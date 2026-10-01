@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, toApiError } from "../api/client";
+import { api, toApiError } from "../../api/client";
 
 export default function HomePage() {
   // Gọi thử endpoint ping của backend qua Gateway
