@@ -1,14 +1,14 @@
-# Cấu trúc code
+# Cấu trúc code (Spring MVC)
 
 ```
-api/             Controller, DTO, exception handler. Chỉ gọi application/.
-application/     Use case, điều phối nghiệp vụ, transaction.
-domain/          Entity, value object, domain event, quy tắc nghiệp vụ. Không phụ thuộc framework nếu có thể.
-infrastructure/  Repository, Kafka producer/consumer, Redis, client gọi hệ thống ngoài (GHN/GHTK, PayOS...).
-config/          Cấu hình Spring (security, openapi, kafka...).
+controller/     Controller (@RestController), DTO, exception handler. Chỉ gọi service/.
+service/        Service (@Service), điều phối nghiệp vụ, transaction.
+entity/         Entity (@Entity), enums, quy tắc nghiệp vụ.
+repository/     Repository (@Repository, Spring Data JPA), custom query.
+config/         Cấu hình Spring (security, openapi, kafka...).
 ```
 
-Chiều phụ thuộc: `api -> application -> domain <- infrastructure`.
+Chiều phụ thuộc: `controller -> service -> repository -> entity`.
 
 ## Nguyên tắc bắt buộc (SRS mục 4)
 - Mỗi service có DB riêng, không truy cập DB của service khác; giao tiếp qua API hoặc event (Kafka).
