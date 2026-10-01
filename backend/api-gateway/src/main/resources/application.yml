@@ -1,0 +1,45 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        # URL service lấy từ biến môi trường; mặc định trỏ localhost để chạy từng service khi dev.
+        - id: user-service
+          uri: ${USER_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/api/v1/auth/**,/api/v1/users/**,/api/v1/roles/**,/api/v1/reputation/**,/api/v1/ping
+        - id: catalog-service
+          uri: ${CATALOG_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/v1/products/**,/api/v1/categories/**
+        - id: commerce-service
+          uri: ${COMMERCE_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/api/v1/cart/**,/api/v1/checkout/**,/api/v1/orders/**,/api/v1/payments/**
+        - id: auction-service
+          uri: ${AUCTION_SERVICE_URL:http://localhost:8084}
+          predicates:
+            - Path=/api/v1/auctions/**,/api/v1/bids/**,/ws/auctions/**
+        - id: fulfillment-service
+          uri: ${FULFILLMENT_SERVICE_URL:http://localhost:8085}
+          predicates:
+            - Path=/api/v1/inventory/**,/api/v1/warehouses/**,/api/v1/shipping/**,/api/v1/shipments/**
+        - id: notification-service
+          uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8086}
+          predicates:
+            - Path=/api/v1/notifications/**,/api/v1/event-logs/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

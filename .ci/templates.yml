@@ -1,0 +1,27 @@
+# Khối dùng chung. Job cụ thể của từng thành phần nằm trong .ci/jobs.yml (sinh sẵn).
+.be-base:
+  image: maven:3.9-eclipse-temurin-21
+  variables:
+    MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+    MAVEN_CLI_OPTS: "-B --no-transfer-progress"
+  cache:
+    key: maven-repo
+    paths:
+      - .m2/repository
+
+.fe-base:
+  image: node:20-alpine
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  cache:
+    key:
+      files: [frontend-web/package-lock.json]
+    paths:
+      - .npm/
+
+.docker-base:
+  image: docker:27
+  services: [docker:27-dind]
+  cache: []
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"

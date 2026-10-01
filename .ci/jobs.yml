@@ -1,0 +1,537 @@
+# FILE SINH SẴN theo mẫu. Mỗi thành phần có 2-3 job; chỉ chạy khi file của thành phần đó thay đổi
+# (hoặc khi sửa CI, hoặc khi gắn tag). Thêm service mới: copy khối của một service và đổi tên.
+
+# ===================== user-service =====================
+user-service:lint:
+  extends: .be-base
+  stage: validate
+  script:
+    - cd backend/user-service && mvn $MAVEN_CLI_OPTS checkstyle:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/user-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/user-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+user-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/user-service && mvn $MAVEN_CLI_OPTS verify   # JaCoCo: line coverage >= 70% (SRS 5.6)
+    - |
+      awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "Total coverage: %.1f%%\n", c/(m+c)*100}' backend/user-service/target/site/jacoco/jacoco.csv
+  coverage: '/Total coverage: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/user-service/target/site/jacoco/
+    reports:
+      junit: backend/user-service/target/surefire-reports/TEST-*.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/user-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/user-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+user-service:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/user-service:$CI_COMMIT_SHORT_SHA" backend/user-service
+    - docker push "$CI_REGISTRY_IMAGE/user-service:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/user-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/user-service:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/user-service:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/user-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/user-service:develop"
+        docker push "$CI_REGISTRY_IMAGE/user-service:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/user-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== catalog-service =====================
+catalog-service:lint:
+  extends: .be-base
+  stage: validate
+  script:
+    - cd backend/catalog-service && mvn $MAVEN_CLI_OPTS checkstyle:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/catalog-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/catalog-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+catalog-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/catalog-service && mvn $MAVEN_CLI_OPTS verify   # JaCoCo: line coverage >= 70% (SRS 5.6)
+    - |
+      awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "Total coverage: %.1f%%\n", c/(m+c)*100}' backend/catalog-service/target/site/jacoco/jacoco.csv
+  coverage: '/Total coverage: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/catalog-service/target/site/jacoco/
+    reports:
+      junit: backend/catalog-service/target/surefire-reports/TEST-*.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/catalog-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/catalog-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+catalog-service:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/catalog-service:$CI_COMMIT_SHORT_SHA" backend/catalog-service
+    - docker push "$CI_REGISTRY_IMAGE/catalog-service:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/catalog-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/catalog-service:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/catalog-service:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/catalog-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/catalog-service:develop"
+        docker push "$CI_REGISTRY_IMAGE/catalog-service:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/catalog-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== commerce-service =====================
+commerce-service:lint:
+  extends: .be-base
+  stage: validate
+  script:
+    - cd backend/commerce-service && mvn $MAVEN_CLI_OPTS checkstyle:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/commerce-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/commerce-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+commerce-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/commerce-service && mvn $MAVEN_CLI_OPTS verify   # JaCoCo: line coverage >= 70% (SRS 5.6)
+    - |
+      awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "Total coverage: %.1f%%\n", c/(m+c)*100}' backend/commerce-service/target/site/jacoco/jacoco.csv
+  coverage: '/Total coverage: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/commerce-service/target/site/jacoco/
+    reports:
+      junit: backend/commerce-service/target/surefire-reports/TEST-*.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/commerce-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/commerce-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+commerce-service:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/commerce-service:$CI_COMMIT_SHORT_SHA" backend/commerce-service
+    - docker push "$CI_REGISTRY_IMAGE/commerce-service:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/commerce-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/commerce-service:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/commerce-service:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/commerce-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/commerce-service:develop"
+        docker push "$CI_REGISTRY_IMAGE/commerce-service:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/commerce-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== auction-service =====================
+auction-service:lint:
+  extends: .be-base
+  stage: validate
+  script:
+    - cd backend/auction-service && mvn $MAVEN_CLI_OPTS checkstyle:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/auction-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/auction-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+auction-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/auction-service && mvn $MAVEN_CLI_OPTS verify   # JaCoCo: line coverage >= 70% (SRS 5.6)
+    - |
+      awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "Total coverage: %.1f%%\n", c/(m+c)*100}' backend/auction-service/target/site/jacoco/jacoco.csv
+  coverage: '/Total coverage: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/auction-service/target/site/jacoco/
+    reports:
+      junit: backend/auction-service/target/surefire-reports/TEST-*.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/auction-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/auction-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+auction-service:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/auction-service:$CI_COMMIT_SHORT_SHA" backend/auction-service
+    - docker push "$CI_REGISTRY_IMAGE/auction-service:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/auction-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/auction-service:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/auction-service:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/auction-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/auction-service:develop"
+        docker push "$CI_REGISTRY_IMAGE/auction-service:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/auction-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== fulfillment-service =====================
+fulfillment-service:lint:
+  extends: .be-base
+  stage: validate
+  script:
+    - cd backend/fulfillment-service && mvn $MAVEN_CLI_OPTS checkstyle:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/fulfillment-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/fulfillment-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+fulfillment-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/fulfillment-service && mvn $MAVEN_CLI_OPTS verify   # JaCoCo: line coverage >= 70% (SRS 5.6)
+    - |
+      awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "Total coverage: %.1f%%\n", c/(m+c)*100}' backend/fulfillment-service/target/site/jacoco/jacoco.csv
+  coverage: '/Total coverage: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/fulfillment-service/target/site/jacoco/
+    reports:
+      junit: backend/fulfillment-service/target/surefire-reports/TEST-*.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/fulfillment-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/fulfillment-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+fulfillment-service:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/fulfillment-service:$CI_COMMIT_SHORT_SHA" backend/fulfillment-service
+    - docker push "$CI_REGISTRY_IMAGE/fulfillment-service:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/fulfillment-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/fulfillment-service:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/fulfillment-service:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/fulfillment-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/fulfillment-service:develop"
+        docker push "$CI_REGISTRY_IMAGE/fulfillment-service:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/fulfillment-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== notification-service =====================
+notification-service:lint:
+  extends: .be-base
+  stage: validate
+  script:
+    - cd backend/notification-service && mvn $MAVEN_CLI_OPTS checkstyle:check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/notification-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/notification-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+notification-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/notification-service && mvn $MAVEN_CLI_OPTS verify   # JaCoCo: line coverage >= 70% (SRS 5.6)
+    - |
+      awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "Total coverage: %.1f%%\n", c/(m+c)*100}' backend/notification-service/target/site/jacoco/jacoco.csv
+  coverage: '/Total coverage: (\d+\.\d+)%/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/notification-service/target/site/jacoco/
+    reports:
+      junit: backend/notification-service/target/surefire-reports/TEST-*.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/notification-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/notification-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+notification-service:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/notification-service:$CI_COMMIT_SHORT_SHA" backend/notification-service
+    - docker push "$CI_REGISTRY_IMAGE/notification-service:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/notification-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/notification-service:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/notification-service:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/notification-service:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/notification-service:develop"
+        docker push "$CI_REGISTRY_IMAGE/notification-service:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/notification-service/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== api-gateway =====================
+api-gateway:test:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/api-gateway && mvn $MAVEN_CLI_OPTS verify
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - backend/api-gateway/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/api-gateway/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+api-gateway:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/api-gateway:$CI_COMMIT_SHORT_SHA" backend/api-gateway
+    - docker push "$CI_REGISTRY_IMAGE/api-gateway:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/api-gateway:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/api-gateway:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/api-gateway:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/api-gateway:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/api-gateway:develop"
+        docker push "$CI_REGISTRY_IMAGE/api-gateway:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/api-gateway/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+# ===================== frontend-web =====================
+frontend-web:lint:
+  extends: .fe-base
+  stage: validate
+  script:
+    - cd frontend-web && npm ci --prefer-offline --no-audit
+    - npm run lint
+    - npm run typecheck
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - frontend-web/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - frontend-web/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+frontend-web:test:
+  extends: .fe-base
+  stage: test
+  script:
+    - cd frontend-web && npm ci --prefer-offline --no-audit
+    - npm run coverage
+  coverage: '/All files\s*\|\s*(\d+\.?\d*)/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - frontend-web/coverage/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: frontend-web/coverage/cobertura-coverage.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+          - frontend-web/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - frontend-web/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+frontend-web:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/frontend-web:$CI_COMMIT_SHORT_SHA" frontend-web
+    - docker push "$CI_REGISTRY_IMAGE/frontend-web:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/frontend-web:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/frontend-web:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/frontend-web:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/frontend-web:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/frontend-web:develop"
+        docker push "$CI_REGISTRY_IMAGE/frontend-web:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - frontend-web/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG

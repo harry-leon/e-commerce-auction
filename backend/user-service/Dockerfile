@@ -1,0 +1,17 @@
+# ---- build ----
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /workspace
+COPY pom.xml .
+RUN mvn -B -q dependency:go-offline
+COPY config ./config
+COPY src ./src
+RUN mvn -B -q package -DskipTests
+
+# ---- runtime ----
+FROM eclipse-temurin:21-jre
+RUN groupadd --system app && useradd --system --gid app app
+WORKDIR /app
+COPY --from=build /workspace/target/*.jar app.jar
+USER app
+EXPOSE 8080
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "app.jar"]

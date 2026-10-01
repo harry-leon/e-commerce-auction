@@ -1,0 +1,6 @@
+app:
+  security:
+    jwt-secret: test-secret-test-secret-test-secret-123456
+spring:
+  application:
+    name: auction-service

@@ -1,0 +1,6 @@
+logging:
+  level:
+    com.nexus: INFO
+  structured:
+    format:
+      console: ecs                # log JSON kèm timestamp, trace id

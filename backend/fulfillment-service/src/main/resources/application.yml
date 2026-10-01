@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: ${SERVICE_NAME:fulfillment-service}
+  profiles:
+    active: ${SYSTEM_ENV:dev}
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nexus_fulfillment}
+    username: ${DB_USERNAME:nexus}
+    password: ${DB_PASSWORD:nexus}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate          # schema do Flyway quản lý
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
+  tracing:
+    sampling:
+      probability: 1.0
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  security:
+    # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
+    jwt-secret: ${JWT_SECRET:}
