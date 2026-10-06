@@ -2,7 +2,7 @@ import { useState, type ReactNode, type SVGProps } from 'react'
 import { useApp } from '../context'
 import { tr } from '../i18n'
 import { LanguageSwitcher, Bell, ShoppingCart, Search, User2, ChevronDown, LogOut, Package, Gavel, Star, X, Home, BarChart2, Users, Tag, Settings2, Shield, Truck, AlertTriangle, Activity, FileText, Server, Plus, Warehouse, HeartHandshake, CreditCard } from './UI'
-import { CATEGORIES } from '../mockData'
+import { CATEGORIES, NOTIFICATIONS } from '../mockData'
 
 // Simple monochrome SVG icons per category
 function IconElectronics(p: SVGProps<SVGSVGElement>) {
@@ -68,15 +68,41 @@ export function PublicHeader() {
         </div>
 
         {/* Right controls */}
-        <div className="flex items-center gap-3 shrink-0">
-          <LanguageSwitcher />
-
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           {/* Notifications */}
           {user && (
-            <button onClick={() => navigate('notifications')} className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors">
-              <Bell size={20} />
-              <span className="absolute top-1 right-1 w-4 h-4 bg-danger text-white text-[10px] font-bold rounded-full flex items-center justify-center">2</span>
-            </button>
+            <div className="relative" onMouseEnter={() => setNotifOpen(true)} onMouseLeave={() => setNotifOpen(false)}>
+              <button onClick={() => navigate('notifications')} className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">
+                <Bell size={20} />
+                <span className="absolute top-1 right-1 w-4 h-4 bg-gray-800 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{NOTIFICATIONS.filter(notification => !notification.read).length}</span>
+              </button>
+              {notifOpen && (
+                <div className="absolute right-0 top-full pt-2 w-96 z-50">
+                  <div className="bg-white border border-border rounded-xl shadow-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                      <p className="font-semibold text-sm text-gray-900">{lang === 'en' ? 'Notifications' : 'Thông báo'}</p>
+                      <span className="text-xs text-gray-400">{NOTIFICATIONS.filter(notification => !notification.read).length} {lang === 'en' ? 'unread' : 'chưa đọc'}</span>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto">
+                      {NOTIFICATIONS.slice(0, 4).map(notification => (
+                        <button key={notification.id} onClick={() => navigate('notifications')} className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-border last:border-0 hover:bg-gray-50 ${notification.read ? '' : 'bg-gray-50/70'}`}>
+                          <span className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0"><Bell size={14} /></span>
+                          <span className="flex-1 min-w-0">
+                            <span className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-800 truncate">{lang === 'vi' ? notification.titleVi : notification.title}</span>
+                              {!notification.read && <span className="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0" />}
+                            </span>
+                            <span className="block text-xs text-gray-500 mt-0.5 line-clamp-2">{lang === 'vi' ? notification.bodyVi : notification.body}</span>
+                            <span className="block text-[11px] text-gray-400 mt-1">{new Date(notification.timestamp).toLocaleString()}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => navigate('notifications')} className="w-full px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">{lang === 'en' ? 'View all notifications' : 'Xem tất cả thông báo'}</button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Cart */}
@@ -125,6 +151,8 @@ export function PublicHeader() {
               <button onClick={() => navigate('register')} className="nexus-btn nexus-btn-primary nexus-btn-sm">{tr(lang, 'register')}</button>
             </div>
           )}
+
+          <LanguageSwitcher />
         </div>
       </div>
 
@@ -210,6 +238,7 @@ const SELLER_NAV = [
 
 export function SellerLayout({ children, title }: { children: ReactNode; title: string }) {
   const { lang, page, navigate, user, setUser } = useApp()
+  const [notifOpen, setNotifOpen] = useState(false)
   return (
     <div className="min-h-screen flex bg-page">
       {/* Sidebar */}
@@ -251,7 +280,38 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
           <h1 className="text-lg font-bold text-gray-900">{title}</h1>
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
-            <button onClick={() => navigate('seller-notifications')} className="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100"><Bell size={18} /><span className="absolute top-1 right-1 w-3.5 h-3.5 bg-danger text-white text-[9px] font-bold rounded-full flex items-center justify-center">3</span></button>
+            <div className="relative" onMouseEnter={() => setNotifOpen(true)} onMouseLeave={() => setNotifOpen(false)}>
+              <button onClick={() => navigate('seller-notifications')} className="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+                <Bell size={18} />
+                <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-gray-800 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{NOTIFICATIONS.filter(notification => !notification.read).length}</span>
+              </button>
+              {notifOpen && (
+                <div className="absolute right-0 top-full pt-2 w-96 z-50">
+                  <div className="bg-white border border-border rounded-xl shadow-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                      <p className="font-semibold text-sm text-gray-900">{lang === 'en' ? 'Seller notifications' : 'Thông báo người bán'}</p>
+                      <span className="text-xs text-gray-400">{NOTIFICATIONS.filter(notification => !notification.read).length} {lang === 'en' ? 'unread' : 'chưa đọc'}</span>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto">
+                      {NOTIFICATIONS.slice(0, 4).map(notification => (
+                        <button key={notification.id} onClick={() => navigate('seller-notifications')} className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-border last:border-0 hover:bg-gray-50 ${notification.read ? '' : 'bg-gray-50/70'}`}>
+                          <span className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0"><Bell size={14} /></span>
+                          <span className="flex-1 min-w-0">
+                            <span className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-800 truncate">{lang === 'vi' ? notification.titleVi : notification.title}</span>
+                              {!notification.read && <span className="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0" />}
+                            </span>
+                            <span className="block text-xs text-gray-500 mt-0.5 line-clamp-2">{lang === 'vi' ? notification.bodyVi : notification.body}</span>
+                            <span className="block text-[11px] text-gray-400 mt-1">{new Date(notification.timestamp).toLocaleString()}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => navigate('seller-notifications')} className="w-full px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">{lang === 'en' ? 'View all notifications' : 'Xem tất cả thông báo'}</button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <main className="flex-1 p-8 overflow-auto">{children}</main>
@@ -333,7 +393,6 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
           <h1 className="text-lg font-bold text-gray-900">{title}</h1>
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
-            <button onClick={() => navigate('admin-event-logs')} className="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100"><Bell size={18} /></button>
           </div>
         </div>
         <main className="flex-1 p-8 overflow-auto">{children}</main>
