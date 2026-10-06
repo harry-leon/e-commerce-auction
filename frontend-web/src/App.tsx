@@ -29,27 +29,27 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 // Auth pages
-import { LoginPage, RegisterPage, ForgotPasswordPage } from './pages/AuthPages'
+import { LoginPage, RegisterPage, ForgotPasswordPage } from './pages/Auth/AuthPages'
 
 // Buyer pages
-import { HomePage, SearchPage, ProductDetailPage, CartPage, CheckoutPage, PaymentResultPage, OrderHistoryPage, OrderDetailPage, ProfilePage, ReputationPage, NotificationPage } from './pages/BuyerPages'
+import { HomePage, SearchPage, ProductDetailPage, CartPage, CheckoutPage, PaymentResultPage, OrderHistoryPage, OrderDetailPage, ProfilePage, ReputationPage, NotificationPage } from './pages/Buyer/BuyerPages'
 
 // Auction pages
-import { AuctionListPage, AuctionDetailPage, MyBidsPage, AuctionPaymentPage } from './pages/AuctionPages'
+import { AuctionListPage, AuctionDetailPage, MyBidsPage, AuctionPaymentPage } from './pages/Auction/AuctionPages'
 
 // Seller pages
-import { SellerDashboardPage, SellerBalancePage, SellerNotificationPage, SellerReputationPage, SellerProductListPage, CreateProductPage, SellerAuctionListPage, CreateAuctionPage, SellerOrdersPage, SellerInventoryPage } from './pages/SellerPages'
+import { SellerDashboardPage, SellerBalancePage, SellerNotificationPage, SellerReputationPage, SellerProductListPage, CreateProductPage, SellerAuctionListPage, CreateAuctionPage, SellerOrdersPage, SellerInventoryPage } from './pages/Seller/SellerPages'
 
 // Admin pages
 import {
   AdminDashboardPage, AdminUsersPage, AdminUserDetailPage, AdminRolesPage, AdminCategoriesPage,
   AdminOrdersPage, AdminAuctionsPage, AdminReputationPage, AdminEventLogsPage, AdminAuditLogsPage,
   AdminSystemConfigPage, AdminSystemHealthPage, AdminProductsPage, AdminWarehousesPage, AdminShipmentsPage
-} from './pages/AdminPages'
+} from './pages/Admin/AdminPages'
 
 // Support pages
-import { SupportDashboardPage, SupportOrderLookupPage, SupportUserLookupPage } from './pages/SupportPages'
-import { AdminProfilePage, SellerProfilePage, SupportProfilePage } from './pages/ProfilePages'
+import { SupportDashboardPage, SupportOrderLookupPage, SupportUserLookupPage } from './pages/Support/SupportPages'
+import { AdminProfilePage, SellerProfilePage, SupportProfilePage } from './pages/Profile/ProfilePages'
 
 import { DEMO_BUYER, DEMO_SELLER, DEMO_ADMIN, DEMO_SUPPORT } from './mockData'
 import type { User } from './types'

@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useApp } from '../context'
-import { tr, formatCurrency, formatDate } from '../i18n'
-import { SupportLayout } from '../components/Layout'
-import { Button, Input, Textarea, Select, Modal, AlertBanner, EmptyState, StatusBadge, DataTable, Search } from '../components/UI'
-import { ORDERS, USERS } from '../mockData'
+import { useApp } from '../../context'
+import { tr, formatCurrency, formatDate } from '../../i18n'
+import { SupportLayout } from '../../components/Layout'
+import { Button, Input, Textarea, Select, Modal, AlertBanner, EmptyState, StatusBadge, DataTable, Search } from '../../components/UI'
+import { ORDERS, USERS } from '../../mockData'
 
 function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'order' | 'user' }) {
   const { lang, showToast, navigate, pageParams } = useApp()

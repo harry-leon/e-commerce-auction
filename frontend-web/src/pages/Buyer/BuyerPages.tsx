@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import { useApp } from '../context'
-import { tr, formatCurrency, formatDate } from '../i18n'
-import { BuyerLayout } from '../components/Layout'
-import { ProductCard } from '../components/Cards'
-import { AuctionCard } from '../components/Cards'
-import { Button, Input, Textarea, Select, NumberStepper, Tabs, Modal, ConfirmModal, AlertBanner, EmptyState, StarRating, StatusBadge, OrderTimeline, ReputationBar, ProgressBar, Toggle, Checkbox, Breadcrumb, Pagination, Download, Gavel, Search, Filter, ChevronRight, AlertTriangle, CheckCircle, Truck, Package, ShoppingCart, CreditCard, Settings2, Gift, Star, CircleX, Shield } from '../components/UI'
-import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../mockData'
-import { CATEGORY_ICONS } from '../components/Layout'
-import { getEffectivePaymentStatus } from '../payment'
-import type { OrderStatus } from '../types'
+import { useApp } from '../../context'
+import { tr, formatCurrency, formatDate } from '../../i18n'
+import { BuyerLayout } from '../../components/Layout'
+import { ProductCard } from '../../components/Cards'
+import { AuctionCard } from '../../components/Cards'
+import { Button, Input, Textarea, Select, NumberStepper, Tabs, Modal, ConfirmModal, AlertBanner, EmptyState, StarRating, StatusBadge, OrderTimeline, ReputationBar, ProgressBar, Toggle, Checkbox, Breadcrumb, Pagination, Download, Gavel, Search, Filter, ChevronRight, AlertTriangle, CheckCircle, Truck, Package, ShoppingCart, CreditCard, Settings2, Gift, Star, CircleX, Shield } from '../../components/UI'
+import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
+import { CATEGORY_ICONS } from '../../components/Layout'
+import { getEffectivePaymentStatus } from '../../payment'
+import type { OrderStatus } from '../../types'
 
 function getAuctionCurrentBid(auction: unknown) {
   if (!auction || typeof auction !== 'object') return 0
@@ -313,6 +313,10 @@ export function SearchPage() {
 export function ProductDetailPage() {
   const { lang, navigate, pageParams, setCartCount, cartCount, showToast } = useApp()
   const product = PRODUCTS.find(p => p.id === pageParams?.id) || PRODUCTS[0]
+  // BR-CFG-09: Maximum images per product MAX_PRODUCT_IMAGES = 5
+  const MAX_PRODUCT_IMAGES = 5
+  const productImages = (product.images || []).slice(0, MAX_PRODUCT_IMAGES)
+
   const [activeImg, setActiveImg] = useState(0)
   const [qty, setQty] = useState(1)
   const [activeTab, setActiveTab] = useState('description')
@@ -349,14 +353,18 @@ export function ProductDetailPage() {
     <BuyerLayout>
       <Breadcrumb items={[{ label: lang === 'en' ? 'Home' : 'Trang chủ', page: 'home' }, { label: product.category, page: 'search' }, { label: lang === 'vi' ? product.nameVi : product.name }]} />
       <div className="mt-5 grid grid-cols-[1fr_1.2fr] gap-10">
-        {/* Gallery */}
+        {/* Gallery - BR-CFG-09: MAX_PRODUCT_IMAGES = 5 */}
         <div>
-          <div className="nexus-card overflow-hidden mb-3 bg-gray-50" style={{ aspectRatio: '1/1' }}>
-            <img src={product.images[activeImg] ?? product.images[0]} alt={product.name} className="w-full h-full object-cover" />
+          <div className="nexus-card overflow-hidden mb-3 bg-gray-50 relative group" style={{ aspectRatio: '1/1' }}>
+            <img src={productImages[activeImg] ?? productImages[0]} alt={product.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
+            <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
+              <span>{productImages.length > 0 ? activeImg + 1 : 0} / {productImages.length}</span>
+              <span className="text-gray-300 text-[10px]">(Max {MAX_PRODUCT_IMAGES})</span>
+            </div>
           </div>
           <div className="flex gap-2">
-            {product.images.map((img, i) => (
-              <button key={i} onClick={() => setActiveImg(i)} className={`gallery-thumb w-16 h-16 overflow-hidden bg-gray-100 ${i === activeImg ? 'active' : ''}`}>
+            {productImages.map((img, i) => (
+              <button key={i} onClick={() => setActiveImg(i)} className={`gallery-thumb w-16 h-16 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all ${i === activeImg ? 'border-primary ring-2 ring-primary/20 scale-105' : 'border-transparent opacity-75 hover:opacity-100'}`}>
                 <img src={img} alt="" className="w-full h-full object-cover" />
               </button>
             ))}
@@ -365,9 +373,19 @@ export function ProductDetailPage() {
 
         {/* Product info */}
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm text-gray-500">{product.category}</span>
-            {product.stock > 0 ? <span className="badge badge-green">{tr(lang, 'inStock')}</span> : <span className="badge badge-red">{tr(lang, 'outOfStock')}</span>}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="text-sm font-semibold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">{product.category}</span>
+            {/* BR-CFG-08: Product Statuses (DRAFT, ACTIVE, INACTIVE) */}
+            {product.status === 'active' ? (
+              product.stock > 0 ? <span className="badge badge-green">{tr(lang, 'inStock')}</span> : <span className="badge badge-red">{tr(lang, 'outOfStock')}</span>
+            ) : product.status === 'draft' ? (
+              <span className="badge badge-gray">{tr(lang, 'draft')}</span>
+            ) : (
+              <span className="badge badge-slate">{tr(lang, 'inactive')}</span>
+            )}
+            {product.enableAuction && (
+              <span className="badge badge-indigo">{lang === 'en' ? 'Auction Eligible' : 'Hỗ trợ đấu giá'}</span>
+            )}
           </div>
           <h1 className="text-3xl font-bold text-gray-900 mb-3 leading-tight">{lang === 'vi' ? product.nameVi : product.name}</h1>
           <div className="flex items-center gap-3 mb-5">
@@ -390,7 +408,7 @@ export function ProductDetailPage() {
             </div>
             <div className="text-xs text-gray-500">{product.stock > 0 ? `${product.stock} ${lang === 'en' ? 'units available' : 'sản phẩm còn hàng'}` : tr(lang, 'outOfStock')}</div>
             <div className="flex gap-3">
-              <Button variant="secondary" size="lg" className="flex-1" onClick={addToCart} disabled={product.stock === 0}><ShoppingCart size={16} />{tr(lang, 'addToCart')}</Button>
+              <Button variant="secondary" size="lg" className="flex-1" onClick={addToCart} disabled={product.stock === 0}>{tr(lang, 'addToCart')}</Button>
               <Button variant="primary" size="lg" className="flex-1" onClick={() => navigate('checkout')} disabled={product.stock === 0}>{tr(lang, 'buyNow')}</Button>
             </div>
           </div>
@@ -410,8 +428,7 @@ export function ProductDetailPage() {
           </div>
 
           {/* Shipping estimate */}
-          <div className="flex items-center gap-3 p-4 bg-primary-light rounded-xl text-sm">
-            <Truck size={18} className="text-gray-500 shrink-0" />
+          <div className="p-4 bg-primary-light rounded-xl text-sm">
             <div>
               <span className="font-semibold text-primary">{tr(lang, 'shippingEstimate')}:</span>
               <span className="text-gray-700 ml-2">GHN – {lang === 'en' ? '3-5 days, $3.99' : '3-5 ngày, 50.000₫'} | GHTK – {lang === 'en' ? '2-3 days, $5.99' : '2-3 ngày, 80.000₫'}</span>
@@ -478,9 +495,7 @@ export function ProductDetailPage() {
   )
 }
 
-function ShoppingCart({ size }: { size: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" /><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" /></svg>
-}
+
 
 // ─── Cart Page ─────────────────────────────────────────────────────────────────
 export function CartPage() {

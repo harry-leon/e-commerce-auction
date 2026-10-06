@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { useApp } from '../context'
-import { tr } from '../i18n'
-import { Input, PasswordInput, Button, Checkbox, AlertBanner, LanguageSwitcher, CheckCircle } from '../components/UI'
-import { DEMO_BUYER, DEMO_SELLER, DEMO_ADMIN, DEMO_SUPPORT } from '../mockData'
-import type { User } from '../types'
-import { Gavel } from '../components/UI'
+import { useApp } from '../../context'
+import { tr } from '../../i18n'
+import { Input, PasswordInput, Button, Checkbox, AlertBanner, LanguageSwitcher, CheckCircle } from '../../components/UI'
+import { DEMO_BUYER, DEMO_SELLER, DEMO_ADMIN, DEMO_SUPPORT } from '../../mockData'
+import type { User } from '../../types'
+import { Gavel } from '../../components/UI'
 
 function AuthCard({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) {
   const { lang, navigate } = useApp()

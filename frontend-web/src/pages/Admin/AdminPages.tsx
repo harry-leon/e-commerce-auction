@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { useApp } from '../context'
-import { tr, formatCurrency, formatDate } from '../i18n'
-import { AdminLayout } from '../components/Layout'
-import { Button, Input, Textarea, Select, Tabs, Modal, ConfirmModal, AlertBanner, EmptyState, StatusBadge, DataTable, Toggle, Breadcrumb, Plus, Pencil, Trash2, Search, AlertTriangle, CheckCircle, Server, TrendingUp, Package, Gavel, Users, User2, Settings2, Shield, ClipboardList } from '../components/UI'
-import { USERS, PRODUCTS, AUCTIONS, ORDERS, ROLES, EVENT_LOGS, SYSTEM_SERVICES } from '../mockData'
-import { getEffectivePaymentStatus } from '../payment'
+import { useApp } from '../../context'
+import { tr, formatCurrency, formatDate } from '../../i18n'
+import { AdminLayout } from '../../components/Layout'
+import { Button, Input, Textarea, Select, Tabs, Modal, ConfirmModal, AlertBanner, EmptyState, StatusBadge, DataTable, Toggle, Breadcrumb, Plus, Pencil, Trash2, Search, AlertTriangle, CheckCircle, Server, TrendingUp, Package, Gavel, Users, User2, Settings2, Shield, ClipboardList, Info } from '../../components/UI'
+import { USERS, PRODUCTS, AUCTIONS, ORDERS, ROLES, EVENT_LOGS, SYSTEM_SERVICES } from '../../mockData'
+import { getEffectivePaymentStatus } from '../../payment'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
@@ -285,61 +285,729 @@ export function AdminRolesPage() {
 }
 
 // ─── Admin Categories ──────────────────────────────────────────────────────────
-import { CATEGORIES } from '../mockData'
+import { CATEGORIES as INITIAL_CATEGORIES } from '../../mockData'
+
+interface CategoryItem {
+  id: string
+  name: string
+  nameVi: string
+  slug: string
+  parentId?: string
+  productCount?: number
+  children?: CategoryItem[]
+}
 
 export function AdminCategoriesPage() {
   const { lang, showToast } = useApp()
-  const [editOpen, setEditOpen] = useState(false)
-  const [editName, setEditName] = useState('')
+  const [categories, setCategories] = useState<CategoryItem[]>(INITIAL_CATEGORIES as CategoryItem[])
+  const [search, setSearch] = useState('')
+  const [selectedParentId, setSelectedParentId] = useState<string>('root')
+
+  // Modal states
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editCategory, setEditCategory] = useState<CategoryItem | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CategoryItem | null>(null)
+  const [viewCategory, setViewCategory] = useState<CategoryItem | null>(null)
+
+  // Form states
+  const [formNameEn, setFormNameEn] = useState('')
+  const [formNameVi, setFormNameVi] = useState('')
+  const [formParentId, setFormParentId] = useState<string>('root')
+  const [formError, setFormError] = useState('')
+
+  // Configurations
+  const CATEGORY_MAX_LEVEL = 3
+  const ALLOW_CATEGORY_DELETE_WITH_PRODUCT = false
+
+  // Flatten categories with their depth/level for select options
+  const getFlatOptions = (items: CategoryItem[], currentLevel = 1, prefix = ''): { id: string; label: string; level: number }[] => {
+    let result: { id: string; label: string; level: number }[] = []
+    for (const item of items) {
+      const displayName = lang === 'vi' ? item.nameVi : item.name
+      result.push({ id: item.id, label: `${prefix}${displayName} (Lv.${currentLevel})`, level: currentLevel })
+      if (item.children && item.children.length > 0) {
+        result = result.concat(getFlatOptions(item.children, currentLevel + 1, `${prefix}— `))
+      }
+    }
+    return result
+  }
+
+  // Find category level in tree
+  const findCategoryLevel = (items: CategoryItem[], targetId: string, currentLevel = 1): number => {
+    for (const item of items) {
+      if (item.id === targetId) return currentLevel
+      if (item.children && item.children.length > 0) {
+        const found = findCategoryLevel(item.children, targetId, currentLevel + 1)
+        if (found !== -1) return found
+      }
+    }
+    return -1
+  }
+
+  // Calculate total products recursively
+  const getCategoryTotalProducts = (cat: CategoryItem): number => {
+    const direct = cat.productCount || 0
+    const childrenTotal = (cat.children || []).reduce((acc, child) => acc + getCategoryTotalProducts(child), 0)
+    return direct + childrenTotal
+  }
+
+  // Check if category has any child with products
+  const hasDescendantWithProducts = (cat: CategoryItem): boolean => {
+    if ((cat.productCount || 0) > 0) return true
+    if (!cat.children || cat.children.length === 0) return false
+    return cat.children.some(c => hasDescendantWithProducts(c))
+  }
+
+  // Find category by ID
+  const findCategoryById = (items: CategoryItem[], id: string): CategoryItem | null => {
+    for (const item of items) {
+      if (item.id === id) return item
+      if (item.children) {
+        const res = findCategoryById(item.children, id)
+        if (res) return res
+      }
+    }
+    return null
+  }
+
+  // Open Create Modal
+  const openCreateModal = (presetParentId?: string) => {
+    setFormNameEn('')
+    setFormNameVi('')
+    setFormParentId(presetParentId || 'root')
+    setFormError('')
+    setCreateOpen(true)
+  }
+
+  // Open Edit Modal
+  const openEditModal = (cat: CategoryItem) => {
+    setEditCategory(cat)
+    setFormNameEn(cat.name)
+    setFormNameVi(cat.nameVi)
+    setFormParentId(cat.parentId || 'root')
+    setFormError('')
+  }
+
+  // Handle Create Category with BR-CFG-11 Validation
+  const handleCreateCategory = () => {
+    if (!formNameEn.trim() || !formNameVi.trim()) {
+      setFormError(lang === 'en' ? 'Both English and Vietnamese names are required.' : 'Vui lòng nhập cả tên tiếng Anh và tiếng Việt.')
+      return
+    }
+
+    // Validate level
+    let targetLevel = 1
+    if (formParentId !== 'root') {
+      const parentLevel = findCategoryLevel(categories, formParentId)
+      targetLevel = parentLevel + 1
+    }
+
+    if (targetLevel > CATEGORY_MAX_LEVEL) {
+      setFormError(
+        lang === 'en'
+          ? `BR-CFG-11 Violation: Maximum category depth is ${CATEGORY_MAX_LEVEL} levels. Cannot add subcategory under Level ${targetLevel - 1}.`
+          : `Vi phạm BR-CFG-11: Độ sâu danh mục tối đa là ${CATEGORY_MAX_LEVEL} cấp. Không thể tạo danh mục con dưới cấp ${targetLevel - 1}.`
+      )
+      return
+    }
+
+    const newId = `cat-${Date.now().toString(36)}`
+    const newCategory: CategoryItem = {
+      id: newId,
+      name: formNameEn.trim(),
+      nameVi: formNameVi.trim(),
+      slug: formNameEn.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      parentId: formParentId === 'root' ? undefined : formParentId,
+      productCount: 0,
+      children: [],
+    }
+
+    if (formParentId === 'root') {
+      setCategories(prev => [...prev, newCategory])
+    } else {
+      const addChild = (items: CategoryItem[]): CategoryItem[] => {
+        return items.map(item => {
+          if (item.id === formParentId) {
+            return {
+              ...item,
+              children: [...(item.children || []), newCategory],
+            }
+          }
+          if (item.children) {
+            return { ...item, children: addChild(item.children) }
+          }
+          return item
+        })
+      }
+      setCategories(prev => addChild(prev))
+    }
+
+    setCreateOpen(false)
+    showToast({
+      type: 'success',
+      message: lang === 'en' ? `Category "${newCategory.name}" created successfully!` : `Đã thêm danh mục "${newCategory.nameVi}"!`,
+    })
+  }
+
+  // Handle Edit Category
+  const handleUpdateCategory = () => {
+    if (!editCategory) return
+    if (!formNameEn.trim() || !formNameVi.trim()) {
+      setFormError(lang === 'en' ? 'Both English and Vietnamese names are required.' : 'Vui lòng nhập đầy đủ tên.')
+      return
+    }
+
+    const updateItem = (items: CategoryItem[]): CategoryItem[] => {
+      return items.map(item => {
+        if (item.id === editCategory.id) {
+          return {
+            ...item,
+            name: formNameEn.trim(),
+            nameVi: formNameVi.trim(),
+            slug: formNameEn.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          }
+        }
+        if (item.children) {
+          return { ...item, children: updateItem(item.children) }
+        }
+        return item
+      })
+    }
+
+    setCategories(prev => updateItem(prev))
+    setEditCategory(null)
+    showToast({
+      type: 'success',
+      message: lang === 'en' ? 'Category updated successfully.' : 'Đã cập nhật danh mục thành công.',
+    })
+  }
+
+  // Handle Delete Category with BR-CFG-12 Validation
+  const handleDeleteCategory = (cat: CategoryItem) => {
+    // BR-CFG-12: ALLOW_CATEGORY_DELETE_WITH_PRODUCT = false
+    const totalProducts = getCategoryTotalProducts(cat)
+    if (!ALLOW_CATEGORY_DELETE_WITH_PRODUCT && totalProducts > 0) {
+      showToast({
+        type: 'error',
+        message:
+          lang === 'en'
+            ? `BR-CFG-12 Blocked: Category contains ${totalProducts} active products. Cannot delete category while products exist.`
+            : `Chặn bởi BR-CFG-12: Danh mục đang chứa ${totalProducts} sản phẩm. Không cho phép xóa danh mục có sản phẩm.`,
+      })
+      setDeleteTarget(null)
+      return
+    }
+
+    // Also check if it has subcategories
+    if (cat.children && cat.children.length > 0) {
+      const hasProductsInSub = cat.children.some(c => hasDescendantWithProducts(c))
+      if (hasProductsInSub) {
+        showToast({
+          type: 'error',
+          message:
+            lang === 'en'
+              ? 'BR-CFG-12 Blocked: Subcategories contain products. Please reassign or delete them first.'
+              : 'Chặn bởi BR-CFG-12: Danh mục con đang chứa sản phẩm. Vui lòng chuyển hoặc xóa sản phẩm trước.',
+        })
+        setDeleteTarget(null)
+        return
+      }
+    }
+
+    // Perform deletion
+    const removeItem = (items: CategoryItem[]): CategoryItem[] => {
+      return items
+        .filter(item => item.id !== cat.id)
+        .map(item => ({
+          ...item,
+          children: item.children ? removeItem(item.children) : undefined,
+        }))
+    }
+
+    setCategories(prev => removeItem(prev))
+    setDeleteTarget(null)
+    showToast({
+      type: 'success',
+      message: lang === 'en' ? `Category "${cat.name}" deleted.` : `Đã xóa danh mục "${cat.nameVi}".`,
+    })
+  }
+
+  // Filter categories by search
+  const filterCategoryTree = (items: CategoryItem[], query: string): CategoryItem[] => {
+    if (!query) return items
+    const lower = query.toLowerCase()
+    return items
+      .map(item => {
+        const matchesSelf = item.name.toLowerCase().includes(lower) || item.nameVi.toLowerCase().includes(lower)
+        const filteredChildren = item.children ? filterCategoryTree(item.children, query) : []
+        if (matchesSelf || filteredChildren.length > 0) {
+          return { ...item, children: filteredChildren }
+        }
+        return null
+      })
+      .filter(Boolean) as CategoryItem[]
+  }
+
+  const displayedCategories = filterCategoryTree(categories, search)
+  const flatParentOptions = getFlatOptions(categories).filter(opt => opt.level < CATEGORY_MAX_LEVEL)
+  const allFlatCategories = getFlatOptions(categories)
+
+  const totalRootCategories = categories.length
+  const totalAllCategories = allFlatCategories.length
+  const totalProductsCatalog = categories.reduce((sum, c) => sum + getCategoryTotalProducts(c), 0)
+
   return (
     <AdminLayout title={tr(lang, 'categoryManagement')}>
-      <div className="grid grid-cols-[1fr_300px] gap-6">
-        <div className="nexus-card">
-          <div className="p-4 border-b border-border flex items-center justify-between">
-            <h3 className="font-bold">{lang === 'en' ? 'Category Tree (max 3 levels)' : 'Cây danh mục (tối đa 3 cấp)'}</h3>
-            <Button variant="primary" size="sm" icon={<Plus size={12} />}>{lang === 'en' ? 'Add Category' : 'Thêm danh mục'}</Button>
+      {/* Policy Banners */}
+      <div className="mb-6 grid grid-cols-2 gap-4">
+        <div className="p-4 bg-indigo-50/60 border border-indigo-100 rounded-xl flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="badge badge-indigo text-[11px] font-bold">BR-CFG-11</span>
+              <p className="font-bold text-sm text-gray-900">{lang === 'en' ? 'Max Depth Level' : 'Độ sâu cấp danh mục'}</p>
+            </div>
+            <p className="text-xs text-gray-600 mt-1">{lang === 'en' ? 'Strict limit enforced: CATEGORY_MAX_LEVEL = 3' : 'Giới hạn nghiêm ngặt: CATEGORY_MAX_LEVEL = 3'}</p>
           </div>
-          <div className="p-4 space-y-1">
-            {CATEGORIES.map(cat => (
-              <div key={cat.id}>
-                <div className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50">
-                  <div className="flex items-center gap-2"><span className="text-lg">{cat.icon}</span><span className="font-semibold text-sm">{lang === 'vi' ? cat.nameVi : cat.name}</span></div>
-                  <div className="flex items-center gap-1">
-                    {cat.productCount && <span className="text-xs text-gray-400">{cat.productCount}</span>}
-                    <button onClick={() => { setEditName(lang === 'vi' ? cat.nameVi : cat.name); setEditOpen(true) }} className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1"><Pencil size={12} /></button>
-                    <button className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1 text-danger"><Trash2 size={12} /></button>
-                  </div>
-                </div>
-                {cat.children?.map(child => (
-                  <div key={child.id} className="ml-6 flex items-center justify-between p-2 rounded-lg hover:bg-gray-50">
-                    <span className="text-sm text-gray-700">{lang === 'vi' ? child.nameVi : child.name} <span className="text-xs text-gray-400">({child.productCount})</span></span>
-                    <div className="flex gap-1">
-                      <button className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1"><Pencil size={11} /></button>
-                      <button className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1 text-danger"><Trash2 size={11} /></button>
-                    </div>
-                  </div>
-                ))}
+          <span className="text-2xl font-black text-primary">3</span>
+        </div>
+        <div className="p-4 bg-orange-50/60 border border-orange-100 rounded-xl flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="badge badge-orange text-[11px] font-bold">BR-CFG-12</span>
+              <p className="font-bold text-sm text-gray-900">{lang === 'en' ? 'Product Integrity Guard' : 'Bảo vệ toàn vẹn sản phẩm'}</p>
+            </div>
+            <p className="text-xs text-gray-600 mt-1">{lang === 'en' ? 'ALLOW_CATEGORY_DELETE_WITH_PRODUCT = false' : 'Không cho phép xóa danh mục còn chứa sản phẩm'}</p>
+          </div>
+          <span className="badge badge-red font-bold uppercase tracking-wider text-xs">{lang === 'en' ? 'Protected' : 'Bảo vệ'}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[1fr_320px] gap-6">
+        {/* Category Tree Main Card */}
+        <div className="nexus-card">
+          <div className="p-5 border-b border-border flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h3 className="font-bold text-base text-gray-900">{lang === 'en' ? 'Category Hierarchy (3 Levels)' : 'Cây phân cấp danh mục (3 cấp)'}</h3>
+              <p className="text-xs text-gray-500 mt-0.5">{lang === 'en' ? 'Manage root, sub, and leaf product categories' : 'Quản lý danh mục cha, con và danh mục cấp 3'}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder={lang === 'en' ? 'Search category...' : 'Tìm danh mục...'}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-48 text-xs"
+              />
+              <Button variant="primary" size="sm" onClick={() => openCreateModal()}>
+                {lang === 'en' ? 'New Root Category' : 'Thêm danh mục gốc'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-3">
+            {displayedCategories.length === 0 ? (
+              <div className="py-16 text-center">
+                <h3 className="text-lg font-semibold text-gray-700 mb-5">{lang === 'en' ? 'No categories found' : 'Không tìm thấy danh mục'}</h3>
+                <Button variant="primary" size="sm" onClick={() => openCreateModal()}>
+                  {lang === 'en' ? 'Create Category' : 'Tạo danh mục'}
+                </Button>
               </div>
-            ))}
+            ) : (
+              displayedCategories.map(cat => {
+                const totalCatProducts = getCategoryTotalProducts(cat)
+                const canAddChild = 1 < CATEGORY_MAX_LEVEL
+
+                return (
+                  <div key={cat.id} className="border border-border/80 rounded-xl overflow-hidden bg-white shadow-xs">
+                    {/* Level 1: Root Category */}
+                    <div className="flex items-center justify-between p-3.5 bg-gray-50/80 hover:bg-gray-100/70 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-gray-900">{lang === 'vi' ? cat.nameVi : cat.name}</span>
+                            <span className="text-xs text-gray-400">({lang === 'vi' ? cat.name : cat.nameVi})</span>
+                            <span className="badge badge-slate text-[10px] font-semibold">Level 1</span>
+                          </div>
+                          <span className="text-xs text-gray-500 font-mono">slug: /{cat.slug}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className={`badge ${totalCatProducts > 0 ? 'badge-blue' : 'badge-gray'} text-xs font-semibold`}>
+                          {totalCatProducts} {lang === 'en' ? 'products' : 'sản phẩm'}
+                        </span>
+                        {canAddChild && (
+                          <button
+                            title={lang === 'en' ? 'Add subcategory (Level 2)' : 'Thêm danh mục con (Cấp 2)'}
+                            onClick={() => openCreateModal(cat.id)}
+                            className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-primary hover:bg-primary-light"
+                          >
+                            {lang === 'en' ? 'Add child' : 'Thêm con'}
+                          </button>
+                        )}
+                        <button
+                          title={lang === 'en' ? 'View details' : 'Xem chi tiết'}
+                          onClick={() => setViewCategory(cat)}
+                          className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-gray-500 hover:text-gray-800"
+                        >
+                          {lang === 'en' ? 'View' : 'Xem'}
+                        </button>
+                        <button
+                          title={lang === 'en' ? 'Edit category' : 'Sửa danh mục'}
+                          onClick={() => openEditModal(cat)}
+                          className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-gray-500 hover:text-gray-800"
+                        >
+                          {tr(lang, 'edit')}
+                        </button>
+                        <button
+                          title={
+                            totalCatProducts > 0
+                              ? lang === 'en'
+                                ? 'Cannot delete: Category contains products (BR-CFG-12)'
+                                : 'Không thể xóa: Danh mục đang có sản phẩm (BR-CFG-12)'
+                              : lang === 'en'
+                              ? 'Delete category'
+                              : 'Xóa danh mục'
+                          }
+                          onClick={() => setDeleteTarget(cat)}
+                          className={`nexus-btn nexus-btn-ghost nexus-btn-sm px-2 ${totalCatProducts > 0 ? 'text-gray-300 hover:text-gray-300 cursor-not-allowed' : 'text-danger hover:bg-red-50'}`}
+                        >
+                          {tr(lang, 'delete')}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Level 2: Children */}
+                    {cat.children && cat.children.length > 0 && (
+                      <div className="divide-y divide-border/40 pl-6 pr-3 py-1 bg-white">
+                        {cat.children.map(child => {
+                          const childProducts = getCategoryTotalProducts(child)
+                          const canAddLeaf = 2 < CATEGORY_MAX_LEVEL
+
+                          return (
+                            <div key={child.id} className="py-2.5">
+                              <div className="flex items-center justify-between rounded-lg p-2 hover:bg-gray-50/80 transition-colors">
+                                <div className="flex items-center gap-2.5">
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold text-sm text-gray-800">{lang === 'vi' ? child.nameVi : child.name}</span>
+                                      <span className="badge badge-indigo text-[10px]">Level 2</span>
+                                    </div>
+                                    <span className="text-xs text-gray-400 font-mono">slug: /{child.slug}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500 font-medium">
+                                    {childProducts} {lang === 'en' ? 'products' : 'sản phẩm'}
+                                  </span>
+                                  {canAddLeaf && (
+                                    <button
+                                      title={lang === 'en' ? 'Add subcategory (Level 3)' : 'Thêm danh mục con (Cấp 3)'}
+                                      onClick={() => openCreateModal(child.id)}
+                                      className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-primary hover:bg-primary-light"
+                                    >
+                                      {lang === 'en' ? 'Add child' : 'Thêm con'}
+                                    </button>
+                                  )}
+                                  <button
+                                    title={lang === 'en' ? 'View details' : 'Xem chi tiết'}
+                                    onClick={() => setViewCategory(child)}
+                                    className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-gray-500 hover:text-gray-800"
+                                  >
+                                    {lang === 'en' ? 'View' : 'Xem'}
+                                  </button>
+                                  <button
+                                    title={lang === 'en' ? 'Edit category' : 'Sửa danh mục'}
+                                    onClick={() => openEditModal(child)}
+                                    className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-gray-500 hover:text-gray-800"
+                                  >
+                                    {tr(lang, 'edit')}
+                                  </button>
+                                  <button
+                                    title={
+                                      childProducts > 0
+                                        ? lang === 'en'
+                                          ? 'Cannot delete: Category contains products (BR-CFG-12)'
+                                          : 'Không thể xóa: Danh mục đang có sản phẩm (BR-CFG-12)'
+                                        : lang === 'en'
+                                        ? 'Delete category'
+                                        : 'Xóa danh mục'
+                                    }
+                                    onClick={() => setDeleteTarget(child)}
+                                    className={`nexus-btn nexus-btn-ghost nexus-btn-sm px-2 ${childProducts > 0 ? 'text-gray-300 hover:text-gray-300 cursor-not-allowed' : 'text-danger hover:bg-red-50'}`}
+                                  >
+                                    {tr(lang, 'delete')}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Level 3: Leaf Children */}
+                              {child.children && child.children.length > 0 && (
+                                <div className="pl-8 pr-2 py-1 space-y-1">
+                                  {child.children.map(leaf => {
+                                    const leafProducts = leaf.productCount || 0
+                                    return (
+                                      <div key={leaf.id} className="flex items-center justify-between p-2 rounded-lg bg-gray-50/50 hover:bg-gray-100/50 transition-colors">
+                                        <div className="flex items-center gap-2">
+                                          <div>
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="font-medium text-xs text-gray-800">{lang === 'vi' ? leaf.nameVi : leaf.name}</span>
+                                              <span className="badge badge-yellow text-[9px]">Level 3 (Max)</span>
+                                            </div>
+                                            <span className="text-[11px] text-gray-400 font-mono">slug: /{leaf.slug}</span>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs text-gray-500">{leafProducts} {lang === 'en' ? 'products' : 'sản phẩm'}</span>
+                                          <button
+                                            title={lang === 'en' ? 'View details' : 'Xem chi tiết'}
+                                            onClick={() => setViewCategory(leaf)}
+                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-gray-500 hover:text-gray-800"
+                                          >
+                                            {lang === 'en' ? 'View' : 'Xem'}
+                                          </button>
+                                          <button
+                                            title={lang === 'en' ? 'Edit category' : 'Sửa danh mục'}
+                                            onClick={() => openEditModal(leaf)}
+                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm px-2 text-gray-500 hover:text-gray-800"
+                                          >
+                                            {tr(lang, 'edit')}
+                                          </button>
+                                          <button
+                                            title={
+                                              leafProducts > 0
+                                                ? lang === 'en'
+                                                  ? 'Cannot delete: Category contains products (BR-CFG-12)'
+                                                  : 'Không thể xóa: Danh mục đang có sản phẩm (BR-CFG-12)'
+                                                : lang === 'en'
+                                                ? 'Delete category'
+                                                : 'Xóa danh mục'
+                                            }
+                                            onClick={() => setDeleteTarget(leaf)}
+                                            className={`nexus-btn nexus-btn-ghost nexus-btn-sm px-2 ${leafProducts > 0 ? 'text-gray-300 hover:text-gray-300 cursor-not-allowed' : 'text-danger hover:bg-red-50'}`}
+                                          >
+                                            {tr(lang, 'delete')}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
           </div>
         </div>
-        <div className="nexus-card p-5 h-fit">
-          <h3 className="font-bold mb-4">{lang === 'en' ? 'Category Stats' : 'Thống kê danh mục'}</h3>
-          <div className="space-y-2">
-            {CATEGORIES.map(c => (
-              <div key={c.id} className="flex items-center justify-between text-sm p-2 bg-gray-50 rounded-lg">
-                <span>{c.icon} {lang === 'vi' ? c.nameVi : c.name}</span>
-                <span className="font-bold text-primary">{c.productCount || c.children?.reduce((s, ch) => s + (ch.productCount || 0), 0)}</span>
+
+        {/* Sidebar Statistics & Rules Card */}
+        <div className="space-y-5">
+          <div className="nexus-card p-5">
+            <h3 className="font-bold text-base text-gray-900 mb-4">{lang === 'en' ? 'Catalog Overview' : 'Thống kê danh mục'}</h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <span className="text-xs font-semibold text-gray-600">{lang === 'en' ? 'Root Categories' : 'Danh mục gốc (Lv.1)'}</span>
+                <span className="font-black text-gray-900 text-sm">{totalRootCategories}</span>
               </div>
-            ))}
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <span className="text-xs font-semibold text-gray-600">{lang === 'en' ? 'Total All Categories' : 'Tổng số danh mục'}</span>
+                <span className="font-black text-primary text-sm">{totalAllCategories}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <span className="text-xs font-semibold text-gray-600">{lang === 'en' ? 'Total Linked Products' : 'Tổng sản phẩm liên kết'}</span>
+                <span className="font-black text-success text-sm">{totalProductsCatalog}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="nexus-card p-5">
+            <h4 className="font-bold text-sm text-gray-900 mb-3">{lang === 'en' ? 'SRS §3.3 Rules Compliance' : 'Tuân thủ quy tắc SRS §3.3'}</h4>
+            <ul className="text-xs space-y-2.5 text-gray-600">
+              <li><strong>BR-CFG-11:</strong> {lang === 'en' ? 'Maximum 3 hierarchy levels strictly validated.' : 'Giới hạn tối đa 3 cấp được kiểm tra tự động.'}</li>
+              <li><strong>BR-CFG-12:</strong> {lang === 'en' ? 'Prevent deleting categories with existing products.' : 'Chặn xóa danh mục khi có sản phẩm bên trong.'}</li>
+              <li><strong>BR-IAM-05:</strong> {lang === 'en' ? 'Access restricted to Administrator role.' : 'Chỉ tài khoản ADMIN mới có quyền truy cập.'}</li>
+            </ul>
           </div>
         </div>
       </div>
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={lang === 'en' ? 'Edit Category' : 'Sửa danh mục'} size="sm"
-        footer={<><Button variant="outline" onClick={() => setEditOpen(false)}>{tr(lang, 'cancel')}</Button><Button variant="primary" onClick={() => { setEditOpen(false); showToast({ type: 'success', message: lang === 'en' ? 'Category updated.' : 'Đã cập nhật danh mục.' }) }}>{tr(lang, 'save')}</Button></>}>
-        <Input label={lang === 'en' ? 'Name (EN)' : 'Tên (EN)'} value={editName} onChange={e => setEditName(e.target.value)} />
-        <div className="mt-3"><Input label={lang === 'en' ? 'Name (VI)' : 'Tên (VI)'} /></div>
+
+      {/* Modal: Create Category */}
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title={lang === 'en' ? 'Create New Category' : 'Thêm danh mục mới'}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              {tr(lang, 'cancel')}
+            </Button>
+            <Button variant="primary" onClick={handleCreateCategory}>
+              {tr(lang, 'create')}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {formError && <AlertBanner type="error" message={formError} />}
+
+          <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-semibold text-gray-700">{lang === 'en' ? 'Parent Category' : 'Danh mục cha'}</label>
+              <select
+                value={formParentId}
+                onChange={e => {
+                  setFormParentId(e.target.value)
+                  setFormError('')
+                }}
+                className="nexus-input py-2 text-sm"
+              >
+                <option value="root">{lang === 'en' ? 'None (Root Level 1)' : 'Không có (Cấp 1 - Gốc)'}</option>
+                {flatParentOptions.map(opt => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[11px] text-gray-500">
+                {lang === 'en'
+                  ? 'Only Level 1 and Level 2 can be selected as parents (Max depth: 3 levels).'
+                  : 'Chỉ có thể chọn Cấp 1 hoặc Cấp 2 làm danh mục cha (Tối đa 3 cấp).'}
+              </span>
+          </div>
+
+          <Input
+            label={`${tr(lang, 'name')} (EN)`}
+            value={formNameEn}
+            onChange={e => {
+              setFormNameEn(e.target.value)
+              setFormError('')
+            }}
+            placeholder="e.g. Smart Home Devices"
+          />
+
+          <Input
+            label={`${tr(lang, 'name')} (VI)`}
+            value={formNameVi}
+            onChange={e => {
+              setFormNameVi(e.target.value)
+              setFormError('')
+            }}
+            placeholder="Ví dụ: Thiết bị nhà thông minh"
+          />
+        </div>
       </Modal>
+
+      {/* Modal: Edit Category */}
+      <Modal
+        open={!!editCategory}
+        onClose={() => setEditCategory(null)}
+        title={lang === 'en' ? 'Edit Category' : 'Chỉnh sửa danh mục'}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setEditCategory(null)}>
+              {tr(lang, 'cancel')}
+            </Button>
+            <Button variant="primary" onClick={handleUpdateCategory}>
+              {tr(lang, 'save')}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {formError && <AlertBanner type="error" message={formError} />}
+
+          <div>
+            <label className="text-sm font-semibold text-gray-700 block mb-1.5">{lang === 'en' ? 'Category ID' : 'Mã danh mục'}</label>
+            <input value={editCategory?.id || ''} disabled className="nexus-input bg-gray-100 text-gray-500 text-sm font-mono cursor-not-allowed" />
+          </div>
+
+          <Input
+            label={`${tr(lang, 'name')} (EN)`}
+            value={formNameEn}
+            onChange={e => setFormNameEn(e.target.value)}
+          />
+
+          <Input
+            label={`${tr(lang, 'name')} (VI)`}
+            value={formNameVi}
+            onChange={e => setFormNameVi(e.target.value)}
+          />
+        </div>
+      </Modal>
+
+      {/* Modal: View Category Details */}
+      <Modal
+        open={!!viewCategory}
+        onClose={() => setViewCategory(null)}
+        title={lang === 'en' ? 'Category Details' : 'Chi tiết danh mục'}
+        footer={
+          <Button variant="primary" onClick={() => setViewCategory(null)}>
+            {tr(lang, 'close')}
+          </Button>
+        }
+      >
+        {viewCategory && (
+          <div className="space-y-4 text-sm">
+            <div className="p-3 bg-gray-50 rounded-xl">
+              <div>
+                <h4 className="font-bold text-base text-gray-900">{lang === 'vi' ? viewCategory.nameVi : viewCategory.name}</h4>
+                <p className="text-xs text-gray-500">{lang === 'vi' ? viewCategory.name : viewCategory.nameVi}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <span className="text-gray-400 block mb-0.5">{lang === 'en' ? 'Hierarchy Level' : 'Cấp bậc'}</span>
+                <span className="font-bold text-gray-900 text-sm">Level {findCategoryLevel(categories, viewCategory.id)}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <span className="text-gray-400 block mb-0.5">{lang === 'en' ? 'Direct Products' : 'Sản phẩm trực tiếp'}</span>
+                <span className="font-bold text-primary text-sm">{viewCategory.productCount || 0}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <span className="text-gray-400 block mb-0.5">{lang === 'en' ? 'Total Sub-tree Products' : 'Tổng sản phẩm toàn nhánh'}</span>
+                <span className="font-bold text-success text-sm">{getCategoryTotalProducts(viewCategory)}</span>
+              </div>
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <span className="text-gray-400 block mb-0.5">{lang === 'en' ? 'Subcategories Count' : 'Số danh mục con'}</span>
+                <span className="font-bold text-gray-900 text-sm">{viewCategory.children?.length || 0}</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-gray-50 rounded-lg text-xs space-y-1 font-mono">
+              <div><span className="text-gray-400">ID:</span> {viewCategory.id}</div>
+              <div><span className="text-gray-400">Slug:</span> /{viewCategory.slug}</div>
+              <div><span className="text-gray-400">Parent ID:</span> {viewCategory.parentId || 'None (Root)'}</div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal: Confirm Delete Target */}
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && handleDeleteCategory(deleteTarget)}
+        title={lang === 'en' ? 'Delete Category' : 'Xác nhận xóa danh mục'}
+        message={
+          deleteTarget
+            ? getCategoryTotalProducts(deleteTarget) > 0
+              ? lang === 'en'
+                ? `BR-CFG-12 Protected: Category "${deleteTarget.name}" contains ${getCategoryTotalProducts(deleteTarget)} product(s). Deletion is prohibited by business rules.`
+                : `Bảo vệ bởi BR-CFG-12: Danh mục "${deleteTarget.nameVi}" đang có ${getCategoryTotalProducts(deleteTarget)} sản phẩm. Quy tắc hệ thống cấm xóa danh mục này.`
+              : lang === 'en'
+              ? `Are you sure you want to delete category "${deleteTarget.name}"? This action cannot be undone.`
+              : `Bạn có chắc muốn xóa danh mục "${deleteTarget.nameVi}"? Thao tác này không thể hoàn tác.`
+            : ''
+        }
+        danger
+      />
     </AdminLayout>
   )
 }
