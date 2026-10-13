@@ -4,7 +4,7 @@ import { tr, formatCurrency, formatDate } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
 import { ProductCard } from '../../components/Cards'
 import { AuctionCard } from '../../components/Cards'
-import { Button, Input, Textarea, Select, NumberStepper, Tabs, Modal, ConfirmModal, AlertBanner, EmptyState, StarRating, StatusBadge, OrderTimeline, ReputationBar, ProgressBar, Toggle, Checkbox, Breadcrumb, Pagination, Download, Gavel, Search, Filter, ChevronRight, AlertTriangle, CheckCircle, Truck, Package, ShoppingCart, CreditCard, Settings2, Gift, Star, CircleX, Shield } from '../../components/UI'
+import { Button, Input, Textarea, Select, NumberStepper, Tabs, Modal, ConfirmModal, AlertBanner, EmptyState, StarRating, StatusBadge, OrderTimeline, ReputationBar, ProgressBar, Toggle, Checkbox, Breadcrumb, Pagination, Download, Gavel, Search, Filter, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle, Truck, Package, ShoppingCart, CreditCard, Settings2, Gift, Star, CircleX, Shield } from '../../components/UI'
 import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
@@ -313,7 +313,7 @@ export function SearchPage() {
 export function ProductDetailPage() {
   const { lang, navigate, pageParams, setCartCount, cartCount, showToast } = useApp()
   const product = PRODUCTS.find(p => p.id === pageParams?.id) || PRODUCTS[0]
-  // BR-CFG-09: Maximum images per product MAX_PRODUCT_IMAGES = 5
+  // Maximum images per product MAX_PRODUCT_IMAGES = 5
   const MAX_PRODUCT_IMAGES = 5
   const productImages = (product.images || []).slice(0, MAX_PRODUCT_IMAGES)
 
@@ -353,21 +353,83 @@ export function ProductDetailPage() {
     <BuyerLayout>
       <Breadcrumb items={[{ label: lang === 'en' ? 'Home' : 'Trang chủ', page: 'home' }, { label: product.category, page: 'search' }, { label: lang === 'vi' ? product.nameVi : product.name }]} />
       <div className="mt-5 grid grid-cols-[1fr_1.2fr] gap-10">
-        {/* Gallery - BR-CFG-09: MAX_PRODUCT_IMAGES = 5 */}
+        {/* Product Gallery Carousel */}
         <div>
+          {/* Main Large Image with Prev / Next Buttons */}
           <div className="nexus-card overflow-hidden mb-3 bg-gray-50 relative group" style={{ aspectRatio: '1/1' }}>
-            <img src={productImages[activeImg] ?? productImages[0]} alt={product.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
-            <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
+            <img
+              src={productImages[activeImg] ?? productImages[0]}
+              alt={product.name}
+              className="w-full h-full object-cover transition-all duration-300 group-hover:scale-105"
+            />
+
+            {/* Prev Image Button (<) */}
+            {productImages.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setActiveImg(prev => (prev === 0 ? productImages.length - 1 : prev - 1))}
+                aria-label="Previous image"
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/80 hover:bg-white text-gray-800 shadow-md backdrop-blur-xs flex items-center justify-center transition-all opacity-80 hover:opacity-100 hover:scale-110 cursor-pointer"
+              >
+                <ChevronLeft size={20} />
+              </button>
+            )}
+
+            {/* Next Image Button (>) */}
+            {productImages.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setActiveImg(prev => (prev === productImages.length - 1 ? 0 : prev + 1))}
+                aria-label="Next image"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/80 hover:bg-white text-gray-800 shadow-md backdrop-blur-xs flex items-center justify-center transition-all opacity-80 hover:opacity-100 hover:scale-110 cursor-pointer"
+              >
+                <ChevronRight size={20} />
+              </button>
+            )}
+
+            {/* Counter badge */}
+            <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 pointer-events-none">
               <span>{productImages.length > 0 ? activeImg + 1 : 0} / {productImages.length}</span>
-              <span className="text-gray-300 text-[10px]">(Max {MAX_PRODUCT_IMAGES})</span>
             </div>
           </div>
-          <div className="flex gap-2">
-            {productImages.map((img, i) => (
-              <button key={i} onClick={() => setActiveImg(i)} className={`gallery-thumb w-16 h-16 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all ${i === activeImg ? 'border-primary ring-2 ring-primary/20 scale-105' : 'border-transparent opacity-75 hover:opacity-100'}`}>
-                <img src={img} alt="" className="w-full h-full object-cover" />
+
+          {/* Thumbnails row with navigation buttons */}
+          <div className="flex items-center gap-2">
+            {productImages.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setActiveImg(prev => (prev === 0 ? productImages.length - 1 : prev - 1))}
+                className="w-7 h-7 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-all shrink-0 cursor-pointer"
+                title="Ảnh trước"
+              >
+                <ChevronLeft size={16} />
               </button>
-            ))}
+            )}
+
+            <div className="flex gap-2 overflow-x-auto py-0.5 flex-1">
+              {productImages.map((img, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setActiveImg(i)}
+                  className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${i === activeImg ? 'border-primary ring-2 ring-primary/20 scale-105' : 'border-transparent opacity-70 hover:opacity-100'
+                    }`}
+                >
+                  <img src={img} alt="" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+
+            {productImages.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setActiveImg(prev => (prev === productImages.length - 1 ? 0 : prev + 1))}
+                className="w-7 h-7 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-all shrink-0 cursor-pointer"
+                title="Ảnh tiếp theo"
+              >
+                <ChevronRight size={16} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -375,7 +437,6 @@ export function ProductDetailPage() {
         <div>
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span className="text-sm font-semibold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">{product.category}</span>
-            {/* BR-CFG-08: Product Statuses (DRAFT, ACTIVE, INACTIVE) */}
             {product.status === 'active' ? (
               product.stock > 0 ? <span className="badge badge-green">{tr(lang, 'inStock')}</span> : <span className="badge badge-red">{tr(lang, 'outOfStock')}</span>
             ) : product.status === 'draft' ? (
@@ -1136,6 +1197,141 @@ export function ReputationPage() {
   )
 }
 
+// ─── Shopee-Style Public Seller Shop Page ──────────────────────────────────────
+export function SellerShopPage() {
+  const { lang, pageParams, showToast } = useApp()
+  const sellerId = (pageParams?.id as string) || 'seller-1'
+  const sellerName = (pageParams?.sellerName as string) || 'TechZone Store'
+  const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions'>('all')
+  const [isFollowing, setIsFollowing] = useState(false)
+
+  const sellerProducts = PRODUCTS.filter(p => p.sellerId === sellerId || p.sellerName === sellerName)
+  const displayProducts = sellerProducts.length > 0 ? sellerProducts : PRODUCTS.slice(0, 8)
+  const sellerAuctions = AUCTIONS.filter(a => a.sellerId === sellerId || a.sellerName === sellerName)
+
+  return (
+    <BuyerLayout>
+      <div className="max-w-[1440px] mx-auto space-y-6">
+        <Breadcrumb items={[{ label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' }, { label: sellerName }]} />
+
+        {/* Shopee-style Store Header Banner */}
+        <div className="nexus-card overflow-hidden border border-border/80 bg-white">
+          <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] p-6 gap-6 items-center bg-gradient-to-r from-gray-900 via-slate-800 to-indigo-950 text-white rounded-xl">
+            {/* Left Box: Avatar & Action Buttons */}
+            <div className="flex items-center gap-4 bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/15">
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full bg-white text-gray-900 font-black text-2xl flex items-center justify-center shadow-lg border-2 border-white">
+                  {sellerName[0]}
+                </div>
+                <span className="absolute -bottom-1 -right-1 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                  Mall
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="font-bold text-base text-white truncate">{sellerName}</h2>
+                <p className="text-xs text-gray-300 mt-0.5">{lang === 'vi' ? 'Online 5 phút trước' : 'Active 5m ago'}</p>
+                <div className="flex items-center gap-2 mt-2.5">
+                  <button
+                    onClick={() => {
+                      setIsFollowing(!isFollowing)
+                      showToast({ type: 'success', message: !isFollowing ? (lang === 'vi' ? `Đã theo dõi ${sellerName}` : `Followed ${sellerName}`) : (lang === 'vi' ? 'Đã bỏ theo dõi' : 'Unfollowed') })
+                    }}
+                    className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${isFollowing ? 'bg-white/20 text-white border border-white/40' : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
+                      }`}
+                  >
+                    {isFollowing ? (lang === 'vi' ? '✓ Đang Theo Dõi' : '✓ Following') : (lang === 'vi' ? '+ Theo Dõi' : '+ Follow')}
+                  </button>
+                  <button
+                    onClick={() => showToast({ type: 'info', message: lang === 'vi' ? `Mở khung chat với ${sellerName}` : `Chatting with ${sellerName}` })}
+                    className="px-3 py-1 rounded-md text-xs font-semibold bg-white/20 hover:bg-white/30 text-white border border-white/30 transition-all"
+                  >
+                    💬 {lang === 'vi' ? 'Chat' : 'Chat'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Box: Shopee Metrics Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3.5 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">📦 {lang === 'vi' ? 'Sản Phẩm:' : 'Products:'}</span>
+                <span className="font-bold text-yellow-400 text-sm">{displayProducts.length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">👥 {lang === 'vi' ? 'Người Theo Dõi:' : 'Followers:'}</span>
+                <span className="font-bold text-yellow-400 text-sm">3,1k</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">★ {lang === 'vi' ? 'Đánh Giá:' : 'Rating:'}</span>
+                <span className="font-bold text-yellow-400 text-sm">4.9 (8.7k {lang === 'vi' ? 'Đánh Giá' : 'Reviews'})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">⚡ {lang === 'vi' ? 'Tỉ Lệ Phản Hồi:' : 'Response Rate:'}</span>
+                <span className="font-bold text-green-400 text-sm">99% ({lang === 'vi' ? 'Trong Vài Giờ' : 'In Hours'})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">🕒 {lang === 'vi' ? 'Tham Gia:' : 'Joined:'}</span>
+                <span className="font-bold text-white text-sm">{lang === 'vi' ? '2 năm trước' : '2 years ago'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-300">📍 {lang === 'vi' ? 'Kho Hàng:' : 'Location:'}</span>
+                <span className="font-bold text-white text-sm">{lang === 'vi' ? 'TP. Hồ Chí Minh' : 'HCMC, VN'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Tab Navigation for Shop Items */}
+        <div className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            {[
+              { id: 'all' as const, label: lang === 'vi' ? 'TẤT CẢ SẢN PHẨM' : 'ALL PRODUCTS', count: displayProducts.length },
+              { id: 'popular' as const, label: lang === 'vi' ? 'BÁN CHẠY NHẤT' : 'BEST SELLERS', count: Math.min(4, displayProducts.length) },
+              { id: 'auctions' as const, label: lang === 'vi' ? 'ĐANG ĐẤU GIÁ' : 'LIVE AUCTIONS', count: sellerAuctions.length },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setShopTab(tab.id)}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${shopTab === tab.id
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  }`}
+              >
+                {tab.label} ({tab.count})
+              </button>
+            ))}
+          </div>
+
+          <p className="text-xs text-gray-400">
+            {lang === 'vi' ? `Đang hiển thị ${displayProducts.length} mặt hàng` : `Showing ${displayProducts.length} items`}
+          </p>
+        </div>
+
+        {/* Product Cards Grid */}
+        {shopTab === 'auctions' ? (
+          sellerAuctions.length > 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+              {sellerAuctions.map(auc => (
+                <AuctionCard key={auc.id} auction={auc} />
+              ))}
+            </div>
+          ) : (
+            <div className="py-16 text-center bg-white rounded-xl border border-border/60">
+              <p className="text-gray-500 text-sm">{lang === 'vi' ? 'Shop hiện chưa có phiên đấu giá nào đang diễn ra.' : 'No live auctions from this shop at the moment.'}</p>
+            </div>
+          )
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-5">
+            {(shopTab === 'popular' ? displayProducts.slice(0, 4) : displayProducts).map(p => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        )}
+      </div>
+    </BuyerLayout>
+  )
+}
+
 // ─── Notification Center ───────────────────────────────────────────────────────
 export function NotificationPage() {
   const { lang } = useApp()
@@ -1190,8 +1386,8 @@ export function NotificationPage() {
                       ].map(item => (
                         <tr key={item.type} className="border-b border-border last:border-0">
                           <td className="py-3 text-sm font-medium flex items-center gap-2">{item.type}{item.locked && <span className="badge badge-gray text-[10px]">{tr(lang, 'alwaysOn')}</span>}</td>
-                          <td className="text-center py-3"><Toggle checked={true} onChange={() => {}} disabled={item.locked} /></td>
-                          <td className="text-center py-3"><Toggle checked={!item.locked} onChange={() => {}} disabled={item.locked} /></td>
+                          <td className="text-center py-3"><Toggle checked={true} onChange={() => { }} disabled={item.locked} /></td>
+                          <td className="text-center py-3"><Toggle checked={!item.locked} onChange={() => { }} disabled={item.locked} /></td>
                         </tr>
                       ))}
                     </tbody>

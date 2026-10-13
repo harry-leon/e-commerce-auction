@@ -101,7 +101,7 @@ export interface SystemService {
 export type Page =
   | 'login' | 'register' | 'forgot-password'
   | 'home' | 'search' | 'product-detail' | 'cart' | 'checkout' | 'payment-result'
-  | 'order-history' | 'order-detail' | 'profile' | 'my-reputation' | 'public-reputation' | 'notifications'
+  | 'order-history' | 'order-detail' | 'profile' | 'my-reputation' | 'public-reputation' | 'seller-shop' | 'notifications'
   | 'auction-list' | 'auction-detail' | 'my-bids' | 'auction-payment'
   | 'seller-dashboard' | 'seller-products' | 'seller-create-product' | 'seller-auctions'
   | 'seller-create-auction' | 'seller-orders' | 'seller-balance' | 'seller-inventory' | 'seller-reputation'

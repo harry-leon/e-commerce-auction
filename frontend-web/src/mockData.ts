@@ -37,7 +37,8 @@ export const PRODUCTS: Product[] = [
     descriptionVi: 'Chip M3 mạnh mẽ. Thiết kế siêu mỏng nhẹ, pin lên đến 18 giờ.',
     price: 1099.00, images: [
       'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600&h=600&fit=crop&auto=format',
-      'https://images.unsplash.com/photo-1611186871525-2e69c63fcdb9?w=600&h=600&fit=crop&auto=format',
+      'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=600&h=600&fit=crop&auto=format',
+      'https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?w=600&h=600&fit=crop&auto=format',
     ],
     category: 'Laptops', categoryId: 'c1-2', location: 'ho-chi-minh', sku: 'APL-MBA-M3-13-SLV', stock: 8,
     status: 'active', sellerId: 'u2', sellerName: 'TechZone Store', sellerTrust: 'gold',
