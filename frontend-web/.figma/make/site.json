@@ -1,0 +1,10 @@
+{
+  "description": "This e-commerce platform combines online shopping with auction features, enabling buyers and sellers to interact seamlessly in both English and Vietnamese.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
