@@ -1,3 +1,11 @@
+﻿spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres?currentSchema=nexus_notification&sslmode=require}
+    username: ${DB_USERNAME:postgres.qhwdgeohaxdwxebuhcka}
+    password: ${DB_PASSWORD:db-nexus-lab}
+  flyway:
+    default-schema: nexus_notification
+    schemas: nexus_notification
 app:
   security:
     jwt-secret: ${JWT_SECRET:dev-only-secret-change-me-0123456789abcdef}
