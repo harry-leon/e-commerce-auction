@@ -1,5 +1,6 @@
 package com.nexus.user.controller;
 
+import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.service.UserService;
@@ -152,5 +153,42 @@ public class UserController {
             @PathVariable UUID id,
             @RequestBody Set<String> roleCodes) {
         return ResponseEntity.ok(userService.assignRoles(id, roleCodes));
+    }
+
+    /**
+     * Xem lịch sử hoạt động của chính người dùng đang đăng nhập (theo SRS §3.1.1).
+     *
+     * @param jwt      Thông tin JWT xác thực
+     * @param pageable Thông tin phân trang (mặc định sort theo createdAt giảm dần)
+     * @return Trang danh sách lịch sử hoạt động
+     */
+    @GetMapping("/me/activity-history")
+    @PreAuthorize("hasAuthority('PROFILE.VIEW')")
+    @Operation(summary = "Xem lịch sử hoạt động cá nhân",
+            description = "Lấy lịch sử các thao tác của tài khoản mình (login, update...)"
+    )
+    public ResponseEntity<Page<ActivityHistoryResponse>> getMyActivityHistory(
+            @AuthenticationPrincipal Jwt jwt,
+            @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        return ResponseEntity.ok(userService.getActivityHistory(userId, pageable));
+    }
+
+    /**
+     * Xem lịch sử hoạt động của người dùng theo ID (Dành cho Admin/Support).
+     *
+     * @param id       Mã người dùng
+     * @param pageable Thông tin phân trang
+     * @return Trang danh sách lịch sử hoạt động
+     */
+    @GetMapping("/{id}/activity-history")
+    @PreAuthorize("hasAuthority('USER.VIEW')")
+    @Operation(summary = "Xem lịch sử hoạt động người dùng",
+            description = "Admin/Support xem lịch sử thao tác của một người dùng"
+    )
+    public ResponseEntity<Page<ActivityHistoryResponse>> getUserActivityHistory(
+            @PathVariable UUID id,
+            @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(userService.getActivityHistory(id, pageable));
     }
 }
