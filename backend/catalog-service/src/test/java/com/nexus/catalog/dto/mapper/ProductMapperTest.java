@@ -6,9 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.nexus.catalog.dto.request.ImageRequest;
 import com.nexus.catalog.dto.request.SkuRequest;
-import com.nexus.catalog.dto.response.ImageResponse;
 import com.nexus.catalog.dto.response.ProductResponse;
-import com.nexus.catalog.dto.response.SkuResponse;
 import com.nexus.catalog.model.entity.Category;
 import com.nexus.catalog.model.entity.Product;
 import com.nexus.catalog.model.entity.ProductImage;
@@ -17,7 +15,6 @@ import com.nexus.catalog.model.enum_.ProductStatus;
 import com.nexus.catalog.model.enum_.SkuStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 

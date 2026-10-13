@@ -19,7 +19,9 @@ import com.nexus.catalog.model.entity.Category;
 import com.nexus.catalog.model.entity.Product;
 import com.nexus.catalog.model.enum_.ProductStatus;
 import com.nexus.catalog.model.enum_.SkuStatus;
+import com.nexus.catalog.dto.mapper.ProductMapper;
 import com.nexus.catalog.repository.CategoryRepository;
+import com.nexus.catalog.repository.ProductImageRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import com.nexus.catalog.repository.SkuRepository;
 import com.nexus.catalog.service.impl.ProductServiceImpl;
@@ -46,6 +48,7 @@ class ProductServiceTest {
     private ProductRepository productRepository;
     private SkuRepository skuRepository;
     private CategoryRepository categoryRepository;
+    private ProductImageRepository productImageRepository;
     private ProductService productService;
     private UUID sellerId;
     private Category category;
@@ -66,8 +69,14 @@ class ProductServiceTest {
         productRepository = mock(ProductRepository.class);
         skuRepository = mock(SkuRepository.class);
         categoryRepository = mock(CategoryRepository.class);
+        productImageRepository = mock(ProductImageRepository.class);
         productService = new ProductServiceImpl(
-                productRepository, skuRepository, categoryRepository, validator);
+                productRepository,
+                skuRepository,
+                categoryRepository,
+                productImageRepository,
+                ProductMapper.INSTANCE,
+                validator);
         sellerId = UUID.randomUUID();
         category = new Category();
         category.setId(UUID.randomUUID());

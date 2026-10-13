@@ -5,8 +5,6 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SkuRepository extends JpaRepository<Sku, UUID> {
-
     boolean existsBySkuCode(String skuCode);
-
     boolean existsBySkuCodeAndIdNot(String skuCode, UUID id);
 }

@@ -10,10 +10,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ProductRepository extends JpaRepository<Product, UUID> {
-
     Page<Product> findByStatus(ProductStatus status, Pageable pageable);
-
     Page<Product> findBySellerId(UUID sellerId, Pageable pageable);
-
     Optional<ProductImage> findImagesById(UUID imageId);
 }

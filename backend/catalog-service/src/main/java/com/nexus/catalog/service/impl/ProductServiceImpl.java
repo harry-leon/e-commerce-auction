@@ -57,23 +57,6 @@ public class ProductServiceImpl implements ProductService {
         this.validator = validator;
     }
 
-    public ProductServiceImpl(
-            ProductRepository productRepository,
-            SkuRepository skuRepository,
-            CategoryRepository categoryRepository,
-            ProductImageRepository productImageRepository,
-            Validator validator) {
-        this(productRepository, skuRepository, categoryRepository, productImageRepository, null, validator);
-    }
-
-    public ProductServiceImpl(
-            ProductRepository productRepository,
-            SkuRepository skuRepository,
-            CategoryRepository categoryRepository,
-            Validator validator) {
-        this(productRepository, skuRepository, categoryRepository, null, null, validator);
-    }
-
     @Override
     public ProductResponse create(UUID sellerId, ProductRequest request) {
         if (sellerId == null) {

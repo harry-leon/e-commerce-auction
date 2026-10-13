@@ -7,10 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ProductReviewRepository extends JpaRepository<ProductReview, UUID> {
-
     Page<ProductReview> findByProductIdAndIsHiddenFalse(UUID productId, Pageable pageable);
-
     Page<ProductReview> findByUserId(UUID userId, Pageable pageable);
-
     boolean existsByProductIdAndOrderIdAndUserId(UUID productId, UUID orderId, UUID userId);
 }
