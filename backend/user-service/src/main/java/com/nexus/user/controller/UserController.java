@@ -1,0 +1,156 @@
+package com.nexus.user.controller;
+
+import com.nexus.user.dto.UpdateUserRequest;
+import com.nexus.user.dto.UserResponse;
+import com.nexus.user.service.UserService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * REST Controller quản lý thông tin tài khoản người dùng theo SRS mục 3.1.1.
+ *
+ * @author Nguyễn Tiến Thương
+ * @since 06/10/2026
+ */
+@RestController
+@RequestMapping("/api/v1/users")
+@Tag(name = "User Management", description = "Các API quản lý tài khoản người dùng")
+public class UserController {
+
+    private final UserService userService;
+
+    /**
+     * Khởi tạo UserController với UserService.
+     *
+     * @param userService Service xử lý tài khoản
+     */
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
+
+    /**
+     * Lấy thông tin hồ sơ của chính người dùng đang đăng nhập.
+     *
+     * @param jwt Thông tin JWT xác thực
+     * @return DTO UserResponse
+     */
+    @GetMapping("/me")
+    @PreAuthorize("hasAuthority('PROFILE.VIEW')")
+    @Operation(summary = "Xem hồ sơ cá nhân", description = "Lấy thông tin tài khoản của chính mình")
+    public ResponseEntity<UserResponse> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        return ResponseEntity.ok(userService.getUserById(userId));
+    }
+
+    /**
+     * Cập nhật thông tin hồ sơ của chính mình.
+     *
+     * @param jwt     Thông tin JWT xác thực
+     * @param request Dữ liệu cập nhật
+     * @return DTO UserResponse sau cập nhật
+     */
+    @PutMapping("/me")
+    @PreAuthorize("hasAuthority('PROFILE.UPDATE')")
+    @Operation(summary = "Cập nhật hồ sơ cá nhân", description = "Cập nhật thông tin tài khoản của chính mình")
+    public ResponseEntity<UserResponse> updateMyProfile(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody UpdateUserRequest request) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        return ResponseEntity.ok(userService.updateUser(userId, request));
+    }
+
+    /**
+     * Lấy chi tiết thông tin một người dùng theo ID (Dành cho Admin/Support).
+     *
+     * @param id Mã định danh của người dùng
+     * @return DTO UserResponse
+     */
+    @GetMapping("/{id}")
+    @PreAuthorize("hasAuthority('USER.VIEW')")
+    @Operation(summary = "Xem chi tiết người dùng", description = "Lấy thông tin người dùng theo ID")
+    public ResponseEntity<UserResponse> getUserById(@PathVariable UUID id) {
+        return ResponseEntity.ok(userService.getUserById(id));
+    }
+
+    /**
+     * Tìm kiếm và lấy danh sách phân trang người dùng (Dành cho Admin/Support).
+     *
+     * @param keyword  Từ khóa tìm kiếm theo tên hoặc email
+     * @param pageable Thông tin phân trang (mặc định sort theo fullName)
+     * @return Trang danh sách UserResponse
+     */
+    @GetMapping
+    @PreAuthorize("hasAuthority('USER.LIST')")
+    @Operation(summary = "Danh sách người dùng", description = "Tìm kiếm và phân trang người dùng trong hệ thống")
+    public ResponseEntity<Page<UserResponse>> listUsers(
+            @RequestParam(required = false) String keyword,
+            @PageableDefault(sort = "fullName", direction = Sort.Direction.ASC) Pageable pageable) {
+        return ResponseEntity.ok(userService.searchUsers(keyword, pageable));
+    }
+
+    /**
+     * Cập nhật thông tin người dùng theo ID (Dành cho Admin/Support).
+     *
+     * @param id      Mã người dùng
+     * @param request Dữ liệu cập nhật
+     * @return DTO UserResponse
+     */
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('USER.UPDATE')")
+    @Operation(summary = "Cập nhật người dùng", description = "Admin/Support cập nhật thông tin người dùng")
+    public ResponseEntity<UserResponse> updateUser(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateUserRequest request) {
+        return ResponseEntity.ok(userService.updateUser(id, request));
+    }
+
+    /**
+     * Xóa mềm tài khoản người dùng theo ID (Dành cho Admin).
+     *
+     * @param id Mã người dùng
+     * @return Thông báo kết quả
+     */
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('USER.DELETE')")
+    @Operation(summary = "Xóa người dùng", description = "Xóa mềm tài khoản người dùng khỏi hệ thống")
+    public ResponseEntity<Map<String, String>> deleteUser(@PathVariable UUID id) {
+        userService.deleteUser(id);
+        return ResponseEntity.ok(Map.of("message", "Đã xóa người dùng thành công"));
+    }
+
+    /**
+     * Phân quyền và gán vai trò cho người dùng (Dành cho Admin).
+     *
+     * @param id        Mã người dùng
+     * @param roleCodes Danh sách mã vai trò cần gán
+     * @return DTO UserResponse sau cập nhật vai trò
+     */
+    @PutMapping("/{id}/roles")
+    @PreAuthorize("hasAuthority('USER.UPDATE')")
+    @Operation(summary = "Gán vai trò cho người dùng", description = "Gán danh sách vai trò cho người dùng")
+    public ResponseEntity<UserResponse> assignRoles(
+            @PathVariable UUID id,
+            @RequestBody Set<String> roleCodes) {
+        return ResponseEntity.ok(userService.assignRoles(id, roleCodes));
+    }
+}
