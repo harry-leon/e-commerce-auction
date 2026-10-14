@@ -12,9 +12,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.user.config.SecurityConfig;
+import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.service.UserService;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -137,5 +139,34 @@ class UserControllerTest {
                         .content(objectMapper.writeValueAsString(Set.of("SELLER"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.roles[0]").value("SELLER"));
+    }
+
+    @Test
+    void testGetMyActivityHistory() throws Exception {
+        UUID userId = UUID.randomUUID();
+        ActivityHistoryResponse item = new ActivityHistoryResponse(
+                UUID.randomUUID(), "LOGIN", "Dang nhap", "SUCCESS", LocalDateTime.now()
+        );
+        when(userService.getActivityHistory(eq(userId), any())).thenReturn(new PageImpl<>(List.of(item)));
+
+        mockMvc.perform(get("/api/v1/users/me/activity-history")
+                        .with(jwt().jwt(j -> j.subject(userId.toString()))
+                                .authorities(new SimpleGrantedAuthority("PROFILE.VIEW"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].action").value("LOGIN"));
+    }
+
+    @Test
+    void testGetUserActivityHistory() throws Exception {
+        UUID userId = UUID.randomUUID();
+        ActivityHistoryResponse item = new ActivityHistoryResponse(
+                UUID.randomUUID(), "USER_UPDATE", "Cap nhat", "SUCCESS", LocalDateTime.now()
+        );
+        when(userService.getActivityHistory(eq(userId), any())).thenReturn(new PageImpl<>(List.of(item)));
+
+        mockMvc.perform(get("/api/v1/users/" + userId + "/activity-history")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("USER.VIEW"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].action").value("USER_UPDATE"));
     }
 }
