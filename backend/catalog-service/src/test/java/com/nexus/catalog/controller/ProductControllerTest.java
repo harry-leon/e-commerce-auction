@@ -112,9 +112,9 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").value(productId.toString()))
-                .andExpect(jsonPath("$.name").value("Sample Product"))
-                .andExpect(jsonPath("$.status").value("DRAFT"));
+                .andExpect(jsonPath("$.data.id").value(productId.toString()))
+                .andExpect(jsonPath("$.data.name").value("Sample Product"))
+                .andExpect(jsonPath("$.data.status").value("DRAFT"));
     }
 
     @Test
@@ -136,7 +136,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
 
     @Test
@@ -149,7 +149,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(invalidRequest)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -163,7 +163,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(productId.toString()));
+                .andExpect(jsonPath("$.data.id").value(productId.toString()));
     }
 
     @Test
@@ -182,7 +182,7 @@ class ProductControllerTest {
         mockMvc.perform(get("/api/v1/products/{id}", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(productId.toString()));
+                .andExpect(jsonPath("$.data.id").value(productId.toString()));
     }
 
     @Test
@@ -193,7 +193,7 @@ class ProductControllerTest {
         mockMvc.perform(get("/api/v1/products/{id}", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
     }
 
     @Test
@@ -205,7 +205,7 @@ class ProductControllerTest {
                         .param("status", "DRAFT")
                         .with(withUser(sellerId, "PRODUCT.LIST")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].id").value(productId.toString()));
+                .andExpect(jsonPath("$.data[0].id").value(productId.toString()));
     }
 
     @Test
@@ -216,7 +216,7 @@ class ProductControllerTest {
         mockMvc.perform(get("/api/v1/products/seller/{sellerId}", sellerId)
                         .with(withUser(sellerId, "PRODUCT.LIST")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].sellerId").value(sellerId.toString()));
+                .andExpect(jsonPath("$.data[0].sellerId").value(sellerId.toString()));
     }
 
     @Test
@@ -232,7 +232,7 @@ class ProductControllerTest {
                         .param("target", "INACTIVE")
                         .with(withUser(UUID.randomUUID(), "ROLE_ADMIN")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("INACTIVE"));
+                .andExpect(jsonPath("$.data.status").value("INACTIVE"));
     }
 
     @Test
@@ -244,8 +244,8 @@ class ProductControllerTest {
                         .param("target", "ACTIVE")
                         .with(withUser(UUID.randomUUID(), "ROLE_ADMIN")))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("BUSINESS_ERROR"))
-                .andExpect(jsonPath("$.message").value("Product must be approved by Admin/Support to become ACTIVE"));
+                .andExpect(jsonPath("$.error.code").value("BUSINESS_ERROR"))
+                .andExpect(jsonPath("$.error.message").value("Product must be approved by Admin/Support to become ACTIVE"));
     }
 
     @Test
@@ -259,7 +259,7 @@ class ProductControllerTest {
         mockMvc.perform(post("/api/v1/products/{id}/approve", productId)
                         .with(withUser(UUID.randomUUID(), "ROLE_SUPPORT")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("ACTIVE"));
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
     }
 
     @Test
@@ -267,7 +267,7 @@ class ProductControllerTest {
         mockMvc.perform(post("/api/v1/products/{id}/approve", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
 
     // --- SKU API Tests ---
@@ -289,7 +289,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(skuReq)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.skuCode").value("SKU-002"));
+                .andExpect(jsonPath("$.data.skuCode").value("SKU-002"));
     }
 
     @Test
@@ -309,7 +309,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(skuReq)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.skuCode").value("SKU-001-MOD"));
+                .andExpect(jsonPath("$.data.skuCode").value("SKU-001-MOD"));
     }
 
     @Test
@@ -336,7 +336,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(imgReq)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.url").value("https://example.com/img2.png"));
+                .andExpect(jsonPath("$.data.url").value("https://example.com/img2.png"));
     }
 
     @Test
@@ -350,8 +350,8 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(imgReq)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("BUSINESS_ERROR"))
-                .andExpect(jsonPath("$.message").value("Product may have at most 5 images"));
+                .andExpect(jsonPath("$.error.code").value("BUSINESS_ERROR"))
+                .andExpect(jsonPath("$.error.message").value("Product may have at most 5 images"));
     }
 
     @Test
@@ -367,7 +367,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(imgReq)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.url").value("https://example.com/img_updated.png"));
+                .andExpect(jsonPath("$.data.url").value("https://example.com/img_updated.png"));
     }
 
     @Test

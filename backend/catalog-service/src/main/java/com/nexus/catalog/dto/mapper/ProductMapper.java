@@ -8,6 +8,9 @@ import com.nexus.catalog.dto.response.SkuResponse;
 import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.entity.ProductImage;
 import com.nexus.catalog.entity.Sku;
+import com.nexus.catalog.dto.request.ProductRequest;
+import org.mapstruct.BeanMapping;
+import org.mapstruct.NullValuePropertyMappingStrategy;
 import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -22,6 +25,24 @@ public interface ProductMapper {
 
     @Mapping(target = "categoryId", source = "category.id")
     ProductResponse toResponse(Product product);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "sellerId", ignore = true)
+    @Mapping(target = "category", ignore = true)
+    @Mapping(target = "skus", ignore = true)
+    @Mapping(target = "images", ignore = true)
+    @Mapping(target = "status", constant = "DRAFT")
+    Product toEntity(ProductRequest request);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "sellerId", ignore = true)
+    @Mapping(target = "category", ignore = true)
+    @Mapping(target = "status", ignore = true)
+    @Mapping(target = "skus", ignore = true)
+    @Mapping(target = "images", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    void updateProductFromRequest(ProductRequest request, @MappingTarget Product product);
 
     List<SkuResponse> toSkuResponseList(List<Sku> skus);
 
