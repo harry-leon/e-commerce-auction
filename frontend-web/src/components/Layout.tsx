@@ -349,6 +349,45 @@ const GROUP_LABELS: Record<string, [string, string]> = {
 export function AdminLayout({ children, title }: { children: ReactNode; title: string }) {
   const { lang, page, navigate, user, setUser } = useApp()
   const groups = ['main', 'catalog', 'ops', 'system']
+
+  // BR-IAM-05: RBAC check - Only ADMIN role can access Admin pages
+  if (!user || user.role !== 'admin') {
+    return (
+      <div className="min-h-screen bg-page flex items-center justify-center p-6">
+        <div className="nexus-card max-w-md w-full p-8 text-center space-y-4 shadow-xl border border-red-100">
+          <div className="w-16 h-16 bg-red-50 text-danger rounded-2xl flex items-center justify-center mx-auto shadow-sm">
+            <Shield size={32} />
+          </div>
+          <div>
+            <span className="badge badge-red uppercase tracking-wider text-[11px] font-bold">BR-IAM-05 Access Denied</span>
+            <h2 className="text-xl font-bold text-gray-900 mt-2">
+              {lang === 'en' ? '403 - Administrator Access Required' : '403 - Yêu cầu quyền Quản trị viên'}
+            </h2>
+            <p className="text-sm text-gray-500 mt-2 leading-relaxed">
+              {lang === 'en'
+                ? `Your current role (${user?.role || 'Guest'}) does not have permission to access the Admin Console and Category Management. Please sign in with an Administrator account.`
+                : `Vai trò hiện tại của bạn (${user?.role || 'Khách'}) không có quyền truy cập Bảng quản trị & Quản lý danh mục. Vui lòng đăng nhập với tài khoản Quản trị viên.`}
+            </p>
+          </div>
+          <div className="pt-2 flex flex-col gap-2">
+            <button
+              onClick={() => navigate('home')}
+              className="nexus-btn nexus-btn-primary w-full py-2.5 font-semibold"
+            >
+              {lang === 'en' ? 'Return to Home Store' : 'Quay về Cửa hàng'}
+            </button>
+            <button
+              onClick={() => navigate('login')}
+              className="nexus-btn nexus-btn-ghost w-full text-sm text-gray-500 hover:text-gray-800"
+            >
+              {lang === 'en' ? 'Switch Account / Login' : 'Đổi tài khoản / Đăng nhập'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen flex bg-page">
       <aside className="w-56 min-h-screen flex flex-col shrink-0" style={{ background: '#0F172A' }}>

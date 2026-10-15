@@ -14,11 +14,16 @@ import com.nexus.user.dto.RegisterRequest;
 import com.nexus.user.dto.ResetPasswordRequest;
 import com.nexus.user.dto.UpdateRoleRequest;
 import com.nexus.user.dto.UpdateUserRequest;
+import com.nexus.user.dto.shared.ApiResponse;
+import com.nexus.user.dto.shared.PagedResponse;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
 
 /**
  * Kiểm thử toàn diện các Entity và DTO để đảm bảo tính toàn vẹn và độ phủ mã nguồn.
@@ -256,5 +261,49 @@ class DtoAndEntityTest {
         assertEquals("N2", urr.getName());
         assertEquals("D2", urr.getDescription());
         assertEquals(0, urr.getPrivilegeCodes().size());
+    }
+
+    @Test
+    void testSharedDtos() {
+        ApiResponse<String> resOk = ApiResponse.ok("Hello");
+        assertTrue(resOk.isSuccess());
+        assertEquals("Hello", resOk.getData());
+        assertNotNull(resOk.getTimestamp());
+        assertTrue(resOk.getErrors().isEmpty());
+
+        ApiResponse<Void> resErrList = ApiResponse.error(List.of("Err1", "Err2"));
+        assertFalse(resErrList.isSuccess());
+        assertEquals(2, resErrList.getErrors().size());
+
+        ApiResponse<Void> resErrMsg = ApiResponse.error("Single error");
+        assertFalse(resErrMsg.isSuccess());
+        assertEquals("Single error", resErrMsg.getErrors().get(0));
+
+        ApiResponse<String> resCustom = new ApiResponse<>();
+        resCustom.setSuccess(true);
+        resCustom.setData("custom");
+        resCustom.setErrors(List.of());
+        resCustom.setTimestamp(Instant.now());
+        assertTrue(resCustom.isSuccess());
+        assertEquals("custom", resCustom.getData());
+
+        PagedResponse<String> pagedEmpty = new PagedResponse<>();
+        pagedEmpty.setContent(List.of("Item"));
+        pagedEmpty.setPage(0);
+        pagedEmpty.setSize(10);
+        pagedEmpty.setTotalElements(1L);
+        pagedEmpty.setTotalPages(1);
+        pagedEmpty.setFirst(true);
+        pagedEmpty.setLast(true);
+        assertEquals(1, pagedEmpty.getContent().size());
+        assertEquals(0, pagedEmpty.getPage());
+        assertEquals(10, pagedEmpty.getSize());
+        assertEquals(1L, pagedEmpty.getTotalElements());
+        assertEquals(1, pagedEmpty.getTotalPages());
+        assertTrue(pagedEmpty.isFirst());
+        assertTrue(pagedEmpty.isLast());
+
+        PagedResponse<String> fromSpringPage = PagedResponse.of(new PageImpl<>(List.of("A", "B")));
+        assertEquals(2, fromSpringPage.getContent().size());
     }
 }

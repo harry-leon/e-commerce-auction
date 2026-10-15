@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { useApp } from '../context'
-import { tr } from '../i18n'
-import { AdminLayout, SellerLayout, SupportLayout } from '../components/Layout'
-import { Button, Input, StatusBadge } from '../components/UI'
+import { useApp } from '../../context'
+import { tr } from '../../i18n'
+import { AdminLayout, SellerLayout, SupportLayout } from '../../components/Layout'
+import { Button, Input, StatusBadge } from '../../components/UI'
 
 function RoleProfile({ role }: { role: 'admin' | 'seller' | 'support' }) {
   const { lang, user, showToast } = useApp()

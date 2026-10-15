@@ -11,6 +11,7 @@ import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.entity.Role;
 import com.nexus.user.entity.User;
+import com.nexus.user.repository.AuditLogRepository;
 import com.nexus.user.repository.RoleRepository;
 import com.nexus.user.repository.UserRepository;
 import java.util.Optional;
@@ -38,6 +39,9 @@ class UserServiceTest {
     private RoleRepository roleRepository;
 
     @Mock
+    private AuditLogRepository auditLogRepository;
+
+    @Mock
     private AuthService authService;
 
     @Mock
@@ -47,7 +51,7 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        userService = new UserService(userRepository, roleRepository, authService, auditService);
+        userService = new UserService(userRepository, roleRepository, auditLogRepository, authService, auditService);
     }
 
     @Test

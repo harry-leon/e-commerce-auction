@@ -1,10 +1,13 @@
 package com.nexus.user.service;
 
+import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
+import com.nexus.user.entity.AuditLog;
 import com.nexus.user.entity.NotFoundException;
 import com.nexus.user.entity.Role;
 import com.nexus.user.entity.User;
+import com.nexus.user.repository.AuditLogRepository;
 import com.nexus.user.repository.RoleRepository;
 import com.nexus.user.repository.UserRepository;
 import java.util.HashSet;
@@ -26,23 +29,27 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final AuditLogRepository auditLogRepository;
     private final AuthService authService;
     private final AuditService auditService;
 
     /**
      * Khởi tạo UserService với các dependency cần thiết.
      *
-     * @param userRepository Repository người dùng
-     * @param roleRepository Repository vai trò
-     * @param authService    Service xác thực (để map DTO)
-     * @param auditService   Service ghi log kiểm toán
+     * @param userRepository    Repository người dùng
+     * @param roleRepository    Repository vai trò
+     * @param auditLogRepository Repository lịch sử kiểm toán
+     * @param authService       Service xác thực (để map DTO)
+     * @param auditService      Service ghi log kiểm toán
      */
     public UserService(UserRepository userRepository,
                        RoleRepository roleRepository,
+                       AuditLogRepository auditLogRepository,
                        AuthService authService,
                        AuditService auditService) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
+        this.auditLogRepository = auditLogRepository;
         this.authService = authService;
         this.auditService = auditService;
     }
@@ -144,5 +151,39 @@ public class UserService {
         auditService.record(userId, "USER_ROLES_ASSIGNED", "Gán vai trò mới cho người dùng", null, null, "SUCCESS");
 
         return authService.mapToUserResponse(savedUser);
+    }
+
+    /**
+     * Lấy lịch sử hoạt động phân trang của một người dùng theo SRS §3.1.1.
+     * Truy vấn bảng audit_logs theo userId, sắp xếp mới nhất trước.
+     *
+     * @param userId   Mã định danh duy nhất của người dùng
+     * @param pageable Thông tin phân trang
+     * @return Trang danh sách ActivityHistoryResponse
+     */
+    @Transactional(readOnly = true)
+    public Page<ActivityHistoryResponse> getActivityHistory(UUID userId, Pageable pageable) {
+        // Kiểm tra người dùng tồn tại trước khi truy vấn lịch sử
+        if (!userRepository.findByIdAndIsDeletedFalse(userId).isPresent()) {
+            throw new NotFoundException("Không tìm thấy người dùng với ID: " + userId);
+        }
+        return auditLogRepository.findByUserId(userId, pageable)
+                .map(this::mapToActivityHistoryResponse);
+    }
+
+    /**
+     * Chuyển đổi đối tượng AuditLog sang DTO ActivityHistoryResponse.
+     *
+     * @param log Bản ghi audit log
+     * @return DTO lịch sử hoạt động
+     */
+    private ActivityHistoryResponse mapToActivityHistoryResponse(AuditLog log) {
+        return new ActivityHistoryResponse(
+                log.getId(),
+                log.getAction(),
+                log.getDescription(),
+                log.getStatus(),
+                log.getCreatedAt()
+        );
     }
 }
