@@ -16,3 +16,7 @@ coverage/
 *.iml
 .vscode/
 .DS_Store
+
+# Local Runner
+.runner_system_id
+start-runner.bat

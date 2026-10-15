@@ -1,7 +1,8 @@
 package com.nexus.user.dto;
 
+import com.nexus.user.validation.ValidGender;
+import com.nexus.user.validation.ValidPhoneNumber;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
@@ -17,12 +18,12 @@ public class UpdateUserRequest {
     @Size(max = 255, message = "Họ và tên tối đa 255 ký tự")
     private String fullName;
 
-    @Pattern(regexp = "^$|[0-9]{10,11}", message = "Số điện thoại không hợp lệ")
+    @ValidPhoneNumber
     private String phone;
 
     private String identifyNumber;
 
-    @Pattern(regexp = "^$|MALE|FEMALE|OTHER", message = "Giới tính phải là MALE, FEMALE hoặc OTHER")
+    @ValidGender
     private String gender;
 
     private LocalDate dateOfBirth;
