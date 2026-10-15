@@ -3,7 +3,6 @@ package com.nexus.catalog.controller;
 import java.time.Instant;
 import java.util.List;
 
-/** Định dạng lỗi chuẩn cho mọi service. */
 public record ApiError(String code, String message, List<String> details, Instant timestamp) {
 
     public static ApiError of(String code, String message) {

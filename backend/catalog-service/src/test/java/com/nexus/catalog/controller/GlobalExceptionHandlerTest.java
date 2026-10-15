@@ -2,7 +2,7 @@ package com.nexus.catalog.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.nexus.catalog.entity.NotFoundException;
+import com.nexus.catalog.exception.NotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
@@ -15,6 +15,13 @@ class GlobalExceptionHandlerTest {
         var res = handler.handleNotFound(new NotFoundException("missing"));
         assertEquals(HttpStatus.NOT_FOUND, res.getStatusCode());
         assertEquals("NOT_FOUND", res.getBody().code());
+    }
+
+    @Test
+    void businessMapsTo400() {
+        var res = handler.handleBusiness(new com.nexus.catalog.exception.BusinessException("bad input"));
+        assertEquals(HttpStatus.BAD_REQUEST, res.getStatusCode());
+        assertEquals("BUSINESS_ERROR", res.getBody().code());
     }
 
     @Test

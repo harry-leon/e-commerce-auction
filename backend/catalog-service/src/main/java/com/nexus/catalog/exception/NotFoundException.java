@@ -1,4 +1,4 @@
-package com.nexus.catalog.entity;
+package com.nexus.catalog.exception;
 
 public class NotFoundException extends RuntimeException {
 
