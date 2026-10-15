@@ -1,5 +1,6 @@
 package com.nexus.catalog.service.impl;
 
+import com.nexus.catalog.constant.ProductConstant;
 import com.nexus.catalog.dto.mapper.ProductMapper;
 import com.nexus.catalog.dto.request.ImageRequest;
 import com.nexus.catalog.dto.request.ProductRequest;
@@ -9,10 +10,10 @@ import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.dto.response.SkuResponse;
 import com.nexus.catalog.exception.BusinessException;
 import com.nexus.catalog.exception.NotFoundException;
-import com.nexus.catalog.model.entity.Product;
-import com.nexus.catalog.model.entity.ProductImage;
-import com.nexus.catalog.model.entity.Sku;
-import com.nexus.catalog.model.enum_.ProductStatus;
+import com.nexus.catalog.entity.Product;
+import com.nexus.catalog.entity.ProductImage;
+import com.nexus.catalog.entity.Sku;
+import com.nexus.catalog.enums.ProductStatus;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductImageRepository;
 import com.nexus.catalog.repository.ProductRepository;
@@ -63,7 +64,7 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException("Seller ID is required");
         }
         validateRequest(request);
-        // Business validation before any DB lookups
+        
         Set<String> seenCodes = new HashSet<>();
         for (SkuRequest skuReq : request.skus()) {
             if (!seenCodes.add(skuReq.skuCode().toLowerCase())) {
@@ -227,8 +228,8 @@ public class ProductServiceImpl implements ProductService {
     @Override
     public ImageResponse addImage(UUID productId, ImageRequest request) {
         Product product = findProductById(productId);
-        if (product.getImages().size() >= MAX_IMAGES) {
-            throw new BusinessException("Product may have at most 5 images");
+        if (product.getImages().size() >= ProductConstant.MAX_IMAGES) {
+            throw new BusinessException("Product may have at most " + ProductConstant.MAX_IMAGES + " images");
         }
         ProductImage image = productMapper.toImageEntity(request);
         image.setProduct(product);

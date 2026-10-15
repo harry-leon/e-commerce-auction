@@ -1,6 +1,6 @@
 package com.nexus.catalog.dto.request;
 
-import com.nexus.catalog.model.enum_.SkuStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;

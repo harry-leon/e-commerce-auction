@@ -1,8 +1,8 @@
 package com.nexus.catalog.repository;
 
-import com.nexus.catalog.model.entity.Product;
-import com.nexus.catalog.model.entity.ProductImage;
-import com.nexus.catalog.model.enum_.ProductStatus;
+import com.nexus.catalog.entity.Product;
+import com.nexus.catalog.entity.ProductImage;
+import com.nexus.catalog.enums.ProductStatus;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;

@@ -8,7 +8,7 @@ import com.nexus.catalog.dto.response.PageResponse;
 import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.dto.response.SkuResponse;
 import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.model.enum_.ProductStatus;
+import com.nexus.catalog.enums.ProductStatus;
 import com.nexus.catalog.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;

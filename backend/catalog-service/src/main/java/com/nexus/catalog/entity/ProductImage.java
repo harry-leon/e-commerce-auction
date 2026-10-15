@@ -1,4 +1,4 @@
-package com.nexus.catalog.model.entity;
+package com.nexus.catalog.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

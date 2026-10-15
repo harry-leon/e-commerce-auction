@@ -15,10 +15,10 @@ import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.exception.BusinessException;
 import com.nexus.catalog.exception.NotFoundException;
-import com.nexus.catalog.model.entity.Category;
-import com.nexus.catalog.model.entity.Product;
-import com.nexus.catalog.model.enum_.ProductStatus;
-import com.nexus.catalog.model.enum_.SkuStatus;
+import com.nexus.catalog.entity.Category;
+import com.nexus.catalog.entity.Product;
+import com.nexus.catalog.enums.ProductStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import com.nexus.catalog.dto.mapper.ProductMapper;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductImageRepository;
@@ -361,7 +361,7 @@ class ProductServiceTest {
     @Test
     void updateKeepsExistingSkuCodeWithoutDuplicateCheck() {
         Product product = existingProduct(ProductStatus.DRAFT);
-        com.nexus.catalog.model.entity.Sku existing = new com.nexus.catalog.model.entity.Sku();
+        com.nexus.catalog.entity.Sku existing = new com.nexus.catalog.entity.Sku();
         existing.setSkuCode("SKU-1");
         existing.setPrice(new BigDecimal("10.00"));
         product.getSkus().add(existing);

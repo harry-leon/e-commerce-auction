@@ -1,6 +1,6 @@
-package com.nexus.catalog.model.entity;
+package com.nexus.catalog.entity;
 
-import com.nexus.catalog.model.enum_.ProductStatus;
+import com.nexus.catalog.enums.ProductStatus;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

@@ -1,7 +1,7 @@
 package com.nexus.catalog.repository;
 
-import com.nexus.catalog.model.entity.Category;
-import com.nexus.catalog.model.enum_.CategoryStatus;
+import com.nexus.catalog.entity.Category;
+import com.nexus.catalog.enums.CategoryStatus;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;

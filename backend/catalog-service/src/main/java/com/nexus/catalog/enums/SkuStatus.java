@@ -1,4 +1,4 @@
-package com.nexus.catalog.model.enum_;
+package com.nexus.catalog.enums;
 
 /** Trạng thái SKU. */
 public enum SkuStatus {

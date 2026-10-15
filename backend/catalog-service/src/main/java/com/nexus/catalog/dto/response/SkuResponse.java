@@ -1,6 +1,6 @@
 package com.nexus.catalog.dto.response;
 
-import com.nexus.catalog.model.enum_.SkuStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import java.math.BigDecimal;
 import java.util.UUID;
 

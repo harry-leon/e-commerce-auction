@@ -6,13 +6,12 @@ import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
 import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.dto.response.SkuResponse;
-import com.nexus.catalog.model.enum_.ProductStatus;
+import com.nexus.catalog.enums.ProductStatus;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 public interface ProductService {
-    int MAX_IMAGES = 5;
     ProductResponse create(UUID sellerId, ProductRequest request);
     ProductResponse update(UUID id, ProductRequest request);
     void delete(UUID id);

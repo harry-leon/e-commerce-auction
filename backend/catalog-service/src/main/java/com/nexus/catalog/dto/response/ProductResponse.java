@@ -1,6 +1,6 @@
 package com.nexus.catalog.dto.response;
 
-import com.nexus.catalog.model.enum_.ProductStatus;
+import com.nexus.catalog.enums.ProductStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;

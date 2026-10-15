@@ -1,6 +1,6 @@
 package com.nexus.catalog.repository;
 
-import com.nexus.catalog.model.entity.Sku;
+import com.nexus.catalog.entity.Sku;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 

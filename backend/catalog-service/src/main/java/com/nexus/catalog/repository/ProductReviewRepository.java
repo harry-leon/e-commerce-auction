@@ -1,6 +1,6 @@
 package com.nexus.catalog.repository;
 
-import com.nexus.catalog.model.entity.ProductReview;
+import com.nexus.catalog.entity.ProductReview;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;

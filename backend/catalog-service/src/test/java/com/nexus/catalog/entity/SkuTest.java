@@ -1,8 +1,6 @@
 package com.nexus.catalog.entity;
 
-import com.nexus.catalog.model.entity.Product;
-import com.nexus.catalog.model.entity.Sku;
-import com.nexus.catalog.model.enum_.SkuStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;

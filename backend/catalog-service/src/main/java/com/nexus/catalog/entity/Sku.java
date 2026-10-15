@@ -1,6 +1,6 @@
-package com.nexus.catalog.model.entity;
+package com.nexus.catalog.entity;
 
-import com.nexus.catalog.model.enum_.SkuStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

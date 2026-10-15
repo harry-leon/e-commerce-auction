@@ -1,4 +1,4 @@
-package com.nexus.catalog.model.enum_;
+package com.nexus.catalog.enums;
 
 /** Trạng thái sản phẩm. BR-CFG-08: chỉ DRAFT, ACTIVE, INACTIVE. */
 public enum ProductStatus {
