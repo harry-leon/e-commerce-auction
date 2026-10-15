@@ -318,6 +318,7 @@ export function ProductDetailPage() {
   const productImages = (product.images || []).slice(0, MAX_PRODUCT_IMAGES)
 
   const [activeImg, setActiveImg] = useState(0)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
   const [qty, setQty] = useState(1)
   const [activeTab, setActiveTab] = useState('description')
   const categoryRoot = product.categoryId.split('-')[0]
@@ -331,7 +332,20 @@ export function ProductDetailPage() {
     setActiveImg(0)
     setQty(1)
     setActiveTab('description')
+    setLightboxOpen(false)
   }, [product.id])
+
+  // Close lightbox on Escape key
+  useEffect(() => {
+    if (!lightboxOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxOpen(false)
+      if (e.key === 'ArrowLeft') setActiveImg(prev => (prev === 0 ? productImages.length - 1 : prev - 1))
+      if (e.key === 'ArrowRight') setActiveImg(prev => (prev === productImages.length - 1 ? 0 : prev + 1))
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [lightboxOpen, productImages.length])
 
   const addToCart = () => {
     setCartCount(cartCount + qty)
@@ -357,17 +371,25 @@ export function ProductDetailPage() {
         <div>
           {/* Main Large Image with Prev / Next Buttons */}
           <div className="nexus-card overflow-hidden mb-3 bg-gray-50 relative group" style={{ aspectRatio: '1/1' }}>
+            {/* Clickable main image → opens lightbox */}
             <img
               src={productImages[activeImg] ?? productImages[0]}
               alt={product.name}
-              className="w-full h-full object-cover transition-all duration-300 group-hover:scale-105"
+              onClick={() => setLightboxOpen(true)}
+              className="w-full h-full object-cover transition-all duration-300 group-hover:scale-105 cursor-zoom-in"
             />
+
+            {/* Zoom hint */}
+            <div className="absolute top-3 right-3 bg-black/50 backdrop-blur-md text-white px-2.5 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              {lang === 'en' ? 'Click to zoom' : 'Nhấn để phóng to'}
+            </div>
 
             {/* Prev Image Button (<) */}
             {productImages.length > 1 && (
               <button
                 type="button"
-                onClick={() => setActiveImg(prev => (prev === 0 ? productImages.length - 1 : prev - 1))}
+                onClick={e => { e.stopPropagation(); setActiveImg(prev => (prev === 0 ? productImages.length - 1 : prev - 1)) }}
                 aria-label="Previous image"
                 className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/80 hover:bg-white text-gray-800 shadow-md backdrop-blur-xs flex items-center justify-center transition-all opacity-80 hover:opacity-100 hover:scale-110 cursor-pointer"
               >
@@ -379,7 +401,7 @@ export function ProductDetailPage() {
             {productImages.length > 1 && (
               <button
                 type="button"
-                onClick={() => setActiveImg(prev => (prev === productImages.length - 1 ? 0 : prev + 1))}
+                onClick={e => { e.stopPropagation(); setActiveImg(prev => (prev === productImages.length - 1 ? 0 : prev + 1)) }}
                 aria-label="Next image"
                 className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/80 hover:bg-white text-gray-800 shadow-md backdrop-blur-xs flex items-center justify-center transition-all opacity-80 hover:opacity-100 hover:scale-110 cursor-pointer"
               >
@@ -392,6 +414,85 @@ export function ProductDetailPage() {
               <span>{productImages.length > 0 ? activeImg + 1 : 0} / {productImages.length}</span>
             </div>
           </div>
+
+          {/* ── Lightbox Modal ── */}
+          {lightboxOpen && (
+            <div
+              className="fixed inset-0 z-[9999] flex items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.92)' }}
+              onClick={() => setLightboxOpen(false)}
+            >
+              {/* Close button */}
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(false)}
+                className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all z-10 cursor-pointer"
+                aria-label="Close"
+              >
+                <CircleX size={22} />
+              </button>
+
+              {/* Prev button */}
+              {productImages.length > 1 && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); setActiveImg(prev => (prev === 0 ? productImages.length - 1 : prev - 1)) }}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all cursor-pointer z-10"
+                  aria-label="Previous"
+                >
+                  <ChevronLeft size={28} />
+                </button>
+              )}
+
+              {/* Main lightbox image */}
+              <div
+                className="flex flex-col items-center gap-5 px-20 w-full max-h-screen"
+                onClick={e => e.stopPropagation()}
+              >
+                <img
+                  src={productImages[activeImg]}
+                  alt={product.name}
+                  className="max-h-[75vh] max-w-[80vw] object-contain rounded-xl shadow-2xl select-none"
+                  style={{ transition: 'opacity 0.2s' }}
+                />
+
+                {/* Counter */}
+                <p className="text-white/60 text-sm font-medium">
+                  {activeImg + 1} / {productImages.length}
+                </p>
+
+                {/* Thumbnails strip */}
+                {productImages.length > 1 && (
+                  <div className="flex gap-3">
+                    {productImages.map((img, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setActiveImg(i)}
+                        className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                          i === activeImg ? 'border-white scale-110' : 'border-white/25 opacity-50 hover:opacity-80'
+                        }`}
+                      >
+                        <img src={img} alt="" className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Next button */}
+              {productImages.length > 1 && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); setActiveImg(prev => (prev === productImages.length - 1 ? 0 : prev + 1)) }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all cursor-pointer z-10"
+                  aria-label="Next"
+                >
+                  <ChevronRight size={28} />
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Thumbnails row with navigation buttons */}
           <div className="flex items-center gap-2">
