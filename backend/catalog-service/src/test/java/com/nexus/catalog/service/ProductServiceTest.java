@@ -33,12 +33,17 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 class ProductServiceTest {
 
@@ -82,6 +87,14 @@ class ProductServiceTest {
         category.setId(UUID.randomUUID());
         category.setName("Electronics");
         when(categoryRepository.findById(category.getId())).thenReturn(Optional.of(category));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(sellerId.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_SELLER")))
+        );
+    }
+
+    @AfterEach
+    void tearDownEach() {
+        SecurityContextHolder.clearContext();
     }
 
     private SkuRequest sku(String code, String price) {
@@ -391,6 +404,45 @@ class ProductServiceTest {
                 command(List.of(sku("SKU-1", "10.00")), List.of(image(0), image(1))));
 
         assertEquals(2, updated.images().size());
+    }
+
+    @Test
+    void updateThrowsWhenUserIsNotOwner() {
+        Product product = existingProduct(ProductStatus.DRAFT);
+        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(UUID.randomUUID().toString(), null, List.of(new SimpleGrantedAuthority("ROLE_SELLER")))
+        );
+
+        assertThrows(AccessDeniedException.class,
+                () -> productService.update(product.getId(), command(List.of(sku("SKU-1", "15.00")), null)));
+    }
+
+    @Test
+    void addSkuThrowsWhenUserIsNotOwner() {
+        Product product = existingProduct(ProductStatus.DRAFT);
+        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(UUID.randomUUID().toString(), null, List.of(new SimpleGrantedAuthority("ROLE_SELLER")))
+        );
+
+        assertThrows(AccessDeniedException.class,
+                () -> productService.addSku(product.getId(), sku("SKU-NEW", "20.00")));
+    }
+
+    @Test
+    void deleteSkuThrowsWhenUserIsNotOwner() {
+        Product product = existingProduct(ProductStatus.DRAFT);
+        com.nexus.catalog.entity.Sku sku = new com.nexus.catalog.entity.Sku();
+        sku.setId(UUID.randomUUID());
+        sku.setProduct(product);
+        when(skuRepository.findById(sku.getId())).thenReturn(Optional.of(sku));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(UUID.randomUUID().toString(), null, List.of(new SimpleGrantedAuthority("ROLE_SELLER")))
+        );
+
+        assertThrows(AccessDeniedException.class,
+                () -> productService.deleteSku(sku.getId()));
     }
 }
 
