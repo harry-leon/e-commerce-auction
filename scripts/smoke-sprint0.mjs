@@ -55,7 +55,9 @@ try {
   }, 201, false)
   fixtureUser = registration.user.id
   token = registration.accessToken
-  await request('/categories', 'POST', { name: 'Forbidden', status: 'ACTIVE' }, 403)
+  const denied = await request('/categories', 'POST', { name: 'Forbidden', status: 'ACTIVE' }, 403)
+  // Hợp đồng lỗi chung trả code ở cấp ngoài cùng, không bọc trong Catalog success envelope.
+  assert.equal(denied.code, 'FORBIDDEN')
   console.log('PASS registration and category write authorization')
 
   bootstrapAdmin(fixtureUser)
