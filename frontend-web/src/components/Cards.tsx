@@ -45,6 +45,7 @@ export function ProductCard({ product }: { product: Product }) {
 
 // ─── Auction Card ──────────────────────────────────────────────────────────────
 export function AuctionCard({ auction }: { auction: Auction }) {
+  // Nhãn trạng thái phải bao phủ các giá trị AuctionStatus, kể cả pending/rejected; không chỉ các phiên đã kết thúc.
   const { lang, navigate } = useApp()
   const isActive = auction.status === 'active'
   return (
@@ -57,7 +58,7 @@ export function AuctionCard({ auction }: { auction: Auction }) {
           ) : auction.status === 'scheduled' ? (
             <span className="badge badge-blue">{lang === 'en' ? 'Upcoming' : 'Sắp diễn ra'}</span>
           ) : (
-            <StatusBadge status={auction.status} label={lang === 'en' ? auction.status.charAt(0).toUpperCase() + auction.status.slice(1) : { ended: 'Đã kết thúc', settled: 'Đã thanh toán', cancelled: 'Đã hủy', failed: 'Thất bại', scheduled: 'Đã lên lịch' }[auction.status] || auction.status} />
+            <StatusBadge status={auction.status} label={lang === 'en' ? auction.status.charAt(0).toUpperCase() + auction.status.slice(1) : { active: 'Live', pending_approval: 'Pending approval', rejected: 'Rejected', ended: 'Đã kết thúc', settled: 'Đã thanh toán', cancelled: 'Đã hủy', failed: 'Thất bại', scheduled: 'Đã lên lịch' }[auction.status] || auction.status} />
           )}
         </div>
         {auction.bidCount > 0 && <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-lg">{auction.bidCount} {lang === 'en' ? 'bids' : 'lượt đặt'}</div>}

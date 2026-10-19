@@ -1,0 +1,15 @@
+# Eureka chạy một node local; không đăng ký chính nó hoặc tìm registry từ một Eureka khác.
+server:
+  port: 8761
+spring:
+  application:
+    name: discovery-server
+eureka:
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

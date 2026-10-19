@@ -2,7 +2,11 @@ server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
 
+# Gateway là điểm vào API: route theo path, chuyển tiếp nguyên request tới service đích.
+# Dev độc lập mặc định dùng localhost; Compose cấp URI lb://... để tra instance qua Eureka.
 spring:
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
   application:
     name: api-gateway
   cloud:
@@ -43,3 +47,12 @@ management:
     health:
       probes:
         enabled: true
+
+# Client lấy registry để load balancer phân giải tên service; không tự chọn IP container cố định.
+eureka:
+  client:
+    enabled: ${EUREKA_ENABLED:false}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true

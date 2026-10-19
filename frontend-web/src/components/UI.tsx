@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode, type InputHTMLAttributes } from 'react'
+import { useState, useEffect, useRef, useId, type ReactNode, type InputHTMLAttributes } from 'react'
 import type { Toast } from '../types'
 import { useApp } from '../context'
 
@@ -35,12 +35,15 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string; error?: string; helper?: string; icon?: ReactNode; rightIcon?: ReactNode; suffix?: string
 }
 export function Input({ label, error, helper, icon, rightIcon, suffix, className = '', ...props }: InputProps) {
+  // ID ổn định liên kết label với input để bấm nhãn/focus, trình đọc màn hình và test getByLabel hoạt động đúng.
+  const generatedId = useId()
+  const inputId = props.id || generatedId
   return (
     <div className="flex flex-col gap-1.5">
-      {label && <label className="text-sm font-semibold text-gray-700">{label}</label>}
+      {label && <label htmlFor={inputId} className="text-sm font-semibold text-gray-700">{label}</label>}
       <div className="relative">
         {icon && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{icon}</span>}
-        <input {...props} className={`nexus-input ${error ? 'error' : ''} ${icon ? 'pl-9' : ''} ${(rightIcon || suffix) ? 'pr-10' : ''} ${className}`} />
+        <input {...props} id={inputId} aria-invalid={!!error} className={`nexus-input ${error ? 'error' : ''} ${icon ? 'pl-9' : ''} ${(rightIcon || suffix) ? 'pr-10' : ''} ${className}`} />
         {(rightIcon || suffix) && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{rightIcon || suffix}</span>}
       </div>
       {error && <p className="text-xs text-danger">{error}</p>}

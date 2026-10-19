@@ -476,13 +476,14 @@ api-gateway:image:
     - if: $CI_COMMIT_TAG
 
 # ===================== frontend-web =====================
+# Chạy lint và TypeScript thật; lỗi phải làm job fail, không dùng echo hoặc || true để bỏ qua.
 frontend-web:lint:
   extends: .fe-base
   stage: validate
   script:
     - cd frontend-web && npm ci --prefer-offline --no-audit
-    - npm run lint --if-present || true
-    - npm run typecheck --if-present || true
+    - npm run lint
+    - npm run typecheck
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -496,12 +497,13 @@ frontend-web:lint:
           - .ci/**/*
     - if: $CI_COMMIT_TAG
 
+# Coverage do Vitest/V8 sinh từ các test thực tế; báo cáo hiện chỉ bao phủ module được chọn trong vitest.config.ts.
 frontend-web:test:
   extends: .fe-base
   stage: test
   script:
     - cd frontend-web && npm ci --prefer-offline --no-audit
-    - npm run coverage --if-present || true
+    - npm run coverage
   coverage: '/All files\s*\|\s*(\d+\.?\d*)/'
   artifacts:
     when: always
@@ -547,3 +549,26 @@ frontend-web:image:
           - .gitlab-ci.yml
           - .ci/**/*
     - if: $CI_COMMIT_TAG
+
+# Kiểm tra hai module hạ tầng mới khi source hoặc cấu hình CI thay đổi.
+discovery-server:verify:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/discovery-server && mvn $MAVEN_CLI_OPTS verify
+  rules:
+    - changes:
+        - backend/discovery-server/**/*
+        - .ci/**/*
+        - .gitlab-ci.yml
+
+config-server:verify:
+  extends: .be-base
+  stage: test
+  script:
+    - cd backend/config-server && mvn $MAVEN_CLI_OPTS verify
+  rules:
+    - changes:
+        - backend/config-server/**/*
+        - .ci/**/*
+        - .gitlab-ci.yml

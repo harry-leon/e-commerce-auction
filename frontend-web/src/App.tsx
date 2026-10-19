@@ -1,7 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react'
 import { AppProvider, useApp } from './context'
 import { ToastContainer } from './components/UI'
-import { DemoNavigation } from './components/DemoNavigation'
 import { AppRouter } from './routes/AppRouter'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -31,12 +30,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 function AppInner() {
+  // Chỉ render route và thông báo; bỏ bộ đổi vai trò demo để phiên đăng nhập thật không bị thay bằng user giả.
   const { toasts, dismissToast } = useApp()
   return (
     <>
       <AppRouter />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      <DemoNavigation />
     </>
   )
 }

@@ -1,0 +1,9 @@
+# Cấu hình chung cho mọi client: logging và tracing; không chứa credential hoặc thay thế cấu hình DB riêng.
+# Shared configuration loaded by every registered service.
+logging:
+  level:
+    com.nexus: INFO
+management:
+  tracing:
+    sampling:
+      probability: 0.1

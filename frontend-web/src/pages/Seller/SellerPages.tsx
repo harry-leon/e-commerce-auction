@@ -349,6 +349,7 @@ export function CreateProductPage() {
 }
 
 // ─── Seller Auction List ───────────────────────────────────────────────────────
+/** Review có thể chưa tồn tại trong state; khi hiển thị kết quả dùng optional access và giữ trạng thái gốc nếu chưa duyệt. */
 export function SellerAuctionListPage() {
   const { lang, navigate, showToast, auctionReviews, createdAuctions } = useApp()
   const [tab, setTab] = useState('all')
@@ -402,24 +403,24 @@ export function SellerAuctionListPage() {
         {reviewedAuction && auctionReviews[reviewedAuction.id] && (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              {auctionReviews[reviewedAuction.id].status === 'scheduled'
+              {auctionReviews[reviewedAuction.id]?.status === 'scheduled'
                 ? <CheckCircle size={22} className="text-gray-500" />
                 : <AlertTriangle size={22} className="text-gray-500" />}
               <div>
-                <p className="font-bold">{auctionReviews[reviewedAuction.id].status === 'scheduled' ? (lang === 'en' ? 'Approved' : 'Đã phê duyệt') : (lang === 'en' ? 'Rejected' : 'Bị từ chối')}</p>
-                <p className="text-xs text-gray-400">{new Date(auctionReviews[reviewedAuction.id].reviewedAt).toLocaleString()}</p>
+                <p className="font-bold">{auctionReviews[reviewedAuction.id]?.status === 'scheduled' ? (lang === 'en' ? 'Approved' : 'Đã phê duyệt') : (lang === 'en' ? 'Rejected' : 'Bị từ chối')}</p>
+                <p className="text-xs text-gray-400">{new Date(auctionReviews[reviewedAuction.id]?.reviewedAt || '').toLocaleString()}</p>
               </div>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-sm font-semibold">{lang === 'vi' ? reviewedAuction.product.nameVi : reviewedAuction.product.name}</p>
               <p className="text-xs text-gray-500 mt-1">{lang === 'en' ? 'Starting price' : 'Giá khởi điểm'}: {formatCurrency(reviewedAuction.startingPrice, lang)}</p>
             </div>
-            {auctionReviews[reviewedAuction.id].status === 'scheduled' ? (
+            {auctionReviews[reviewedAuction.id]?.status === 'scheduled' ? (
               <AlertBanner type="success" message={lang === 'en' ? 'Your auction was approved and scheduled. It will become visible to Buyers at the configured start time.' : 'Phiên đấu giá đã được phê duyệt và lên lịch. Phiên sẽ hiển thị cho Buyer vào thời gian bắt đầu đã thiết lập.'} />
             ) : (
               <div>
                 <p className="text-sm font-semibold mb-1">{lang === 'en' ? 'Admin reason' : 'Lý do từ Admin'}</p>
-                <p className="text-sm text-gray-600">{auctionReviews[reviewedAuction.id].reason}</p>
+                <p className="text-sm text-gray-600">{auctionReviews[reviewedAuction.id]?.reason}</p>
                 <Button variant="primary" size="sm" className="mt-4" onClick={() => { setReviewedAuction(null); navigate('seller-create-auction', { id: reviewedAuction.id }) }}>{lang === 'en' ? 'Edit and Resubmit' : 'Chỉnh sửa và gửi lại'}</Button>
               </div>
             )}

@@ -1,4 +1,8 @@
+# Luồng cấu hình: môi trường/ứng dụng → thử lấy cấu hình chung từ Config Server.
+# Import optional cho phép chạy từng service khi dev mà không bắt buộc dựng toàn bộ hạ tầng.
 spring:
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
   application:
     name: ${SERVICE_NAME:catalog-service}
   profiles:
@@ -42,3 +46,13 @@ app:
   security:
     # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
     jwt-secret: ${JWT_SECRET:}
+
+# Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
+# Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.
+eureka:
+  client:
+    enabled: ${EUREKA_ENABLED:false}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true

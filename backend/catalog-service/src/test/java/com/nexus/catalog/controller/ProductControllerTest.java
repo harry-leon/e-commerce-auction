@@ -58,6 +58,10 @@ class ProductControllerTest {
     @MockitoBean
     private ProductService productService;
 
+    @MockitoBean
+    // Mock service tìm kiếm riêng để WebMvcTest chỉ kiểm tra routing, phân quyền và định dạng response.
+    private com.nexus.catalog.service.ProductSearchService searchService;
+
     private UUID sellerId;
     private UUID productId;
     private UUID categoryId;
@@ -198,7 +202,7 @@ class ProductControllerTest {
 
     @Test
     void listProducts_Success() throws Exception {
-        when(productService.list(eq(ProductStatus.DRAFT), any()))
+        when(searchService.search(any(), any(), any(), any(), any(), eq(ProductStatus.DRAFT), any()))
                 .thenReturn(new PageImpl<>(List.of(sampleResponse), PageRequest.of(0, 10), 1));
 
         mockMvc.perform(get("/api/v1/products")

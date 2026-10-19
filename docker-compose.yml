@@ -4,25 +4,65 @@
 #   Kèm Redis + Kafka: docker compose --profile full up --build
 name: nexus
 
+# Luồng khởi động: PostgreSQL + Eureka + Config Server → backend → Gateway → web.
+# Healthcheck TCP chỉ xác nhận cổng đã mở; script smoke còn chờ registry Eureka truyền tới Gateway.
 x-service: &service
   env_file: .env
+  healthcheck:
+    test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8080"]
+    interval: 5s
+    timeout: 3s
+    start_period: 30s
+    retries: 30
+  # Tách tài khoản PostgreSQL local khỏi DB_* có thể đang dùng cho database từ xa trong .env.
+  environment: &cloud-env
+    DB_USERNAME: ${LOCAL_DB_USERNAME:-nexus}
+    DB_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
+    EUREKA_ENABLED: "true"
+    EUREKA_URL: http://discovery-server:8761/eureka/
+    CONFIG_SERVER_URL: http://config-server:8888
+
   depends_on:
+    discovery-server:
+      condition: service_healthy
+    config-server:
+      condition: service_healthy
     postgres:
       condition: service_healthy
 
 services:
+  discovery-server:
+    build: ./backend/discovery-server
+    ports: ["8761:8761"]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8761"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  config-server:
+    build: ./backend/config-server
+    ports: ["8888:8888"]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8888"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  # SMTP local nhận thư reset thật; mở cổng 8025 để đọc thư, không gửi ra hộp thư Internet.
+  mailpit:
+    image: axllent/mailpit:v1.24.2
+    ports: ["8025:8025", "1025:1025"]
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${DB_USERNAME:-nexus}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-nexus}
+      POSTGRES_USER: ${LOCAL_DB_USERNAME:-nexus}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-nexus} -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_DB_USERNAME:-nexus} -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -31,6 +71,9 @@ services:
     <<: *service
     build: ./backend/user-service
     environment:
+      <<: *cloud-env
+      SMTP_HOST: mailpit
+      FRONTEND_URL: http://localhost:3000
       SERVICE_NAME: user-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_user
     ports:
@@ -40,6 +83,7 @@ services:
     <<: *service
     build: ./backend/catalog-service
     environment:
+      <<: *cloud-env
       SERVICE_NAME: catalog-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_catalog
     ports:
@@ -49,6 +93,7 @@ services:
     <<: *service
     build: ./backend/commerce-service
     environment:
+      <<: *cloud-env
       SERVICE_NAME: commerce-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_commerce
     ports:
@@ -58,6 +103,7 @@ services:
     <<: *service
     build: ./backend/auction-service
     environment:
+      <<: *cloud-env
       SERVICE_NAME: auction-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_auction
     ports:
@@ -67,6 +113,7 @@ services:
     <<: *service
     build: ./backend/fulfillment-service
     environment:
+      <<: *cloud-env
       SERVICE_NAME: fulfillment-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_fulfillment
     ports:
@@ -76,31 +123,50 @@ services:
     <<: *service
     build: ./backend/notification-service
     environment:
+      <<: *cloud-env
       SERVICE_NAME: notification-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_notification
     ports:
       - "8086:8080"
 
+  # Gateway tra registry Eureka qua các URI lb://... thay vì phụ thuộc IP cố định của container.
   api-gateway:
     build: ./backend/api-gateway
     environment:
-      USER_SERVICE_URL: http://user-service:8080
-      CATALOG_SERVICE_URL: http://catalog-service:8080
-      COMMERCE_SERVICE_URL: http://commerce-service:8080
-      AUCTION_SERVICE_URL: http://auction-service:8080
-      FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
-      NOTIFICATION_SERVICE_URL: http://notification-service:8080
+      <<: *cloud-env
+      USER_SERVICE_URL: lb://user-service
+      CATALOG_SERVICE_URL: lb://catalog-service
+      COMMERCE_SERVICE_URL: lb://commerce-service
+      AUCTION_SERVICE_URL: lb://auction-service
+      FULFILLMENT_SERVICE_URL: lb://fulfillment-service
+      NOTIFICATION_SERVICE_URL: lb://notification-service
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8080"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 30
     depends_on:
-      - user-service
-      - catalog-service
-      - commerce-service
-      - auction-service
-      - fulfillment-service
-      - notification-service
+      user-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      commerce-service:
+        condition: service_healthy
+      auction-service:
+        condition: service_healthy
+      fulfillment-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
 
+  # Chờ Gateway sẵn sàng trước khi nginx nạp upstream; tránh lỗi DNS upstream khi web khởi động quá sớm.
   web:
+    depends_on:
+      api-gateway:
+        condition: service_healthy
     build: ./frontend-web   # cần frontend-web/package-lock.json (chạy `npm install` một lần)
     ports:
       - "3000:8080"

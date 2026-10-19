@@ -1,5 +1,9 @@
 # figma-make-app
 
+## Project-wide AI rules
+
+Read and follow [`../AGENTS.md`](../AGENTS.md), especially the requirement to explain new or modified functionality and processing flows with Vietnamese comments directly in the relevant code. The frontend guidance below supplements those rules.
+
 React + Vite + Tailwind CSS project running inside Figma Make.
 
 ## Development Server

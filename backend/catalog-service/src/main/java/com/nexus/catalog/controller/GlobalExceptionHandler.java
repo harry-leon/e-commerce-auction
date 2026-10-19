@@ -31,6 +31,13 @@ public class GlobalExceptionHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    /** Tham số query/path sai kiểu (UUID, giá, enum...) là lỗi client 400, không phải lỗi hệ thống 500. */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidParameter(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+        return ResponseEntity.badRequest().body(ApiResponse.error("INVALID_PARAMETER", "Invalid parameter: " + ex.getName()));
+    }
+
     /**
      * 1. ResourceNotFoundException (custom 404)
      */

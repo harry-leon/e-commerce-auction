@@ -3,6 +3,8 @@ target/
 node_modules/
 dist/
 coverage/
+playwright-report/
+test-results/
 .m2/
 .npm/
 *.class

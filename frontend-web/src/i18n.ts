@@ -1,5 +1,6 @@
 export type Lang = 'en' | 'vi'
 
+// Mỗi khóa chỉ khai báo một lần trong từng ngôn ngữ; khóa trùng vừa gây lỗi TypeScript vừa dễ ghi đè bản dịch.
 const en = {
   // Auth
   login: 'Login', logout: 'Logout', register: 'Register', forgotPassword: 'Forgot Password',
@@ -69,7 +70,7 @@ const en = {
   // Common
   noData: 'No Data', loading: 'Loading...', error: 'Error', success: 'Success',
   save: 'Save', cancel: 'Cancel', delete: 'Delete', edit: 'Edit', create: 'Create',
-  confirm: 'Confirm', close: 'Close', search: 'Search', filter: 'Filter', sort: 'Sort',
+  confirm: 'Confirm', close: 'Close',  filter: 'Filter', sort: 'Sort',
   apply: 'Apply', reset: 'Reset', clearAll: 'Clear All',
   actions: 'Actions', status: 'Status', date: 'Date', name: 'Name', price: 'Price',
   category: 'Category', all: 'All', active: 'Active', inactive: 'Inactive', draft: 'Draft',
@@ -86,7 +87,7 @@ const en = {
   startingPrice: 'Starting Price', minIncrement: 'Minimum Increment',
   startTime: 'Start Time', endTime: 'End Time',
   auctionDuration: 'Min 60 min, max 168 hours',
-  cancelReason: 'Cancellation Reason',
+
   sellerDashboard: 'Seller Dashboard', revenueThisMonth: 'Revenue This Month',
   activeListings: 'Active Listings', runningAuctions: 'Running Auctions',
   lowStock: 'Low Stock Alert', recentOrders: 'Recent Orders',
@@ -178,7 +179,7 @@ const vi: typeof en = {
   language: 'Ngôn ngữ', languagePreference: 'Ngôn ngữ ưu tiên',
   noData: 'Không có dữ liệu', loading: 'Đang tải...', error: 'Lỗi', success: 'Thành công',
   save: 'Lưu', cancel: 'Hủy', delete: 'Xóa', edit: 'Sửa', create: 'Tạo mới',
-  confirm: 'Xác nhận', close: 'Đóng', search: 'Tìm kiếm', filter: 'Lọc', sort: 'Sắp xếp',
+  confirm: 'Xác nhận', close: 'Đóng',  filter: 'Lọc', sort: 'Sắp xếp',
   apply: 'Áp dụng', reset: 'Đặt lại', clearAll: 'Xóa tất cả',
   actions: 'Hành động', status: 'Trạng thái', date: 'Ngày', name: 'Tên', price: 'Giá',
   category: 'Danh mục', all: 'Tất cả', active: 'Đang hoạt động', inactive: 'Ngừng hoạt động', draft: 'Nháp',
@@ -194,7 +195,7 @@ const vi: typeof en = {
   startingPrice: 'Giá khởi điểm', minIncrement: 'Bước giá tối thiểu',
   startTime: 'Thời gian bắt đầu', endTime: 'Thời gian kết thúc',
   auctionDuration: 'Tối thiểu 60 phút, tối đa 168 giờ',
-  cancelReason: 'Lý do hủy',
+
   sellerDashboard: 'Bảng điều khiển người bán', revenueThisMonth: 'Doanh thu tháng này',
   activeListings: 'Đang niêm yết', runningAuctions: 'Đấu giá đang chạy',
   lowStock: 'Cảnh báo sắp hết hàng', recentOrders: 'Đơn hàng gần đây',

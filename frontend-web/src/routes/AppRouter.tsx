@@ -1,5 +1,5 @@
 import {
-  AdminAuditLogsPage, AdminAuctionsPage, AdminCategoriesPage, AdminDashboardPage, AdminEventLogsPage,
+  AdminAuditLogsPage, AdminAuctionsPage, AdminDashboardPage, AdminEventLogsPage,
   AdminOrdersPage, AdminProductsPage, AdminReputationPage, AdminRolesPage, AdminShipmentsPage,
   AdminSystemConfigPage, AdminSystemHealthPage, AdminUserDetailPage, AdminUsersPage, AdminWarehousesPage,
 } from '../pages/Admin/AdminPages'
@@ -7,7 +7,7 @@ import { AuctionDetailPage, AuctionListPage, AuctionPaymentPage, MyBidsPage } fr
 import { ForgotPasswordPage, LoginPage, RegisterPage } from '../pages/Auth/AuthPages'
 import {
   CartPage, CheckoutPage, HomePage, NotificationPage, OrderDetailPage, OrderHistoryPage, PaymentResultPage,
-  ProductDetailPage, ProfilePage, ReputationPage, SearchPage, SellerShopPage,
+  ReputationPage, SellerShopPage,
 } from '../pages/Buyer/BuyerPages'
 import { AdminProfilePage, SellerProfilePage, SupportProfilePage } from '../pages/Profile/ProfilePages'
 import {
@@ -15,18 +15,31 @@ import {
   SellerInventoryPage, SellerNotificationPage, SellerOrdersPage, SellerProductListPage, SellerReputationPage,
 } from '../pages/Seller/SellerPages'
 import { SupportDashboardPage, SupportOrderLookupPage, SupportUserLookupPage } from '../pages/Support/SupportPages'
+import { SearchPage, ProductDetailPage, ProfilePage, AdminCategoriesPage } from '../pages/SprintPages'
+import { LoginPage as SignIn } from '../pages/Auth/AuthPages'
 import { useApp } from '../context'
 
+/**
+ * Chọn màn hình từ route state, yêu cầu đăng nhập cho trang riêng và kiểm tra vai trò cho các khu vực.
+ * Đây là bảo vệ điều hướng UI; API backend vẫn xác minh JWT và quyền cho từng thao tác.
+ * Các trang SprintPages dùng dữ liệu thật; một số màn của sprint sau vẫn giữ bản demo hiện có.
+ */
 export function AppRouter() {
-  const { page } = useApp()
+  const { page, user, pageParams: routeParams } = useApp()
+  const publicPages = ['login', 'register', 'forgot-password', 'home', 'search', 'product-detail']
+  if (!user && !publicPages.includes(page)) return <SignIn />
+  if (page.startsWith('admin-') && user?.role !== 'admin') return <p role="alert">Access denied</p>
+  if (page.startsWith('seller-') && user?.role !== 'seller' && user?.role !== 'admin') return <p role="alert">Access denied</p>
+  if (page.startsWith('support-') && user?.role !== 'support' && user?.role !== 'admin') return <p role="alert">Access denied</p>
 
+  // key theo tham số URL buộc catalog/chi tiết khởi tạo lại bộ lọc hoặc ảnh khi điều hướng sang dữ liệu khác.
   switch (page) {
     case 'login': return <LoginPage />
     case 'register': return <RegisterPage />
     case 'forgot-password': return <ForgotPasswordPage />
-    case 'home': return <HomePage />
-    case 'search': return <SearchPage />
-    case 'product-detail': return <ProductDetailPage />
+    case 'home': return <SearchPage key={JSON.stringify(routeParams)} />
+    case 'search': return <SearchPage key={JSON.stringify(routeParams)} />
+    case 'product-detail': return <ProductDetailPage key={String(routeParams.id)} />
     case 'cart': return <CartPage />
     case 'checkout': return <CheckoutPage />
     case 'payment-result': return <PaymentResultPage />
@@ -51,7 +64,7 @@ export function AppRouter() {
     case 'seller-inventory': return <SellerInventoryPage />
     case 'seller-reputation': return <SellerReputationPage />
     case 'seller-notifications': return <SellerNotificationPage />
-    case 'seller-profile': return <SellerProfilePage />
+    case 'seller-profile': return <ProfilePage />
     case 'admin-dashboard': return <AdminDashboardPage />
     case 'admin-users': return <AdminUsersPage />
     case 'admin-user-detail': return <AdminUserDetailPage />
@@ -67,11 +80,11 @@ export function AppRouter() {
     case 'admin-audit-logs': return <AdminAuditLogsPage />
     case 'admin-system-config': return <AdminSystemConfigPage />
     case 'admin-system-health': return <AdminSystemHealthPage />
-    case 'admin-profile': return <AdminProfilePage />
+    case 'admin-profile': return <ProfilePage />
     case 'support-dashboard': return <SupportDashboardPage />
     case 'support-order-lookup': return <SupportOrderLookupPage />
     case 'support-user-lookup': return <SupportUserLookupPage />
-    case 'support-profile': return <SupportProfilePage />
-    default: return <HomePage />
+    case 'support-profile': return <ProfilePage />
+    default: return <p role="alert">Page not found</p>
   }
 }

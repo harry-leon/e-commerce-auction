@@ -1,0 +1,18 @@
+# Config Server chạy profile native, đọc các file trong configuration/ rồi phục vụ qua /{application}/{profile}.
+server:
+  port: 8888
+spring:
+  application:
+    name: config-server
+  profiles:
+    active: native
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: classpath:/configuration/
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

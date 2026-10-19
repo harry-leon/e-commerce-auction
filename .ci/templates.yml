@@ -9,8 +9,9 @@
     paths:
       - .m2/repository
 
+# Node 22 dùng thống nhất với frontend Dockerfile để CI và máy build chạy cùng dòng toolchain.
 .fe-base:
-  image: node:20-alpine
+  image: node:22-alpine
   variables:
     npm_config_cache: "$CI_PROJECT_DIR/.npm"
   cache:

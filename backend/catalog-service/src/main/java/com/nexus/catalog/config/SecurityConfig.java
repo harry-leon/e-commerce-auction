@@ -35,6 +35,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/products", "/api/v1/products/{id}", "/api/v1/categories/**").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();
@@ -46,7 +47,17 @@ public class SecurityConfig {
         authorities.setAuthoritiesClaimName("privileges");
         authorities.setAuthorityPrefix("");
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        // Giữ các privileges và bổ sung ROLE_<code> từ claim roles để hasAuthority và hasRole cùng hoạt động.
+        // Chỉ chuyển đổi claims sau bước xác minh JWT của Resource Server; không tin vai trò do frontend gửi riêng.
+        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
+            java.util.Collection<org.springframework.security.core.GrantedAuthority> granted =
+                    new java.util.ArrayList<>(authorities.convert(jwt));
+            java.util.List<String> roles = jwt.getClaimAsStringList("roles");
+            if (roles != null) {
+                roles.forEach(role -> granted.add(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));
+            }
+            return granted;
+        });
         return converter;
     }
 

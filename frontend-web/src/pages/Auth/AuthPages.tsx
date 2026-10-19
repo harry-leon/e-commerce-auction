@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useApp } from '../../context'
 import { tr } from '../../i18n'
 import { Input, PasswordInput, Button, Checkbox, AlertBanner, LanguageSwitcher, CheckCircle } from '../../components/UI'
-import { DEMO_BUYER, DEMO_SELLER, DEMO_ADMIN, DEMO_SUPPORT } from '../../mockData'
-import type { User } from '../../types'
+import { post, saveSession, mapUser, errorMessage, type AuthPayload } from '../../api'
+import type { Page } from '../../types'
 import { Gavel } from '../../components/UI'
 
 function AuthCard({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) {
@@ -27,6 +27,7 @@ function AuthCard({ children, title, subtitle }: { children: React.ReactNode; ti
 }
 
 // ─── Login Page ────────────────────────────────────────────────────────────────
+/** Gửi tài khoản tới IAM, lưu token theo lựa chọn ghi nhớ, cập nhật user rồi điều hướng theo vai trò trả về. */
 export function LoginPage() {
   const { lang, navigate, setUser, showToast } = useApp()
   const [email, setEmail] = useState('')
@@ -36,30 +37,19 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const DEMO_USERS: [string, User, string][] = [
-    ['buyer@nexus.vn', DEMO_BUYER, 'Buyer'],
-    ['seller@nexus.vn', DEMO_SELLER, 'Seller'],
-    ['admin@nexus.vn', DEMO_ADMIN, 'Admin'],
-    ['support@nexus.vn', DEMO_SUPPORT, 'Support'],
-  ]
-
+  // Chỉ tạo session sau khi API login thành công; số lần sai/khóa tài khoản thực tế do backend quyết định.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (attempts >= 5) { setError(tr(lang, 'accountLocked')); return }
-    setLoading(true)
-    await new Promise(r => setTimeout(r, 700))
-    const found = DEMO_USERS.find(([em]) => em === email.toLowerCase())
-    if (found && password === 'password') {
-      setUser(found[1])
-      showToast({ type: 'success', message: lang === 'en' ? `Welcome back, ${found[1].fullName}!` : `Chào mừng trở lại, ${found[1].fullName}!` })
-      const rolePages: Record<string, string> = { buyer: 'home', seller: 'seller-dashboard', admin: 'admin-dashboard', support: 'support-dashboard' }
-      navigate(rolePages[found[1].role] as any)
-    } else {
-      const newAttempts = attempts + 1
-      setAttempts(newAttempts)
-      setError(newAttempts >= 5 ? tr(lang, 'accountLocked') : tr(lang, 'loginError'))
-    }
-    setLoading(false)
+    setLoading(true); setError('')
+    try {
+      const response = await post<AuthPayload>('/auth/login', { email, password })
+      const user = mapUser(response.user)
+      saveSession({ ...response, user }, remember)
+      setUser(user)
+      const pages: Record<string, Page> = { buyer: 'home', seller: 'seller-dashboard', admin: 'admin-dashboard', support: 'support-dashboard' }
+      navigate(pages[user.role])
+    } catch (error) { setError(errorMessage(error)); setAttempts(value => value + 1) }
+    finally { setLoading(false) }
   }
 
   return (
@@ -75,23 +65,6 @@ export function LoginPage() {
         </div>
         <Button type="submit" variant="primary" size="lg" loading={loading} className="w-full mt-2">{tr(lang, 'login')}</Button>
       </form>
-
-      {/* Demo accounts */}
-      <div className="mt-6 pt-5 border-t border-border">
-        <p className="text-xs text-gray-500 mb-3 text-center">{lang === 'en' ? 'Demo accounts (password: password)' : 'Tài khoản demo (mật khẩu: password)'}</p>
-        <div className="grid grid-cols-2 gap-2">
-          {DEMO_USERS.map(([em, user, role]) => (
-            <button key={em} onClick={() => { setEmail(em); setPassword('password') }}
-              className="flex items-center gap-2 p-2 border border-border rounded-lg text-xs hover:border-primary hover:bg-primary-light transition-colors">
-              <img src={user.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
-              <div className="text-left">
-                <p className="font-semibold text-gray-800">{role}</p>
-                <p className="text-gray-400 text-[10px] truncate">{em}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
 
       <p className="text-center text-sm text-gray-500 mt-5">
         {tr(lang, 'dontHaveAccount')}{' '}
@@ -116,6 +89,7 @@ function PasswordStrength({ password }: { password: string }) {
   )
 }
 
+/** Form đăng ký ba bước; validate UI để hướng dẫn nhập, backend vẫn kiểm tra dữ liệu trước khi tạo tài khoản. */
 export function RegisterPage() {
   const { lang, navigate, showToast } = useApp()
   const [step, setStep] = useState(1)
@@ -145,10 +119,17 @@ export function RegisterPage() {
     setErrors(e); return Object.keys(e).length === 0
   }
 
+  // Chuyển tên trường và enum theo DTO backend; đăng ký xong quay về login, không tự giả lập user đã lưu.
   const handleSubmit = async () => {
     if (!validate3()) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1000))
+    try {
+      await post<AuthPayload>('/auth/register', {
+        ...form, identifyNumber: form.idNumber, gender: form.gender.toUpperCase(),
+      })
+    } catch (error) {
+      showToast({ type: 'error', message: errorMessage(error) }); setLoading(false); return
+    }
     showToast({ type: 'success', message: lang === 'en' ? 'Account created! Please log in.' : 'Tài khoản đã được tạo! Vui lòng đăng nhập.' })
     navigate('login')
     setLoading(false)
@@ -222,28 +203,37 @@ export function RegisterPage() {
 }
 
 // ─── Forgot Password Page ──────────────────────────────────────────────────────
+/**
+ * Luồng quên mật khẩu: gửi email → nhận link chứa token → nhập mật khẩu mới → gọi reset-password.
+ * Nếu mở trực tiếp link từ email, khởi tạo bước 2 và lấy token từ query string; lỗi API giữ người dùng ở form.
+ */
 export function ForgotPasswordPage() {
-  const { lang, navigate, showToast } = useApp()
-  const [step, setStep] = useState(1)
+  const { lang, navigate } = useApp()
+  const [step, setStep] = useState(new URLSearchParams(window.location.search).has('token') ? 2 : 1)
+  const [token, setToken] = useState(new URLSearchParams(window.location.search).get('token') || '')
   const [email, setEmail] = useState('')
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // Backend sinh token và gửi SMTP; frontend chỉ xác nhận yêu cầu, không tự tạo token hoặc gửi email.
   const sendLink = async () => {
     if (!email.includes('@')) { setError(tr(lang, 'invalidEmail')); return }
     setLoading(true)
-    await new Promise(r => setTimeout(r, 800))
+    try { await post('/auth/forgot-password', { email }) }
+    catch (error) { setError(errorMessage(error)); setLoading(false); return }
     setLoading(false)
     setStep(2)
   }
 
+  // Chỉ báo hoàn tất sau khi backend chấp nhận token chưa hết hạn/chưa dùng và cập nhật mật khẩu.
   const resetPw = async () => {
     if (newPw !== confirmPw) { setError(tr(lang, 'passwordMismatch')); return }
     if (newPw.length < 8) { setError(tr(lang, 'passwordRule')); return }
     setLoading(true)
-    await new Promise(r => setTimeout(r, 800))
+    try { await post('/auth/reset-password', { token, newPassword: newPw }) }
+    catch (error) { setError(errorMessage(error)); setLoading(false); return }
     setLoading(false)
     setStep(3)
   }
@@ -270,6 +260,7 @@ export function ForgotPasswordPage() {
           <p className="text-gray-500 text-sm mb-5">{lang === 'en' ? 'Enter your new password:' : 'Nhập mật khẩu mới của bạn:'}</p>
           {error && <div className="mb-4"><AlertBanner type="error" message={error} onClose={() => setError('')} /></div>}
           <div className="space-y-4">
+            <Input label="Reset token" value={token} onChange={event => setToken(event.target.value)} required />
             <PasswordInput label={tr(lang, 'newPassword')} value={newPw} onChange={e => setNewPw(e.target.value)} />
             <PasswordInput label={tr(lang, 'confirmPassword')} value={confirmPw} onChange={e => setConfirmPw(e.target.value)} />
             <Button variant="primary" size="lg" className="w-full" loading={loading} onClick={resetPw}>{tr(lang, 'resetPassword')}</Button>

@@ -50,6 +50,13 @@ public class Category {
     @Column(nullable = false, length = 20)
     private CategoryStatus status = CategoryStatus.ACTIVE;
 
+    @Column(name = "name_vi", length = 255)
+    // Tên tiếng Việt lưu riêng với name; cột được thêm bằng Flyway V3 để form Admin giữ được hai ngôn ngữ.
+    private String nameVi;
+
+    public String getNameVi() { return nameVi; }
+    public void setNameVi(String nameVi) { this.nameVi = nameVi; }
+
     public Category() {}
 
     public UUID getId() { return id; }

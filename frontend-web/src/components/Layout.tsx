@@ -1,8 +1,9 @@
-import { useState, type ReactNode, type SVGProps } from 'react'
+import { useEffect, useState, type ReactNode, type SVGProps } from 'react'
 import { useApp } from '../context'
 import { tr } from '../i18n'
 import { LanguageSwitcher, Bell, ShoppingCart, Search, User2, ChevronDown, LogOut, Package, Gavel, Star, X, Home, BarChart2, Users, Tag, Settings2, Shield, Truck, AlertTriangle, Activity, FileText, Server, Plus, Warehouse, HeartHandshake, CreditCard } from './UI'
-import { CATEGORIES, NOTIFICATIONS } from '../mockData'
+import { NOTIFICATIONS } from '../mockData'
+import { api, type Envelope, type ApiCategory } from '../api'
 
 // Simple monochrome SVG icons per category
 function IconElectronics(p: SVGProps<SVGSVGElement>) {
@@ -24,7 +25,7 @@ function IconCollectibles(p: SVGProps<SVGSVGElement>) {
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" {...p}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
 }
 
-export const CATEGORY_ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => JSX.Element> = {
+export const CATEGORY_ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => React.JSX.Element> = {
   c1: IconElectronics,
   c2: IconFashion,
   c3: IconHome,
@@ -35,6 +36,15 @@ export const CATEGORY_ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => JSX.
 
 // ─── Public Header ─────────────────────────────────────────────────────────────
 export function PublicHeader() {
+  // Danh mục trên thanh điều hướng lấy UUID thật từ Catalog; ID mock sẽ khiến bộ lọc backend không hợp lệ.
+  const [categories, setCategories] = useState<ApiCategory[]>([])
+  useEffect(() => {
+    const controller = new AbortController()
+    // Không thay lỗi mạng bằng danh mục demo; SearchPage có hiển thị lỗi tải catalog riêng.
+    api<Envelope<ApiCategory[]>>('/categories', { signal: controller.signal })
+      .then(response => setCategories(response.data)).catch(() => setCategories([]))
+    return () => controller.abort()
+  }, [])
   const { lang, navigate, user, setUser, cartCount, page } = useApp()
   const [searchQ, setSearchQ] = useState('')
   const [userOpen, setUserOpen] = useState(false)
@@ -159,7 +169,7 @@ export function PublicHeader() {
       {/* Category nav */}
       <div className="border-t border-gray-100">
         <div className="max-w-[1440px] mx-auto px-8 flex items-center gap-1 py-1">
-          {CATEGORIES.map(cat => {
+          {categories.map(cat => {
             const Icon = CATEGORY_ICONS[cat.id]
             return (
               <button key={cat.id} onClick={() => navigate('search', { category: cat.id })}

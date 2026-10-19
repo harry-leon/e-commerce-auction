@@ -123,7 +123,8 @@ export interface AppState {
   user: User | null; setUser: (u: User | null) => void
   cartCount: number; setCartCount: (n: number) => void
   toasts: Toast[]; showToast: (t: Omit<Toast, 'id'>) => void; dismissToast: (id: string) => void
-  auctionReviews: Record<string, AuctionReview>
+  // Chỉ phiên đã được xét duyệt mới có entry; phiên khác dùng status gốc của Auction, không mặc định có review.
+  auctionReviews: Partial<Record<string, AuctionReview>>
   reviewAuction: (auctionId: string, status: 'scheduled' | 'rejected', reason?: string) => void
   createdAuctions: Auction[]
   submitAuction: (auction: Auction) => void

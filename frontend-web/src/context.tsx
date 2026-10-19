@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { AppState, Auction, AuctionReview, Lang, Page, Toast, User } from './types'
-import { DEMO_BUYER } from './mockData'
+import { useSessionStore } from './sessionStore'
+import { readRoute, writeRoute } from './routing'
 
 const AppContext = createContext<AppState>({
   lang: 'en',
@@ -21,20 +22,33 @@ const AppContext = createContext<AppState>({
   submitAuction: () => undefined,
 })
 
+/**
+ * Cầu nối cho component cũ: session lấy từ Zustand, route lấy từ URL, còn toast/ngôn ngữ dùng state tại đây.
+ * cartCount, auctionReviews và createdAuctions chỉ là state phía trình duyệt cho màn demo, chưa lưu backend.
+ */
 export function AppProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>('en')
-  const [page, setPage] = useState<Page>('login')
-  const [pageParams, setPageParams] = useState<Record<string, unknown>>({})
-  const [user, setUser] = useState<User | null>(DEMO_BUYER)
-  const [cartCount, setCartCount] = useState(3)
+  const [page, setPage] = useState<Page>(() => readRoute().page)
+  const [pageParams, setPageParams] = useState<Record<string, unknown>>(() => readRoute().params)
+  const { user, setUser } = useSessionStore()
+  const [cartCount, setCartCount] = useState(0)
   const [toasts, setToasts] = useState<Toast[]>([])
-  const [auctionReviews, setAuctionReviews] = useState<Record<string, AuctionReview>>({})
+  const [auctionReviews, setAuctionReviews] = useState<Partial<Record<string, AuctionReview>>>({})
   const [createdAuctions, setCreatedAuctions] = useState<Auction[]>([])
 
+  // pushState không phát popstate: chủ động cập nhật URL và React state cùng lúc khi điều hướng trong app.
   const navigate = useCallback((p: Page, params?: Record<string, unknown>) => {
+    writeRoute(p, params || {})
     setPage(p)
     setPageParams(params || {})
     window.scrollTo(0, 0)
+  }, [])
+
+  // Back/Forward do trình duyệt phát popstate; đọc lại URL để màn hình và tham số khớp lịch sử duyệt.
+  useEffect(() => {
+    const sync = () => { const route = readRoute(); setPage(route.page); setPageParams(route.params) }
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
   }, [])
 
   const showToast = useCallback((t: Omit<Toast, 'id'>) => {
