@@ -1,15 +1,18 @@
 import { defineConfig } from 'vitest/config'
 
-// Chỉ thu thập unit test trong src; test trình duyệt chạy bằng Playwright riêng.
-// Coverage chỉ tính api.ts và routing.ts, không đại diện toàn bộ component UI.
+// Đo toàn bộ TS/TSX ứng dụng, kể cả module chưa được import bởi test; không bỏ các trang demo khỏi báo cáo.
+// Ngưỡng LINE 70% giống quy ước JaCoCo backend; test/fixture hỗ trợ kiểm thử không phải code ứng dụng.
 export default defineConfig({
-  test: {
-    include: ['src/**/*.test.ts'],
-    environment: 'node',
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'cobertura', 'html'],
-      include: ['src/api.ts', 'src/routing.ts'],
+    test: {
+        include: ['src/**/*.test.{ts,tsx}'],
+        environment: 'jsdom',
+        setupFiles: ['src/test/setup.ts'],
+        coverage: {
+            provider: 'v8',
+            reporter: ['text', 'text-summary', 'cobertura', 'html'],
+            include: ['src/**/*.{ts,tsx}'],
+            exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/**/*.d.ts'],
+            thresholds: { lines: 70 },
+        },
     },
-  },
 })
