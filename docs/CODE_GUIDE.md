@@ -19,17 +19,17 @@ React form / màn hình
 
 | File | Vai trò và luồng chính |
 | --- | --- |
-| `frontend-web/src/api.ts` | Gọi backend, chọn storage theo “remember me”, gắn token, refresh chung khi nhiều request bị 401, chuyển DTO User sang model UI. |
-| `frontend-web/src/sessionStore.ts` | Zustand giữ user; đồng bộ hồ sơ đã lưu và xóa token khi logout. |
-| `frontend-web/src/routing.ts` | Đọc/ghi URL, query, history; nhận token từ link reset. |
+| `frontend-web/src/api/client.ts` | Gọi backend, token chỉ lưu sessionStorage; “ghi nhớ” chỉ lưu email. Gắn token, refresh chung khi nhiều request bị 401, chuyển DTO User sang model UI. |
+| `frontend-web/src/features/auth/sessionStore.ts` | Zustand giữ user; đồng bộ hồ sơ đã lưu và xóa token khi logout. |
+| `frontend-web/src/routes/routing.ts` | Đọc/ghi URL, query, history; nhận token từ link reset. |
 | `frontend-web/src/context.tsx` | Cung cấp state cho component cũ, đồng bộ Back/Forward; một số state cart/auction vẫn là demo trong bộ nhớ. |
 | `frontend-web/src/routes/AppRouter.tsx` | Chọn màn hình, bảo vệ điều hướng theo đăng nhập/vai trò; backend vẫn kiểm tra quyền thực sự. |
-| `frontend-web/src/pages/Auth/AuthPages.tsx` | Login → lưu session → điều hướng; register → login; forgot/reset → gọi IAM bằng email/token. |
-| `frontend-web/src/pages/SprintPages.tsx` | Tải catalog/chi tiết, phân trang và bộ lọc; ghi profile; quản trị cây danh mục qua API thật. |
+| `frontend-web/src/features/auth/AuthPages.tsx` | Login → lưu session → điều hướng; register → login; forgot/reset → gọi IAM bằng email/token. |
+| `frontend-web/src/features/` | Tải catalog/chi tiết, phân trang và bộ lọc; ghi profile; quản trị cây danh mục qua API thật. |
 | `frontend-web/src/components/Layout.tsx` | Header dùng UUID danh mục thật khi điều hướng sang bộ lọc catalog. |
 | `frontend-web/src/components/UI.tsx` | Input có ID ổn định gắn label để dùng được với bàn phím, trình đọc màn hình và test. |
 
-Trong `SprintPages.tsx`, `useLoad` quản lý loading/error và hủy request khi đổi màn; các thao tác ghi chỉ báo thành công sau response API. `revision` ở quản trị danh mục làm tải lại cây từ DB, không giả lưu dữ liệu chỉ trong state.
+`src/hooks/useLoad.ts` quản lý loading/error và hủy request khi đổi màn; các thao tác ghi trong `src/features/` chỉ báo thành công sau response API. `revision` ở quản trị danh mục làm tải lại cây từ DB, không giả lưu dữ liệu chỉ trong state. `catalog/`, `auth/`, `profile/` và `admin/` được tách riêng thay vì gộp vào SprintPages.
 
 ## Backend
 
@@ -42,7 +42,7 @@ Trong `SprintPages.tsx`, `useLoad` quản lý loading/error và hủy request kh
 | `ProductController`, `ProductServiceImpl` | Chuyển bộ lọc sang service; kiểm tra quyền và quyền sở hữu khi đọc sản phẩm chưa công bố. |
 | `ProductMapper` | Quy tắc MapStruct; giá trị mặc định khi tạo, bỏ qua field null khi cập nhật. File code sinh nằm trong `target`, không sửa trực tiếp. |
 | `ProductRepository` | JPA Specification, truy vấn ảnh đúng entity, đếm/kiểm tra sản phẩm trực tiếp của danh mục. |
-| `GlobalExceptionHandler` | Chuyển tham số query/path sai kiểu thành lỗi client 400. |
+| `GlobalExceptionHandler`, `ApiError` | Lỗi trả trực tiếp `{code,message,details,timestamp}` giống các service khác; tham số query/path sai kiểu trả HTTP 400. |
 | `EmailService` | Dựng link token và gửi SMTP; local nhận thư ở Mailpit, không ghi token ra log. |
 | `JwtService.extractClaims` | Parse JWT → xác minh HS256/chữ ký → kiểm tra hạn và issuer → trả claims cho AuthService kiểm tra tiếp. |
 | `SecurityConfig` trong các service | Chuyển privileges và roles trong JWT thành Spring authorities, hỗ trợ cả `hasAuthority` và `hasRole`. |
@@ -56,7 +56,9 @@ Migration thêm `name_vi` được giải thích ở `backend/catalog-service/sr
 - `docker-compose.yml`: khởi động hạ tầng trước backend, Gateway trước web; tách `LOCAL_DB_*` khỏi tài khoản DB từ xa.
 - Các Dockerfile backend dùng cache Maven có khóa để tái sử dụng artifact giữa các service; test chạy riêng trong CI/dev.
 - `frontend-web/nginx.conf` và `vite.config.ts`: chuyển `/api` tới Gateway ở production/dev.
-- `.ci/jobs.yml`, `eslint.config.js`, `vitest.config.ts`: kiểm tra thật, không bỏ qua lỗi; coverage frontend hiện chỉ đo các module được chỉ định.
+- `.ci/jobs.yml`, `eslint.config.js`, `vitest.config.ts`: kiểm tra thật, không bỏ qua lỗi. Frontend đo toàn bộ source TS/TSX và bắt buộc LINE coverage ≥70%; không dùng tỷ lệ này để khẳng định branch/function cũng đạt 70%.
+- `.prettierrc.json`, `format:check`: thống nhất Prettier theo CONTRIBUTING và kiểm tra format trong CI.
+- Job `discovery-server:image` và `config-server:image`: build/push image theo cùng quy ước SHA, `develop` và tag release của các service khác.
 - `frontend-web/package.json` và các lockfile không hỗ trợ comment JSON: ý nghĩa các script đã ghi trong `SPRINT0_HANDOVER.md`; lockfile do package manager cập nhật.
 - Các test mới ghi tình huống được bảo vệ ở đầu class/khối test; Playwright mock response chỉ kiểm tra UI/request, không thay kiểm chứng backend thật.
 - `scripts/smoke-sprint0.mjs`: kiểm chứng local qua Gateway, tạo fixture riêng và cleanup; cần cờ xác nhận cấp ADMIN cho tài khoản test mới.

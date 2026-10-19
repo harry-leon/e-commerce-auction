@@ -14,11 +14,11 @@ Compose uses `LOCAL_DB_USERNAME` / `LOCAL_DB_PASSWORD` (default `nexus` / `nexus
 
 Each service registers with Eureka in Compose; Gateway uses `lb://...` routes. Individual services can still run without discovery locally (`EUREKA_ENABLED=false` by default). Shared configuration resides in `backend/config-server/src/main/resources/configuration/application.yml`; service-specific configuration and secrets remain in service config/environment. Config import is optional for standalone development.
 
-Frontend local development: `npm ci`, `npm run dev` inside `frontend-web`; Vite proxies `/api` to `http://localhost:8080`. Set `API_PROXY_TARGET` for another gateway. URL routes support direct opening and browser back/forward. Auth session state uses Zustand; “remember me” chooses localStorage instead of sessionStorage. The demo role-switch toolbar is removed from the application.
+Frontend local development: `npm ci`, `npm run dev` inside `frontend-web`; Vite proxies `/api` to `http://localhost:8080`. Set `API_PROXY_TARGET` for another gateway. URL routes support direct opening and browser back/forward. Auth session state uses Zustand. Tokens are stored only in the tab's sessionStorage; the remember option persists only an email, not a password/token or login session. Legacy localStorage tokens are removed when the client loads. The demo role-switch toolbar is removed from the application.
 
 ## API v1 contract for review
 
-User service responses use the existing user DTOs. Catalog uses `{success,data,error,meta}`; list pagination metadata is `{page,pageSize,total}` and pages are zero-based.
+User service responses use the existing user DTOs. Successful Catalog responses keep `{success,data,error,meta}`; pagination metadata is `{page,pageSize,total}` and pages are zero-based. HTTP errors now use the common `ApiError` shape `{code,message,details,timestamp}`, as required by CONTRIBUTING. Consumers that formerly read `error.code` from a Catalog error envelope must read `code` instead; the frontend client supports both shapes during transition. This error-contract change still requires API review.
 
 | Endpoint | Behavior / authorization |
 | --- | --- |
@@ -46,7 +46,7 @@ Swagger remains available per service on `/swagger-ui.html`; OpenAPI JSON on `/v
 
 ## Verification
 
-Frontend: `npm run lint`, `npm run typecheck`, `npm run coverage`, `npm run build`. Coverage is real V8 coverage of API/session/URL utilities; it is not whole-application coverage. `npm run test:e2e` runs browser integration tests against intercepted API responses (Edge by default, or set `PLAYWRIGHT_CHANNEL`). Browser tests verify credential requests, profile saving, reset token submission, product URLs/back navigation and visible API failures.
+Frontend: `npm run lint`, `npm run typecheck`, `npm run format:check`, `npm run coverage`, `npm run build`. Prettier follows the repository EditorConfig and `.prettierrc.json`. V8 coverage includes all application TS/TSX files, including prototypes; only tests/test setup and declaration files are excluded. A LINE coverage threshold of 70% fails the job below that value. This is not a 70% branch/function coverage claim. `npm run test:e2e` runs separate browser integration tests against intercepted API responses (Edge by default, or set `PLAYWRIGHT_CHANNEL`). Browser tests do not substitute for the real PostgreSQL/SMTP smoke test.
 
 Backend: run `mvn clean verify checkstyle:check` in each existing service. Catalog adds category business-rule tests and H2 PostgreSQL-mode search integration tests. H2 tests do not replace the PostgreSQL runtime check. IAM adds SMTP-message and forged/expired-token regression tests. New infrastructure services can be built with `mvn clean verify`.
 
@@ -62,7 +62,7 @@ After Compose is healthy, set `NEXUS_SMOKE_BOOTSTRAP_ADMIN=true` and run `node s
 | Quốc Hào | Auth/profile/catalog UI integration; review route/session behavior and original visual requirements |
 | Linh Đang | Product detail/category admin integration; review business requirements and Sprint 1 story acceptance criteria |
 
-The API-backed Sprint 0 screens are implemented in `frontend-web/src/pages/SprintPages.tsx`. Existing demonstration screens for later sprints (cart, checkout, orders, auctions, dashboards and other admin modules) remain prototypes. Their presence is not evidence of implemented backend features.
+The API-backed Sprint 0 screens are split across `src/features/catalog/`, `src/features/auth/`, `src/features/profile/ProfilePage.tsx` and `src/features/admin/AdminCategoriesPage.tsx`. Shared loading behavior is in `src/hooks/useLoad.ts`, while every HTTP request goes through `src/api/client.ts`. Existing demonstration screens for later sprints (cart, checkout, orders, auctions, dashboards and other admin modules) remain prototypes under their feature directories. Their presence or UI render tests are not evidence of implemented backend features.
 
 The source includes an SRS and database specifications. The file named `srs-nexus-ecommerce-auction-v1.docx` currently contains plain text/Markdown rather than a native Word archive; it should be converted if a Word deliverable is required. Physical ERD diagrams derived from migrations are in `docs/database/ERD.md`.
 

@@ -1,6 +1,6 @@
 # Sprint 0 verification — 2026-10-19
 
-Verified against the current working tree on Windows with Java 21, Node 22, Maven from IntelliJ and Docker Desktop. These results describe engineering checks; they are not stakeholder acceptance.
+Historical verification for commit `9c11f2d`, before the convention compliance fixes. See [COMPLIANCE_VERIFICATION.md](COMPLIANCE_VERIFICATION.md) for the subsequent checks, expanded frontend coverage and CI changes. These results describe engineering checks; they are not stakeholder acceptance.
 
 | Check | Result |
 | --- | --- |
