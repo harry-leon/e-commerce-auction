@@ -1,5 +1,9 @@
 # figma-make-app
 
+## Project-wide AI rules
+
+Read and follow [`../AGENTS.md`](../AGENTS.md), especially the requirement to explain new or modified functionality and processing flows with Vietnamese comments directly in the relevant code. The frontend guidance below supplements those rules.
+
 React + Vite + Tailwind CSS project running inside Figma Make.
 
 ## Development Server
@@ -15,6 +19,9 @@ This is the canonical project structure. Start with task-relevant files below. O
 
 - `src/main.tsx` - React entrypoint; imports `src/index.css` and mounts `src/App.tsx` into the `#root` element
 - `src/App.tsx` - Primary application component and the usual starting point for UI work
+- `src/features/<feature>/` - Domain screens and state; keep catalog, auth, profile, admin and later-sprint prototypes in their own feature directories
+- `src/api/client.ts` - Shared HTTP client; tokens stay in sessionStorage, never localStorage; the remember option saves only an email
+- `src/hooks/` and `src/components/` - Shared hooks and UI primitives used across features
 - `src/index.css` - Global CSS entrypoint and Tailwind CSS v4 import
 - `index.html` - Vite HTML shell containing the `#root` element and loading `src/main.tsx`
 - `package.json` - Project dependencies and the Vite build, development, preview, and formatting scripts
@@ -26,7 +33,7 @@ This is the canonical project structure. Start with task-relevant files below. O
 - Runtime: React 19 and React DOM 19
 - Styling: Tailwind CSS v4 with the `@tailwindcss/vite` plugin
 - Build tooling: Vite 8, TypeScript 5.7, and `@vitejs/plugin-react`
-- Formatting: oxfmt
+- Formatting: Prettier, matching `../CONTRIBUTING.md`. Run `npm run format:check` before committing; `npm run format` applies the shared `.prettierrc.json` rules.
 
 ## Styling
 

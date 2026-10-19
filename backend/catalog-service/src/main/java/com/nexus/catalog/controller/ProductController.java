@@ -16,7 +16,6 @@ import com.nexus.catalog.dto.response.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
@@ -38,10 +37,16 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Product", description = "Product & SKU catalog management APIs")
 @RestController
 @RequestMapping("/api/v1/products")
-@RequiredArgsConstructor
 public class ProductController {
 
     private final ProductService productService;
+
+    private final com.nexus.catalog.service.ProductSearchService searchService;
+
+    public ProductController(ProductService productService, com.nexus.catalog.service.ProductSearchService searchService) {
+        this.productService = productService;
+        this.searchService = searchService;
+    }
 
     // Get seller id from authentication
     private UUID getCurrentSellerId() {
@@ -94,12 +99,26 @@ public class ProductController {
 
     // List all products
     @Operation(summary = "List/search products", description = "Retrieves paginated list of products, optionally filtered by status.")
-    @GetMapping
     public ApiResponse<List<ProductResponse>> list(
         @RequestParam(required = false) ProductStatus status,
         Pageable pageable
     ) {
         return ApiResponse.ok(productService.list(status, pageable));
+    }
+
+    @GetMapping
+    // Ghép bộ lọc qua service chuyên tìm kiếm; kiểm tra quyền trước khi cho phép trạng thái ngoài ACTIVE.
+    @Operation(summary = "Search products by keyword, category tree and SKU price range")
+    @PreAuthorize("#status == null or #status.name() == 'ACTIVE' or hasAuthority('PRODUCT.LIST')")
+    public ApiResponse<List<ProductResponse>> search(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) UUID categoryId,
+            @RequestParam(required = false) java.math.BigDecimal minPrice,
+            @RequestParam(required = false) java.math.BigDecimal maxPrice,
+            @RequestParam(required = false) Boolean auctionEnabled,
+            @RequestParam(required = false) ProductStatus status,
+            Pageable pageable) {
+        return ApiResponse.ok(searchService.search(q, categoryId, minPrice, maxPrice, auctionEnabled, status, pageable));
     }
 
     // List products by seller

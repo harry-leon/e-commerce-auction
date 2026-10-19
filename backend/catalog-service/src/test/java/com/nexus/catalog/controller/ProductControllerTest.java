@@ -59,6 +59,10 @@ class ProductControllerTest {
     @MockitoBean
     private ProductService productService;
 
+    @MockitoBean
+    // Mock service tìm kiếm riêng để WebMvcTest chỉ kiểm tra routing, phân quyền và định dạng response.
+    private com.nexus.catalog.service.ProductSearchService searchService;
+
     private UUID sellerId;
     private UUID productId;
     private UUID categoryId;
@@ -137,7 +141,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     @Test
@@ -150,7 +154,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(invalidRequest)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -194,12 +198,12 @@ class ProductControllerTest {
         mockMvc.perform(get("/api/v1/products/{id}", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
     }
 
     @Test
     void listProducts_Success() throws Exception {
-        when(productService.list(eq(ProductStatus.DRAFT), any()))
+        when(searchService.search(any(), any(), any(), any(), any(), eq(ProductStatus.DRAFT), any()))
                 .thenReturn(new PageImpl<>(List.of(sampleResponse), PageRequest.of(0, 10), 1));
 
         mockMvc.perform(get("/api/v1/products")
@@ -245,8 +249,8 @@ class ProductControllerTest {
                         .param("target", "ACTIVE")
                         .with(withUser(UUID.randomUUID(), "ROLE_ADMIN")))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("BUSINESS_ERROR"))
-                .andExpect(jsonPath("$.error.message").value("Product must be approved by Admin/Support to become ACTIVE"));
+                .andExpect(jsonPath("$.code").value("BUSINESS_ERROR"))
+                .andExpect(jsonPath("$.message").value("Product must be approved by Admin/Support to become ACTIVE"));
     }
 
     @Test
@@ -268,7 +272,7 @@ class ProductControllerTest {
         mockMvc.perform(post("/api/v1/products/{id}/approve", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     // --- SKU API Tests ---
@@ -351,8 +355,8 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(imgReq)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("BUSINESS_ERROR"))
-                .andExpect(jsonPath("$.error.message").value("Product may have at most 5 images"));
+                .andExpect(jsonPath("$.code").value("BUSINESS_ERROR"))
+                .andExpect(jsonPath("$.message").value("Product may have at most 5 images"));
     }
 
     @Test
@@ -410,6 +414,6 @@ class ProductControllerTest {
                 .param("minPrice", "-10")
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.success").value(false));
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 }

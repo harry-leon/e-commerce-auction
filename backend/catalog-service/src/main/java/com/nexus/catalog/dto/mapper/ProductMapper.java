@@ -18,6 +18,10 @@ import org.mapstruct.MappingConstants;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.factory.Mappers;
 
+/**
+ * MapStruct sinh code chuyển DTO ↔ entity; sửa quy tắc tại interface này, không sửa file trong target/generated-sources.
+ * Khi tạo mới, giá trị tùy chọn có default để không ghi null đè mặc định entity; khi cập nhật bỏ qua field null.
+ */
 @Mapper(componentModel = MappingConstants.ComponentModel.SPRING)
 public interface ProductMapper {
 
@@ -32,6 +36,7 @@ public interface ProductMapper {
     @Mapping(target = "skus", ignore = true)
     @Mapping(target = "images", ignore = true)
     @Mapping(target = "status", constant = "DRAFT")
+    @Mapping(target = "auctionEnabled", source = "auctionEnabled", defaultValue = "false")
     Product toEntity(ProductRequest request);
 
     @Mapping(target = "id", ignore = true)
@@ -54,17 +59,21 @@ public interface ProductMapper {
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "product", ignore = true)
+    @Mapping(target = "status", source = "status", defaultValue = "ACTIVE")
     Sku toSkuEntity(SkuRequest request);
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "product", ignore = true)
+    @Mapping(target = "sortOrder", source = "sortOrder", defaultValue = "0")
     ProductImage toImageEntity(ImageRequest request);
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "product", ignore = true)
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateSkuFromRequest(SkuRequest request, @MappingTarget Sku sku);
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "product", ignore = true)
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateImageFromRequest(ImageRequest request, @MappingTarget ProductImage image);
 }

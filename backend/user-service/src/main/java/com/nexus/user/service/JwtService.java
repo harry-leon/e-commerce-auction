@@ -113,15 +113,32 @@ public class JwtService {
     }
 
     /**
-     * Giải mã và trích xuất claims từ JWT string.
+     * Xác minh JWT rồi mới trả claims: kiểm tra thuật toán HS256, chữ ký, thời hạn và issuer.
+     * AuthService tiếp tục kiểm tra token_type và token_version trong luồng refresh.
      *
      * @param token Chuỗi JWT token
      * @return JWTClaimsSet chứa các claims đã giải mã
      * @throws ParseException Nếu định dạng token không hợp lệ
+     * @throws IllegalArgumentException Nếu chữ ký, issuer hoặc thời hạn không hợp lệ
      */
     public JWTClaimsSet extractClaims(String token) throws ParseException {
         SignedJWT signedJwt = SignedJWT.parse(token);
-        return signedJwt.getJWTClaimsSet();
+        // Parse được JSON chưa chứng minh token hợp lệ; xác minh chữ ký trước khi tin các claims.
+        try {
+            if (!JWSAlgorithm.HS256.equals(signedJwt.getHeader().getAlgorithm())
+                    || !signedJwt.verify(new com.nimbusds.jose.crypto.MACVerifier(secretKey))) {
+                throw new IllegalArgumentException("Invalid token signature");
+            }
+        } catch (JOSEException exception) {
+            throw new IllegalArgumentException("Invalid token signature", exception);
+        }
+        JWTClaimsSet claims = signedJwt.getJWTClaimsSet();
+        // Token ký đúng nhưng hết hạn hoặc không do Nexus phát hành vẫn phải bị từ chối.
+        if (claims.getExpirationTime() == null || !claims.getExpirationTime().after(new Date())
+                || !"nexus-user-service".equals(claims.getIssuer())) {
+            throw new IllegalArgumentException("Token expired or issuer invalid");
+        }
+        return claims;
     }
 
     /**

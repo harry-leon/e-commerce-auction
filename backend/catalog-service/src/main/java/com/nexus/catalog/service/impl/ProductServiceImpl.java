@@ -144,7 +144,12 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional(readOnly = true)
     public ProductResponse getById(UUID id) {
-        return productMapper.toResponse(findProductById(id));
+        Product product = findProductById(id);
+        if (product.getStatus() != ProductStatus.ACTIVE) {
+            // Chi tiết ACTIVE được đọc công khai; sản phẩm chưa công bố phải qua kiểm tra chủ sở hữu/quản trị.
+            verifyProductOwnership(product);
+        }
+        return productMapper.toResponse(product);
     }
 
     @Override

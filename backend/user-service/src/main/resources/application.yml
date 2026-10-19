@@ -1,4 +1,20 @@
+# Luồng cấu hình: môi trường/ứng dụng → thử lấy cấu hình chung từ Config Server.
+# Import optional cho phép chạy từng service khi dev mà không bắt buộc dựng toàn bộ hạ tầng.
 spring:
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
+  # JavaMailSender dùng các thuộc tính này để gửi reset email; mặc định local trỏ Mailpit, không log token.
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:false}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
   application:
     name: ${SERVICE_NAME:user-service}
   profiles:
@@ -40,6 +56,9 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+  mail:
+    from: ${SMTP_FROM:noreply@nexus.local}
   security:
     # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
     jwt-secret: ${JWT_SECRET:nexus-default-dev-secret-key-must-be-32-characters-or-more}
@@ -47,3 +66,13 @@ app:
     refresh-token-expiry-days: ${REFRESH_TOKEN_EXPIRY_DAYS:7}
     max-login-attempts: ${MAX_LOGIN_ATTEMPTS:5}
     reset-password-expiry-minutes: ${RESET_PASSWORD_EXPIRY_MINUTES:15}
+
+# Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
+# Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.
+eureka:
+  client:
+    enabled: ${EUREKA_ENABLED:false}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
