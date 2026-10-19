@@ -8,8 +8,9 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
-public interface ProductRepository extends JpaRepository<Product, UUID> {
+public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpecificationExecutor<Product> {
     Page<Product> findByStatus(ProductStatus status, Pageable pageable);
     Page<Product> findBySellerId(UUID sellerId, Pageable pageable);
     Optional<ProductImage> findImagesById(UUID imageId);

@@ -6,11 +6,9 @@ package com.nexus.catalog.exception;
  */
 @Deprecated
 public class NotFoundException extends ResourceNotFoundException {
-
     public NotFoundException(String message) {
         super(message);
     }
-
     public NotFoundException(String code, String message) {
         super(code, message);
     }

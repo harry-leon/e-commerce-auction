@@ -3,6 +3,7 @@ package com.nexus.catalog.service.impl;
 import com.nexus.catalog.constant.ProductConstant;
 import com.nexus.catalog.dto.mapper.ProductMapper;
 import com.nexus.catalog.dto.request.ImageRequest;
+import com.nexus.catalog.dto.request.ProductFilterRequest;
 import com.nexus.catalog.dto.request.ProductRequest;
 import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
@@ -19,6 +20,7 @@ import com.nexus.catalog.repository.ProductImageRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import com.nexus.catalog.repository.SkuRepository;
 import com.nexus.catalog.service.ProductService;
+import com.nexus.catalog.specification.ProductSpecification;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import java.util.ArrayList;
@@ -29,6 +31,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.access.AccessDeniedException;
@@ -39,7 +42,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 @Service
 @Transactional
 public class ProductServiceImpl implements ProductService {
-
     private final ProductRepository productRepository;
     private final SkuRepository skuRepository;
     private final CategoryRepository categoryRepository;
@@ -68,7 +70,7 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException("Seller ID is required");
         }
         validateRequest(request);
-        
+
         Set<String> seenCodes = new HashSet<>();
         for (SkuRequest skuReq : request.skus()) {
             if (!seenCodes.add(skuReq.skuCode().toLowerCase())) {
@@ -98,12 +100,12 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public ProductResponse update(UUID id, ProductRequest request) {
-        // Validate request 
+        // Validate request
         validateRequest(request);
         Product product = findProductById(id);
         verifyProductOwnership(product);
         Set<String> existingCodes = product.getSkus().stream().map(Sku::getSkuCode).collect(Collectors.toSet());
-        
+
         // check dub
         Set<String> seenCodes = new HashSet<>();
         for (SkuRequest skuReq : request.skus()) {
@@ -119,7 +121,7 @@ public class ProductServiceImpl implements ProductService {
         }
         var category = categoryRepository.findById(request.categoryId())
                 .orElseThrow(() -> new NotFoundException("Category not found: " + request.categoryId()));
-        
+
         // save db
         productMapper.updateProductFromRequest(request, product);
         product.setCategory(category);
@@ -305,6 +307,21 @@ public class ProductServiceImpl implements ProductService {
         }
         return result;
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> search(ProductFilterRequest request, Pageable pageable) {
+        // Validate logic if have min and max
+        if (request != null && request.minPrice() != null && request.maxPrice() != null) {
+            if (request.minPrice().compareTo(request.maxPrice()) > 0) {
+                throw new BusinessException("minPrice cannot be greater than maxPrice");
+            }
+        }
+
+        Specification<Product> spec = ProductSpecification.build(request);
+        return productRepository.findAll(spec, pageable).map(productMapper::toResponse);
+    }
+
     // ==============
     // ====HEPPER========
     // ==============
@@ -342,7 +359,7 @@ public class ProductServiceImpl implements ProductService {
             return false;
         }
         return auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") 
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")
                             || a.getAuthority().equals("ADMIN"));
     }
 

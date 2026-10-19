@@ -1,6 +1,7 @@
 package com.nexus.catalog.service;
 
 import com.nexus.catalog.dto.request.ImageRequest;
+import com.nexus.catalog.dto.request.ProductFilterRequest;
 import com.nexus.catalog.dto.request.ProductRequest;
 import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
@@ -30,4 +31,7 @@ public interface ProductService {
     ImageResponse addImage(UUID productId, ImageRequest request);
     ImageResponse updateImage(UUID imageId, ImageRequest request);
     void deleteImage(UUID imageId);
+
+    // Specification
+    Page<ProductResponse> search(ProductFilterRequest request, Pageable pageable);
 }
