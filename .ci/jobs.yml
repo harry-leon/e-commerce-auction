@@ -484,6 +484,7 @@ frontend-web:lint:
     - cd frontend-web && npm ci --prefer-offline --no-audit
     - npm run lint
     - npm run typecheck
+    - npm run format:check
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
@@ -504,7 +505,8 @@ frontend-web:test:
   script:
     - cd frontend-web && npm ci --prefer-offline --no-audit
     - npm run coverage
-  coverage: '/All files\s*\|\s*(\d+\.?\d*)/'
+  # GitLab hiển thị LINE coverage cùng chỉ số dùng cho gate, không lấy cột statements đầu bảng.
+  coverage: '/Lines\s*:\s*(\d+\.?\d*)%/'
   artifacts:
     when: always
     expire_in: 7 days
@@ -572,3 +574,52 @@ config-server:verify:
         - backend/config-server/**/*
         - .ci/**/*
         - .gitlab-ci.yml
+
+# Build và push image hạ tầng sau khi các job validate/test thành công.
+discovery-server:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/discovery-server:$CI_COMMIT_SHORT_SHA" backend/discovery-server
+    - docker push "$CI_REGISTRY_IMAGE/discovery-server:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/discovery-server:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/discovery-server:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/discovery-server:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ] || [ "$CI_COMMIT_BRANCH" = "dev" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/discovery-server:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/discovery-server:develop"
+        docker push "$CI_REGISTRY_IMAGE/discovery-server:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/discovery-server/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG
+
+
+# Build và push image hạ tầng sau khi các job validate/test thành công.
+config-server:image:
+  extends: .docker-base
+  stage: package
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE/config-server:$CI_COMMIT_SHORT_SHA" backend/config-server
+    - docker push "$CI_REGISTRY_IMAGE/config-server:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/config-server:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/config-server:$CI_COMMIT_TAG"
+        docker push "$CI_REGISTRY_IMAGE/config-server:$CI_COMMIT_TAG"
+      elif [ "$CI_COMMIT_BRANCH" = "develop" ] || [ "$CI_COMMIT_BRANCH" = "dev" ]; then
+        docker tag "$CI_REGISTRY_IMAGE/config-server:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/config-server:develop"
+        docker push "$CI_REGISTRY_IMAGE/config-server:develop"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main"
+      changes:
+          - backend/config-server/**/*
+          - .gitlab-ci.yml
+          - .ci/**/*
+    - if: $CI_COMMIT_TAG

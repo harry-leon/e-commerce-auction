@@ -25,4 +25,5 @@
   services: [docker:27-dind]
   cache: []
   variables:
+    DOCKER_BUILDKIT: "1"
     DOCKER_TLS_CERTDIR: "/certs"
