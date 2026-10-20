@@ -1,0 +1,505 @@
+openapi: 3.0.3
+info:
+  title: Fulfillment Service - Inventory API
+  description: >
+    Hợp đồng giao tiếp API tồn kho và giữ hàng (Inventory API Contract & DTOs)
+    phục vụ tích hợp giữa Commerce Service, Payment và Fulfillment Service theo Sprint Task [KH-S1-1].
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Qua API Gateway (Local Dev)
+  - url: http://localhost:8085/api/v1
+    description: Trực tiếp Fulfillment Service
+
+paths:
+  /inventory/check:
+    post:
+      summary: Kiểm tra số lượng tồn kho khả dụng cho danh sách SKU
+      description: Tiếp nhận danh sách sku_id, warehouse_id (tùy chọn) và quantity để xác định khả năng đáp ứng đơn hàng.
+      operationId: checkStock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryCheckRequest'
+      responses:
+        '200':
+          description: Kiểm tra tồn kho thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_InventoryCheckResponse'
+        '400':
+          description: Dữ liệu yêu cầu không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /inventory/reservations:
+    post:
+      summary: Tạo phiếu giữ hàng tạm thời (Reservation) khi checkout
+      description: Nhận thông tin order_id, danh sách SKU, số lượng yêu cầu và thời gian hết hạn (expires_at) để tạm giữ tồn kho.
+      operationId: createReservation
+      security:
+        - bearer-jwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReservationRequest'
+      responses:
+        '201':
+          description: Tạo phiếu giữ hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_ReservationResponse'
+        '400':
+          description: Dữ liệu yêu cầu không hợp lệ (VALIDATION_ERROR)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Mã SKU không tồn tại (ERR_SKU_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Không đủ tồn kho khả dụng (ERR_INSUFFICIENT_STOCK)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /inventory/reservations/{id}:
+    get:
+      summary: Tra cứu chi tiết phiếu giữ hàng
+      description: Lấy thông tin chi tiết và trạng thái của phiếu giữ hàng theo mã định danh (id).
+      operationId: getReservation
+      security:
+        - bearer-jwt: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Mã UUID của phiếu giữ hàng
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Tra cứu thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_ReservationResponse'
+        '404':
+          description: Không tìm thấy phiếu giữ hàng (ERR_RESERVATION_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /inventory/reservations/{id}/commit:
+    post:
+      summary: Xác nhận xuất kho chính thức (Commit Reservation)
+      description: Chuyển trạng thái phiếu sang CONFIRMED và trừ tồn vật lý sau khi thanh toán thành công (InventoryCommitted).
+      operationId: commitReservation
+      security:
+        - bearer-jwt: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Mã UUID của phiếu giữ hàng
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitReservationRequest'
+      responses:
+        '200':
+          description: Xác nhận xuất kho thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_ReservationResponse'
+        '400':
+          description: Trạng thái phiếu giữ hàng không hợp lệ (ERR_INVALID_RESERVATION_STATUS)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy phiếu giữ hàng (ERR_RESERVATION_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '410':
+          description: Phiếu giữ hàng đã quá hạn hiệu lực (ERR_RESERVATION_EXPIRED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /inventory/reservations/{id}/release:
+    post:
+      summary: Hủy giữ hàng và hoàn kho (Release Reservation)
+      description: Giải phóng số lượng đang giữ và hoàn trả vào tồn khả dụng khi đơn hàng bị hủy hoặc quá hạn (InventoryReleased).
+      operationId: releaseReservation
+      security:
+        - bearer-jwt: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Mã UUID của phiếu giữ hàng
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseReservationRequest'
+      responses:
+        '200':
+          description: Hủy giữ hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_ReservationResponse'
+        '400':
+          description: Không thể release phiếu đã CONFIRMED (ERR_INVALID_RESERVATION_STATUS)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy phiếu giữ hàng (ERR_RESERVATION_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /inventory/sku/{skuId}:
+    get:
+      summary: Tra cứu số lượng tồn kho theo SKU
+      description: Lấy thông tin tổng tồn, số lượng đang giữ và số lượng khả dụng của một SKU.
+      operationId: getSkuInventory
+      parameters:
+        - name: skuId
+          in: path
+          required: true
+          description: Mã UUID của SKU
+          schema:
+            type: string
+            format: uuid
+        - name: warehouseId
+          in: query
+          required: false
+          description: Mã UUID của kho hàng (tùy chọn)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Tra cứu thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse_SkuInventoryResponse'
+        '404':
+          description: Không tìm thấy SKU (ERR_SKU_NOT_FOUND)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+components:
+  securitySchemes:
+    bearer-jwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    MetaInfo:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-20T09:30:00Z'
+        requestId:
+          type: string
+          example: 'req-001'
+        version:
+          type: string
+          example: 'v1'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          example: 'ERR_INSUFFICIENT_STOCK'
+        message:
+          type: string
+          example: 'Không đủ tồn kho khả dụng'
+        details:
+          type: object
+
+    ApiError:
+      type: object
+      properties:
+        code:
+          type: string
+          example: 'ERR_INSUFFICIENT_STOCK'
+        message:
+          type: string
+          example: 'Không đủ tồn kho khả dụng cho SKU'
+        details:
+          type: array
+          items:
+            type: string
+          example: ['skuId: a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d, requested: 10, available: 2']
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-20T09:30:00Z'
+
+    InventoryCheckItemRequest:
+      type: object
+      required:
+        - skuId
+        - quantity
+      properties:
+        skuId:
+          type: string
+          format: uuid
+          example: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d'
+        warehouseId:
+          type: string
+          format: uuid
+          example: 'f8c3de3d-1fea-4d7c-a8b0-29f63c4c3454'
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+
+    InventoryCheckRequest:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryCheckItemRequest'
+
+    InventoryCheckItemResult:
+      type: object
+      properties:
+        skuId:
+          type: string
+          format: uuid
+        warehouseId:
+          type: string
+          format: uuid
+        requestedQuantity:
+          type: integer
+        availableQuantity:
+          type: integer
+        available:
+          type: boolean
+
+    InventoryCheckResponse:
+      type: object
+      properties:
+        available:
+          type: boolean
+          example: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InventoryCheckItemResult'
+
+    ApiResponse_InventoryCheckResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/InventoryCheckResponse'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        meta:
+          $ref: '#/components/schemas/MetaInfo'
+
+    ReservationItemRequest:
+      type: object
+      required:
+        - skuId
+        - quantity
+      properties:
+        skuId:
+          type: string
+          format: uuid
+          example: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d'
+        warehouseId:
+          type: string
+          format: uuid
+          example: 'f8c3de3d-1fea-4d7c-a8b0-29f63c4c3454'
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+
+    CreateReservationRequest:
+      type: object
+      required:
+        - orderId
+        - items
+      properties:
+        orderId:
+          type: string
+          format: uuid
+          example: '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+        refType:
+          type: string
+          enum: [ORDER, AUCTION]
+          default: ORDER
+          example: 'ORDER'
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-10-20T10:00:00Z'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReservationItemRequest'
+
+    ReservationItemResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        skuId:
+          type: string
+          format: uuid
+        warehouseId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+
+    ReservationResponse:
+      type: object
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+          example: '550e8400-e29b-41d4-a716-446655440000'
+        orderId:
+          type: string
+          format: uuid
+          example: '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+        refType:
+          type: string
+          enum: [ORDER, AUCTION]
+        status:
+          type: string
+          enum: [PENDING, CONFIRMED, RELEASED, EXPIRED]
+          example: 'PENDING'
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReservationItemResponse'
+
+    ApiResponse_ReservationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/ReservationResponse'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        meta:
+          $ref: '#/components/schemas/MetaInfo'
+
+    CommitReservationRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          example: 'PAYMENT_SUCCESS'
+
+    ReleaseReservationRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          example: 'ORDER_CANCELLED'
+
+    SkuInventoryResponse:
+      type: object
+      properties:
+        skuId:
+          type: string
+          format: uuid
+        warehouseId:
+          type: string
+          format: uuid
+        totalQuantity:
+          type: integer
+          example: 100
+        reservedQuantity:
+          type: integer
+          example: 15
+        unavailableQuantity:
+          type: integer
+          example: 5
+        availableQuantity:
+          type: integer
+          example: 80
+
+    ApiResponse_SkuInventoryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/SkuInventoryResponse'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        meta:
+          $ref: '#/components/schemas/MetaInfo'
