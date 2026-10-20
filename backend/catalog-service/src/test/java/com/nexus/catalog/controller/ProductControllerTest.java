@@ -11,7 +11,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
+import com.nexus.catalog.dto.request.ProductFilterRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.catalog.config.SecurityConfig;
 import com.nexus.catalog.dto.request.ImageRequest;
@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
@@ -381,5 +382,38 @@ class ProductControllerTest {
         mockMvc.perform(delete("/api/v1/products/images/{imageId}", imageId)
                         .with(withUser(sellerId, "PRODUCT.DELETE")))
                 .andExpect(status().isNoContent());
+    }
+    // --- Search & Filter Endpoint Tests ---
+    @Test
+    void search_ValidQueryParams_Returns200AndApiResponseList() throws Exception {
+        // Arrange
+        PageRequest pageable = PageRequest.of(0, 20);
+        Page<ProductResponse> page = new PageImpl<>(List.of(sampleResponse), pageable, 1);
+        when(productService.search(any(ProductFilterRequest.class), any()))
+            .thenReturn(page);
+        // Act & Assert
+        mockMvc.perform(get("/api/v1/products/search")
+                .param("keyword", "test")
+                .param("minPrice", "10")
+                .param("maxPrice", "100")
+                .param("page", "0")
+                .param("size", "20")
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.success").value(true))
+            .andExpect(jsonPath("$.data").isArray())
+            .andExpect(jsonPath("$.data[0].id").value(productId.toString()))
+            .andExpect(jsonPath("$.meta.page").value(0))
+            .andExpect(jsonPath("$.meta.pageSize").value(20))
+            .andExpect(jsonPath("$.meta.total").value(1));
+    }
+    @Test
+    void search_NegativeMinPrice_Returns400BadRequest() throws Exception {
+        // Act & Assert: param minPrice âm vi phạm @Min(0)
+        mockMvc.perform(get("/api/v1/products/search")
+                .param("minPrice", "-10")
+                .contentType(MediaType.APPLICATION_JSON))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 }

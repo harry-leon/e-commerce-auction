@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,6 +45,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import com.nexus.catalog.dto.request.ProductFilterRequest;
+import org.springframework.data.jpa.domain.Specification;
 
 class ProductServiceTest {
 
@@ -443,6 +446,55 @@ class ProductServiceTest {
 
         assertThrows(AccessDeniedException.class,
                 () -> productService.deleteSku(sku.getId()));
+    }
+
+    // --- Search & Filter Tests ---
+    @Test
+    void search_ValidCriteria_Success() {
+        // Arrange
+        ProductFilterRequest filter = new ProductFilterRequest(
+            "laptop", category.getId(), new BigDecimal("100"), new BigDecimal("500"), ProductStatus.ACTIVE
+        );
+        PageRequest pageable = PageRequest.of(0, 10);
+        Product product = new Product();
+        product.setName("Laptop Gaming");
+        product.setCategory(category);
+        product.setStatus(ProductStatus.ACTIVE);
+        when(productRepository.findAll(any(Specification.class), eq(pageable)))
+            .thenReturn(new PageImpl<>(List.of(product), pageable, 1));
+        // Act
+        Page<ProductResponse> result = productService.search(filter, pageable);
+        // Assert
+        assertEquals(1, result.getTotalElements());
+        assertEquals("Laptop Gaming", result.getContent().get(0).name());
+        verify(productRepository).findAll(any(Specification.class), eq(pageable));
+    }
+    @Test
+    void search_MinPriceGreaterThanMaxPrice_ThrowsBusinessException() {
+        // Arrange
+        ProductFilterRequest invalidFilter = new ProductFilterRequest(
+            null, null, new BigDecimal("500"), new BigDecimal("100"), null
+        );
+        PageRequest pageable = PageRequest.of(0, 10);
+        // Act & Assert
+        BusinessException exception = assertThrows(
+            BusinessException.class,
+            () -> productService.search(invalidFilter, pageable)
+        );
+        assertEquals("minPrice cannot be greater than maxPrice", exception.getMessage());
+        verify(productRepository, never()).findAll(any(Specification.class), any(PageRequest.class));
+    }
+    @Test
+    void search_NullCriteria_ReturnsDefaultActiveProducts() {
+        // Arrange
+        PageRequest pageable = PageRequest.of(0, 10);
+        when(productRepository.findAll(any(Specification.class), eq(pageable)))
+            .thenReturn(Page.empty(pageable));
+        // Act
+        Page<ProductResponse> result = productService.search(null, pageable);
+        // Assert
+        assertTrue(result.isEmpty());
+        verify(productRepository).findAll(any(Specification.class), eq(pageable));
     }
 }
 

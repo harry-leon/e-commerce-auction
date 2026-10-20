@@ -1,6 +1,7 @@
 package com.nexus.catalog.controller;
 
 import com.nexus.catalog.dto.request.ImageRequest;
+import com.nexus.catalog.dto.request.ProductFilterRequest;
 import com.nexus.catalog.dto.request.ProductRequest;
 import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
@@ -16,6 +17,8 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -145,6 +148,16 @@ public class ProductController {
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPPORT') or hasAnyAuthority('PRODUCT.UPDATE', 'ADMIN', 'SUPPORT', 'ROLE_ADMIN', 'ROLE_SUPPORT')")
     public ApiResponse<ProductResponse> approve(@PathVariable UUID id) {
         return ApiResponse.ok(productService.approve(id));
+    }
+
+    // search specification product
+    @Operation(summary = "Search and filter products", description = "Search products by keyword/category, filter by price, and support sort & pagination.")
+    @GetMapping("/search")
+    public ApiResponse<List<ProductResponse>> search(
+        @Valid ProductFilterRequest filterRequest,
+        @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        return ApiResponse.ok(productService.search(filterRequest, pageable));
     }
 
     // --- SKU Endpoints ---

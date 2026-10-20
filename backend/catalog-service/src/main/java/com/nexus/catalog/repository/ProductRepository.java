@@ -8,9 +8,10 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 /** JpaSpecificationExecutor ghép bộ lọc tìm kiếm; các truy vấn dưới đây hỗ trợ CRUD và quy tắc xóa danh mục. */
-public interface ProductRepository extends JpaRepository<Product, UUID>, org.springframework.data.jpa.repository.JpaSpecificationExecutor<Product> {
+public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpecificationExecutor<Product> {
     Page<Product> findByStatus(ProductStatus status, Pageable pageable);
     Page<Product> findBySellerId(UUID sellerId, Pageable pageable);
     // Truy vấn Image trực tiếp bằng JPQL; tránh để Spring suy diễn phương thức thành truy vấn trả entity Product.

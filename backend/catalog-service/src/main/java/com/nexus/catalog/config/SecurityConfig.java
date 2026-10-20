@@ -35,7 +35,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
-                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/products", "/api/v1/products/{id}", "/api/v1/categories/**").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/products/**", "/api/v1/categories/**").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();
