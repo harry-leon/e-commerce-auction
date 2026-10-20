@@ -45,7 +45,8 @@ import {
 import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
-import type { OrderStatus } from '../../types'
+import type { Order, OrderStatus } from '../../types'
+import { ordersApi } from '../../api/orders'
 
 function getAuctionCurrentBid(auction: unknown) {
     if (!auction || typeof auction !== 'object') return 0
@@ -1647,22 +1648,40 @@ export function PaymentResultPage() {
 }
 
 // ─── Order History Page ─────────────────────────────────────────────────────────
+/**
+ * Màn hình Lịch sử đơn hàng của Buyer (SRS 3.2.1 & ORDER-02).
+ * 
+ * Chức năng: Hiển thị danh sách các đơn hàng đã mua của Buyer theo phân loại trạng thái,
+ * cho phép tìm kiếm theo mã đơn hoặc sản phẩm, hủy nhanh đơn chưa xử lý, và điều hướng vào xem chi tiết.
+ * 
+ * Đầu vào: Bộ lọc tab trạng thái (all, pending, paid, processing, shipped, delivered, completed, cancelled, refunded)
+ * và chuỗi từ khóa tìm kiếm.
+ * 
+ * Luồng xử lý:
+ * 1. Gọi `ordersApi.getOrders({ role: 'buyer', status, search })`.
+ * 2. Ưu tiên lấy từ REST API/DB; nếu không có kết nối thì fallback dữ liệu mock JSON trong localStorage.
+ * 3. Hỗ trợ thao tác hủy đơn trực tiếp (`ordersApi.cancelOrder`) với popup xác nhận và reload danh sách.
+ */
 export function OrderHistoryPage() {
-    const { lang, navigate } = useApp()
+    const { lang, navigate, showToast } = useApp()
+    const [orders, setOrders] = useState<Order[]>([])
     const [statusFilter, setStatusFilter] = useState<string>('all')
-    const [loading, setLoading] = useState(false)
+    const [searchQuery, setSearchQuery] = useState<string>('')
+    const [loading, setLoading] = useState<boolean>(true)
+    const [cancelOrderId, setCancelOrderId] = useState<string | null>(null)
+    const [cancelReason, setCancelReason] = useState<string>('')
 
     const STATUS_TABS = [
         { id: 'all', label: tr(lang, 'all') },
         { id: 'pending', label: tr(lang, 'statusPending') },
+        { id: 'paid', label: tr(lang, 'statusPaid') },
         { id: 'processing', label: tr(lang, 'statusProcessing') },
         { id: 'shipped', label: tr(lang, 'statusShipped') },
+        { id: 'delivered', label: tr(lang, 'statusDelivered') },
         { id: 'completed', label: tr(lang, 'statusCompleted') },
         { id: 'cancelled', label: tr(lang, 'statusCancelled') },
+        { id: 'refunded', label: tr(lang, 'statusRefunded') },
     ]
-
-    const filtered =
-        statusFilter === 'all' ? ORDERS : ORDERS.filter((o) => o.status === statusFilter)
 
     const statusLabel = (s: string) =>
         ({
@@ -1676,106 +1695,266 @@ export function OrderHistoryPage() {
             refunded: tr(lang, 'statusRefunded'),
         })[s] || s
 
+    // Tải danh sách đơn hàng từ API hoặc kho mock store
+    const loadOrders = async () => {
+        setLoading(true)
+        try {
+            const data = await ordersApi.getOrders({
+                role: 'buyer',
+                status: statusFilter,
+                search: searchQuery,
+            })
+            setOrders(data)
+        } catch {
+            setOrders([])
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        loadOrders()
+    }, [statusFilter, searchQuery])
+
+    // Xử lý xác nhận hủy đơn hàng
+    const handleConfirmCancel = async () => {
+        if (!cancelOrderId) return
+        try {
+            await ordersApi.cancelOrder(cancelOrderId, cancelReason)
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+            })
+            setCancelOrderId(null)
+            setCancelReason('')
+            await loadOrders()
+        } catch (err: any) {
+            showToast({
+                type: 'error',
+                message: err.message || (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
+            })
+        }
+    }
+
     return (
         <BuyerLayout>
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">{tr(lang, 'orderHistory')}</h1>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">{tr(lang, 'orderHistory')}</h1>
+                    <p className="text-sm text-gray-500 mt-1">
+                        {lang === 'en'
+                            ? 'Track, inspect and manage your placed purchases'
+                            : 'Theo dõi, tra cứu và quản lý các đơn hàng bạn đã mua'}
+                    </p>
+                </div>
+                <div className="w-full sm:w-72">
+                    <Input
+                        icon={<Search size={16} />}
+                        placeholder={
+                            lang === 'en'
+                                ? 'Search order ID or item...'
+                                : 'Tìm mã đơn hoặc tên sản phẩm...'
+                        }
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full"
+                    />
+                </div>
             </div>
+
             <div className="nexus-card">
                 <Tabs tabs={STATUS_TABS} active={statusFilter} onChange={setStatusFilter} />
-                <div className="p-4">
-                    {filtered.length === 0 ? (
+                <div className="p-4 sm:p-6">
+                    {loading ? (
+                        <div className="py-12 text-center text-gray-400">
+                            <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
+                            <p>{lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}</p>
+                        </div>
+                    ) : orders.length === 0 ? (
                         <EmptyState
-                            icon={<Package size={20} />}
+                            icon={<Package size={24} />}
                             title={tr(lang, 'noData')}
                             subtitle={
                                 lang === 'en'
-                                    ? 'No orders in this status.'
-                                    : 'Không có đơn hàng nào.'
+                                    ? 'No orders found matching the filter.'
+                                    : 'Không tìm thấy đơn hàng nào phù hợp với bộ lọc.'
                             }
                         />
                     ) : (
-                        filtered.map((order) => (
-                            <div
-                                key={order.id}
-                                className="border-b border-border last:border-0 py-5 first:pt-0"
-                            >
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center gap-3">
-                                        <StatusBadge
-                                            status={order.status}
-                                            label={statusLabel(order.status)}
-                                        />
-                                        <span className="font-mono text-sm text-gray-600">
-                                            {order.id}
-                                        </span>
-                                        <span className="text-xs text-gray-400">
-                                            {formatDate(order.createdAt, lang)}
-                                        </span>
-                                    </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => navigate('order-detail', { id: order.id })}
+                        <div className="space-y-5">
+                            {orders.map((order) => {
+                                const canCancel = ['pending', 'paid'].includes(order.status)
+                                return (
+                                    <div
+                                        key={order.id}
+                                        className="border border-border rounded-xl p-5 hover:border-primary/40 transition-colors bg-white"
                                     >
-                                        {tr(lang, 'orderDetail')} <ChevronRight size={14} />
-                                    </Button>
-                                </div>
-                                <div className="flex gap-4">
-                                    {order.items.map((item) => (
-                                        <div
-                                            key={item.productId}
-                                            className="flex items-center gap-3"
-                                        >
-                                            <img
-                                                src={item.image}
-                                                alt=""
-                                                className="w-14 h-14 object-cover rounded-lg"
-                                            />
-                                            <div>
-                                                <p className="text-sm font-semibold">
-                                                    {item.productName}
-                                                </p>
-                                                <p className="text-xs text-gray-400">
-                                                    ×{item.quantity} ·{' '}
-                                                    {formatCurrency(item.subtotal, lang)}
-                                                </p>
+                                        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border/60 mb-3">
+                                            <div className="flex items-center gap-3">
+                                                <StatusBadge
+                                                    status={order.status}
+                                                    label={statusLabel(order.status)}
+                                                />
+                                                <span className="font-mono font-semibold text-sm text-gray-800">
+                                                    {order.id}
+                                                </span>
+                                                <span className="text-xs text-gray-400">
+                                                    {formatDate(order.createdAt, lang)}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {canCancel && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="text-danger hover:bg-danger/10"
+                                                        onClick={() => setCancelOrderId(order.id)}
+                                                    >
+                                                        {tr(lang, 'cancelOrder')}
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => navigate('order-detail', { id: order.id })}
+                                                >
+                                                    {tr(lang, 'orderDetail')} <ChevronRight size={14} />
+                                                </Button>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                                <div className="flex items-center justify-between mt-3">
-                                    <span className="text-sm text-gray-500">
-                                        {lang === 'en'
-                                            ? `Sold by ${order.sellerName}`
-                                            : `Bởi ${order.sellerName}`}
-                                    </span>
-                                    <span className="font-bold text-primary">
-                                        {lang === 'en' ? 'Total: ' : 'Tổng: '}
-                                        {formatCurrency(order.total, lang)}
-                                    </span>
-                                </div>
-                            </div>
-                        ))
+
+                                        {/* Danh sách sản phẩm của đơn */}
+                                        <div className="space-y-3">
+                                            {order.items.map((item) => (
+                                                <div
+                                                    key={item.productId}
+                                                    className="flex items-center justify-between gap-4"
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <img
+                                                            src={item.image}
+                                                            alt=""
+                                                            className="w-14 h-14 object-cover rounded-lg border border-border"
+                                                        />
+                                                        <div>
+                                                            <p className="text-sm font-semibold text-gray-900 line-clamp-1">
+                                                                {item.productName}
+                                                            </p>
+                                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                                ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <span className="font-semibold text-sm text-gray-800 shrink-0">
+                                                        {formatCurrency(item.subtotal, lang)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="flex items-center justify-between pt-3 mt-3 border-t border-border/60">
+                                            <div className="text-xs text-gray-500">
+                                                <span>
+                                                    {lang === 'en'
+                                                        ? `Sold by ${order.sellerName}`
+                                                        : `Cung cấp bởi ${order.sellerName}`}
+                                                </span>
+                                                {order.shippingAddress && (
+                                                    <span className="hidden md:inline ml-3 text-gray-400">
+                                                        · {order.shippingAddress}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-right">
+                                                <span className="text-xs text-gray-500 mr-2">
+                                                    {lang === 'en' ? 'Total payable:' : 'Tổng thanh toán:'}
+                                                </span>
+                                                <span className="font-bold text-base text-primary">
+                                                    {formatCurrency(order.total, lang)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
                     )}
                 </div>
             </div>
+
+            {/* Modal xác nhận hủy đơn */}
+            <ConfirmModal
+                open={!!cancelOrderId}
+                onClose={() => setCancelOrderId(null)}
+                onConfirm={handleConfirmCancel}
+                title={tr(lang, 'confirmCancel')}
+                message={
+                    lang === 'en'
+                        ? 'Are you sure you want to cancel this order? This action will release inventory reservations and refund payments if applicable.'
+                        : 'Bạn có chắc chắn muốn hủy đơn hàng này? Thao tác này sẽ giải phóng kho hàng và hoàn tiền (nếu đã thanh toán).'
+                }
+                danger
+            />
         </BuyerLayout>
     )
 }
 
 // ─── Order Detail Page ─────────────────────────────────────────────────────────
+/**
+ * Màn hình Chi tiết đơn hàng của Buyer (SRS 3.2.1 & ORDER-02, ORDER-03, PAYMENT-01).
+ * 
+ * Chức năng: Hiển thị đầy đủ thông tin một đơn hàng: tiến trình timeline, sản phẩm, địa chỉ,
+ * thanh toán, trạng thái ký quỹ Escrow (Bảo vệ Buyer), vận chuyển tracking;
+ * cho phép Buyer thực hiện các hành động: Hủy đơn, Xác nhận đã nhận hàng (giải ngân Escrow),
+ * Mở khiếu nại (giữ tiền để Admin xử lý), và Đánh giá người bán.
+ * 
+ * Luồng dữ liệu:
+ * - Gọi `ordersApi.getOrderById(pageParams.id)` để lấy thông tin đơn hàng mới nhất từ API / Mock store.
+ * - Các tương tác hành động gọi API tương ứng trong `ordersApi` và cập nhật trực tiếp dữ liệu.
+ */
 export function OrderDetailPage() {
     const { lang, navigate, pageParams, showToast } = useApp()
-    const order = ORDERS.find((o) => o.id === pageParams?.id) || ORDERS[0]
+    const [order, setOrder] = useState<Order | null>(null)
+    const [loading, setLoading] = useState(true)
     const [cancelOpen, setCancelOpen] = useState(false)
     const [reviewOpen, setReviewOpen] = useState(false)
-    const [rating, setRating] = useState(0)
+    const [rating, setRating] = useState(5)
     const [comment, setComment] = useState('')
     const [reviewed, setReviewed] = useState(false)
-    const [paymentStatus, setPaymentStatus] = useState(getEffectivePaymentStatus(order))
     const [disputeOpen, setDisputeOpen] = useState(false)
     const [disputeReason, setDisputeReason] = useState('')
+
+    // Nạp chi tiết đơn hàng
+    const loadDetail = async () => {
+        setLoading(true)
+        try {
+            const targetId = (pageParams?.id as string) || 'ORD-20240215-001'
+            const data = await ordersApi.getOrderById(targetId)
+            if (data) {
+                setOrder(data)
+                setReviewed(Boolean(data.reviewed))
+            }
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        loadDetail()
+    }, [pageParams?.id])
+
+    if (loading || !order) {
+        return (
+            <BuyerLayout>
+                <div className="py-20 text-center text-gray-500">
+                    <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-3" />
+                    <p>{lang === 'en' ? 'Loading order details...' : 'Đang tải chi tiết đơn hàng...'}</p>
+                </div>
+            </BuyerLayout>
+        )
+    }
+
+    const paymentStatus = getEffectivePaymentStatus(order)
 
     const statusLabel = (s: string) =>
         ({
@@ -1798,28 +1977,64 @@ export function OrderDetailPage() {
         : 0
     const isProtectionActive = order.status === 'delivered' && paymentStatus === 'protection_period'
 
-    const confirmDelivery = () => {
-        setPaymentStatus('released')
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? 'Order confirmed. Payment has been released to the seller.'
-                    : 'Đã xác nhận đơn hàng. Tiền đã được chuyển vào số dư người bán.',
-        })
+    // Xác nhận đã nhận hàng -> chuyển sang completed và giải ngân tiền cho Seller
+    const confirmDelivery = async () => {
+        try {
+            const updated = await ordersApi.confirmOrderDelivery(order.id)
+            setOrder(updated)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Order confirmed. Payment has been released to the seller.'
+                        : 'Đã xác nhận nhận hàng. Khoản tiền đã được giải ngân cho người bán.',
+            })
+        } catch {
+            showToast({
+                type: 'error',
+                message: lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
+            })
+        }
     }
 
-    const submitDispute = () => {
+    // Mở khiếu nại đơn hàng -> chuyển tiền sang on_hold để Admin xử lý
+    const submitDispute = async () => {
         if (!disputeReason.trim()) return
-        setPaymentStatus('on_hold')
-        setDisputeOpen(false)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? 'Dispute submitted. Payment remains on hold for admin review.'
-                    : 'Đã gửi khiếu nại. Khoản thanh toán tiếp tục được giữ để Admin xử lý.',
-        })
+        try {
+            const updated = await ordersApi.submitOrderDispute(order.id, disputeReason)
+            setOrder(updated)
+            setDisputeOpen(false)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Dispute submitted. Payment remains on hold for admin review.'
+                        : 'Đã gửi khiếu nại. Khoản thanh toán tiếp tục được giữ để Admin xử lý.',
+            })
+        } catch {
+            showToast({
+                type: 'error',
+                message: lang === 'en' ? 'Failed to submit dispute.' : 'Không thể gửi khiếu nại.',
+            })
+        }
+    }
+
+    // Hủy đơn hàng
+    const handleCancelOrder = async () => {
+        try {
+            const updated = await ordersApi.cancelOrder(order.id, 'Buyer requested cancellation')
+            setOrder(updated)
+            setCancelOpen(false)
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+            })
+        } catch {
+            showToast({
+                type: 'error',
+                message: lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.',
+            })
+        }
     }
 
     return (
@@ -1833,10 +2048,10 @@ export function OrderDetailPage() {
                     { label: order.id },
                 ]}
             />
-            <div className="mt-5 grid grid-cols-[1fr_360px] gap-6">
+            <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
                 <div className="space-y-5">
-                    {/* Header */}
-                    <div className="nexus-card p-5 flex items-center justify-between">
+                    {/* Header đơn hàng */}
+                    <div className="nexus-card p-5 flex flex-wrap items-center justify-between gap-4">
                         <div>
                             <div className="flex items-center gap-3 mb-1">
                                 <StatusBadge
@@ -1869,97 +2084,104 @@ export function OrderDetailPage() {
                         </div>
                     </div>
 
-                    {/* Items */}
+                    {/* Danh sách sản phẩm mua */}
                     <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-4">{lang === 'en' ? 'Items' : 'Sản phẩm'}</h3>
-                        {order.items.map((item) => (
-                            <div
-                                key={item.productId}
-                                className="flex gap-4 py-3 border-b border-border last:border-0"
-                            >
-                                <img
-                                    src={item.image}
-                                    alt=""
-                                    className="w-16 h-16 object-cover rounded-xl"
-                                />
-                                <div className="flex-1">
-                                    <p className="font-semibold">{item.productName}</p>
-                                    <p className="text-sm text-gray-500">
-                                        ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                        <h3 className="font-bold mb-4">{lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}</h3>
+                        <div className="divide-y divide-border/60">
+                            {order.items.map((item) => (
+                                <div
+                                    key={item.productId}
+                                    className="flex gap-4 py-3 first:pt-0 last:pb-0"
+                                >
+                                    <img
+                                        src={item.image}
+                                        alt=""
+                                        className="w-16 h-16 object-cover rounded-xl border border-border shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-semibold text-gray-900 line-clamp-1">{item.productName}</p>
+                                        <p className="text-sm text-gray-500 mt-1">
+                                            ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                        </p>
+                                    </div>
+                                    <p className="font-bold text-primary shrink-0">
+                                        {formatCurrency(item.subtotal, lang)}
                                     </p>
                                 </div>
-                                <p className="font-bold text-primary">
-                                    {formatCurrency(item.subtotal, lang)}
-                                </p>
-                            </div>
-                        ))}
-                        <div className="pt-3 space-y-1.5 text-sm">
-                            {[
-                                [tr(lang, 'subtotal'), order.subtotal],
-                                [tr(lang, 'shipping'), order.shipping],
-                                [tr(lang, 'tax'), order.tax],
-                                ...(order.discount > 0
-                                    ? [[tr(lang, 'discount'), -order.discount]]
-                                    : []),
-                            ].map(([k, v]) => (
-                                <div key={String(k)} className="flex justify-between text-gray-600">
-                                    <span>{k}</span>
-                                    <span>
-                                        {typeof v === 'number' && v < 0
-                                            ? `-${formatCurrency(-v, lang)}`
-                                            : formatCurrency(Number(v), lang)}
-                                    </span>
-                                </div>
                             ))}
-                            <div className="flex justify-between font-bold text-base text-gray-900 border-t border-border pt-2 mt-1">
+                        </div>
+
+                        {/* Tổng kết chi phí */}
+                        <div className="pt-4 border-t border-border mt-4 space-y-2 text-sm">
+                            <div className="flex justify-between text-gray-600">
+                                <span>{tr(lang, 'subtotal')}</span>
+                                <span>{formatCurrency(order.subtotal, lang)}</span>
+                            </div>
+                            <div className="flex justify-between text-gray-600">
+                                <span>{tr(lang, 'shipping')}</span>
+                                <span>{formatCurrency(order.shipping, lang)}</span>
+                            </div>
+                            <div className="flex justify-between text-gray-600">
+                                <span>{tr(lang, 'tax')}</span>
+                                <span>{formatCurrency(order.tax, lang)}</span>
+                            </div>
+                            {order.discount > 0 && (
+                                <div className="flex justify-between text-green-600">
+                                    <span>{tr(lang, 'discount')}</span>
+                                    <span>-{formatCurrency(order.discount, lang)}</span>
+                                </div>
+                            )}
+                            <div className="flex justify-between font-bold text-base text-gray-900 border-t border-border pt-3 mt-1">
                                 <span>{tr(lang, 'total')}</span>
-                                <span className="text-primary">
+                                <span className="text-primary text-lg">
                                     {formatCurrency(order.total, lang)}
                                 </span>
                             </div>
                         </div>
                     </div>
 
-                    {/* Order timeline */}
+                    {/* Timeline tiến trình đơn hàng */}
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Order Status' : 'Trạng thái đơn hàng'}
+                            {lang === 'en' ? 'Order Status Timeline' : 'Tiến trình trạng thái đơn hàng'}
                         </h3>
                         <OrderTimeline status={order.status} />
                     </div>
 
+                    {/* Thời hạn bảo vệ người mua (Buyer Protection) */}
                     {isProtectionActive && (
-                        <div className="nexus-card p-5 border-primary/30">
-                            <div className="flex items-start justify-between gap-6">
+                        <div className="nexus-card p-5 border-primary/40 bg-primary/5">
+                            <div className="flex flex-col sm:flex-row items-start justify-between gap-6">
                                 <div>
                                     <div className="flex items-center gap-2 mb-2">
-                                        <Shield size={18} className="text-gray-500" />
-                                        <h3 className="font-bold">
+                                        <Shield size={20} className="text-primary" />
+                                        <h3 className="font-bold text-gray-900">
                                             {lang === 'en'
-                                                ? '7-day buyer protection'
-                                                : 'Bảo vệ người mua trong 7 ngày'}
+                                                ? '7-day buyer protection escrow'
+                                                : 'Bảo vệ người mua & Giữ tiền an toàn trong 7 ngày'}
                                         </h3>
                                     </div>
                                     <p className="text-sm text-gray-600">
                                         {lang === 'en'
-                                            ? `Payment is held by Nexus for ${protectionDays} more day(s). Confirm the item or submit a return/dispute before the protection period ends.`
-                                            : `Nexus tiếp tục giữ tiền trong ${protectionDays} ngày. Hãy xác nhận hàng hoặc gửi yêu cầu trả hàng/khiếu nại trước khi thời gian bảo vệ kết thúc.`}
+                                            ? `Payment is safely held by Nexus for ${protectionDays} more day(s). Confirm satisfactory goods to release payment, or submit a return/dispute.`
+                                            : `Tiền của bạn đang được giữ an toàn tại Nexus thêm ${protectionDays} ngày. Vui lòng kiểm tra hàng và xác nhận hài lòng để thanh toán cho người bán, hoặc yêu cầu khiếu nại nếu hàng có vấn đề.`}
                                     </p>
                                     {order.protectionEndsAt && (
-                                        <p className="text-xs text-gray-400 mt-2">
-                                            {lang === 'en' ? 'Protection ends' : 'Kết thúc bảo vệ'}:{' '}
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            {lang === 'en' ? 'Auto release at' : 'Tự động giải ngân lúc'}:{' '}
                                             {new Date(order.protectionEndsAt).toLocaleString()}
                                         </p>
                                     )}
                                 </div>
-                                <div className="flex flex-col gap-2 shrink-0">
-                                    <Button variant="primary" size="sm" onClick={confirmDelivery}>
-                                        {lang === 'en' ? 'Confirm Item' : 'Xác nhận hàng'}
+                                <div className="flex sm:flex-col gap-2 shrink-0 w-full sm:w-auto">
+                                    <Button variant="primary" size="sm" onClick={confirmDelivery} className="flex-1 sm:flex-initial">
+                                        {lang === 'en' ? 'Confirm Received' : 'Xác nhận đã nhận hàng'}
                                     </Button>
                                     <Button
                                         variant="outline"
                                         size="sm"
                                         onClick={() => setDisputeOpen(true)}
+                                        className="flex-1 sm:flex-initial"
                                     >
                                         {lang === 'en'
                                             ? 'Return / Dispute'
@@ -1975,8 +2197,8 @@ export function OrderDetailPage() {
                             type="warning"
                             message={
                                 lang === 'en'
-                                    ? 'Payment is on hold while Admin reviews the dispute.'
-                                    : 'Khoản thanh toán đang được giữ trong khi Admin xử lý khiếu nại.'
+                                    ? `Payment is on hold while Admin reviews the dispute: "${order.disputeReason || 'Customer reported issue'}"`
+                                    : `Khoản thanh toán đang được giữ lại để Admin thụ lý khiếu nại: "${order.disputeReason || 'Khách hàng báo cáo sự cố'}"`
                             }
                         />
                     )}
@@ -1986,22 +2208,23 @@ export function OrderDetailPage() {
                             type="success"
                             message={
                                 lang === 'en'
-                                    ? 'Order completed. Payment has been released to the seller balance.'
-                                    : 'Đơn hàng đã hoàn tất. Tiền đã được chuyển vào số dư người bán.'
+                                    ? 'Order successfully completed. Payment has been released to the seller.'
+                                    : 'Đơn hàng đã hoàn tất thành công. Tiền ký quỹ đã được chuyển vào số dư người bán.'
                             }
                         />
                     )}
 
-                    {/* Shipment tracking */}
+                    {/* Theo dõi vận chuyển */}
                     {order.shipment && (
                         <div className="nexus-card p-5">
                             <div className="flex items-center justify-between mb-4">
-                                <h3 className="font-bold">
-                                    {lang === 'en' ? 'Shipment Tracking' : 'Theo dõi vận chuyển'}
+                                <h3 className="font-bold flex items-center gap-2">
+                                    <Truck size={18} className="text-primary" />
+                                    {lang === 'en' ? 'Shipment Tracking' : 'Hành trình vận chuyển'}
                                 </h3>
                                 <div className="text-sm text-gray-500">
                                     {order.shipment.carrier} ·{' '}
-                                    <span className="font-mono">
+                                    <span className="font-mono font-semibold">
                                         {order.shipment.trackingNumber}
                                     </span>
                                 </div>
@@ -2036,14 +2259,14 @@ export function OrderDetailPage() {
                         </div>
                     )}
 
-                    {/* Review */}
+                    {/* Đánh giá đơn hàng */}
                     {order.status === 'delivered' && !reviewed && (
                         <div className="nexus-card p-5 border-primary/20 bg-primary-light/30">
                             <h3 className="font-bold mb-2">{tr(lang, 'leaveReview')}</h3>
                             <p className="text-sm text-gray-500 mb-3">
                                 {lang === 'en'
-                                    ? 'How was your purchase?'
-                                    : 'Trải nghiệm mua hàng của bạn như thế nào?'}
+                                    ? 'How was your purchase? Share your experience with others.'
+                                    : 'Trải nghiệm mua sắm của bạn thế nào? Hãy chia sẻ đánh giá của bạn.'}
                             </p>
                             <Button variant="primary" size="sm" onClick={() => setReviewOpen(true)}>
                                 {tr(lang, 'leaveReview')}
@@ -2055,17 +2278,19 @@ export function OrderDetailPage() {
                     )}
                 </div>
 
-                <div className="space-y-4">
+                {/* Sidebar thông tin người bán, địa chỉ, thanh toán */}
+                <div className="space-y-5">
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'shippingAddress')}</h3>
-                        <p className="text-sm text-gray-700">{order.shippingAddress}</p>
+                        <p className="text-sm text-gray-700 leading-relaxed">{order.shippingAddress}</p>
                     </div>
+
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'payment')}</h3>
                         <p className="text-sm text-gray-700">{order.paymentMethod}</p>
-                        <div className="mt-3 flex items-center justify-between">
+                        <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
                             <span className="text-xs text-gray-500">
-                                {lang === 'en' ? 'Escrow status' : 'Trạng thái tiền giữ hộ'}
+                                {lang === 'en' ? 'Escrow status' : 'Trạng thái ký quỹ Escrow'}
                             </span>
                             <StatusBadge
                                 status={paymentStatus}
@@ -2077,16 +2302,19 @@ export function OrderDetailPage() {
                                                 ? 'Buyer protection'
                                                 : 'Đang bảo vệ Buyer',
                                         released: lang === 'en' ? 'Released' : 'Đã giải ngân',
-                                        on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ',
+                                        on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ khiếu nại',
                                         refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
                                         partial_refund:
                                             lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
-                                    }[paymentStatus]
+                                    }[paymentStatus] || paymentStatus
                                 }
                             />
                         </div>
                         {order.refundStatus !== 'none' && (
-                            <div className="mt-3">
+                            <div className="mt-2 flex items-center justify-between">
+                                <span className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Refund progress' : 'Tiến trình hoàn tiền'}
+                                </span>
                                 <StatusBadge
                                     status={order.refundStatus}
                                     label={
@@ -2098,31 +2326,30 @@ export function OrderDetailPage() {
                             </div>
                         )}
                     </div>
+
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-2">{tr(lang, 'seller')}</h3>
-                        <p className="text-sm font-semibold">{order.sellerName}</p>
+                        <p className="text-sm font-semibold text-gray-800">{order.sellerName}</p>
+                        <p className="text-xs text-gray-400 mt-1">ID: {order.sellerId}</p>
                     </div>
                 </div>
             </div>
 
+            {/* Modal xác nhận hủy đơn */}
             <ConfirmModal
                 open={cancelOpen}
                 onClose={() => setCancelOpen(false)}
-                onConfirm={() =>
-                    showToast({
-                        type: 'success',
-                        message: lang === 'en' ? 'Order cancelled.' : 'Đã hủy đơn hàng.',
-                    })
-                }
+                onConfirm={handleCancelOrder}
                 title={tr(lang, 'confirmCancel')}
                 message={
                     lang === 'en'
-                        ? 'Are you sure you want to cancel this order? This cannot be undone.'
-                        : 'Bạn có chắc muốn hủy đơn hàng này? Hành động này không thể hoàn tác.'
+                        ? 'Are you sure you want to cancel this order? This action cannot be undone.'
+                        : 'Bạn có chắc chắn muốn hủy đơn hàng này? Thao tác này không thể hoàn tác.'
                 }
                 danger
             />
 
+            {/* Modal đánh giá */}
             <Modal
                 open={reviewOpen}
                 onClose={() => setReviewOpen(false)}
@@ -2170,6 +2397,7 @@ export function OrderDetailPage() {
                 </div>
             </Modal>
 
+            {/* Modal gửi khiếu nại */}
             <Modal
                 open={disputeOpen}
                 onClose={() => setDisputeOpen(false)}

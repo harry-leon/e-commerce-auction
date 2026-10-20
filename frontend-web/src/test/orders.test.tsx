@@ -1,0 +1,168 @@
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AppState } from '../types'
+import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER } from '../mockData'
+import { ordersApi } from '../api/orders'
+import { OrderHistoryPage, OrderDetailPage } from '../features/buyer/BuyerPages'
+import { SellerOrdersPage } from '../features/seller/SellerPages'
+import { AdminOrdersPage } from '../features/admin/AdminPages'
+
+const contextHolder = vi.hoisted(() => ({ current: {} as AppState }))
+vi.mock('../context', () => ({ useApp: () => contextHolder.current }))
+
+describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Seller, Admin)', () => {
+    beforeEach(() => {
+        ordersApi.resetOrdersToDefault()
+        contextHolder.current = {
+            lang: 'vi',
+            setLang: vi.fn(),
+            page: 'order-history',
+            navigate: vi.fn(),
+            pageParams: { id: 'ORD-20240215-001' },
+            user: DEMO_BUYER,
+            setUser: vi.fn(),
+            cartCount: 0,
+            setCartCount: vi.fn(),
+            toasts: [],
+            showToast: vi.fn(),
+            dismissToast: vi.fn(),
+            auctionReviews: {},
+            reviewAuction: vi.fn(),
+            createdAuctions: [],
+            submitAuction: vi.fn(),
+        }
+    })
+
+    afterEach(() => {
+        vi.clearAllMocks()
+    })
+
+    it('ordersApi: Lấy danh sách đơn hàng cho Buyer, Seller, Admin và fallback mock data thành công', async () => {
+        // Kiểm tra danh sách buyer
+        const buyerOrders = await ordersApi.getOrders({ role: 'buyer' })
+        expect(buyerOrders.length).toBeGreaterThan(0)
+        expect(buyerOrders.every((o) => o.buyerId === 'u1')).toBe(true)
+
+        // Kiểm tra chi tiết đơn hàng
+        const order = await ordersApi.getOrderById('ORD-20240215-001')
+        expect(order).not.toBeNull()
+        expect(order?.id).toBe('ORD-20240215-001')
+
+        // Kiểm tra danh sách seller
+        const sellerOrders = await ordersApi.getOrders({ role: 'seller' })
+        expect(sellerOrders.length).toBeGreaterThan(0)
+
+        // Kiểm tra danh sách admin
+        const adminOrders = await ordersApi.getOrders({ role: 'admin' })
+        expect(adminOrders.length).toBeGreaterThanOrEqual(buyerOrders.length)
+    })
+
+    it('ordersApi: Buyer hủy đơn hàng, cập nhật trạng thái cancelled và thanh toán refunded', async () => {
+        const cancelled = await ordersApi.cancelOrder('ORD-20240305-005', 'Không còn nhu cầu')
+        expect(cancelled.status).toBe('cancelled')
+        expect(cancelled.paymentStatus).toBe('refunded')
+
+        // Xác minh lưu vết vào storage
+        const recheck = await ordersApi.getOrderById('ORD-20240305-005')
+        expect(recheck?.status).toBe('cancelled')
+    })
+
+    it('ordersApi: Seller cập nhật trạng thái đơn hàng processing -> shipped', async () => {
+        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'shipped', 'Giao cho đơn vị vận chuyển')
+        expect(updated.status).toBe('shipped')
+
+        const recheck = await ordersApi.getOrderById('ORD-20240220-002')
+        expect(recheck?.status).toBe('shipped')
+    })
+
+    it('ordersApi: Buyer xác nhận đã nhận hàng và mở khiếu nại', async () => {
+        // Xác nhận nhận hàng thành công
+        const completed = await ordersApi.confirmOrderDelivery('ORD-20240215-001')
+        expect(completed.status).toBe('completed')
+        expect(completed.paymentStatus).toBe('released')
+
+        // Mở khiếu nại
+        const disputed = await ordersApi.submitOrderDispute('ORD-20240301-004', 'Hàng bị trầy xước')
+        expect(disputed.disputeStatus).toBe('open')
+        expect(disputed.paymentStatus).toBe('on_hold')
+    })
+
+    it('ordersApi: Admin xử lý giải quyết tranh chấp ký quỹ Escrow', async () => {
+        const resolved = await ordersApi.resolveOrderDispute('ORD-20240101-003', 'refunded', 'Chấp nhận khiếu nại của Buyer')
+        expect(resolved.paymentStatus).toBe('refunded')
+        expect(resolved.status).toBe('refunded')
+        expect(resolved.disputeStatus).toBe('resolved')
+    })
+
+    it('OrderHistoryPage: Hiển thị danh sách đơn của Buyer và hỗ trợ tìm kiếm', async () => {
+        render(<OrderHistoryPage />)
+
+        // Chờ tải xong dữ liệu đơn hàng
+        await waitFor(() => {
+            expect(screen.getByText('ORD-20240215-001')).toBeDefined()
+        })
+
+        // Tìm kiếm theo mã đơn
+        const searchInput = screen.getByPlaceholderText(/Tìm mã đơn hoặc tên sản phẩm/i)
+        fireEvent.change(searchInput, { target: { value: 'ORD-20240220-002' } })
+
+        await waitFor(() => {
+            expect(screen.getByText('ORD-20240220-002')).toBeDefined()
+        })
+    })
+
+    it('OrderDetailPage: Hiển thị đầy đủ thông tin đơn hàng và cho phép Buyer xác nhận nhận hàng', async () => {
+        render(<OrderDetailPage />)
+
+        await waitFor(() => {
+            expect(screen.getAllByText('ORD-20240215-001').length).toBeGreaterThan(0)
+        })
+
+        // Kiểm tra nút xác nhận đã nhận hàng
+        const confirmBtn = screen.getByText(/Xác nhận đã nhận hàng/i)
+        expect(confirmBtn).toBeDefined()
+        fireEvent.click(confirmBtn)
+
+        await waitFor(() => {
+            expect(contextHolder.current.showToast).toHaveBeenCalled()
+        })
+    })
+
+    it('SellerOrdersPage: Hiển thị danh sách đơn của người bán và chuyển đổi trạng thái', async () => {
+        contextHolder.current.user = DEMO_SELLER
+        render(<SellerOrdersPage />)
+
+        await waitFor(() => {
+            expect(screen.getAllByText('ORD-20240215-001').length).toBeGreaterThan(0)
+        })
+
+        // Bấm nút View chi tiết đơn hàng
+        const viewButtons = screen.getAllByRole('button', { name: /Chi tiết/i })
+        expect(viewButtons.length).toBeGreaterThan(0)
+        fireEvent.click(viewButtons[0])
+
+        // Modal chi tiết mở ra
+        await waitFor(() => {
+            expect(screen.getByText(/Danh sách sản phẩm cần đóng gói/i)).toBeDefined()
+        })
+    })
+
+    it('AdminOrdersPage: Hiển thị thống kê ký quỹ và mở modal quản lý can thiệp trạng thái', async () => {
+        contextHolder.current.user = DEMO_ADMIN
+        render(<AdminOrdersPage />)
+
+        await waitFor(() => {
+            expect(screen.getAllByText('ORD-20240215-001').length).toBeGreaterThan(0)
+        })
+
+        // Bấm nút Quản lý đơn hàng trên dòng bảng
+        const manageButtons = screen.getAllByRole('button', { name: /Quản lý/i })
+        expect(manageButtons.length).toBeGreaterThan(0)
+        fireEvent.click(manageButtons[0])
+
+        // Modal can thiệp mở ra
+        await waitFor(() => {
+            expect(screen.getByText(/Can thiệp quản lý trạng thái đơn hàng/i)).toBeDefined()
+        })
+    })
+})
