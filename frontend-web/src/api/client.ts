@@ -95,9 +95,9 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     if (!response.ok || payload.success === false) {
         throw new Error(
             payload.error?.message ||
-                payload.message ||
-                payload.detail ||
-                `Request failed (${response.status})`,
+            payload.message ||
+            payload.detail ||
+            `Request failed (${response.status})`,
         )
     }
     return payload as T
@@ -136,10 +136,10 @@ export function mapUser(user: ApiUser): User {
     const role: UserRole = roles.includes('admin')
         ? 'admin'
         : roles.includes('support')
-          ? 'support'
-          : roles.includes('seller')
-            ? 'seller'
-            : 'buyer'
+            ? 'support'
+            : roles.includes('seller')
+                ? 'seller'
+                : 'buyer'
     return {
         id: user.id,
         fullName: user.fullName,

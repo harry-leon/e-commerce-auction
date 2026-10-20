@@ -742,11 +742,10 @@ export function ProductDetailPage() {
                                                 key={i}
                                                 type="button"
                                                 onClick={() => setActiveImg(i)}
-                                                className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                                                    i === activeImg
-                                                        ? 'border-white scale-110'
-                                                        : 'border-white/25 opacity-50 hover:opacity-80'
-                                                }`}
+                                                className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${i === activeImg
+                                                    ? 'border-white scale-110'
+                                                    : 'border-white/25 opacity-50 hover:opacity-80'
+                                                    }`}
                                             >
                                                 <img
                                                     src={img}
@@ -801,11 +800,10 @@ export function ProductDetailPage() {
                                     key={i}
                                     type="button"
                                     onClick={() => setActiveImg(i)}
-                                    className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${
-                                        i === activeImg
-                                            ? 'border-primary ring-2 ring-primary/20 scale-105'
-                                            : 'border-transparent opacity-70 hover:opacity-100'
-                                    }`}
+                                    className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${i === activeImg
+                                        ? 'border-primary ring-2 ring-primary/20 scale-105'
+                                        : 'border-transparent opacity-70 hover:opacity-100'
+                                        }`}
                                 >
                                     <img src={img} alt="" className="w-full h-full object-cover" />
                                 </button>
@@ -1971,9 +1969,9 @@ export function OrderDetailPage() {
     const canCancel = ['pending', 'paid'].includes(order.status)
     const protectionDays = order.protectionEndsAt
         ? Math.max(
-              0,
-              Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
-          )
+            0,
+            Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
+        )
         : 0
     const isProtectionActive = order.status === 'delivered' && paymentStatus === 'protection_period'
 
@@ -2708,23 +2706,22 @@ export function SellerShopPage() {
                                                         ? `Đã theo dõi ${sellerName}`
                                                         : `Followed ${sellerName}`
                                                     : lang === 'vi'
-                                                      ? 'Đã bỏ theo dõi'
-                                                      : 'Unfollowed',
+                                                        ? 'Đã bỏ theo dõi'
+                                                        : 'Unfollowed',
                                             })
                                         }}
-                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                                            isFollowing
-                                                ? 'bg-white/20 text-white border border-white/40'
-                                                : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
-                                        }`}
+                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${isFollowing
+                                            ? 'bg-white/20 text-white border border-white/40'
+                                            : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
+                                            }`}
                                     >
                                         {isFollowing
                                             ? lang === 'vi'
                                                 ? '✓ Đang Theo Dõi'
                                                 : '✓ Following'
                                             : lang === 'vi'
-                                              ? '+ Theo Dõi'
-                                              : '+ Follow'}
+                                                ? '+ Theo Dõi'
+                                                : '+ Follow'}
                                     </button>
                                     <button
                                         onClick={() =>
@@ -2819,11 +2816,10 @@ export function SellerShopPage() {
                             <button
                                 key={tab.id}
                                 onClick={() => setShopTab(tab.id)}
-                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                                    shopTab === tab.id
-                                        ? 'bg-primary text-white shadow-sm'
-                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                                }`}
+                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${shopTab === tab.id
+                                    ? 'bg-primary text-white shadow-sm'
+                                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                                    }`}
                             >
                                 {tab.label} ({tab.count})
                             </button>
@@ -2880,14 +2876,14 @@ export function NotificationPage() {
             type === 'order'
                 ? Package
                 : type === 'auction'
-                  ? Gavel
-                  : type === 'payment'
-                    ? CreditCard
-                    : type === 'promotion'
-                      ? Gift
-                      : type === 'reputation'
-                        ? Star
-                        : Settings2
+                    ? Gavel
+                    : type === 'payment'
+                        ? CreditCard
+                        : type === 'promotion'
+                            ? Gift
+                            : type === 'reputation'
+                                ? Star
+                                : Settings2
         return <Icon size={18} />
     }
 
@@ -3027,14 +3023,14 @@ export function NotificationPage() {
                                                     <td className="text-center py-3">
                                                         <Toggle
                                                             checked={true}
-                                                            onChange={() => {}}
+                                                            onChange={() => { }}
                                                             disabled={item.locked}
                                                         />
                                                     </td>
                                                     <td className="text-center py-3">
                                                         <Toggle
                                                             checked={!item.locked}
-                                                            onChange={() => {}}
+                                                            onChange={() => { }}
                                                             disabled={item.locked}
                                                         />
                                                     </td>

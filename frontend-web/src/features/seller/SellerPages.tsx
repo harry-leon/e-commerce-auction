@@ -389,8 +389,8 @@ export function SellerBalancePage() {
                                                 ? 'Released'
                                                 : 'Đã giải ngân'
                                             : lang === 'en'
-                                              ? 'Completed'
-                                              : 'Hoàn tất'
+                                                ? 'Completed'
+                                                : 'Hoàn tất'
                                     }
                                 />
                             </div>
@@ -494,7 +494,7 @@ export function SellerProductListPage() {
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
-            s
+        s
         ] || s
     const filtered = PRODUCTS.filter(
         (p) =>
@@ -789,7 +789,7 @@ export function CreateProductPage() {
                         <Select
                             label=""
                             value="c1-3"
-                            onChange={() => {}}
+                            onChange={() => { }}
                             options={[
                                 { value: 'c1-3', label: 'Electronics > Audio' },
                                 { value: 'c1-1', label: 'Electronics > Smartphones' },
@@ -954,16 +954,16 @@ export function SellerAuctionListPage() {
                                     {['pending_approval', 'scheduled', 'active'].includes(
                                         r.status,
                                     ) && (
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                setCancelOpen(true)
-                                            }}
-                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    )}
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setCancelOpen(true)
+                                                }}
+                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
                                     {auctionReviews[r.id] && (
                                         <Button
                                             variant="outline"
@@ -1041,8 +1041,8 @@ export function SellerAuctionListPage() {
                                             ? 'Approved'
                                             : 'Đã phê duyệt'
                                         : lang === 'en'
-                                          ? 'Rejected'
-                                          : 'Bị từ chối'}
+                                            ? 'Rejected'
+                                            : 'Bị từ chối'}
                                 </p>
                                 <p className="text-xs text-gray-400">
                                     {new Date(
@@ -1977,7 +1977,7 @@ export function SellerNotificationPage() {
                                     <span className="text-sm font-medium text-gray-700">
                                         {label}
                                     </span>
-                                    <Toggle checked={index < 3} onChange={() => {}} />
+                                    <Toggle checked={index < 3} onChange={() => { }} />
                                 </div>
                             ))}
                         </div>
