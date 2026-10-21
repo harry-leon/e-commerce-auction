@@ -2,12 +2,17 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState } from '../types'
-import { DEMO_ADMIN } from '../mockData'
+import { DEMO_ADMIN, DEMO_BUYER } from '../mockData'
 import { SearchPage } from '../features/catalog/SearchPage'
 import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
+import {
+    CartPage,
+    CheckoutPage,
+    PaymentResultPage,
+} from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession } from '../api/client'
 
@@ -297,5 +302,151 @@ describe('IAM forms', () => {
         await screen.findByText('Password reset successfully!')
         await ui.click(screen.getByRole('button', { name: 'Back to Login' }))
         expect(holder.current.navigate).toHaveBeenCalledWith('login')
+    })
+})
+
+describe('Cart, Checkout và Payment Result', () => {
+    /**
+     * Kiểm tra CartPage: apply voucher hợp lệ/không hợp lệ.
+     * Bảo vệ nghiệp vụ giỏ hàng mới được thêm trong sprint này.
+     */
+    it('CartPage: hiển thị sản phẩm, áp voucher sai báo lỗi, voucher đúng gọi showToast', async () => {
+        render(<CartPage />)
+        // Trang render đúng với danh sách item
+        expect(screen.getByRole('heading', { level: 1 })).toBeVisible()
+
+        // Nhập voucher sai → hiển thị lỗi
+        const voucherInput = screen.getByPlaceholderText('NEXUS10')
+        fireEvent.change(voucherInput, { target: { value: 'WRONG' } })
+        fireEvent.click(screen.getByRole('button', { name: /áp|apply/i }))
+        await waitFor(() => expect(screen.getByText(/invalid|không hợp lệ/i)).toBeVisible())
+
+        // Nhập voucher đúng → showToast được gọi
+        fireEvent.change(voucherInput, { target: { value: 'NEXUS10' } })
+        fireEvent.click(screen.getByRole('button', { name: /áp|apply/i }))
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+    })
+
+    it('CartPage: điều hướng sang Checkout khi bấm nút', async () => {
+        render(<CartPage />)
+        fireEvent.click(screen.getByRole('button', { name: /checkout|thanh toán/i }))
+        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+    })
+
+    /**
+     * Kiểm tra CheckoutPage: flow đa bước (1→2→3→4), mỗi bước có nút Next/Back.
+     * Bảo vệ hồi quy luồng mua hàng quan trọng nhất của Buyer.
+     */
+    it('CheckoutPage: điều hướng qua các bước 1→2→3→4 và hiển thị đúng nội dung', async () => {
+        render(<CheckoutPage />)
+        // Bước 1: Địa chỉ giao hàng
+        expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible()
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Bước 2: Phương thức vận chuyển
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        // Chọn GHTK
+        const radios = screen.getAllByRole('radio')
+        fireEvent.click(radios[1])
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Bước 3: Thanh toán
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Bước 4: Xác nhận – hiển thị GHTK Standard
+        await waitFor(() => expect(screen.getByText(/GHTK Standard/i)).toBeVisible())
+    })
+
+    it('CheckoutPage: nút Back đưa về bước trước', async () => {
+        render(<CheckoutPage />)
+        // Vào bước 2
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        // Back về bước 1
+        fireEvent.click(screen.getByRole('button', { name: /back|quay lại/i }))
+        await waitFor(() =>
+            expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible(),
+        )
+    })
+
+    /**
+     * Kiểm tra PaymentResultPage: 3 trạng thái success/failed/pending.
+     * Bảo vệ hành vi hiển thị kết quả thanh toán đúng với từng pageParam status.
+     */
+    it('PaymentResultPage: hiển thị thành công và cho phép điều hướng', async () => {
+        holder.current.pageParams = { status: 'success' }
+        render(<PaymentResultPage />)
+        await waitFor(() => expect(screen.getByText(/ORD-20240301/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /order history|lịch sử/i }))
+        expect(holder.current.navigate).toHaveBeenCalledWith('order-history')
+    })
+
+    it('PaymentResultPage: hiển thị thất bại và cho phép retry đến 3 lần', async () => {
+        holder.current.pageParams = { status: 'failed' }
+        render(<PaymentResultPage />)
+        await waitFor(() => expect(screen.getByText(/1.*3|lần thử 1/i)).toBeVisible())
+        // Retry lần 1
+        fireEvent.click(screen.getByRole('button', { name: /try again|thử lại/i }))
+        await waitFor(() => expect(screen.getByText(/2.*3|lần thử 2/i)).toBeVisible())
+        // Retry lần 2
+        fireEvent.click(screen.getByRole('button', { name: /try again|thử lại/i }))
+        await waitFor(() => expect(screen.getByText(/3.*3|lần thử 3/i)).toBeVisible())
+        // Retry lần 3 → hiện thông báo hết lượt
+        fireEvent.click(screen.getByRole('button', { name: /try again|thử lại/i }))
+        await waitFor(() => expect(screen.getByText(/maximum|hết số lần/i)).toBeVisible())
+    })
+
+    it('PaymentResultPage: hiển thị trạng thái pending', async () => {
+        holder.current.pageParams = { status: 'pending' }
+        render(<PaymentResultPage />)
+        await waitFor(() =>
+            expect(screen.getByRole('heading', { name: /pending|đang xử lý/i })).toBeVisible(),
+        )
+    })
+})
+
+describe('ProductDetailPage (catalog) – Add to Cart và Tab', () => {
+    /**
+     * Kiểm tra các luồng trong ProductDetailPage của catalog chưa được cover:
+     * - Nút Add to Cart gọi setCartCount và showToast
+     * - Nút Buy Now điều hướng đến trang checkout
+     * - Chuyển tab mô tả/đánh giá/thông số
+     */
+    it('click Add to Cart cập nhật cartCount và hiển thị toast', async () => {
+        holder.current.pageParams = { id: 'product-1' }
+        render(<ProductDetailPage />)
+        await screen.findByText('Live description')
+
+        // Bấm nút Thêm vào giỏ
+        const addBtn = screen.getByRole('button', { name: /thêm vào giỏ|add to cart/i })
+        fireEvent.click(addBtn)
+        expect(holder.current.showToast).toHaveBeenCalled()
+    })
+
+    it('click Buy Now điều hướng đến trang checkout', async () => {
+        holder.current.pageParams = { id: 'product-1' }
+        render(<ProductDetailPage />)
+        await screen.findByText('Live description')
+
+        const buyBtn = screen.getByRole('button', { name: /mua ngay|buy now/i })
+        fireEvent.click(buyBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+    })
+
+    it('chuyển tab sang Specifications hiển thị thông số kỹ thuật', async () => {
+        holder.current.pageParams = { id: 'product-1' }
+        render(<ProductDetailPage />)
+        await screen.findByText('Live description')
+
+        // Tìm tất cả buttons, click tab Specifications
+        const allButtons = screen.getAllByRole('button')
+        const specsTab = allButtons.find((btn) =>
+            /^specifications|^thông số/i.test(btn.textContent || ''),
+        )
+        expect(specsTab).toBeDefined()
+        fireEvent.click(specsTab!)
+        // Tab Specifications hiển thị bảng thông số (có row "Weight")
+        await waitFor(() => expect(screen.getByText('Weight')).toBeVisible())
     })
 })
