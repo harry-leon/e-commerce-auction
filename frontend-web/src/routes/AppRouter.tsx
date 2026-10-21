@@ -78,6 +78,7 @@ export function AppRouter() {
         return <p role="alert">Access denied</p>
 
     // key theo tham số URL buộc catalog/chi tiết khởi tạo lại bộ lọc hoặc ảnh khi điều hướng sang dữ liệu khác.
+    // Trang 'home' hiển thị HomePage (Banner Hero, Đấu giá, Danh mục theo Figma); trang 'search' dùng SearchPage gọi API catalog thật.
     switch (page) {
         case 'login':
             return <LoginPage />
@@ -86,7 +87,7 @@ export function AppRouter() {
         case 'forgot-password':
             return <ForgotPasswordPage />
         case 'home':
-            return <SearchPage key={JSON.stringify(routeParams)} />
+            return <HomePage />
         case 'search':
             return <SearchPage key={JSON.stringify(routeParams)} />
         case 'product-detail':
