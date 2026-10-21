@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency, formatDate } from '../../i18n'
 import { AdminLayout } from '../../components/Layout'
@@ -46,6 +46,8 @@ import {
     SYSTEM_SERVICES,
 } from '../../mockData'
 import { getEffectivePaymentStatus } from '../../payment'
+import { api, mapUser, errorMessage, type ApiUser, type ApiRole, type ApiProduct, type Envelope } from '../../api/client'
+import { useLoad } from '../../hooks/useLoad'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
@@ -212,8 +214,24 @@ export function AdminUsersPage() {
     const [roleFilter, setRoleFilter] = useState('all')
     const [createOpen, setCreateOpen] = useState(false)
     const [deleteId, setDeleteId] = useState<string | null>(null)
+    const [apiUsers, setApiUsers] = useState<ApiUser[]>([])
+    const [refreshKey, setRefreshKey] = useState(0)
 
-    const filtered = USERS.filter(
+    // Tải danh sách người dùng thật từ User Service (/api/v1/users) theo từ khóa tìm kiếm
+    useEffect(() => {
+        const query = search ? `?keyword=${encodeURIComponent(search)}` : ''
+        api<{ content: ApiUser[] } | ApiUser[]>('/users' + query)
+            .then((res) => {
+                const list = Array.isArray(res) ? res : res?.content || []
+                setApiUsers(list)
+            })
+            .catch(() => setApiUsers([]))
+    }, [search, refreshKey])
+
+    // Ưu tiên danh sách người dùng thực tế từ database, fallback về USERS mock khi chưa có dữ liệu
+    const allUsers = apiUsers.length > 0 ? apiUsers.map(mapUser) : USERS
+
+    const filtered = allUsers.filter(
         (u) =>
             (roleFilter === 'all' || u.role === roleFilter) &&
             (!search ||
@@ -422,12 +440,24 @@ export function AdminUsersPage() {
             <ConfirmModal
                 open={!!deleteId}
                 onClose={() => setDeleteId(null)}
-                onConfirm={() =>
-                    showToast({
-                        type: 'success',
-                        message: lang === 'en' ? 'User deleted.' : 'Đã xóa người dùng.',
-                    })
-                }
+                onConfirm={async () => {
+                    if (!deleteId) return
+                    try {
+                        await api(`/users/${deleteId}`, { method: 'DELETE' })
+                        showToast({
+                            type: 'success',
+                            message: lang === 'en' ? 'User deleted.' : 'Đã xóa người dùng thành công.',
+                        })
+                        setRefreshKey((k) => k + 1)
+                    } catch (err) {
+                        showToast({
+                            type: 'error',
+                            message: errorMessage(err),
+                        })
+                    } finally {
+                        setDeleteId(null)
+                    }
+                }}
                 title={tr(lang, 'confirmDeleteTitle')}
                 message={
                     lang === 'en'
@@ -581,7 +611,35 @@ const MODULES = [
 export function AdminRolesPage() {
     const { lang, showToast } = useApp()
     const [createOpen, setCreateOpen] = useState(false)
-    const [selectedRole, setSelectedRole] = useState<(typeof ROLES)[0] | null>(null)
+    const [rolesList, setRolesList] = useState<any[]>(ROLES)
+    const [selectedRole, setSelectedRole] = useState<any>(ROLES[0])
+
+    // Tải danh sách vai trò và phân quyền N-N thật từ User Service (/api/v1/roles)
+    useEffect(() => {
+        api<ApiRole[]>('/roles')
+            .then((data) => {
+                if (data && data.length > 0) {
+                    const mapped = data.map((r) => ({
+                        id: r.id,
+                        code: r.code,
+                        name: r.name || r.code,
+                        description: r.description || '',
+                        userCount: r.code === 'ADMIN' ? 1 : r.code === 'BUYER' ? 1 : 0,
+                        privileges: r.privileges || [],
+                        permissions: MODULES.map((mod) => ({
+                            module: mod,
+                            read: r.privileges?.includes(`${mod}.VIEW`) || r.privileges?.includes(`${mod}.LIST`) || false,
+                            write: r.privileges?.includes(`${mod}.UPDATE`) || r.privileges?.includes(`${mod}.CREATE`) || false,
+                            delete: r.privileges?.includes(`${mod}.DELETE`) || false,
+                            admin: r.code === 'ADMIN',
+                        })),
+                    }))
+                    setRolesList(mapped)
+                    setSelectedRole(mapped[0])
+                }
+            })
+            .catch(() => {})
+    }, [])
 
     return (
         <AdminLayout title={tr(lang, 'roleManagement')}>
@@ -599,7 +657,7 @@ export function AdminRolesPage() {
                         </Button>
                     </div>
                     <div className="space-y-2">
-                        {ROLES.map((role) => (
+                        {rolesList.map((role) => (
                             <button
                                 key={role.id}
                                 onClick={() => setSelectedRole(role)}
@@ -656,9 +714,15 @@ export function AdminRolesPage() {
                                     </thead>
                                     <tbody>
                                         {MODULES.map((mod) => {
-                                            const perm = selectedRole.permissions.find(
-                                                (p) => p.module === mod,
-                                            )
+                                            const perm = (
+                                                selectedRole.permissions as Array<{
+                                                    module: string
+                                                    read?: boolean
+                                                    write?: boolean
+                                                    delete?: boolean
+                                                    admin?: boolean
+                                                }> | undefined
+                                            )?.find((p) => p.module === mod)
                                             return (
                                                 <tr key={mod} className="border-b border-border">
                                                     <td className="py-3 font-semibold text-gray-700">
@@ -2778,6 +2842,55 @@ export function AdminSystemHealthPage() {
 // ─── Admin Products (Moderation) ───────────────────────────────────────────────
 export function AdminProductsPage() {
     const { lang, showToast } = useApp()
+    const [refreshKey, setRefreshKey] = useState(0)
+    // Gọi API Catalog thật để lấy toàn bộ danh sách sản phẩm cần duyệt/quản lý
+    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
+    const products =
+        prodEnvelope?.data && prodEnvelope.data.length > 0
+            ? prodEnvelope.data.map((p) => {
+                  const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
+                  return {
+                      ...fallback,
+                      id: p.id,
+                      name: p.name,
+                      nameVi: p.name,
+                      price: p.skus?.[0]?.price ?? fallback.price,
+                      sku: p.skus?.[0]?.skuCode ?? fallback.sku,
+                      images:
+                          p.images && p.images.length > 0
+                              ? p.images.map((img) => img.url)
+                              : fallback.images,
+                      status: p.status.toLowerCase(),
+                  }
+              })
+            : PRODUCTS
+
+    const handleApprove = async (id: string) => {
+        try {
+            await api(`/products/${id}/approve`, { method: 'POST' })
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Product approved.' : 'Đã duyệt sản phẩm thành công.',
+            })
+            setRefreshKey((k) => k + 1)
+        } catch (err) {
+            showToast({ type: 'error', message: errorMessage(err) })
+        }
+    }
+
+    const handleReject = async (id: string) => {
+        try {
+            await api(`/products/${id}/status?target=INACTIVE`, { method: 'POST' })
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Product set to inactive.' : 'Đã chuyển sản phẩm sang ngừng bán.',
+            })
+            setRefreshKey((k) => k + 1)
+        } catch (err) {
+            showToast({ type: 'error', message: errorMessage(err) })
+        }
+    }
+
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
             s
@@ -2834,24 +2947,14 @@ export function AdminProductsPage() {
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() =>
-                                            showToast({
-                                                type: 'success',
-                                                message: 'Product approved.',
-                                            })
-                                        }
+                                        onClick={() => handleApprove(r.id)}
                                     >
                                         {lang === 'en' ? 'Approve' : 'Duyệt'}
                                     </Button>
                                     <Button
                                         variant="danger"
                                         size="sm"
-                                        onClick={() =>
-                                            showToast({
-                                                type: 'error',
-                                                message: 'Product rejected.',
-                                            })
-                                        }
+                                        onClick={() => handleReject(r.id)}
                                     >
                                         {lang === 'en' ? 'Reject' : 'Từ chối'}
                                     </Button>
@@ -2859,7 +2962,7 @@ export function AdminProductsPage() {
                             ),
                         },
                     ]}
-                    data={PRODUCTS}
+                    data={products}
                     rowKey={(r) => r.id}
                 />
             </div>
