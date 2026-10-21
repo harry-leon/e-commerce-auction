@@ -126,15 +126,6 @@ export interface AuthPayload {
     refreshToken: string
     user: ApiUser
 }
-
-/** Vai trò và danh sách quyền từ User Service (RoleController) theo SRS §3.1.1 */
-export interface ApiRole {
-    id: string
-    code: string
-    name: string
-    description: string
-    privileges: string[]
-}
 /**
  * Chuyển DTO backend sang User của UI; chọn vai trò điều hướng theo thứ tự admin → support → seller → buyer.
  * Avatar/reputation dùng giá trị mặc định vì UserResponse hiện chưa cung cấp các trường này.

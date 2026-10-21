@@ -36,8 +36,6 @@ import {
 import { PRODUCTS, AUCTIONS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
-import { api, errorMessage, type ApiProduct, type Envelope } from '../../api/client'
-import { useLoad } from '../../hooks/useLoad'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
 const VIETNAMESE_BANKS = [
@@ -491,35 +489,12 @@ export function SellerProductListPage() {
     const [search, setSearch] = useState('')
     const [statusFilter, setStatusFilter] = useState<ProductStatus | 'all'>('all')
     const [deleteId, setDeleteId] = useState<string | null>(null)
-    const [refreshKey, setRefreshKey] = useState(0)
-
-    // Tải danh sách sản phẩm của người bán từ Catalog Service (/api/v1/products)
-    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
-    const liveProducts =
-        prodEnvelope?.data && prodEnvelope.data.length > 0
-            ? prodEnvelope.data.map((p) => {
-                  const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
-                  return {
-                      ...fallback,
-                      id: p.id,
-                      name: p.name,
-                      nameVi: p.name,
-                      price: p.skus?.[0]?.price ?? fallback.price,
-                      sku: p.skus?.[0]?.skuCode ?? fallback.sku,
-                      images:
-                          p.images && p.images.length > 0
-                              ? p.images.map((img) => img.url)
-                              : fallback.images,
-                      status: p.status.toLowerCase() as ProductStatus,
-                  }
-              })
-            : PRODUCTS
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
             s
         ] || s
-    const filtered = liveProducts.filter(
+    const filtered = PRODUCTS.filter(
         (p) =>
             (statusFilter === 'all' || p.status === statusFilter) &&
             (!search || p.name.toLowerCase().includes(search.toLowerCase())),
@@ -679,24 +654,12 @@ export function SellerProductListPage() {
             <ConfirmModal
                 open={!!deleteId}
                 onClose={() => setDeleteId(null)}
-                onConfirm={async () => {
-                    if (!deleteId) return
-                    try {
-                        await api(`/products/${deleteId}`, { method: 'DELETE' })
-                        showToast({
-                            type: 'success',
-                            message: lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
-                        })
-                        setRefreshKey((k) => k + 1)
-                    } catch (err) {
-                        showToast({
-                            type: 'error',
-                            message: errorMessage(err),
-                        })
-                    } finally {
-                        setDeleteId(null)
-                    }
-                }}
+                onConfirm={() =>
+                    showToast({
+                        type: 'success',
+                        message: lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm.',
+                    })
+                }
                 title={tr(lang, 'confirmDeleteTitle')}
                 message={tr(lang, 'confirmDeleteMsg')}
                 danger
@@ -717,50 +680,19 @@ export function CreateProductPage() {
     const [enableAuction, setEnableAuction] = useState(false)
     const [nameError, setNameError] = useState('')
 
-    // Gọi API Catalog Service tạo sản phẩm mới vào PostgreSQL
     const save = async () => {
         if (!name) {
             setNameError(tr(lang, 'required'))
             return
         }
         setSaving(true)
-        try {
-            await api('/products', {
-                method: 'POST',
-                body: JSON.stringify({
-                    name,
-                    description: name,
-                    categoryId: '11111111-1111-1111-1111-111111111111',
-                    auctionEnabled: enableAuction,
-                    skus: [
-                        {
-                            skuCode: sku || `SKU-${Date.now().toString().slice(-6)}`,
-                            price: Number(price) || 100,
-                            originalPrice: Number(price) ? Number(price) * 1.2 : 120,
-                            status: status === 'active' ? 'ACTIVE' : 'DRAFT',
-                        },
-                    ],
-                    images: [
-                        {
-                            url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&h=600&fit=crop&auto=format',
-                            sortOrder: 0,
-                        },
-                    ],
-                }),
-            })
-            showToast({
-                type: 'success',
-                message: lang === 'en' ? 'Product saved!' : 'Đã lưu sản phẩm thành công!',
-            })
-            navigate('seller-products')
-        } catch (err) {
-            showToast({
-                type: 'error',
-                message: errorMessage(err),
-            })
-        } finally {
-            setSaving(false)
-        }
+        await new Promise((r) => setTimeout(r, 800))
+        setSaving(false)
+        showToast({
+            type: 'success',
+            message: lang === 'en' ? 'Product saved!' : 'Đã lưu sản phẩm!',
+        })
+        navigate('seller-products')
     }
 
     return (
