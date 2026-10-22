@@ -1,6 +1,8 @@
 package com.nexus.user.service;
 
 import com.nexus.user.dto.ActivityHistoryResponse;
+import com.nexus.user.dto.CreateUserProfileRequest;
+import java.time.LocalDateTime;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.entity.AuditLog;
@@ -177,6 +179,43 @@ public class UserService {
      * @param log Bản ghi audit log
      * @return DTO lịch sử hoạt động
      */
+    /**
+     * Tạo hồ sơ người dùng mới sau khi tài khoản Keycloak được tạo thành công bởi API Gateway.
+     * Chức năng: Lưu trữ thông tin cá nhân và liên kết với keycloak_id, hoàn toàn không lưu mật khẩu.
+     *
+     * @param keycloakId Mã định danh Keycloak (UUID) được chuyển tiếp từ header X-User-Id của Gateway
+     * @param request    Dữ liệu thông tin cá nhân của người dùng
+     * @return DTO UserResponse thông tin hồ sơ đã tạo
+     */
+    @Transactional
+    public UserResponse createUserProfile(String keycloakId, CreateUserProfileRequest request) {
+        if (userRepository.existsByEmailAndIsDeletedFalse(request.getEmail())) {
+            throw new IllegalArgumentException("Email đã được đăng ký trong hệ thống: " + request.getEmail());
+        }
+
+        User user = new User();
+        user.setId(keycloakId != null ? UUID.fromString(keycloakId) : UUID.randomUUID());
+        user.setKeycloakId(keycloakId);
+        user.setEmail(request.getEmail().trim().toLowerCase());
+        user.setFullName(request.getFullName().trim());
+        user.setPhone(request.getPhone());
+        user.setIdentifyNumber(request.getIdentifyNumber());
+        user.setGender(request.getGender());
+        user.setDateOfBirth(request.getDateOfBirth());
+        user.setAddress(request.getAddress());
+        user.setStatus("ACTIVE");
+        user.setFailedLoginAttempts(0);
+        user.setTokenVersion(1);
+        user.setCreatedAt(LocalDateTime.now());
+
+        roleRepository.findByCode("BUYER").ifPresent(user::addRole);
+
+        User savedUser = userRepository.save(user);
+        auditService.record(savedUser.getId(), "CREATE_PROFILE", "Hồ sơ người dùng mới được tạo từ Gateway", "GATEWAY", "GATEWAY", "SUCCESS");
+
+        return authService.mapToUserResponse(savedUser);
+    }
+
     private ActivityHistoryResponse mapToActivityHistoryResponse(AuditLog log) {
         return new ActivityHistoryResponse(
                 log.getId(),

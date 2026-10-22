@@ -1,0 +1,86 @@
+{
+  "id": "nexus-realm",
+  "realm": "nexus-realm",
+  "displayName": "Nexus E-Commerce & Auction",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "roles": {
+    "realm": [
+      {
+        "name": "ROLE_BUYER",
+        "description": "Standard buyer customer role"
+      },
+      {
+        "name": "ROLE_SELLER",
+        "description": "Merchant seller role"
+      },
+      {
+        "name": "ROLE_ADMIN",
+        "description": "System administrator role"
+      },
+      {
+        "name": "ROLE_SUPPORT",
+        "description": "Customer support and dispute staff"
+      }
+    ]
+  },
+  "defaultRoles": [
+    "ROLE_BUYER"
+  ],
+  "clients": [
+    {
+      "clientId": "nexus-web",
+      "name": "Nexus Web & Mobile Client",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email"
+      ]
+    },
+    {
+      "clientId": "nexus-admin-cli",
+      "name": "Nexus Internal Service Admin Client",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "nexus-internal-admin-secret-key-123456",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": []
+}

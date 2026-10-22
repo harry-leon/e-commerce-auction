@@ -1,6 +1,10 @@
 package com.nexus.user.controller;
 
 import com.nexus.user.dto.ActivityHistoryResponse;
+import com.nexus.user.dto.CreateUserProfileRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.service.UserService;
@@ -190,5 +194,20 @@ public class UserController {
             @PathVariable UUID id,
             @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         return ResponseEntity.ok(userService.getActivityHistory(id, pageable));
+    }
+
+    /**
+     * Tạo hồ sơ người dùng mới trong cơ sở dữ liệu sau khi tài khoản Keycloak đã được tạo.
+     * Chức năng: Lưu trữ thông tin cá nhân (họ tên, email, số điện thoại...) và liên kết keycloak_id.
+     * Đầu vào: Header X-User-Id chứa keycloak_id (UUID), body chứa CreateUserProfileRequest không có mật khẩu.
+     * Kết quả: Trả về DTO UserResponse cùng mã trạng thái 201 Created.
+     * Luồng: Gọi UserService.createUserProfile() để gán vai trò mặc định BUYER và lưu bảng users.
+     */
+    @PostMapping
+    @Operation(summary = "Tạo hồ sơ người dùng mới", description = "Được gọi từ API Gateway kèm header X-User-Id sau khi Keycloak đã tạo tài khoản")
+    public ResponseEntity<UserResponse> createUserProfile(
+            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
+            @Valid @RequestBody CreateUserProfileRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUserProfile(headerUserId, request));
     }
 }

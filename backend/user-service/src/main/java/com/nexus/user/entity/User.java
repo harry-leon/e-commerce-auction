@@ -52,8 +52,15 @@ public class User {
     @Column(name = "address", length = 500)
     private String address;
 
-    @Column(name = "password_hash", nullable = false, length = 255)
+    @Column(name = "password_hash", length = 255)
     private String passwordHash;
+
+    /**
+     * Định danh duy nhất của tài khoản trên Keycloak IAM (khớp claim "sub" trong JWT token).
+     * Dùng để liên kết hồ sơ người dùng (profile) với hệ thống xác thực tập trung.
+     */
+    @Column(name = "keycloak_id", unique = true, length = 255)
+    private String keycloakId;
 
     @Column(name = "status", nullable = false, length = 20)
     private String status = "ACTIVE";
@@ -157,6 +164,14 @@ public class User {
 
     public void setPasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public String getKeycloakId() {
+        return keycloakId;
+    }
+
+    public void setKeycloakId(String keycloakId) {
+        this.keycloakId = keycloakId;
     }
 
     public String getStatus() {
