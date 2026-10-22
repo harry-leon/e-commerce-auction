@@ -95,7 +95,6 @@ class AuthServiceTest {
         request.setFullName("Nguyen Van B");
 
         when(userRepository.existsByEmailAndIsDeletedFalse(anyString())).thenReturn(false);
-        when(passwordEncoder.encode(anyString())).thenReturn("hashed_pass");
 
         Role role = new Role(UUID.randomUUID(), "BUYER", "Buyer", "Desc");
         when(roleRepository.findByCode("BUYER")).thenReturn(Optional.of(role));

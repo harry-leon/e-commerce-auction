@@ -21,6 +21,7 @@ import {
 } from '../../api/client'
 import type { Page } from '../../types'
 import { Gavel } from '../../components/UI'
+import { hashPasswordClient } from '../../utils/crypto'
 
 function AuthCard({
     children,

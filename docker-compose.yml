@@ -67,6 +67,24 @@ services:
       timeout: 3s
       retries: 10
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.5
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/nexus_keycloak
+      KC_DB_USERNAME: ${LOCAL_DB_USERNAME:-nexus}
+      KC_DB_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./deploy/keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   user-service:
     <<: *service
     build: ./backend/user-service
@@ -129,6 +147,16 @@ services:
     ports:
       - "8086:8080"
 
+  reputation-service:
+    <<: *service
+    build: ./backend/reputation-service
+    environment:
+      <<: *cloud-env
+      SERVICE_NAME: reputation-service
+      DB_URL: jdbc:postgresql://postgres:5432/nexus_reputation
+    ports:
+      - "8087:8080"
+
   # Gateway tra registry Eureka qua các URI lb://... thay vì phụ thuộc IP cố định của container.
   api-gateway:
     build: ./backend/api-gateway
@@ -140,6 +168,8 @@ services:
       AUCTION_SERVICE_URL: lb://auction-service
       FULFILLMENT_SERVICE_URL: lb://fulfillment-service
       NOTIFICATION_SERVICE_URL: lb://notification-service
+      REPUTATION_SERVICE_URL: lb://reputation-service
+      KEYCLOAK_URL: http://keycloak:8080
     ports:
       - "8080:8080"
     healthcheck:
