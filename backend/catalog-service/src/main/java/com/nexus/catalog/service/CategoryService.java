@@ -3,8 +3,8 @@ package com.nexus.catalog.service;
 import com.nexus.catalog.dto.request.CategoryRequest;
 import com.nexus.catalog.dto.response.CategoryResponse;
 import com.nexus.catalog.entity.Category;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import java.util.List;
@@ -101,7 +101,7 @@ public class CategoryService {
 
     /** Gom xử lý không tìm thấy vào một chỗ để controller nhận lỗi 404 thống nhất. */
     private Category find(UUID id) {
-        return categories.findById(id).orElseThrow(() -> new NotFoundException("Category not found: " + id));
+        return categories.findById(id).orElseThrow(() -> new ResourceNotFoundException("Category not found: " + id));
     }
 
     /** productCount chỉ đếm sản phẩm gắn trực tiếp với node, không cộng dồn sản phẩm của các node con. */

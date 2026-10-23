@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.entity.AuditLog;
-import com.nexus.user.entity.NotFoundException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.entity.User;
 import com.nexus.user.repository.AuditLogRepository;
 import com.nexus.user.repository.RoleRepository;
@@ -108,7 +108,7 @@ class ActivityHistoryServiceTest {
 
         when(userRepository.findByIdAndIsDeletedFalse(userId)).thenReturn(Optional.empty());
 
-        assertThrows(NotFoundException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> userService.getActivityHistory(userId, pageable));
     }
 

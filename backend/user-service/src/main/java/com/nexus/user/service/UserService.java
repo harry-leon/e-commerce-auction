@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.entity.AuditLog;
-import com.nexus.user.entity.NotFoundException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.entity.Role;
 import com.nexus.user.entity.User;
 import com.nexus.user.repository.AuditLogRepository;
@@ -65,7 +65,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public UserResponse getUserById(UUID id) {
         User user = userRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + id));
         return authService.mapToUserResponse(user);
     }
 
@@ -79,7 +79,7 @@ public class UserService {
     @Transactional
     public UserResponse updateUser(UUID id, UpdateUserRequest request) {
         User user = userRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + id));
 
         user.setFullName(request.getFullName().trim());
         user.setPhone(request.getPhone());
@@ -102,7 +102,7 @@ public class UserService {
     @Transactional
     public void deleteUser(UUID id) {
         User user = userRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + id));
 
         user.setDeleted(true);
         user.setStatus("INACTIVE");
@@ -140,7 +140,7 @@ public class UserService {
     @Transactional
     public UserResponse assignRoles(UUID userId, Set<String> roleCodes) {
         User user = userRepository.findByIdAndIsDeletedFalse(userId)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + userId));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + userId));
 
         Set<Role> roles = new HashSet<>();
         for (String code : roleCodes) {
@@ -167,7 +167,7 @@ public class UserService {
     public Page<ActivityHistoryResponse> getActivityHistory(UUID userId, Pageable pageable) {
         // Kiểm tra người dùng tồn tại trước khi truy vấn lịch sử
         if (!userRepository.findByIdAndIsDeletedFalse(userId).isPresent()) {
-            throw new NotFoundException("Không tìm thấy người dùng với ID: " + userId);
+            throw new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + userId);
         }
         return auditLogRepository.findByUserId(userId, pageable)
                 .map(this::mapToActivityHistoryResponse);

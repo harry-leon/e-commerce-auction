@@ -27,7 +27,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,refresh
   endpoint:
     health:
       probes:
@@ -46,6 +46,13 @@ app:
   security:
     # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
     jwt-secret: ${JWT_SECRET:}
+  # Cấu hình dự phòng cục bộ cho auction-service khi chưa kết nối Config Server
+  auction:
+    bidding:
+      min-increment: ${AUCTION_MIN_INCREMENT:1000}
+      anti-sniping-seconds: ${AUCTION_ANTI_SNIPING_SECONDS:120}
+    rules:
+      max-active-auctions-per-seller: ${AUCTION_MAX_ACTIVE_PER_SELLER:20}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.

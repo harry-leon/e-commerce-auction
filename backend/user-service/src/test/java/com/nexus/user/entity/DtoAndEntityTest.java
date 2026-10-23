@@ -3,6 +3,7 @@ package com.nexus.user.entity;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexus.user.dto.ChangePasswordRequest;
@@ -14,9 +15,9 @@ import com.nexus.user.dto.RegisterRequest;
 import com.nexus.user.dto.ResetPasswordRequest;
 import com.nexus.user.dto.UpdateRoleRequest;
 import com.nexus.user.dto.UpdateUserRequest;
-import com.nexus.user.dto.shared.ApiResponse;
+// Sử dụng ApiResponse dùng chung từ common theo quy chuẩn v2
+import com.nexus.common.response.ApiResponse;
 import com.nexus.user.dto.shared.PagedResponse;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -265,27 +266,18 @@ class DtoAndEntityTest {
 
     @Test
     void testSharedDtos() {
+        // Kiểm tra đối tượng ApiResponse chuẩn từ nexus-common theo Envelope Pattern v2
         ApiResponse<String> resOk = ApiResponse.ok("Hello");
-        assertTrue(resOk.isSuccess());
-        assertEquals("Hello", resOk.getData());
-        assertNotNull(resOk.getTimestamp());
-        assertTrue(resOk.getErrors().isEmpty());
+        assertTrue(resOk.success());
+        assertEquals("Hello", resOk.data());
+        assertNotNull(resOk.meta().timestamp());
+        assertNull(resOk.error());
 
-        ApiResponse<Void> resErrList = ApiResponse.error(List.of("Err1", "Err2"));
-        assertFalse(resErrList.isSuccess());
-        assertEquals(2, resErrList.getErrors().size());
-
-        ApiResponse<Void> resErrMsg = ApiResponse.error("Single error");
-        assertFalse(resErrMsg.isSuccess());
-        assertEquals("Single error", resErrMsg.getErrors().get(0));
-
-        ApiResponse<String> resCustom = new ApiResponse<>();
-        resCustom.setSuccess(true);
-        resCustom.setData("custom");
-        resCustom.setErrors(List.of());
-        resCustom.setTimestamp(Instant.now());
-        assertTrue(resCustom.isSuccess());
-        assertEquals("custom", resCustom.getData());
+        ApiResponse<Void> resErr = ApiResponse.error("USER_NOT_FOUND", "Không tìm thấy người dùng");
+        assertFalse(resErr.success());
+        assertNotNull(resErr.error());
+        assertEquals("USER_NOT_FOUND", resErr.error().code());
+        assertEquals("Không tìm thấy người dùng", resErr.error().message());
 
         PagedResponse<String> pagedEmpty = new PagedResponse<>();
         pagedEmpty.setContent(List.of("Item"));

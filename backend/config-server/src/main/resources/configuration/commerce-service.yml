@@ -1,0 +1,11 @@
+# Cấu hình tập trung dành riêng cho commerce-service do Config Server quản lý.
+# Các thông số nghiệp vụ này có thể thay đổi tại runtime và cập nhật qua /actuator/refresh.
+app:
+  commerce:
+    cart:
+      expiration-days: 7            # Thời gian hết hạn giỏ hàng tính theo ngày (BR-CFG-15)
+      expire-after-minutes: 10080   # 7 ngày = 10080 phút
+      max-items-per-cart: 50        # Số lượng mặt hàng tối đa trong giỏ hàng
+    order:
+      max-daily-orders: 10          # Giới hạn số đơn hàng tối đa của 1 user mỗi ngày
+      cancellation-timeout-minutes: 30 # Thời gian tối đa được phép hủy đơn hàng sau khi tạo

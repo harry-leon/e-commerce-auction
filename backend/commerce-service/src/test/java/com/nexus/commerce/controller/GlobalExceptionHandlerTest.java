@@ -4,8 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import com.nexus.commerce.exception.BusinessException;
-import com.nexus.commerce.exception.ResourceNotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
+import com.nexus.common.exception.GlobalExceptionHandler;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
@@ -35,10 +36,10 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void unexpectedMapsTo500() {
-        var res = handler.handleUnexpected(new IllegalStateException("boom"));
+        var res = handler.handleUnexpected(new Exception("boom"));
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, res.getStatusCode());
         assertNotNull(res.getBody());
         assertFalse(res.getBody().success());
-        assertEquals("INTERNAL_ERROR", res.getBody().error().code());
+        assertEquals("INTERNAL_SERVER_ERROR", res.getBody().error().code());
     }
 }
