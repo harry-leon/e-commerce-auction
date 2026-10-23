@@ -3,7 +3,7 @@ package com.nexus.commerce.controller;
 import com.nexus.commerce.dto.request.AddToCartRequest;
 import com.nexus.commerce.dto.request.MergeCartRequest;
 import com.nexus.commerce.dto.request.UpdateCartItemRequest;
-import com.nexus.commerce.dto.response.ApiResponse;
+import com.nexus.common.response.ApiResponse;
 import com.nexus.commerce.dto.response.CartResponse;
 import com.nexus.commerce.service.CartService;
 import io.swagger.v3.oas.annotations.Operation;

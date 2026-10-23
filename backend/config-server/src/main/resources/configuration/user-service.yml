@@ -1,0 +1,11 @@
+# Cấu hình tập trung dành riêng cho user-service do Config Server quản lý.
+# Các thông số nghiệp vụ và bảo mật này có thể thay đổi tại runtime và cập nhật qua POST /actuator/refresh.
+app:
+  user:
+    security:
+      access-token-expiry-minutes: 60       # Thời hạn token truy cập (phút)
+      refresh-token-expiry-days: 7          # Thời hạn refresh token (ngày)
+      max-login-attempts: 5                 # Số lần đăng nhập sai tối đa trước khi tạm khóa
+      reset-password-expiry-minutes: 15     # Thời hạn mã/link đặt lại mật khẩu (phút)
+    verification:
+      email-verification-expiry-hours: 24   # Thời hạn mã xác thực email (giờ)

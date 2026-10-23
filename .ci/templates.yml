@@ -4,6 +4,8 @@
   variables:
     MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
     MAVEN_CLI_OPTS: "-B --no-transfer-progress"
+  before_script:
+    - if [ -d "backend/common" ]; then mvn $MAVEN_CLI_OPTS -f backend/common/pom.xml install -DskipTests; fi
   cache:
     key: maven-repo
     paths:

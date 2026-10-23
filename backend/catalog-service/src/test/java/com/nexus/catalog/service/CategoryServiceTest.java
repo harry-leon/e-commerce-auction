@@ -10,8 +10,8 @@ import static org.mockito.ArgumentMatchers.any;
 import com.nexus.catalog.dto.request.CategoryRequest;
 import com.nexus.catalog.entity.Category;
 import com.nexus.catalog.enums.CategoryStatus;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import java.util.List;
@@ -109,6 +109,6 @@ class CategoryServiceTest {
         Category root = category(null);
         service.delete(root.getId());
         verify(categories).delete(root);
-        assertThrows(NotFoundException.class, () -> service.get(UUID.randomUUID()));
+        assertThrows(ResourceNotFoundException.class, () -> service.get(UUID.randomUUID()));
     }
 }

@@ -1,10 +1,12 @@
 package com.nexus.user.service;
 
 import com.nexus.user.dto.ActivityHistoryResponse;
+import com.nexus.user.dto.CreateUserProfileRequest;
+import java.time.LocalDateTime;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.entity.AuditLog;
-import com.nexus.user.entity.NotFoundException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.entity.Role;
 import com.nexus.user.entity.User;
 import com.nexus.user.repository.AuditLogRepository;
@@ -63,7 +65,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public UserResponse getUserById(UUID id) {
         User user = userRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + id));
         return authService.mapToUserResponse(user);
     }
 
@@ -77,7 +79,7 @@ public class UserService {
     @Transactional
     public UserResponse updateUser(UUID id, UpdateUserRequest request) {
         User user = userRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + id));
 
         user.setFullName(request.getFullName().trim());
         user.setPhone(request.getPhone());
@@ -100,7 +102,7 @@ public class UserService {
     @Transactional
     public void deleteUser(UUID id) {
         User user = userRepository.findByIdAndIsDeletedFalse(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + id));
 
         user.setDeleted(true);
         user.setStatus("INACTIVE");
@@ -138,7 +140,7 @@ public class UserService {
     @Transactional
     public UserResponse assignRoles(UUID userId, Set<String> roleCodes) {
         User user = userRepository.findByIdAndIsDeletedFalse(userId)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng với ID: " + userId));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + userId));
 
         Set<Role> roles = new HashSet<>();
         for (String code : roleCodes) {
@@ -165,7 +167,7 @@ public class UserService {
     public Page<ActivityHistoryResponse> getActivityHistory(UUID userId, Pageable pageable) {
         // Kiểm tra người dùng tồn tại trước khi truy vấn lịch sử
         if (!userRepository.findByIdAndIsDeletedFalse(userId).isPresent()) {
-            throw new NotFoundException("Không tìm thấy người dùng với ID: " + userId);
+            throw new ResourceNotFoundException("Không tìm thấy người dùng với ID: " + userId);
         }
         return auditLogRepository.findByUserId(userId, pageable)
                 .map(this::mapToActivityHistoryResponse);
@@ -177,6 +179,43 @@ public class UserService {
      * @param log Bản ghi audit log
      * @return DTO lịch sử hoạt động
      */
+    /**
+     * Tạo hồ sơ người dùng mới sau khi tài khoản Keycloak được tạo thành công bởi API Gateway.
+     * Chức năng: Lưu trữ thông tin cá nhân và liên kết với keycloak_id, hoàn toàn không lưu mật khẩu.
+     *
+     * @param keycloakId Mã định danh Keycloak (UUID) được chuyển tiếp từ header X-User-Id của Gateway
+     * @param request    Dữ liệu thông tin cá nhân của người dùng
+     * @return DTO UserResponse thông tin hồ sơ đã tạo
+     */
+    @Transactional
+    public UserResponse createUserProfile(String keycloakId, CreateUserProfileRequest request) {
+        if (userRepository.existsByEmailAndIsDeletedFalse(request.getEmail())) {
+            throw new IllegalArgumentException("Email đã được đăng ký trong hệ thống: " + request.getEmail());
+        }
+
+        User user = new User();
+        user.setId(keycloakId != null ? UUID.fromString(keycloakId) : UUID.randomUUID());
+        user.setKeycloakId(keycloakId);
+        user.setEmail(request.getEmail().trim().toLowerCase());
+        user.setFullName(request.getFullName().trim());
+        user.setPhone(request.getPhone());
+        user.setIdentifyNumber(request.getIdentifyNumber());
+        user.setGender(request.getGender());
+        user.setDateOfBirth(request.getDateOfBirth());
+        user.setAddress(request.getAddress());
+        user.setStatus("ACTIVE");
+        user.setFailedLoginAttempts(0);
+        user.setTokenVersion(1);
+        user.setCreatedAt(LocalDateTime.now());
+
+        roleRepository.findByCode("BUYER").ifPresent(user::addRole);
+
+        User savedUser = userRepository.save(user);
+        auditService.record(savedUser.getId(), "CREATE_PROFILE", "Hồ sơ người dùng mới được tạo từ Gateway", "GATEWAY", "GATEWAY", "SUCCESS");
+
+        return authService.mapToUserResponse(savedUser);
+    }
+
     private ActivityHistoryResponse mapToActivityHistoryResponse(AuditLog log) {
         return new ActivityHistoryResponse(
                 log.getId(),

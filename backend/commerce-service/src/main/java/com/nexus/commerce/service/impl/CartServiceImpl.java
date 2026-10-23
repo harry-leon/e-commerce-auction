@@ -1,6 +1,7 @@
 package com.nexus.commerce.service.impl;
 
 import com.nexus.commerce.client.CatalogClient;
+import com.nexus.commerce.config.CommerceProperties;
 import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.CartMapper;
 import com.nexus.commerce.dto.request.AddToCartRequest;
@@ -10,8 +11,8 @@ import com.nexus.commerce.dto.response.CartResponse;
 import com.nexus.commerce.entity.Cart;
 import com.nexus.commerce.entity.CartItem;
 import com.nexus.commerce.enums.CartStatus;
-import com.nexus.commerce.exception.BusinessException;
-import com.nexus.commerce.exception.ResourceNotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.commerce.repository.CartItemRepository;
 import com.nexus.commerce.repository.CartRepository;
 import com.nexus.commerce.service.CartService;
@@ -37,12 +38,14 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CartServiceImpl implements CartService {
 
-    private static final int CART_EXPIRATION_DAYS = 7;
+
 
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final CartMapper cartMapper;
     private final CatalogClient catalogClient;
+    // Cấu hình tham số commerce từ Spring Cloud Config Server / application.yml
+    private final CommerceProperties properties;
 
     @Override
     @Transactional
@@ -158,6 +161,10 @@ public class CartServiceImpl implements CartService {
         }
 
         if (cartItem == null) {
+            if (cart.getItems() != null && cart.getItems().size() >= properties.getCart().getMaxItemsPerCart()) {
+                throw new BusinessException("CART_MAX_ITEMS_EXCEEDED",
+                        "Giỏ hàng đã đạt giới hạn tối đa " + properties.getCart().getMaxItemsPerCart() + " sản phẩm");
+            }
             cartItem = CartItem.builder()
                     .cart(cart)
                     .skuId(skuId)
@@ -194,13 +201,13 @@ public class CartServiceImpl implements CartService {
         Cart newCart = Cart.builder()
                 .userId(userId)
                 .status(CartStatus.ACTIVE)
-                .expiresAt(Instant.now().plus(CART_EXPIRATION_DAYS, ChronoUnit.DAYS))
+                .expiresAt(Instant.now().plus(properties.getCart().getExpirationDays(), ChronoUnit.DAYS))
                 .build();
         return cartRepository.save(newCart);
     }
 
     private void renewCartExpiration(Cart cart) {
-        cart.setExpiresAt(Instant.now().plus(CART_EXPIRATION_DAYS, ChronoUnit.DAYS));
+        cart.setExpiresAt(Instant.now().plus(properties.getCart().getExpirationDays(), ChronoUnit.DAYS));
         cartRepository.save(cart);
     }
 

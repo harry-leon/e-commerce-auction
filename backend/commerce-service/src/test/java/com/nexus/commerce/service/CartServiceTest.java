@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.nexus.commerce.client.CatalogClient;
+import com.nexus.commerce.config.CommerceProperties;
 import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.CartMapper;
 import com.nexus.commerce.dto.request.AddToCartRequest;
@@ -19,7 +20,7 @@ import com.nexus.commerce.dto.response.CartResponse;
 import com.nexus.commerce.entity.Cart;
 import com.nexus.commerce.entity.CartItem;
 import com.nexus.commerce.enums.CartStatus;
-import com.nexus.commerce.exception.BusinessException;
+import com.nexus.common.exception.BusinessException;
 import com.nexus.commerce.repository.CartItemRepository;
 import com.nexus.commerce.repository.CartRepository;
 import com.nexus.commerce.service.impl.CartServiceImpl;
@@ -59,7 +60,7 @@ class CartServiceTest {
     @BeforeEach
     void setUp() {
         cartMapper = new CartMapper();
-        cartService = new CartServiceImpl(cartRepository, cartItemRepository, cartMapper, catalogClient);
+        cartService = new CartServiceImpl(cartRepository, cartItemRepository, cartMapper, catalogClient, new CommerceProperties());
     }
 
     @Test
@@ -255,5 +256,24 @@ class CartServiceTest {
         assertEquals(1, response.totalItems());
         assertEquals(3, response.totalQuantity());
         verify(cartItemRepository, times(1)).save(any(CartItem.class));
+    }
+
+    @Test
+    void addItem_throwsExceptionWhenMaxItemsExceeded() {
+        CommerceProperties customProps = new CommerceProperties();
+        customProps.getCart().setMaxItemsPerCart(1);
+        CartServiceImpl limitedCartService = new CartServiceImpl(cartRepository, cartItemRepository, cartMapper, catalogClient, customProps);
+
+        Cart cart = Cart.builder()
+                .id(cartId)
+                .userId(userId)
+                .status(CartStatus.ACTIVE)
+                .items(new ArrayList<>(List.of(CartItem.builder().id(UUID.randomUUID()).skuId(UUID.randomUUID()).quantity(1).build())))
+                .build();
+        when(cartRepository.findByUserIdAndStatus(userId, CartStatus.ACTIVE)).thenReturn(Optional.of(cart));
+        when(catalogClient.getSkuInfo(skuId)).thenReturn(new SkuInfo(skuId, "SKU-01", "Nike Shoe", "thumb.jpg", new BigDecimal("100.00"), 50, true));
+        when(cartItemRepository.findByCartIdAndSkuId(cartId, skuId)).thenReturn(Optional.empty());
+
+        assertThrows(BusinessException.class, () -> limitedCartService.addItem(userId, new AddToCartRequest(skuId, 1)));
     }
 }

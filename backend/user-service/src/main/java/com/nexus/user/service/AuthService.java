@@ -53,6 +53,7 @@ public class AuthService {
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
 
+
     private final int maxLoginAttempts;
     private final long resetPasswordExpiryMinutes;
 
@@ -79,6 +80,7 @@ public class AuthService {
             AuditService auditService,
             EmailService emailService,
             PasswordEncoder passwordEncoder,
+
             @Value("${app.security.max-login-attempts:5}") int maxLoginAttempts,
             @Value("${app.security.reset-password-expiry-minutes:15}") long resetPasswordExpiryMinutes) {
         this.userRepository = userRepository;
@@ -89,6 +91,7 @@ public class AuthService {
         this.auditService = auditService;
         this.emailService = emailService;
         this.passwordEncoder = passwordEncoder;
+
         this.maxLoginAttempts = maxLoginAttempts;
         this.resetPasswordExpiryMinutes = resetPasswordExpiryMinutes;
     }
@@ -118,7 +121,8 @@ public class AuthService {
         User user = new User();
         user.setId(UUID.randomUUID());
         user.setEmail(request.getEmail().trim().toLowerCase());
-        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setKeycloakId(UUID.randomUUID().toString());
+        user.setPasswordHash(null);
         user.setFullName(request.getFullName().trim());
         user.setPhone(request.getPhone());
         user.setIdentifyNumber(request.getIdentifyNumber());

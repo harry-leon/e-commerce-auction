@@ -1,6 +1,6 @@
 package com.nexus.catalog.service.impl;
 
-import com.nexus.catalog.constant.ProductConstant;
+import com.nexus.catalog.config.CatalogProperties;
 import com.nexus.catalog.dto.mapper.ProductMapper;
 import com.nexus.catalog.dto.request.ImageRequest;
 import com.nexus.catalog.dto.request.ProductFilterRequest;
@@ -9,8 +9,8 @@ import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
 import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.dto.response.SkuResponse;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.entity.ProductImage;
 import com.nexus.catalog.entity.Sku;
@@ -48,6 +48,8 @@ public class ProductServiceImpl implements ProductService {
     private final ProductImageRepository productImageRepository;
     private final ProductMapper productMapper;
     private final Validator validator;
+    // Cấu hình tham số nghiệp vụ catalog từ Spring Cloud Config Server / application.yml
+    private final CatalogProperties catalogProperties;
 
     public ProductServiceImpl(
             ProductRepository productRepository,
@@ -62,6 +64,28 @@ public class ProductServiceImpl implements ProductService {
         this.productImageRepository = productImageRepository;
         this.productMapper = productMapper != null ? productMapper : ProductMapper.INSTANCE;
         this.validator = validator;
+        this.catalogProperties = new CatalogProperties();
+    }
+
+    /**
+     * Khởi tạo ProductServiceImpl với đầy đủ dependencies bao gồm CatalogProperties động.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProductServiceImpl(
+            ProductRepository productRepository,
+            SkuRepository skuRepository,
+            CategoryRepository categoryRepository,
+            ProductImageRepository productImageRepository,
+            ProductMapper productMapper,
+            Validator validator,
+            CatalogProperties catalogProperties) {
+        this.productRepository = productRepository;
+        this.skuRepository = skuRepository;
+        this.categoryRepository = categoryRepository;
+        this.productImageRepository = productImageRepository;
+        this.productMapper = productMapper != null ? productMapper : ProductMapper.INSTANCE;
+        this.validator = validator;
+        this.catalogProperties = catalogProperties != null ? catalogProperties : new CatalogProperties();
     }
 
     @Override
@@ -81,7 +105,7 @@ public class ProductServiceImpl implements ProductService {
             validateOriginalPrice(skuReq);
         }
         var category = categoryRepository.findById(request.categoryId())
-                .orElseThrow(() -> new NotFoundException("Category not found: " + request.categoryId()));
+                .orElseThrow(() -> new ResourceNotFoundException("Category not found: " + request.categoryId()));
         for (SkuRequest skuReq : request.skus()) {
             if (skuRepository.existsBySkuCode(skuReq.skuCode())) {
                 throw new BusinessException("SKU code already exists: " + skuReq.skuCode());
@@ -120,7 +144,7 @@ public class ProductServiceImpl implements ProductService {
             }
         }
         var category = categoryRepository.findById(request.categoryId())
-                .orElseThrow(() -> new NotFoundException("Category not found: " + request.categoryId()));
+                .orElseThrow(() -> new ResourceNotFoundException("Category not found: " + request.categoryId()));
 
         // save db
         productMapper.updateProductFromRequest(request, product);
@@ -215,7 +239,7 @@ public class ProductServiceImpl implements ProductService {
     public SkuResponse updateSku(UUID skuId, SkuRequest request) {
         validateOriginalPrice(request);
         Sku sku = skuRepository.findById(skuId)
-                .orElseThrow(() -> new NotFoundException("SKU not found: " + skuId));
+                .orElseThrow(() -> new ResourceNotFoundException("SKU not found: " + skuId));
         verifyProductOwnership(sku.getProduct());
         if (skuRepository.existsBySkuCodeAndIdNot(request.skuCode(), skuId)) {
             throw new BusinessException("SKU code already exists: " + request.skuCode());
@@ -227,7 +251,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     public void deleteSku(UUID skuId) {
         Sku sku = skuRepository.findById(skuId)
-                .orElseThrow(() -> new NotFoundException("SKU not found: " + skuId));
+                .orElseThrow(() -> new ResourceNotFoundException("SKU not found: " + skuId));
         verifyProductOwnership(sku.getProduct());
         skuRepository.delete(sku);
     }
@@ -236,8 +260,9 @@ public class ProductServiceImpl implements ProductService {
     public ImageResponse addImage(UUID productId, ImageRequest request) {
         Product product = findProductById(productId);
         verifyProductOwnership(product);
-        if (product.getImages().size() >= ProductConstant.MAX_IMAGES) {
-            throw new BusinessException("Product may have at most " + ProductConstant.MAX_IMAGES + " images");
+        int maxImages = catalogProperties.getProduct().getMaxImages();
+        if (product.getImages().size() >= maxImages) {
+            throw new BusinessException("Product may have at most " + maxImages + " images");
         }
         ProductImage image = productMapper.toImageEntity(request);
         image.setProduct(product);
@@ -251,7 +276,7 @@ public class ProductServiceImpl implements ProductService {
         ProductImage image = (productImageRepository != null
                 ? productImageRepository.findById(imageId)
                 : productRepository.findImagesById(imageId))
-                .orElseThrow(() -> new NotFoundException("Image not found: " + imageId));
+                .orElseThrow(() -> new ResourceNotFoundException("Image not found: " + imageId));
         verifyProductOwnership(image.getProduct());
         productMapper.updateImageFromRequest(request, image);
         productRepository.save(image.getProduct());
@@ -263,7 +288,7 @@ public class ProductServiceImpl implements ProductService {
         ProductImage image = (productImageRepository != null
                 ? productImageRepository.findById(imageId)
                 : productRepository.findImagesById(imageId))
-                .orElseThrow(() -> new NotFoundException("Image not found: " + imageId));
+                .orElseThrow(() -> new ResourceNotFoundException("Image not found: " + imageId));
         verifyProductOwnership(image.getProduct());
         Product product = image.getProduct();
         product.getImages().remove(image);
@@ -272,7 +297,7 @@ public class ProductServiceImpl implements ProductService {
 
     private Product findProductById(UUID id) {
         return productRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Product not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
     }
 
     private void validateRequest(ProductRequest request) {

@@ -1,0 +1,51 @@
+# Cấu hình reputation-service quản lý đánh giá, xử phạt và điểm uy tín
+spring:
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
+  application:
+    name: ${SERVICE_NAME:reputation-service}
+  profiles:
+    active: ${SYSTEM_ENV:dev}
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nexus_reputation}
+    username: ${DB_USERNAME:nexus}
+    password: ${DB_PASSWORD:nexus}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8087}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  security:
+    jwt-secret: ${JWT_SECRET:}
+
+eureka:
+  client:
+    enabled: ${EUREKA_ENABLED:false}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true

@@ -27,8 +27,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,refresh
   endpoint:
+    refresh:
+      enabled: true
     health:
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes

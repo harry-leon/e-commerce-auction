@@ -1,0 +1,8 @@
+# Cấu hình tập trung dành riêng cho fulfillment-service do Config Server quản lý.
+# Các thông số vận chuyển/giao vận này có thể thay đổi tại runtime và cập nhật qua POST /actuator/refresh.
+app:
+  fulfillment:
+    shipping:
+      default-delivery-days: 3     # Số ngày giao hàng ước tính mặc định
+      max-retry-attempts: 3        # Số lần thử giao lại tối đa khi giao hàng thất bại
+      auto-confirm-days: 7         # Tự động xác nhận giao hàng thành công sau số ngày

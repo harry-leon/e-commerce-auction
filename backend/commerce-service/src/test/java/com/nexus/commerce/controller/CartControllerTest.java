@@ -35,7 +35,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(CartController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, com.nexus.common.exception.GlobalExceptionHandler.class})
 @ActiveProfiles("test")
 class CartControllerTest {
 
@@ -108,7 +108,7 @@ class CartControllerTest {
                         .with(jwt().jwt(j -> j.subject(userId.toString())))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }

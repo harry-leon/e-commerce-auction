@@ -14,8 +14,8 @@ import com.nexus.catalog.dto.request.ImageRequest;
 import com.nexus.catalog.dto.request.ProductRequest;
 import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ProductResponse;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.entity.Category;
 import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.enums.ProductStatus;
@@ -240,7 +240,7 @@ class ProductServiceTest {
     void createWithUnknownCategoryIsRejected() {
         when(categoryRepository.findById(category.getId())).thenReturn(Optional.empty());
         ProductRequest command = command(List.of(sku("SKU-1", "10.00")), null);
-        assertThrows(NotFoundException.class,
+        assertThrows(ResourceNotFoundException.class,
                 () -> productService.create(sellerId, command));
     }
 
@@ -257,7 +257,7 @@ class ProductServiceTest {
     void getByIdThrowsWhenMissing() {
         UUID id = UUID.randomUUID();
         when(productRepository.findById(id)).thenReturn(Optional.empty());
-        assertThrows(NotFoundException.class, () -> productService.getById(id));
+        assertThrows(ResourceNotFoundException.class, () -> productService.getById(id));
     }
 
     @Test

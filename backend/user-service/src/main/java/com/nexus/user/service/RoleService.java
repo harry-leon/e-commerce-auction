@@ -3,7 +3,7 @@ package com.nexus.user.service;
 import com.nexus.user.dto.CreateRoleRequest;
 import com.nexus.user.dto.RoleResponse;
 import com.nexus.user.dto.UpdateRoleRequest;
-import com.nexus.user.entity.NotFoundException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.entity.Privilege;
 import com.nexus.user.entity.Role;
 import com.nexus.user.repository.PrivilegeRepository;
@@ -65,7 +65,7 @@ public class RoleService {
     @Transactional(readOnly = true)
     public RoleResponse getRoleById(UUID id) {
         Role role = roleRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy vai trò với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò với ID: " + id));
         return mapToRoleResponse(role);
     }
 
@@ -112,7 +112,7 @@ public class RoleService {
     @Transactional
     public RoleResponse updateRole(UUID id, UpdateRoleRequest request) {
         Role role = roleRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy vai trò với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò với ID: " + id));
 
         role.setName(request.getName().trim());
         role.setDescription(request.getDescription());
@@ -139,7 +139,7 @@ public class RoleService {
     @Transactional
     public void deleteRole(UUID id) {
         Role role = roleRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Không tìm thấy vai trò với ID: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò với ID: " + id));
 
         if ("ADMIN".equalsIgnoreCase(role.getCode())) {
             throw new IllegalArgumentException("Không được phép xóa vai trò quản trị hệ thống ADMIN");

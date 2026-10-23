@@ -20,8 +20,8 @@ import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
 import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.dto.response.SkuResponse;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.enums.ProductStatus;
 import com.nexus.catalog.enums.SkuStatus;
 import com.nexus.catalog.service.ProductService;
@@ -46,7 +46,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(ProductController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, com.nexus.common.exception.GlobalExceptionHandler.class})
 @ActiveProfiles("test")
 class ProductControllerTest {
 
@@ -141,7 +141,7 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.error.code").value("AUTH_FORBIDDEN"));
     }
 
     @Test
@@ -153,8 +153,8 @@ class ProductControllerTest {
                         .with(withUser(sellerId, "PRODUCT.CREATE"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(invalidRequest)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -193,12 +193,12 @@ class ProductControllerTest {
     @Test
     void getProductById_NotFound() throws Exception {
         when(productService.getById(productId))
-                .thenThrow(new NotFoundException("Product not found: " + productId));
+                .thenThrow(new ResourceNotFoundException("Product not found: " + productId));
 
         mockMvc.perform(get("/api/v1/products/{id}", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
+                .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
     }
 
     @Test
@@ -249,8 +249,8 @@ class ProductControllerTest {
                         .param("target", "ACTIVE")
                         .with(withUser(UUID.randomUUID(), "ROLE_ADMIN")))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("BUSINESS_ERROR"))
-                .andExpect(jsonPath("$.message").value("Product must be approved by Admin/Support to become ACTIVE"));
+                .andExpect(jsonPath("$.error.code").value("BUSINESS_ERROR"))
+                .andExpect(jsonPath("$.error.message").value("Product must be approved by Admin/Support to become ACTIVE"));
     }
 
     @Test
@@ -272,7 +272,7 @@ class ProductControllerTest {
         mockMvc.perform(post("/api/v1/products/{id}/approve", productId)
                         .with(withUser(sellerId, "PRODUCT.VIEW")))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.error.code").value("AUTH_FORBIDDEN"));
     }
 
     // --- SKU API Tests ---
@@ -355,8 +355,8 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(imgReq)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("BUSINESS_ERROR"))
-                .andExpect(jsonPath("$.message").value("Product may have at most 5 images"));
+                .andExpect(jsonPath("$.error.code").value("BUSINESS_ERROR"))
+                .andExpect(jsonPath("$.error.message").value("Product may have at most 5 images"));
     }
 
     @Test
@@ -403,9 +403,9 @@ class ProductControllerTest {
             .andExpect(jsonPath("$.success").value(true))
             .andExpect(jsonPath("$.data").isArray())
             .andExpect(jsonPath("$.data[0].id").value(productId.toString()))
-            .andExpect(jsonPath("$.meta.page").value(0))
-            .andExpect(jsonPath("$.meta.pageSize").value(20))
-            .andExpect(jsonPath("$.meta.total").value(1));
+            .andExpect(jsonPath("$.meta.pagination.page").value(0))
+            .andExpect(jsonPath("$.meta.pagination.size").value(20))
+            .andExpect(jsonPath("$.meta.pagination.totalElements").value(1));
     }
     @Test
     void search_NegativeMinPrice_Returns400BadRequest() throws Exception {
@@ -413,7 +413,7 @@ class ProductControllerTest {
         mockMvc.perform(get("/api/v1/products/search")
                 .param("minPrice", "-10")
                 .contentType(MediaType.APPLICATION_JSON))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 }

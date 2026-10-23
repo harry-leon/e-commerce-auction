@@ -1,0 +1,9 @@
+# Cấu hình tập trung dành riêng cho catalog-service do Config Server quản lý.
+# Các thông số nghiệp vụ này có thể thay đổi tại runtime và cập nhật qua POST /actuator/refresh.
+app:
+  catalog:
+    product:
+      max-images: 5                # Số ảnh tối đa cho mỗi sản phẩm (thay thế hằng số tĩnh ProductConstant)
+    pagination:
+      default-page-size: 20        # Kích thước trang mặc định khi tìm kiếm/lọc sản phẩm
+      max-page-size: 100           # Kích thước trang tối đa cho phép
