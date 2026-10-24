@@ -1,7 +1,7 @@
 package com.nexus.notification.config;
 
-import java.nio.charset.StandardCharsets;
-import javax.crypto.spec.SecretKeySpec;
+import com.nexus.common.security.KeycloakAuthorities;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,18 +10,12 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 
-/**
- * Stateless JWT (HS256). Secret lấy từ biến môi trường JWT_SECRET (>= 32 ký tự).
- * Claim "privileges" được map thẳng thành authority, khớp bảng Privileges của SRS
- * (PRODUCT.CREATE, AUCTION.BID...). Dùng: @PreAuthorize("hasAuthority('PRODUCT.CREATE')").
- */
+/** Xác thực JWT Keycloak bằng JWKS/issuer; quyền được đọc từ realm composite thay cho IAM HS256 cũ. */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -40,31 +34,21 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /** Converter chung tránh ROLE_ROLE_ADMIN và nhận privilege từ Keycloak composite. */
     @Bean
     JwtAuthenticationConverter jwtConverter() {
-        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
-        authorities.setAuthoritiesClaimName("privileges");
-        authorities.setAuthorityPrefix("");
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        // Giữ các privileges và bổ sung ROLE_<code> từ claim roles để hasAuthority và hasRole cùng hoạt động.
-        // Chỉ chuyển đổi claims sau bước xác minh JWT của Resource Server; không tin vai trò do frontend gửi riêng.
-        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            java.util.Collection<org.springframework.security.core.GrantedAuthority> granted =
-                    new java.util.ArrayList<>(authorities.convert(jwt));
-            java.util.List<String> roles = jwt.getClaimAsStringList("roles");
-            if (roles != null) {
-                roles.forEach(role -> granted.add(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));
-            }
-            return granted;
-        });
+        var converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(new KeycloakAuthorities());
         return converter;
     }
 
+    /** JWKS nội bộ dùng để lấy khóa; issuer đối chiếu URL public đã phát token. */
     @Bean
-    JwtDecoder jwtDecoder(@Value("${app.security.jwt-secret}") String secret) {
-        byte[] key = secret.getBytes(StandardCharsets.UTF_8);
-        return NimbusJwtDecoder.withSecretKey(new SecretKeySpec(key, "HmacSHA256"))
-                .macAlgorithm(MacAlgorithm.HS256)
-                .build();
+    JwtDecoder jwtDecoder(
+            @Value("${app.keycloak.jwk-set-uri:${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/certs}") String uri,
+            @Value("${app.keycloak.issuer:${KEYCLOAK_ISSUER:http://localhost:8180/realms/nexus-realm}}") String issuer) {
+        var decoder = NimbusJwtDecoder.withJwkSetUri(uri).build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
+        return decoder;
     }
 }

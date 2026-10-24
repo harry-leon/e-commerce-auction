@@ -43,9 +43,6 @@ springdoc:
     path: /swagger-ui.html
 
 app:
-  security:
-    # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
-    jwt-secret: ${JWT_SECRET:}
   # Cấu hình dự phòng cục bộ cho auction-service khi chưa kết nối Config Server
   auction:
     bidding:

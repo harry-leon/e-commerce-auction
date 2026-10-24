@@ -22,6 +22,12 @@
     </properties>
 
     <dependencies>
+        <!-- Converter dùng chung cho JWT Keycloak; optional để không ép các module ngoài HTTP dùng Resource Server. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- Spring Boot Web cho Controller, Response, ExceptionHandler -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
