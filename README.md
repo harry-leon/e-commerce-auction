@@ -1,19 +1,23 @@
 # Project Nexus
 
 Nền tảng thương mại điện tử kết hợp đấu giá (xem SRS trong `docs/srs-nexus-ecommerce-auction-v1.docx`).
-Repo dạng **monorepo**: frontend, backend (6 service + gateway) và hạ tầng nằm chung một repo.
+Repo dạng **monorepo**: frontend, backend (7 service nghiệp vụ + gateway + discovery/config) và hạ tầng nằm chung một repo.
 
 ```
 nexus/
 ├── frontend-web/            React + TypeScript + Vite
 ├── backend/
 │   ├── api-gateway/         Spring Cloud Gateway (điểm vào duy nhất)
-│   ├── user-service/        Identity, Role, Reputation          (DB: nexus_user)
+│   ├── user-service/        User Profile (IAM: Keycloak)          (DB: nexus_user)
 │   ├── catalog-service/     Product, Category, Search           (DB: nexus_catalog)
 │   ├── commerce-service/    Cart, Checkout, Payment, Order      (DB: nexus_commerce)
 │   ├── auction-service/     Auction, Bidding, Settlement        (DB: nexus_auction)
 │   ├── fulfillment-service/ Inventory, Shipping                 (DB: nexus_fulfillment)
-│   └── notification-service/ Event log, Notification            (DB: nexus_notification)
+│   ├── notification-service/ Event log, Notification            (DB: nexus_notification)
+│   ├── reputation-service/   Rating, Penalty, Trust Score        (DB: nexus_reputation)
+│   ├── discovery-server/     Eureka registry
+│   ├── config-server/        Centralized configuration
+│   └── common/               Shared response/security library
 ├── deploy/                  init DB (docker), Kubernetes manifests
 ├── docs/                    SRS, kiến trúc, hướng dẫn GitLab
 ├── scripts/                 script cấu hình GitLab
