@@ -54,7 +54,7 @@ public class AuthGatewayController {
     @Value("${app.keycloak.admin-client-id:nexus-admin-cli}")
     private String adminClientId;
 
-    @Value("${app.keycloak.admin-client-secret:nexus-internal-admin-secret-key-123456}")
+    @Value("${app.keycloak.admin-client-secret:}")
     private String adminClientSecret;
 
     @Value("${app.keycloak.user-service-url:http://localhost:8081}")
@@ -88,11 +88,13 @@ public class AuthGatewayController {
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
             .body(BodyInserters.fromFormData("grant_type", "password")
                 .with("client_id", clientId)
+                .with("scope", "openid")
                 .with("username", username)
                 .with("password", password))
             .retrieve()
             .bodyToMono(Map.class)
-            .map(ResponseEntity::ok)
+            .timeout(java.time.Duration.ofSeconds(15))
+            .flatMap(this::withProfile)
             .onErrorResume(WebClientResponseException.class, ex -> {
                 HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
                 return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.UNAUTHORIZED).body(Map.of(
@@ -130,7 +132,8 @@ public class AuthGatewayController {
                 .with("refresh_token", refreshToken))
             .retrieve()
             .bodyToMono(Map.class)
-            .map(ResponseEntity::ok)
+            .timeout(java.time.Duration.ofSeconds(15))
+            .flatMap(this::withProfile)
             .onErrorResume(WebClientResponseException.class, ex -> Mono.just(
                 ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
                     "success", false,
@@ -153,11 +156,12 @@ public class AuthGatewayController {
      */
     @PostMapping(value = "/register", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map>> register(@RequestBody Map<String, Object> body) {
-        String email = (String) body.get("email");
-        String password = (String) body.get("password");
-        String fullName = (String) body.get("fullName");
+        // Từ chối scalar sai kiểu trước khi gọi IAM, tránh ClassCastException trả 500 cho payload không hợp lệ.
+        String email = body.get("email") instanceof String value ? value.trim().toLowerCase(java.util.Locale.ROOT) : null;
+        String password = body.get("password") instanceof String value ? value : null;
+        String fullName = body.get("fullName") instanceof String value ? value.trim() : null;
 
-        if (email == null || email.isBlank() || password == null || password.isBlank()) {
+        if (email == null || email.isBlank() || !email.contains("@") || password == null || password.length() < 6 || password.length() > 100 || fullName == null || fullName.isBlank()) {
             return Mono.just(ResponseEntity.badRequest().body(Map.of(
                 "success", false,
                 "error", Map.of("code", "INVALID_ARGUMENT", "message", "Email và mật khẩu không được để trống")
@@ -175,12 +179,13 @@ public class AuthGatewayController {
 
                         return webClient.post()
                             .uri(userServiceUrl + "/api/v1/users")
-                            .header("X-User-Id", keycloakId)
-                            .header("X-User-Roles", "ROLE_BUYER")
+                            .headers(headers -> headers.setBearerAuth(adminToken))
+                            .header("X-Profile-Subject", keycloakId)
                             .contentType(MediaType.APPLICATION_JSON)
                             .bodyValue(profilePayload)
                             .retrieve()
                             .bodyToMono(Map.class)
+            .timeout(java.time.Duration.ofSeconds(15))
                             .map(userProfileResponse -> ResponseEntity.status(HttpStatus.CREATED).body(userProfileResponse))
                             .onErrorResume(error -> {
                                 log.error("Lỗi khi tạo hồ sơ tại user-service, tiến hành rollback Keycloak user: {}", keycloakId, error);
@@ -199,7 +204,7 @@ public class AuthGatewayController {
             })
             .onErrorResume(WebClientResponseException.class, ex -> {
                 HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
-                String message = ex.getResponseBodyAsString();
+                String message = "Không thể hoàn tất đăng ký";
                 if (status == HttpStatus.CONFLICT || ex.getStatusCode().value() == 409) {
                     message = "Email đã được đăng ký trong hệ thống";
                 }
@@ -212,8 +217,28 @@ public class AuthGatewayController {
                 log.error("Lỗi hệ thống trong luồng đăng ký:", ex);
                 return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
                     "success", false,
-                    "error", Map.of("code", "INTERNAL_SERVER_ERROR", "message", "Lỗi xử lý đăng ký từ Gateway: " + ex.getMessage())
+                    "error", Map.of("code", "INTERNAL_SERVER_ERROR", "message", "Không thể hoàn tất đăng ký, vui lòng thử lại sau")
                 )));
+            });
+    }
+
+    /**
+     * Giữ contract frontend accessToken/refreshToken/user; lấy profile qua API bằng JWT đã được Keycloak cấp.
+     * Lỗi profile dừng login/refresh, không tạo session UI thiếu user.
+     */
+    private Mono<ResponseEntity<Map>> withProfile(Map tokens) {
+        String accessToken = (String) tokens.get("access_token");
+        return webClient.get().uri(userServiceUrl + "/api/v1/users/me")
+            .headers(headers -> headers.setBearerAuth(accessToken))
+            .retrieve().bodyToMono(Map.class).timeout(java.time.Duration.ofSeconds(15))
+            .map(profile -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("accessToken", accessToken);
+                result.put("refreshToken", tokens.get("refresh_token"));
+                result.put("expiresIn", tokens.get("expires_in"));
+                result.put("tokenType", "Bearer");
+                result.put("user", profile.containsKey("data") ? profile.get("data") : profile);
+                return ResponseEntity.ok((Map) result);
             });
     }
 
@@ -221,6 +246,9 @@ public class AuthGatewayController {
      * Lấy Admin Token từ Keycloak thông qua giao thức OAuth2 client_credentials.
      */
     private Mono<String> fetchKeycloakAdminToken() {
+        if (adminClientSecret.isBlank()) {
+            return Mono.error(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "IAM chưa được cấu hình"));
+        }
         return webClient.post()
             .uri(tokenUri)
             .contentType(MediaType.APPLICATION_FORM_URLENCODED)
@@ -229,6 +257,7 @@ public class AuthGatewayController {
                 .with("client_secret", adminClientSecret))
             .retrieve()
             .bodyToMono(Map.class)
+            .timeout(java.time.Duration.ofSeconds(15))
             .map(res -> (String) res.get("access_token"));
     }
 
@@ -237,13 +266,20 @@ public class AuthGatewayController {
      */
     private Mono<String> createKeycloakUser(String adminToken, String email, String password, String fullName) {
         String adminUsersUri = baseUrl + "/admin/realms/" + realm + "/users";
+        // User Profile của Keycloak yêu cầu cả firstName/lastName; thiếu lastName làm password grant bị account-not-fully-set-up.
+        // Profile nghiệp vụ vẫn giữ fullName nguyên vẹn; tên chỉ có một từ được dùng cho cả hai field IAM.
+        String normalizedName = fullName == null || fullName.isBlank() ? email : fullName.trim();
+        int separator = normalizedName.lastIndexOf(' ');
+        String firstName = separator < 0 ? normalizedName : normalizedName.substring(separator + 1);
+        String lastName = separator < 0 ? normalizedName : normalizedName.substring(0, separator);
 
         Map<String, Object> keycloakUser = Map.of(
             "username", email.trim().toLowerCase(),
             "email", email.trim().toLowerCase(),
-            "firstName", fullName != null ? fullName.trim() : email,
+            "firstName", firstName,
+            "lastName", lastName,
             "enabled", true,
-            "emailVerified", true,
+            "emailVerified", false,
             "credentials", List.of(Map.of(
                 "type", "password",
                 "value", password,
@@ -262,7 +298,11 @@ public class AuthGatewayController {
                     if (location != null) {
                         String path = location.getPath();
                         String keycloakId = path.substring(path.lastIndexOf('/') + 1);
-                        return Mono.just(keycloakId);
+                        // Admin create-user không bảo đảm realmRoles trong payload được áp dụng.
+                        // Gán BUYER rõ ràng; lỗi ở bước này phải xóa tài khoản vừa tạo.
+                        return assignDefaultBuyer(adminToken, keycloakId)
+                            .thenReturn(keycloakId)
+                            .onErrorResume(error -> rollbackKeycloakUser(adminToken, keycloakId).then(Mono.error(error)));
                     }
                     return Mono.error(new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Không lấy được keycloak_id từ phản hồi Keycloak"));
                 } else if (clientResponse.statusCode().value() == 409) {
@@ -287,6 +327,18 @@ public class AuthGatewayController {
                 log.warn("Không thể xóa Keycloak user trong bước bù trừ: {}", keycloakId, e);
                 return Mono.empty();
             });
+    }
+
+    /** Gán realm role BUYER trên Keycloak trước khi tạo profile; không tin role từ payload frontend. */
+    private Mono<Void> assignDefaultBuyer(String adminToken, String keycloakId) {
+        String adminBase = baseUrl + "/admin/realms/" + realm;
+        return webClient.get().uri(adminBase + "/roles/ROLE_BUYER")
+            .headers(headers -> headers.setBearerAuth(adminToken))
+            .retrieve().bodyToMono(Map.class).timeout(java.time.Duration.ofSeconds(15))
+            .flatMap(role -> webClient.post().uri(adminBase + "/users/" + keycloakId + "/role-mappings/realm")
+                .headers(headers -> headers.setBearerAuth(adminToken))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(List.of(role))
+                .retrieve().bodyToMono(Void.class).timeout(java.time.Duration.ofSeconds(15)));
     }
 
     /**
