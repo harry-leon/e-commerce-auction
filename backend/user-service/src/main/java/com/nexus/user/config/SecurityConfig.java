@@ -1,116 +1,51 @@
 package com.nexus.user.config;
 
-import java.nio.charset.StandardCharsets;
-import javax.crypto.spec.SecretKeySpec;
+import com.nexus.common.security.KeycloakAuthorities;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
-import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-/**
- * Cấu hình bảo mật ứng dụng với Spring Security và OAuth2 Resource Server.
- * Stateless JWT (HS256). Secret lấy từ biến môi trường JWT_SECRET (>= 32 ký tự).
- * Claim "privileges" được map thẳng thành authority, khớp bảng Privileges của SRS mục 2.7.
- *
- * @author Nguyễn Tiến Thương
- * @since 06/10/2026
- */
+/** Xác thực JWT Keycloak tại service; header X-User-* không tạo Authentication và không thay thế chữ ký. */
 @Configuration
-@EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
-
-    private final HeaderAuthenticationFilter headerAuthenticationFilter;
-
-    public SecurityConfig(HeaderAuthenticationFilter headerAuthenticationFilter) {
-        this.headerAuthenticationFilter = headerAuthenticationFilter;
-    }
-
-    /**
-     * Cấu hình SecurityFilterChain phân quyền truy cập các endpoint.
-     *
-     * @param http Đối tượng HttpSecurity của Spring
-     * @return Chuỗi filter đã cấu hình
-     * @throws Exception Lỗi cấu hình bảo mật nếu có
-     */
+    /** Profile creation bắt buộc service account; các API tự phục vụ dùng principal Jwt thực đã xác minh. */
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
-            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .addFilterBefore(headerAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-            .authorizeHttpRequests(a -> a
-                .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
-                .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                .requestMatchers("/api/v1/ping").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll()
-                .requestMatchers("/api/v1/auth/change-password").authenticated()
-                .requestMatchers("/api/v1/auth/**").permitAll()
-                .anyRequest().authenticated())
-            .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/actuator/health/**", "/actuator/info", "/v3/api-docs/**",
+                                "/swagger-ui/**", "/swagger-ui.html", "/api/v1/ping",
+                                "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password").permitAll()
+                        .anyRequest().authenticated())
+                .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtConverter())));
         return http.build();
     }
 
-    /**
-     * Bean cung cấp thuật toán băm mật khẩu BCrypt an toàn.
-     *
-     * @return Đối tượng PasswordEncoder
-     */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
-    /**
-     * Chuyển đổi các claim trong JWT thành tập hợp GrantedAuthority trong Spring Security.
-     * Trích xuất claim "privileges" để sử dụng cho @PreAuthorize.
-     *
-     * @return Converter JwtAuthenticationConverter
-     */
+    /** Dùng chung chuẩn ROLE_* và privilege composite trên tất cả domain services. */
     @Bean
     JwtAuthenticationConverter jwtConverter() {
-        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
-        authorities.setAuthoritiesClaimName("privileges");
-        authorities.setAuthorityPrefix("");
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        // Giữ các privileges và bổ sung ROLE_<code> từ claim roles để hasAuthority và hasRole cùng hoạt động.
-        // Chỉ chuyển đổi claims sau bước xác minh JWT của Resource Server; không tin vai trò do frontend gửi riêng.
-        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            java.util.Collection<org.springframework.security.core.GrantedAuthority> granted =
-                    new java.util.ArrayList<>(authorities.convert(jwt));
-            java.util.List<String> roles = jwt.getClaimAsStringList("roles");
-            if (roles != null) {
-                roles.forEach(role -> granted.add(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));
-            }
-            return granted;
-        });
+        var converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(new KeycloakAuthorities());
         return converter;
     }
 
-    /**
-     * Bean giải mã và xác thực chữ ký của JWT token bằng thuật toán HMAC-SHA256.
-     *
-     * @param secret Chuỗi secret key từ biến cấu hình
-     * @return Đối tượng JwtDecoder
-     */
+    /** JWKS có thể là hostname nội bộ, issuer phải đúng URL public nằm trong token. */
     @Bean
-    JwtDecoder jwtDecoder(@Value("${app.security.jwt-secret}") String secret) {
-        byte[] key = secret.getBytes(StandardCharsets.UTF_8);
-        return NimbusJwtDecoder.withSecretKey(new SecretKeySpec(key, "HmacSHA256"))
-                .macAlgorithm(MacAlgorithm.HS256)
-                .build();
+    JwtDecoder jwtDecoder(@Value("${app.keycloak.jwk-set-uri:http://localhost:8180/realms/nexus-realm/protocol/openid-connect/certs}") String uri,
+                          @Value("${app.keycloak.issuer:http://localhost:8180/realms/nexus-realm}") String issuer) {
+        var decoder = NimbusJwtDecoder.withJwkSetUri(uri).build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
+        return decoder;
     }
 }

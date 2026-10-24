@@ -63,7 +63,8 @@ public class UserController {
     @PreAuthorize("hasAuthority('PROFILE.VIEW')")
     @Operation(summary = "Xem hồ sơ cá nhân", description = "Lấy thông tin tài khoản của chính mình")
     public ResponseEntity<UserResponse> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
-        UUID userId = UUID.fromString(jwt.getSubject());
+        // Tra JWT sub qua keycloak_id, hỗ trợ profile cũ có id riêng.
+        UUID userId = userService.findBySubject(jwt.getSubject()).getId();
         return ResponseEntity.ok(userService.getUserById(userId));
     }
 
@@ -80,7 +81,8 @@ public class UserController {
     public ResponseEntity<UserResponse> updateMyProfile(
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody UpdateUserRequest request) {
-        UUID userId = UUID.fromString(jwt.getSubject());
+        // Tra subject Keycloak thay vì giả định bằng profile id.
+        UUID userId = userService.findBySubject(jwt.getSubject()).getId();
         return ResponseEntity.ok(userService.updateUser(userId, request));
     }
 
@@ -151,7 +153,8 @@ public class UserController {
      * @return DTO UserResponse sau cập nhật vai trò
      */
     @PutMapping("/{id}/roles")
-    @PreAuthorize("hasAuthority('USER.UPDATE')")
+    // USER.UPDATE của Support không được dùng để tự cấp ADMIN; chỉ quản trị viên thay đổi role.
+    @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Gán vai trò cho người dùng", description = "Gán danh sách vai trò cho người dùng")
     public ResponseEntity<UserResponse> assignRoles(
             @PathVariable UUID id,
@@ -174,7 +177,8 @@ public class UserController {
     public ResponseEntity<Page<ActivityHistoryResponse>> getMyActivityHistory(
             @AuthenticationPrincipal Jwt jwt,
             @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        UUID userId = UUID.fromString(jwt.getSubject());
+        // Tra subject Keycloak thay vì giả định bằng profile id.
+        UUID userId = userService.findBySubject(jwt.getSubject()).getId();
         return ResponseEntity.ok(userService.getActivityHistory(userId, pageable));
     }
 
@@ -199,14 +203,15 @@ public class UserController {
     /**
      * Tạo hồ sơ người dùng mới trong cơ sở dữ liệu sau khi tài khoản Keycloak đã được tạo.
      * Chức năng: Lưu trữ thông tin cá nhân (họ tên, email, số điện thoại...) và liên kết keycloak_id.
-     * Đầu vào: Header X-User-Id chứa keycloak_id (UUID), body chứa CreateUserProfileRequest không có mật khẩu.
+     * Đầu vào: Header nội bộ X-Profile-Subject chứa keycloak_id (UUID), body chứa CreateUserProfileRequest không có mật khẩu.
      * Kết quả: Trả về DTO UserResponse cùng mã trạng thái 201 Created.
-     * Luồng: Gọi UserService.createUserProfile() để gán vai trò mặc định BUYER và lưu bảng users.
+     * Luồng: service account có ROLE_PROFILE_WRITER gọi tạo profile; role BUYER đã được Keycloak quản lý.
      */
     @PostMapping
-    @Operation(summary = "Tạo hồ sơ người dùng mới", description = "Được gọi từ API Gateway kèm header X-User-Id sau khi Keycloak đã tạo tài khoản")
+    @PreAuthorize("hasRole('PROFILE_WRITER')")
+    @Operation(summary = "Tạo hồ sơ người dùng mới", description = "Được gọi từ API Gateway kèm token service account và header X-Profile-Subject sau khi Keycloak đã tạo tài khoản")
     public ResponseEntity<UserResponse> createUserProfile(
-            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
+            @RequestHeader(value = "X-Profile-Subject", required = true) String headerUserId,
             @Valid @RequestBody CreateUserProfileRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUserProfile(headerUserId, request));
     }

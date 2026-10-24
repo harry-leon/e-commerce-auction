@@ -1,19 +1,23 @@
 package com.nexus.user.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
+import com.nexus.user.dto.CreateUserProfileRequest;
 import com.nexus.user.dto.UpdateUserRequest;
-import com.nexus.user.dto.UserResponse;
-import com.nexus.user.entity.Role;
+import com.nexus.user.entity.AuditLog;
 import com.nexus.user.entity.User;
 import com.nexus.user.repository.AuditLogRepository;
-import com.nexus.user.repository.RoleRepository;
 import com.nexus.user.repository.UserRepository;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -22,119 +26,117 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
-/**
- * Kiểm thử đơn vị cho UserService.
- *
- * @author Nguyễn Tiến Thương
- * @since 06/10/2026
- */
+/** Bảo vệ luồng profile sau V4: tách subject/profile ID, không đọc IAM table và không lộ hồ sơ đã xóa. */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
-
-    @Mock
-    private UserRepository userRepository;
-
-    @Mock
-    private RoleRepository roleRepository;
-
-    @Mock
-    private AuditLogRepository auditLogRepository;
-
-    @Mock
-    private AuthService authService;
-
-    @Mock
-    private AuditService auditService;
-
-    private UserService userService;
+    @Mock private UserRepository users;
+    @Mock private AuditLogRepository logs;
+    @Mock private AuditService audit;
+    @Mock private KeycloakClient keycloak;
+    private UserService service;
+    private User user;
 
     @BeforeEach
-    void setUp() {
-        userService = new UserService(userRepository, roleRepository, auditLogRepository, authService, auditService);
+    void setup() {
+        service = new UserService(users, logs, audit, keycloak);
+        user = new User();
+        user.setId(UUID.randomUUID());
+        user.setKeycloakId(UUID.randomUUID());
+        user.setEmail("profile@example.com");
+        user.setFullName("Hồ sơ");
     }
 
     @Test
-    void testGetUserById() {
-        UUID userId = UUID.randomUUID();
-        User user = new User();
-        user.setId(userId);
-        user.setEmail("user@nexus.com");
-
-        UserResponse userResponse = new UserResponse();
-        userResponse.setId(userId);
-        userResponse.setEmail("user@nexus.com");
-
-        when(userRepository.findByIdAndIsDeletedFalse(userId)).thenReturn(Optional.of(user));
-        when(authService.mapToUserResponse(user)).thenReturn(userResponse);
-
-        UserResponse result = userService.getUserById(userId);
-
-        assertNotNull(result);
-        assertEquals("user@nexus.com", result.getEmail());
+    void resolvesSubjectSeparatelyAndRejectsInactiveProfiles() {
+        when(users.findByKeycloakIdAndIsDeletedFalse(user.getKeycloakId())).thenReturn(Optional.of(user));
+        assertEquals(user.getId(), service.findBySubject(user.getKeycloakId().toString()).getId());
+        user.setStatus("INACTIVE");
+        assertThrows(org.springframework.security.authentication.DisabledException.class,
+                () -> service.findBySubject(user.getKeycloakId().toString()));
     }
 
     @Test
-    void testUpdateUser() {
-        UUID userId = UUID.randomUUID();
-        User user = new User();
-        user.setId(userId);
-        user.setFullName("Old Name");
-
-        UserResponse userResponse = new UserResponse();
-        userResponse.setId(userId);
-        userResponse.setFullName("New Name");
-
-        when(userRepository.findByIdAndIsDeletedFalse(userId)).thenReturn(Optional.of(user));
-        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
-        when(authService.mapToUserResponse(any(User.class))).thenReturn(userResponse);
-
-        UpdateUserRequest request = new UpdateUserRequest();
-        request.setFullName("New Name");
-
-        UserResponse result = userService.updateUser(userId, request);
-
-        assertNotNull(result);
-        assertEquals("New Name", result.getFullName());
-        verify(userRepository).save(user);
+    void createsNormalizedProfileAndMapsIamAuthorities() {
+        var request = new CreateUserProfileRequest();
+        request.setEmail(" NEW@EXAMPLE.COM ");
+        request.setFullName(" Người dùng ");
+        request.setPhone("0901234567");
+        request.setIdentifyNumber("123");
+        request.setGender("OTHER");
+        request.setDateOfBirth(LocalDate.of(2000, 1, 1));
+        request.setAddress("HCM");
+        when(keycloak.authorities(user.getKeycloakId())).thenReturn(Set.of("ROLE_BUYER", "PROFILE.VIEW"));
+        var response = service.createUserProfile(user.getKeycloakId().toString(), request);
+        assertEquals("new@example.com", response.getEmail());
+        assertEquals("Người dùng", response.getFullName());
+        assertEquals(Set.of("BUYER"), response.getRoles());
+        assertEquals(Set.of("PROFILE.VIEW"), response.getPrivileges());
+        assertEquals("HCM", response.getAddress());
+        assertEquals("123", response.getIdentifyNumber());
+        assertEquals("OTHER", response.getGender());
+        assertEquals("0901234567", response.getPhone());
+        assertEquals(request.getDateOfBirth(), response.getDateOfBirth());
+        assertEquals("ACTIVE", response.getStatus());
+        verify(users).save(any(User.class));
     }
 
     @Test
-    void testDeleteUserSoftDelete() {
-        UUID userId = UUID.randomUUID();
-        User user = new User();
-        user.setId(userId);
-        user.setDeleted(false);
-        user.setStatus("ACTIVE");
+    void rejectsDuplicateAndMissingSubject() {
+        var request = new CreateUserProfileRequest();
+        request.setEmail("profile@example.com");
+        request.setFullName("User");
+        when(users.existsByEmail(request.getEmail())).thenReturn(true);
+        assertThrows(BusinessException.class, () -> service.createUserProfile(user.getKeycloakId().toString(), request));
+        assertThrows(IllegalArgumentException.class, () -> service.createUserProfile("invalid-subject", request));
+    }
 
-        when(userRepository.findByIdAndIsDeletedFalse(userId)).thenReturn(Optional.of(user));
+    @Test
+    void updatesProfileAndPreservesCreationTime() {
+        when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
+        var request = new UpdateUserRequest();
+        request.setFullName(" Updated ");
+        request.setPhone("0901234567");
+        request.setIdentifyNumber("abc");
+        request.setGender("MALE");
+        request.setDateOfBirth(LocalDate.of(1999, 1, 1));
+        request.setAddress("New address");
+        user.onCreate();
+        var created = user.getCreatedAt();
+        assertEquals("Updated", service.updateUser(user.getId(), request).getFullName());
+        user.onUpdate();
+        assertEquals(created, user.getCreatedAt());
+        assertTrue(!user.getUpdatedAt().isBefore(created));
+        assertEquals("New address", user.getAddress());
+    }
 
-        userService.deleteUser(userId);
-
+    @Test
+    void disablesIamBeforeSoftDeleteAndDelegatesRoles() {
+        when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
+        service.assignRoles(user.getId(), Set.of("SELLER"));
+        verify(keycloak).assignRoles(user.getKeycloakId(), Set.of("SELLER"));
+        service.deleteUser(user.getId());
+        verify(keycloak).disable(user.getKeycloakId());
         assertTrue(user.isDeleted());
         assertEquals("INACTIVE", user.getStatus());
-        verify(userRepository).save(user);
     }
 
     @Test
-    void testAssignRoles() {
-        UUID userId = UUID.randomUUID();
-        User user = new User();
-        user.setId(userId);
+    void searchesAndPagesProfileActivity() {
+        when(users.searchUsers(eq(""), any())).thenReturn(new PageImpl<>(List.of(user)));
+        assertEquals(1, service.searchUsers(null, PageRequest.of(0, 10)).getTotalElements());
+        when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
+        var log = new AuditLog(UUID.randomUUID(), user.getId(), "USER_UPDATED", "Cập nhật", null, null, "SUCCESS");
+        when(logs.findByUserId(eq(user.getId()), any())).thenReturn(new PageImpl<>(List.of(log)));
+        assertEquals("USER_UPDATED", service.getActivityHistory(user.getId(), PageRequest.of(0, 10)).getContent().getFirst().getAction());
+        assertEquals(user.getId(), service.getUserById(user.getId()).getId());
+    }
 
-        Role role = new Role(UUID.randomUUID(), "SELLER", "Seller", "Desc");
-        when(userRepository.findByIdAndIsDeletedFalse(userId)).thenReturn(Optional.of(user));
-        when(roleRepository.findByCode("SELLER")).thenReturn(Optional.of(role));
-        when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
-
-        UserResponse userResponse = new UserResponse();
-        userResponse.setRoles(Set.of("SELLER"));
-        when(authService.mapToUserResponse(any(User.class))).thenReturn(userResponse);
-
-        UserResponse result = userService.assignRoles(userId, Set.of("SELLER"));
-
-        assertNotNull(result);
-        assertTrue(result.getRoles().contains("SELLER"));
-        verify(userRepository).save(user);
+    @Test
+    void rejectsUnknownProfile() {
+        assertThrows(ResourceNotFoundException.class, () -> service.getUserById(UUID.randomUUID()));
+        assertThrows(ResourceNotFoundException.class, () -> service.findBySubject(UUID.randomUUID().toString()));
     }
 }
