@@ -157,17 +157,17 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     const payload = await response.json().catch(() => ({}))
     // Nguyên tắc Fail-Fast: Kiểm tra status/success trước tiên.
     // Nếu false hoặc HTTP status >= 400: dừng ngay lập tức và ném lỗi, không format hay xử lý tiếp để giảm tải hệ thống.
-    const isSuccess = response.ok && payload.success !== false && payload.status !== false;
+    const isSuccess = response.ok && payload.success !== false && payload.status !== false
     if (!isSuccess) {
         const errorObj: Partial<ErrorDetail> = payload.error || {}
         const msg =
             errorObj.message ||
             payload.message ||
             payload.detail ||
-            `Request failed (${response.status})`;
+            `Request failed (${response.status})`
         const code =
             errorObj.code ||
-            (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR');
+            (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
         throw new ApiClientError(
             msg,
             code,
@@ -175,7 +175,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             errorObj.details ?? null,
             payload.meta?.requestId,
             payload.meta?.timestamp,
-        );
+        )
     }
     return payload as T
 }
@@ -218,7 +218,8 @@ export interface ApiRole {
  * Vai trò trong UI chỉ phục vụ hiển thị; backend vẫn là nơi kiểm tra quyền truy cập thực sự.
  */
 export function mapUser(user: ApiUser): User {
-    const roles = user.roles.map((role) => role.toLowerCase())
+    // Backend mới trả role không prefix; chấp nhận ROLE_* trong thời gian chuyển đổi IAM.
+    const roles = (user.roles || []).map((role) => role.replace(/^ROLE_/, '').toLowerCase())
     const role: UserRole = roles.includes('admin')
         ? 'admin'
         : roles.includes('support')
