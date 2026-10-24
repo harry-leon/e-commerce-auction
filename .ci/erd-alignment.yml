@@ -1,0 +1,65 @@
+# Build các domain từ root để Maven tìm được nexus-common; tái sử dụng rules của jobs gốc.
+.domain-image-script:
+  script: &domain-image-script
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -f "backend/$DOMAIN_SERVICE/Dockerfile" -t "$CI_REGISTRY_IMAGE/$DOMAIN_SERVICE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE/$DOMAIN_SERVICE:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        RELEASE_TAG="$CI_COMMIT_TAG"
+      else
+        RELEASE_TAG=develop
+      fi
+      docker tag "$CI_REGISTRY_IMAGE/$DOMAIN_SERVICE:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/$DOMAIN_SERVICE:$RELEASE_TAG"
+      docker push "$CI_REGISTRY_IMAGE/$DOMAIN_SERVICE:$RELEASE_TAG"
+
+user-service:image:
+  variables: { DOMAIN_SERVICE: user-service }
+  script: *domain-image-script
+catalog-service:image:
+  variables: { DOMAIN_SERVICE: catalog-service }
+  script: *domain-image-script
+commerce-service:image:
+  variables: { DOMAIN_SERVICE: commerce-service }
+  script: *domain-image-script
+auction-service:image:
+  variables: { DOMAIN_SERVICE: auction-service }
+  script: *domain-image-script
+fulfillment-service:image:
+  variables: { DOMAIN_SERVICE: fulfillment-service }
+  script: *domain-image-script
+notification-service:image:
+  variables: { DOMAIN_SERVICE: notification-service }
+  script: *domain-image-script
+
+# Service reputation đã có Compose nhưng thiếu job và Dockerfile; thêm build/test tối thiểu.
+reputation-service:test:
+  extends: .be-base
+  stage: test
+  script:
+    - mvn $MAVEN_CLI_OPTS -f backend/reputation-service/pom.xml verify
+  rules:
+    - changes: [backend/reputation-service/**/*, backend/common/**/*, .ci/**/*]
+
+reputation-service:image:
+  extends: .docker-base
+  stage: package
+  variables: { DOMAIN_SERVICE: reputation-service }
+  script: *domain-image-script
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG'
+      changes: [backend/reputation-service/**/*, backend/common/**/*, .ci/**/*]
+
+# Common chứa converter quyền: thay đổi thư viện phải chạy toàn bộ suite dùng converter.
+common:test:
+  extends: .be-base
+  stage: test
+  script:
+    - mvn $MAVEN_CLI_OPTS -f backend/common/pom.xml test
+    - |
+      for SERVICE in user catalog commerce auction fulfillment notification reputation; do
+        mvn $MAVEN_CLI_OPTS -f "backend/$SERVICE-service/pom.xml" verify
+      done
+    - mvn $MAVEN_CLI_OPTS -f backend/api-gateway/pom.xml test
+  rules:
+    - changes: [backend/common/**/*]

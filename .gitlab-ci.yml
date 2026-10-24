@@ -11,6 +11,8 @@ stages: [validate, test, package]
 include:
   - local: .ci/templates.yml
   - local: .ci/jobs.yml
+  # Override riêng cho build domain có nexus-common; giữ nguyên file jobs được sinh theo mẫu.
+  - local: .ci/erd-alignment.yml
 
 # Tiêu đề MR phải theo Conventional Commits (được squash thành commit trên develop)
 mr-title-check:
