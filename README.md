@@ -48,3 +48,4 @@ Dev hằng ngày thường chỉ chạy phần mình làm: `npm run dev` trong `
 - Git: [CONTRIBUTING.md](CONTRIBUTING.md) (Gitflow, Conventional Commits, Merge Request)
 - Cài đặt GitLab: [docs/GITLAB_SETUP.md](docs/GITLAB_SETUP.md)
 - Kiến trúc & nguyên tắc: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- DTO contract FE/BE theo từng service: [docs/dto-contracts/README.md](docs/dto-contracts/README.md)
