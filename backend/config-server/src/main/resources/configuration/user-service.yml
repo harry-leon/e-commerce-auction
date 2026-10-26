@@ -1,11 +1,7 @@
-# Cấu hình tập trung dành riêng cho user-service do Config Server quản lý.
-# Các thông số nghiệp vụ và bảo mật này có thể thay đổi tại runtime và cập nhật qua POST /actuator/refresh.
+# User Service chỉ giữ hồ sơ. Password policy, token lifespan và brute-force policy cấu hình tại Keycloak.
+# JWKS có thể dùng DNS nội bộ; issuer vẫn là địa chỉ public nằm trong JWT.
 app:
-  user:
-    security:
-      access-token-expiry-minutes: 60       # Thời hạn token truy cập (phút)
-      refresh-token-expiry-days: 7          # Thời hạn refresh token (ngày)
-      max-login-attempts: 5                 # Số lần đăng nhập sai tối đa trước khi tạm khóa
-      reset-password-expiry-minutes: 15     # Thời hạn mã/link đặt lại mật khẩu (phút)
-    verification:
-      email-verification-expiry-hours: 24   # Thời hạn mã xác thực email (giờ)
+  keycloak:
+    base-url: ${KEYCLOAK_URL:http://localhost:8180}
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/nexus-realm}
+    jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/certs

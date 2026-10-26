@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
  * - BR-CFG-14: At most 1 active cart per user.
  * - BR-CFG-15: 7-day cart expiration window (extended upon each interaction).
  * - BR-CFG-16: Guest cart merging upon authentication.
- * - Real-time SKU existence, status, and stock availability verification.
+ * - Giá/trạng thái SKU lấy từ Catalog thật; stock null là chưa kiểm tra Fulfillment, Cart không reserve kho.
  */
 @Service
 @RequiredArgsConstructor
@@ -76,8 +76,11 @@ public class CartServiceImpl implements CartService {
             throw new BusinessException("UNAUTHORIZED_ACCESS", "Cart item does not belong to the active user cart");
         }
 
-        // Validate stock with Catalog
+        // SKU phải còn bán khi sửa giỏ; Catalog không sở hữu tồn kho nên chỉ kiểm tra stock nếu nguồn trả số cụ thể.
         SkuInfo skuInfo = catalogClient.getSkuInfo(cartItem.getSkuId());
+        if (skuInfo == null || !Boolean.TRUE.equals(skuInfo.isActive())) {
+            throw new BusinessException("PRODUCT_UNAVAILABLE", "SKU không tồn tại hoặc đã ngừng bán");
+        }
         if (skuInfo != null && skuInfo.stockQuantity() != null && skuInfo.stockQuantity() < request.quantity()) {
             throw new BusinessException("INSUFFICIENT_STOCK",
                     "Requested quantity (" + request.quantity() + ") exceeds available stock (" + skuInfo.stockQuantity() + ")");

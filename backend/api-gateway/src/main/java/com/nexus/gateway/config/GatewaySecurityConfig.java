@@ -24,6 +24,10 @@ public class GatewaySecurityConfig {
     @Value("${app.keycloak.jwk-set-uri}")
     private String jwkSetUri;
 
+    // Issuer public khác URL JWKS nội bộ trong Compose.
+    @Value("${app.keycloak.issuer:http://localhost:8180/realms/nexus-realm}")
+    private String issuer;
+
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         http
@@ -36,7 +40,7 @@ public class GatewaySecurityConfig {
                 .pathMatchers("/api/v1/ping").permitAll()
                 // Public auth endpoints
                 .pathMatchers("/api/v1/auth/login", "/api/v1/auth/refresh-token", "/api/v1/auth/refresh").permitAll()
-                .pathMatchers("/api/v1/auth/register").permitAll()
+                .pathMatchers("/api/v1/auth/register", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password").permitAll()
                 // Public product và category browsing
                 .pathMatchers(HttpMethod.GET, "/api/v1/products/**", "/api/v1/categories/**").permitAll()
                 .pathMatchers(HttpMethod.GET, "/api/v1/reputations/**").permitAll()
@@ -57,6 +61,8 @@ public class GatewaySecurityConfig {
      */
     @Bean
     public ReactiveJwtDecoder reactiveJwtDecoder() {
-        return NimbusReactiveJwtDecoder.withJwkSetUri(jwkSetUri).build();
+        var decoder = NimbusReactiveJwtDecoder.withJwkSetUri(jwkSetUri).build();
+        decoder.setJwtValidator(org.springframework.security.oauth2.jwt.JwtValidators.createDefaultWithIssuer(issuer));
+        return decoder;
     }
 }

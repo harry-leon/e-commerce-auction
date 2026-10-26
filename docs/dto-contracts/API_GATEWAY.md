@@ -1,0 +1,182 @@
+# API Gateway DTO Contract
+
+> **Base URL phía FE:** `/api/v1`
+>
+> **Nguồn:** `AuthGatewayController` và route trong `api-gateway/application.yml`
+>
+> **Lưu ý:** Auth Gateway hiện là ngoại lệ, chưa dùng `ApiResponse<T>` chuẩn.
+
+## 1. Endpoint matrix
+
+| Method | Path | Request | Success response | HTTP | Xác thực |
+|---|---|---|---|---|---|
+| `POST` | `/auth/login` | `LoginRequest` | `AuthPayload` trực tiếp | `200` | Public |
+| `POST` | `/auth/refresh` | `RefreshTokenRequest` | `AuthPayload` trực tiếp | `200` | Public |
+| `POST` | `/auth/refresh-token` | `RefreshTokenRequest` | `AuthPayload` trực tiếp | `200` | Public, alias |
+| `POST` | `/auth/register` | `RegisterRequest` | `UserResponse` trực tiếp | `201` | Public |
+
+`Content-Type: application/json` là bắt buộc cho bốn endpoint trên.
+
+## 2. Request DTO
+
+### `LoginRequest`
+
+| Field | Kiểu | Bắt buộc | Validation/xử lý |
+|---|---|---|---|
+| `email` | `string` | Có nếu không gửi `username` | Dùng làm username đăng nhập |
+| `username` | `string` | Có nếu không gửi `email` | Được ưu tiên hơn `email` nếu cả hai cùng có |
+| `password` | `string` | Có | Gateway chuyển trực tiếp cho Keycloak |
+
+```json
+{
+  "email": "buyer@nexus.vn",
+  "password": "example-password"
+}
+```
+
+### `RefreshTokenRequest`
+
+| Field | Kiểu | Bắt buộc | Validation/xử lý |
+|---|---|---|---|
+| `refreshToken` | `string` | Có | Tên field FE ưu tiên dùng |
+| `refresh_token` | `string` | Không | Alias tương thích; chỉ đọc khi thiếu `refreshToken` |
+
+```json
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token"
+}
+```
+
+### `RegisterRequest`
+
+| Field | Kiểu | Bắt buộc | Validation/xử lý |
+|---|---|---|---|
+| `email` | `string` | Có | Trim, lowercase, phải chứa `@`; user-service kiểm tra email chuẩn lần nữa |
+| `password` | `string` | Có | Từ `6` đến `100` ký tự; chỉ gửi sang Keycloak, không lưu trong profile DB |
+| `fullName` | `string` | Có | Không rỗng, trim, tối đa `255` tại user-service |
+| `phone` | `string` | Không | Nếu có: rỗng hoặc `10–11` chữ số |
+| `identifyNumber` | `string` | Không | Source hiện chưa đặt validation độ dài |
+| `gender` | `"MALE" \| "FEMALE" \| "OTHER" \| ""` | Không | Phân biệt hoa thường tại request đăng ký |
+| `dateOfBirth` | `string` | Không | `YYYY-MM-DD` |
+| `address` | `string` | Không | Tối đa `500` ký tự |
+
+Gateway bỏ qua role do client gửi và luôn gán `ROLE_BUYER`. Nếu tạo profile thất bại sau khi tạo user IAM, Gateway cố gắng rollback user Keycloak.
+
+```json
+{
+  "email": "buyer@nexus.vn",
+  "password": "example-password",
+  "fullName": "Nguyễn Văn An",
+  "phone": "0901234567",
+  "identifyNumber": "079203001234",
+  "gender": "MALE",
+  "dateOfBirth": "2003-05-20",
+  "address": "Quận 1, TP. Hồ Chí Minh"
+}
+```
+
+## 3. Success response
+
+### `AuthPayload`
+
+```ts
+interface AuthPayload {
+  accessToken: string
+  refreshToken: string
+  expiresIn: number
+  tokenType: 'Bearer'
+  user: UserResponse
+}
+```
+
+Payload không có `success`, `data`, `error`, `meta`. `user` là nội dung `UserResponse` lấy từ User Service; chi tiết field xem [USER_SERVICE.md](USER_SERVICE.md#3-response-dto).
+
+Ví dụ response của login/refresh:
+
+```json
+{
+  "accessToken": "eyJhbGciOiJSUzI1NiJ9.example-access-token",
+  "refreshToken": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token",
+  "expiresIn": 3600,
+  "tokenType": "Bearer",
+  "user": {
+    "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
+    "email": "buyer@nexus.vn",
+    "phone": "0901234567",
+    "fullName": "Nguyễn Văn An",
+    "identifyNumber": "079203001234",
+    "gender": "MALE",
+    "dateOfBirth": "2003-05-20",
+    "address": "Quận 1, TP. Hồ Chí Minh",
+    "status": "ACTIVE",
+    "createdAt": "2026-10-25T08:15:30",
+    "updatedAt": "2026-10-25T08:15:30",
+    "roles": ["BUYER"],
+    "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
+  }
+}
+```
+
+### Register response
+
+`POST /auth/register` forward nguyên `UserResponse` của User Service, không bọc envelope. FE không dùng `AuthPayload` cho response đăng ký vì endpoint chưa cấp token.
+
+```json
+{
+  "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
+  "email": "buyer@nexus.vn",
+  "phone": "0901234567",
+  "fullName": "Nguyễn Văn An",
+  "identifyNumber": "079203001234",
+  "gender": "MALE",
+  "dateOfBirth": "2003-05-20",
+  "address": "Quận 1, TP. Hồ Chí Minh",
+  "status": "ACTIVE",
+  "createdAt": "2026-10-25T08:15:30",
+  "updatedAt": "2026-10-25T08:15:30",
+  "roles": ["BUYER"],
+  "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
+}
+```
+
+## 4. Error response hiện tại
+
+Gateway auth trả cấu trúc tối giản:
+
+```ts
+interface GatewayAuthError {
+  success: false
+  error: {
+    code: string
+    message: string
+  }
+}
+```
+
+Các mã đang được tạo trực tiếp gồm `AUTH_CREDENTIALS_INVALID`, `AUTH_REFRESH_TOKEN_EXPIRED`, `INVALID_ARGUMENT`, `REGISTRATION_FAILED`, `INTERNAL_SERVER_ERROR`. Payload này không có `data`, `meta` hoặc `error.details`.
+
+Ví dụ login thất bại:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "AUTH_CREDENTIALS_INVALID",
+    "message": "Email hoặc mật khẩu không chính xác hoặc tài khoản bị khóa"
+  }
+}
+```
+
+## 5. Phân tuyến service
+
+| Route prefix | Đích |
+|---|---|
+| `/users/**`, `/roles/**`, một số `/auth/**` | User Service |
+| `/products/**`, `/categories/**` | Catalog Service |
+| `/cart/**`, `/checkout/**`, `/orders/**`, `/payments/**` | Commerce Service |
+| `/auctions/**`, `/bids/**`, `/ws/auctions/**` | Auction Service |
+| `/inventory/**`, `/warehouses/**`, `/shipping/**`, `/shipments/**` | Fulfillment Service |
+| `/notifications/**`, `/event-logs/**` | Notification Service |
+| `/reputations/**` | Reputation Service |
+
+Route tồn tại trong Gateway không đồng nghĩa endpoint nghiệp vụ đã được service triển khai. Kiểm tra trạng thái trong file contract của từng service trước khi tích hợp.

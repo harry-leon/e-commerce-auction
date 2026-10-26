@@ -1,120 +1,60 @@
 package com.nexus.user.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.user.config.SecurityConfig;
-import com.nexus.user.dto.AuthResponse;
-import com.nexus.user.dto.ForgotPasswordRequest;
-import com.nexus.user.dto.LoginRequest;
-import com.nexus.user.dto.RefreshTokenRequest;
-import com.nexus.user.dto.RegisterRequest;
-import com.nexus.user.dto.ResetPasswordRequest;
-import com.nexus.user.dto.UserResponse;
-import com.nexus.user.service.AuthService;
+import com.nexus.user.entity.User;
+import com.nexus.user.repository.UserRepository;
+import com.nexus.user.service.KeycloakClient;
+import com.nexus.user.service.UserService;
+import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * Kiểm thử WebMvc cho AuthController.
- *
- * @author Nguyễn Tiến Thương
- * @since 06/10/2026
- */
+/** Reset dùng action email Keycloak; change password bắt buộc principal JWT và profile đã liên kết. */
 @WebMvcTest(AuthController.class)
 @Import(SecurityConfig.class)
-@ActiveProfiles("test")
 class AuthControllerTest {
-
-    @Autowired
-    private MockMvc mockMvc;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @MockitoBean
-    private AuthService authService;
+    @Autowired private MockMvc mvc;
+    @MockitoBean private UserService users;
+    @MockitoBean private UserRepository profiles;
+    @MockitoBean private KeycloakClient keycloak;
 
     @Test
-    void testRegisterEndpoint() throws Exception {
-        RegisterRequest request = new RegisterRequest();
-        request.setEmail("newuser@nexus.com");
-        request.setPassword("Password123");
-        request.setFullName("Nguyen Van Test");
-
-        UserResponse userResponse = new UserResponse();
-        userResponse.setEmail("newuser@nexus.com");
-        AuthResponse authResponse = new AuthResponse("token1", "refresh1", 3600L, userResponse);
-
-        when(authService.register(any(RegisterRequest.class), any(), any())).thenReturn(authResponse);
-
-        mockMvc.perform(post("/api/v1/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.accessToken").value("token1"))
-                .andExpect(jsonPath("$.refreshToken").value("refresh1"));
+    void resetEmailsUseSamePublicResponseForMissingAndExistingProfiles() throws Exception {
+        var user = new User();
+        user.setKeycloakId(UUID.randomUUID());
+        when(profiles.findByEmailAndIsDeletedFalse(any())).thenReturn(Optional.empty(), Optional.of(user));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(post("/api/v1/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"email\":\"user@example.com\"}")).andExpect(status().isOk());
+        }
+        verify(keycloak).sendResetEmail(user.getKeycloakId());
+        mvc.perform(post("/api/v1/auth/reset-password")).andExpect(status().isGone());
     }
 
     @Test
-    void testLoginEndpoint() throws Exception {
-        LoginRequest request = new LoginRequest("test@nexus.com", "Password123");
-        UserResponse userResponse = new UserResponse();
-        userResponse.setEmail("test@nexus.com");
-        AuthResponse authResponse = new AuthResponse("access123", "refresh123", 3600L, userResponse);
-
-        when(authService.login(any(LoginRequest.class), any(), any())).thenReturn(authResponse);
-
-        mockMvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").value("access123"));
-    }
-
-    @Test
-    void testRefreshEndpoint() throws Exception {
-        RefreshTokenRequest request = new RefreshTokenRequest("valid_refresh_token");
-        AuthResponse authResponse = new AuthResponse("new_access", "new_refresh", 3600L, new UserResponse());
-
-        when(authService.refreshToken(any(RefreshTokenRequest.class))).thenReturn(authResponse);
-
-        mockMvc.perform(post("/api/v1/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").value("new_access"));
-    }
-
-    @Test
-    void testForgotPasswordEndpoint() throws Exception {
-        ForgotPasswordRequest request = new ForgotPasswordRequest("user@nexus.com");
-
-        mockMvc.perform(post("/api/v1/auth/forgot-password")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").exists());
-    }
-
-    @Test
-    void testResetPasswordEndpoint() throws Exception {
-        ResetPasswordRequest request = new ResetPasswordRequest("token123", "NewPass123");
-
-        mockMvc.perform(post("/api/v1/auth/reset-password")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").exists());
+    void passwordChangeRequiresVerifiedJwt() throws Exception {
+        mvc.perform(post("/api/v1/auth/change-password").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"old-pass\",\"newPassword\":\"new-pass\"}")).andExpect(status().isUnauthorized());
+        var user = new User();
+        user.setKeycloakId(UUID.randomUUID());
+        user.setEmail("user@example.com");
+        when(users.findBySubject(any())).thenReturn(user);
+        mvc.perform(post("/api/v1/auth/change-password").with(jwt())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"old-pass\",\"newPassword\":\"new-pass\"}")).andExpect(status().isOk());
+        verify(keycloak).changePassword(any(), org.mockito.ArgumentMatchers.eq("old-pass"), org.mockito.ArgumentMatchers.eq("new-pass"));
     }
 }

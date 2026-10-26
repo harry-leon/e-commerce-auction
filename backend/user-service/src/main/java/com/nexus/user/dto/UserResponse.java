@@ -23,6 +23,11 @@ public class UserResponse {
     private String address;
     private String status;
     private LocalDateTime createdAt;
+    // updatedAt lấy từ profile; roles/privileges tiếp tục là dữ liệu IAM trả về để giữ contract UI.
+    private LocalDateTime updatedAt;
+
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime value) { updatedAt = value; }
     private Set<String> roles;
     private Set<String> privileges;
 

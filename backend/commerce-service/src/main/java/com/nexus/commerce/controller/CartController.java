@@ -41,12 +41,10 @@ public class CartController {
     private final CartService cartService;
 
     /**
-     * Resolves the current user's UUID from JWT principal or Gateway forwarded X-User-Id header.
+     * Lấy UUID từ principal JWT đã xác minh; bỏ qua header để ngăn truy cập giỏ của người khác.
      */
     private UUID resolveUserId(Jwt jwt, String headerUserId) {
-        if (headerUserId != null && !headerUserId.isBlank()) {
-            return UUID.fromString(headerUserId);
-        }
+        // Chỉ JWT đã xác minh quyết định chủ sở hữu giỏ; header client không thể đổi user ID.
         if (jwt != null) {
             String subject = jwt.getSubject();
             if (subject != null && !subject.isBlank()) {

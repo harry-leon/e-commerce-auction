@@ -37,8 +37,7 @@
     </dependency>
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-netflix-eureka-client</artifactId></dependency>
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-config</artifactId></dependency>
-    <!-- Cấp JavaMailSender cho EmailService gửi SMTP thật; provider/credential lấy từ cấu hình môi trường. -->
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-mail</artifactId></dependency>
+    <!-- Email reset thuộc Keycloak; user-service không lưu password/reset token hoặc tự gửi credential email. -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>

@@ -1,171 +1,95 @@
 package com.nexus.user.service;
 
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.dto.CreateRoleRequest;
 import com.nexus.user.dto.RoleResponse;
 import com.nexus.user.dto.UpdateRoleRequest;
-import com.nexus.common.exception.ResourceNotFoundException;
-import com.nexus.user.entity.Privilege;
-import com.nexus.user.entity.Role;
-import com.nexus.user.repository.PrivilegeRepository;
-import com.nexus.user.repository.RoleRepository;
-import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Service quản lý vai trò và phân quyền (Roles & Privileges N-N) theo SRS mục 3.1.1.
- *
- * @author Nguyễn Tiến Thương
- * @since 06/10/2026
- */
+/** Giữ contract /roles nhưng chuyển lưu trữ sang realm roles/composites của Keycloak, không còn bảng IAM cục bộ. */
 @Service
 public class RoleService {
+    private final KeycloakClient keycloak;
 
-    private final RoleRepository roleRepository;
-    private final PrivilegeRepository privilegeRepository;
-    private final AuditService auditService;
+    public RoleService(KeycloakClient keycloak) { this.keycloak = keycloak; }
 
-    /**
-     * Khởi tạo RoleService với các Repository cần thiết.
-     *
-     * @param roleRepository      Repository vai trò
-     * @param privilegeRepository Repository đặc quyền
-     * @param auditService        Service ghi log kiểm toán
-     */
-    public RoleService(RoleRepository roleRepository,
-                       PrivilegeRepository privilegeRepository,
-                       AuditService auditService) {
-        this.roleRepository = roleRepository;
-        this.privilegeRepository = privilegeRepository;
-        this.auditService = auditService;
+    /** Liệt kê vai trò ứng dụng và privilege hiệu lực từ IAM. */
+    public List<RoleResponse> getAllRoles() { return keycloak.roles().stream().map(this::mapRole).toList(); }
+
+    /** UUID endpoint là ID role do Keycloak cấp. */
+    public RoleResponse getRoleById(UUID id) { return mapRole(find(id)); }
+
+    private KeycloakClient.RealmRole find(UUID id) {
+        return keycloak.roles().stream().filter(role -> role.id().equals(id.toString())).findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò"));
     }
 
-    /**
-     * Lấy danh sách tất cả các vai trò trong hệ thống.
-     *
-     * @return Danh sách DTO RoleResponse
-     */
-    @Transactional(readOnly = true)
-    public List<RoleResponse> getAllRoles() {
-        return roleRepository.findAll().stream()
-                .map(this::mapToRoleResponse)
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Lấy thông tin chi tiết một vai trò theo ID.
-     *
-     * @param id Mã định danh duy nhất của vai trò
-     * @return DTO RoleResponse
-     */
-    @Transactional(readOnly = true)
-    public RoleResponse getRoleById(UUID id) {
-        Role role = roleRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò với ID: " + id));
-        return mapToRoleResponse(role);
-    }
-
-    /**
-     * Tạo vai trò mới và gán danh sách đặc quyền (Role-Privilege N-N).
-     *
-     * @param request Yêu cầu tạo vai trò
-     * @return DTO RoleResponse đã tạo
-     */
-    @Transactional
+    /** Tạo role IAM; validate privilege trước, rollback role mới nếu gán composite thất bại. */
     public RoleResponse createRole(CreateRoleRequest request) {
-        String code = request.getCode().trim().toUpperCase();
-        if (roleRepository.existsByCode(code)) {
-            throw new IllegalArgumentException("Mã vai trò đã tồn tại: " + code);
+        String code = request.getCode().trim().toUpperCase(java.util.Locale.ROOT);
+        String name = code.startsWith("ROLE_") ? code : "ROLE_" + code;
+        if (!name.matches("ROLE_[A-Z0-9_]+")) { throw new IllegalArgumentException("Mã vai trò không hợp lệ"); }
+        validatePrivileges(request.getPrivilegeCodes());
+        keycloak.mutate("POST", "/roles", Map.of("name", name, "description",
+                request.getDescription() == null ? "" : request.getDescription(),
+                "attributes", Map.of("displayName", List.of(request.getName().trim()))));
+        var role = keycloak.roles().stream().filter(item -> item.name().equals(name)).findFirst().orElseThrow();
+        try {
+            replacePrivileges(role, request.getPrivilegeCodes());
+        } catch (RuntimeException error) {
+            try { keycloak.mutate("DELETE", "/roles-by-id/" + role.id(), Map.of()); }
+            catch (RuntimeException rollbackError) { error.addSuppressed(rollbackError); }
+            throw error;
         }
-
-        Role role = new Role();
-        role.setId(UUID.randomUUID());
-        role.setCode(code);
-        role.setName(request.getName().trim());
-        role.setDescription(request.getDescription());
-
-        if (request.getPrivilegeCodes() != null && !request.getPrivilegeCodes().isEmpty()) {
-            Set<Privilege> privileges = new HashSet<>();
-            for (String pCode : request.getPrivilegeCodes()) {
-                privilegeRepository.findByCode(pCode.trim()).ifPresent(privileges::add);
-            }
-            role.setPrivileges(privileges);
-        }
-
-        Role savedRole = roleRepository.save(role);
-        auditService.record(null, "ROLE_CREATED", "Tạo mới vai trò: " + code, null, null, "SUCCESS");
-
-        return mapToRoleResponse(savedRole);
+        return mapRole(role);
     }
 
-    /**
-     * Cập nhật thông tin vai trò và danh sách đặc quyền liên kết.
-     *
-     * @param id      Mã định danh duy nhất của vai trò
-     * @param request Yêu cầu cập nhật
-     * @return DTO RoleResponse sau khi cập nhật
-     */
-    @Transactional
+    /** Cập nhật metadata/privileges bằng Admin API; remote mutation không thuộc transaction PostgreSQL. */
     public RoleResponse updateRole(UUID id, UpdateRoleRequest request) {
-        Role role = roleRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò với ID: " + id));
-
-        role.setName(request.getName().trim());
-        role.setDescription(request.getDescription());
-
-        if (request.getPrivilegeCodes() != null) {
-            Set<Privilege> privileges = new HashSet<>();
-            for (String pCode : request.getPrivilegeCodes()) {
-                privilegeRepository.findByCode(pCode.trim()).ifPresent(privileges::add);
-            }
-            role.setPrivileges(privileges);
-        }
-
-        Role updatedRole = roleRepository.save(role);
-        auditService.record(null, "ROLE_UPDATED", "Cập nhật vai trò: " + role.getCode(), null, null, "SUCCESS");
-
-        return mapToRoleResponse(updatedRole);
+        var role = find(id);
+        validatePrivileges(request.getPrivilegeCodes());
+        keycloak.mutate("PUT", "/roles-by-id/" + id, Map.of("name", role.name(), "description",
+                request.getDescription() == null ? "" : request.getDescription(),
+                "attributes", Map.of("displayName", List.of(request.getName().trim()))));
+        if (request.getPrivilegeCodes() != null) { replacePrivileges(role, request.getPrivilegeCodes()); }
+        return getRoleById(id);
     }
 
-    /**
-     * Xóa một vai trò khỏi hệ thống theo ID.
-     *
-     * @param id Mã định danh duy nhất của vai trò
-     */
-    @Transactional
+    /** Giữ bốn role nền tảng để không phá default role và các policy có sẵn. */
     public void deleteRole(UUID id) {
-        Role role = roleRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò với ID: " + id));
-
-        if ("ADMIN".equalsIgnoreCase(role.getCode())) {
-            throw new IllegalArgumentException("Không được phép xóa vai trò quản trị hệ thống ADMIN");
+        var role = find(id);
+        if (Set.of("ROLE_ADMIN", "ROLE_BUYER", "ROLE_SELLER", "ROLE_SUPPORT").contains(role.name())) {
+            throw new IllegalArgumentException("Không thể xóa vai trò nền tảng");
         }
-
-        roleRepository.delete(role);
-        auditService.record(null, "ROLE_DELETED", "Xóa vai trò: " + role.getCode(), null, null, "SUCCESS");
+        keycloak.mutate("DELETE", "/roles-by-id/" + id, Map.of());
     }
 
-    /**
-     * Chuyển đổi đối tượng Role Entity sang RoleResponse DTO.
-     *
-     * @param role Đối tượng Entity
-     * @return DTO RoleResponse
-     */
-    public RoleResponse mapToRoleResponse(Role role) {
-        Set<String> privilegeCodes = role.getPrivileges() != null
-                ? role.getPrivileges().stream().map(Privilege::getCode).collect(Collectors.toSet())
-                : new HashSet<>();
+    private void validatePrivileges(Set<String> codes) {
+        if (codes != null && !keycloak.privilegeRoles().stream().map(KeycloakClient.RealmRole::name)
+                .collect(java.util.stream.Collectors.toSet()).containsAll(codes)) {
+            throw new IllegalArgumentException("Có đặc quyền không tồn tại");
+        }
+    }
 
-        return new RoleResponse(
-                role.getId(),
-                role.getCode(),
-                role.getName(),
-                role.getDescription(),
-                privilegeCodes
-        );
+    /** Thêm quyền mong muốn trước, xóa quyền dư sau; chỉ xử lý privilege nguyên tử chứa dấu chấm. */
+    private void replacePrivileges(KeycloakClient.RealmRole role, Set<String> codes) {
+        Set<String> requested = codes == null ? Set.of() : codes;
+        var all = keycloak.privilegeRoles();
+        var desired = all.stream().filter(item -> requested.contains(item.name())).toList();
+        Set<String> current = keycloak.privileges(role.id());
+        keycloak.mutate("POST", "/roles-by-id/" + role.id() + "/composites", desired);
+        var removed = all.stream().filter(item -> current.contains(item.name()) && !requested.contains(item.name())).toList();
+        if (!removed.isEmpty()) { keycloak.mutate("DELETE", "/roles-by-id/" + role.id() + "/composites", removed); }
+    }
+
+    private RoleResponse mapRole(KeycloakClient.RealmRole role) {
+        String code = role.name().substring(5);
+        String display = role.attributes() == null ? code :
+                role.attributes().getOrDefault("displayName", List.of(code)).stream().findFirst().orElse(code);
+        return new RoleResponse(UUID.fromString(role.id()), code, display, role.description(), keycloak.privileges(role.id()));
     }
 }

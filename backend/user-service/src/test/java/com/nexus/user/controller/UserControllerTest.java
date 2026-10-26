@@ -42,6 +42,16 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("test")
 class UserControllerTest {
 
+    /** Các API /me phải tra sub qua keycloak_id trước khi dùng profile ID. */
+    @org.junit.jupiter.api.BeforeEach
+    void resolveProfileSubjects() {
+        org.mockito.Mockito.lenient().when(userService.findBySubject(any())).thenAnswer(invocation -> {
+            var profile = new com.nexus.user.entity.User();
+            profile.setId(UUID.fromString(invocation.getArgument(0)));
+            return profile;
+        });
+    }
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -134,7 +144,7 @@ class UserControllerTest {
         when(userService.assignRoles(eq(userId), any())).thenReturn(response);
 
         mockMvc.perform(put("/api/v1/users/" + userId + "/roles")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("USER.UPDATE")))
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Set.of("SELLER"))))
                 .andExpect(status().isOk())

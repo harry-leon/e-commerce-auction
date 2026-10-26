@@ -8,11 +8,7 @@ import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
-import {
-    CartPage,
-    CheckoutPage,
-    PaymentResultPage,
-} from '../features/buyer/BuyerPages'
+import { CartPage, CheckoutPage, PaymentResultPage } from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession } from '../api/client'
 
@@ -283,23 +279,16 @@ describe('IAM forms', () => {
             gender: 'MALE',
         })
     })
-    it('sends email, rejects mismatching passwords and consumes the reset token', async () => {
+    // Hồi quy chuyển IAM: ứng dụng chỉ yêu cầu email, không còn nhập/reset token cục bộ.
+    it('requests an IAM reset email and directs the user to the email link', async () => {
         const ui = userEvent.setup()
         render(<ForgotPasswordPage />)
         await ui.click(screen.getByRole('button', { name: 'Send Reset Link' }))
         expect(screen.getByText(/Invalid email/i)).toBeVisible()
         await ui.type(screen.getByLabelText('Email'), user.email)
         await ui.click(screen.getByRole('button', { name: 'Send Reset Link' }))
-        await screen.findByLabelText('Reset token')
-        await ui.type(screen.getByLabelText('Reset token'), 'mail-token')
-        await ui.type(screen.getByLabelText('New Password'), 'NewPassword1!')
-        await ui.type(screen.getByLabelText('Confirm Password'), 'Mismatch')
-        await ui.click(screen.getByRole('button', { name: 'Reset Password' }))
-        expect(screen.getByText(/match/i)).toBeVisible()
-        await ui.clear(screen.getByLabelText('Confirm Password'))
-        await ui.type(screen.getByLabelText('Confirm Password'), 'NewPassword1!')
-        await ui.click(screen.getByRole('button', { name: 'Reset Password' }))
-        await screen.findByText('Password reset successfully!')
+        expect(await screen.findByRole('status')).toHaveTextContent(/link in your email/i)
+        expect(screen.queryByLabelText('Reset token')).not.toBeInTheDocument()
         await ui.click(screen.getByRole('button', { name: 'Back to Login' }))
         expect(holder.current.navigate).toHaveBeenCalledWith('login')
     })
