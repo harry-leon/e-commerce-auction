@@ -47,6 +47,34 @@ const product = {
     images: [{ id: 'img-1', url: '/laptop.png', sortOrder: 0 }],
 }
 
+const mockCartItem = {
+    id: 'item-1',
+    skuId: 'sku-1',
+    skuCode: 'LAPTOP-1',
+    productName: 'API Laptop',
+    thumbnailUrl: '/laptop.png',
+    unitPrice: 500,
+    quantity: 1,
+    stockAvailable: 10,
+    isAvailable: true,
+    subtotal: 500,
+}
+
+const mockCart = {
+    cartId: 'cart-1',
+    userId: 'user-1',
+    status: 'ACTIVE' as const,
+    items: [mockCartItem],
+    totalItems: 1,
+    totalQuantity: 1,
+    subtotal: 500,
+    discountAmount: 0,
+    shippingFee: 15,
+    taxAmount: 40,
+    totalAmount: 555,
+    expiresAt: null,
+}
+
 /** Mock tại ranh giới HTTP để kiểm tra form → client → payload thật, gồm lỗi nghiệp vụ và cập nhật sau khi lưu. */
 beforeEach(() => {
     sessionStorage.clear()
@@ -98,7 +126,42 @@ beforeEach(() => {
                 }
             else if (path.endsWith('/products/product-1'))
                 payload = { success: true, data: product }
-            else
+            else if (path.includes('/cart/items') && init.method === 'DELETE') {
+                payload = {
+                    success: true,
+                    data: {
+                        ...mockCart,
+                        items: [],
+                        totalItems: 0,
+                        totalQuantity: 0,
+                        subtotal: 0,
+                        totalAmount: 0,
+                    },
+                }
+            } else if (path.includes('/cart/items') && init.method === 'PUT') {
+                const body = init.body ? JSON.parse(String(init.body)) : { quantity: 2 }
+                const qty = body.quantity || 1
+                payload = {
+                    success: true,
+                    data: {
+                        ...mockCart,
+                        items: [
+                            {
+                                ...mockCartItem,
+                                quantity: qty,
+                                subtotal: mockCartItem.unitPrice * qty,
+                            },
+                        ],
+                        totalQuantity: qty,
+                        subtotal: mockCartItem.unitPrice * qty,
+                        totalAmount: mockCartItem.unitPrice * qty + 15 + 40,
+                    },
+                }
+            } else if (path.includes('/cart/items') && init.method === 'POST') {
+                payload = { success: true, data: mockCart }
+            } else if (path.includes('/cart')) {
+                payload = { success: true, data: mockCart }
+            } else
                 payload = {
                     success: true,
                     data: [product],
@@ -297,12 +360,20 @@ describe('IAM forms', () => {
 describe('Cart, Checkout và Payment Result', () => {
     /**
      * Kiểm tra CartPage: apply voucher hợp lệ/không hợp lệ.
-     * Bảo vệ nghiệp vụ giỏ hàng mới được thêm trong sprint này.
+    /**
+     * Kiểm tra CartPage:
+     * 1. Lấy và hiển thị sản phẩm giỏ hàng từ backend API (Accept Criteria 1)
+     * 2. Áp dụng mã giảm giá voucher (hợp lệ và không hợp lệ)
+     * 3. Hiển thị tổng tiền và tóm tắt thanh toán (Accept Criteria 3)
      */
-    it('CartPage: hiển thị sản phẩm, áp voucher sai báo lỗi, voucher đúng gọi showToast', async () => {
+    it('CartPage: hiển thị danh sách sản phẩm từ backend và áp dụng voucher', async () => {
         render(<CartPage />)
-        // Trang render đúng với danh sách item
-        expect(screen.getByRole('heading', { level: 1 })).toBeVisible()
+        // Accept Criteria 1: Buyer lấy và xem được danh sách sản phẩm trong giỏ hàng từ Backend
+        await screen.findByRole('heading', { level: 1 })
+        expect(screen.getByText('API Laptop')).toBeVisible()
+
+        // Accept Criteria 3: Tổng tiền được hiển thị dựa trên dữ liệu API
+        expect(screen.getByText(/order summary|tóm tắt đơn hàng/i)).toBeVisible()
 
         // Nhập voucher sai → hiển thị lỗi
         const voucherInput = screen.getByPlaceholderText('NEXUS10')
@@ -316,10 +387,179 @@ describe('Cart, Checkout và Payment Result', () => {
         await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
     })
 
+    /**
+     * Kiểm tra CartPage: cập nhật số lượng và xóa sản phẩm khỏi giỏ hàng (Accept Criteria 2).
+     */
+    it('CartPage: cập nhật số lượng và xóa sản phẩm khỏi giỏ hàng', async () => {
+        render(<CartPage />)
+        await screen.findByText('API Laptop')
+
+        // Cập nhật số lượng qua nút tăng (+) của NumberStepper
+        const plusBtn = screen.getByRole('button', { name: '+' })
+        fireEvent.click(plusBtn)
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+
+        // Xóa sản phẩm đơn lẻ bằng nút Trash
+        const trashBtn = screen.getByRole('button', { name: /xóa khỏi giỏ|remove item/i })
+        fireEvent.click(trashBtn)
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+    })
+
+    /**
+     * Kiểm tra CartPage: mở modal xác nhận và dọn toàn bộ giỏ hàng (Accept Criteria 2).
+     */
+    it('CartPage: mở modal xác nhận và dọn toàn bộ giỏ hàng', async () => {
+        render(<CartPage />)
+        await screen.findByText('API Laptop')
+
+        // Bấm nút Xóa tất cả
+        const clearBtn = screen.getByRole('button', { name: /clear cart|xóa tất cả/i })
+        fireEvent.click(clearBtn)
+
+        // Modal xác nhận xuất hiện
+        await waitFor(() =>
+            expect(screen.getByText(/are you sure you want to remove all items/i)).toBeVisible(),
+        )
+        // Bấm Confirm
+        const confirmBtn = screen.getByRole('button', { name: /confirm|xác nhận/i })
+        fireEvent.click(confirmBtn)
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+    })
+
     it('CartPage: điều hướng sang Checkout khi bấm nút', async () => {
         render(<CartPage />)
-        fireEvent.click(screen.getByRole('button', { name: /checkout|thanh toán/i }))
+        const checkoutBtn = await screen.findByRole('button', { name: /checkout|thanh toán/i })
+        fireEvent.click(checkoutBtn)
         expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+    })
+
+    /**
+     * Kiểm tra CartPage: xử lý trạng thái giỏ hàng trống và lỗi API (Accept Criteria 5).
+     */
+    it('CartPage: xử lý trạng thái giỏ hàng trống', async () => {
+        const prevFetch = globalThis.fetch
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (input: string, init: RequestInit = {}) => {
+                const path = input.split('?')[0]
+                if (path.includes('/cart')) {
+                    return new Response(
+                        JSON.stringify({
+                            success: true,
+                            data: {
+                                ...mockCart,
+                                items: [],
+                                totalItems: 0,
+                                totalQuantity: 0,
+                                subtotal: 0,
+                                totalAmount: 0,
+                            },
+                        }),
+                        { status: 200 },
+                    )
+                }
+                return prevFetch(input, init)
+            }),
+        )
+
+        render(<CartPage />)
+        await waitFor(() => expect(screen.getByText(/cart is empty|đang trống/i)).toBeVisible())
+        const startShoppingBtn = screen.getByRole('button', {
+            name: /start shopping|bắt đầu mua sắm/i,
+        })
+        fireEvent.click(startShoppingBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('home')
+    })
+
+    it('CartPage: xử lý trạng thái lỗi API và cho phép thử lại', async () => {
+        sessionStorage.setItem(
+            'nexus.session',
+            JSON.stringify({ accessToken: 'token', refreshToken: 'r', user }),
+        )
+        const prevFetch = globalThis.fetch
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (input: string, init: RequestInit = {}) => {
+                const path = input.split('?')[0]
+                if (path.includes('/cart')) {
+                    return new Response(
+                        JSON.stringify({
+                            success: false,
+                            message: 'Connection timed out',
+                        }),
+                        { status: 500 },
+                    )
+                }
+                return prevFetch(input, init)
+            }),
+        )
+
+        render(<CartPage />)
+        await waitFor(() => expect(screen.getByText(/connection timed out/i)).toBeVisible())
+        const tryAgainBtn = screen.getByRole('button', { name: /try again|thử lại/i })
+        expect(tryAgainBtn).toBeVisible()
+    })
+
+    /**
+     * Kiểm tra CheckoutPage: kiểm tra dữ liệu bắt buộc (Accept Criteria 4).
+     * Bắt lỗi khi bỏ trống hoặc nhập sai định dạng tại Bước 1 và Bước 3.
+     */
+    it('CheckoutPage: kiểm tra dữ liệu bắt buộc tại Bước 1 (Họ tên, SĐT, Địa chỉ)', async () => {
+        render(<CheckoutPage />)
+        expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible()
+
+        // Xóa sạch các trường để kích hoạt validation
+        const nameInput = screen.getByPlaceholderText('Nguyen Van A')
+        const phoneInput = screen.getByPlaceholderText('0901234567')
+        const streetInput = screen.getByPlaceholderText('123 Nguyen Hue Street')
+
+        fireEvent.change(nameInput, { target: { value: '' } })
+        fireEvent.change(phoneInput, { target: { value: '123' } }) // SĐT sai định dạng VN
+        fireEvent.change(streetInput, { target: { value: '' } })
+
+        // Bấm Next
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Vẫn ở bước 1 và hiển thị lỗi validation
+        await waitFor(() => {
+            expect(screen.getByText(/full name is required|họ và tên là bắt buộc/i)).toBeVisible()
+            expect(
+                screen.getByText(/invalid phone number|số điện thoại không hợp lệ/i),
+            ).toBeVisible()
+            expect(
+                screen.getByText(/street address is required|địa chỉ cụ thể là bắt buộc/i),
+            ).toBeVisible()
+        })
+    })
+
+    it('CheckoutPage: kiểm tra dữ liệu bắt buộc tại Bước 3 (Thông tin thẻ)', async () => {
+        render(<CheckoutPage />)
+        // Sang bước 2
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+
+        // Sang bước 3
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+
+        // Nhập sai số thẻ và mã CVV
+        const cardInput = screen.getByPlaceholderText('4242 4242 4242 4242')
+        const cvvInput = screen.getByPlaceholderText('123')
+        fireEvent.change(cardInput, { target: { value: '1234' } })
+        fireEvent.change(cvvInput, { target: { value: '9' } })
+
+        // Bấm Next
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Hiển thị lỗi validation thẻ
+        await waitFor(() => {
+            expect(
+                screen.getByText(/card number must be 16 digits|số thẻ phải gồm đúng 16 chữ số/i),
+            ).toBeVisible()
+            expect(
+                screen.getByText(/cvv must be 3 or 4 digits|mã cvv phải gồm 3 hoặc 4 chữ số/i),
+            ).toBeVisible()
+        })
     })
 
     /**
