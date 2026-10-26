@@ -1,5 +1,8 @@
 -- Project Nexus: schema theo microservice (PostgreSQL)
--- Moi schema = 1 service/database. Khong co FK giua cac service.
+-- Bản tổng hợp để đọc/đối chiếu: mỗi schema biểu diễn database của một service.
+-- Khi chạy ứng dụng, deploy/postgres/init-databases.sh tạo database riêng;
+-- Flyway trong từng service quản lý bảng ở schema mặc định. Không chạy file này thay Flyway.
+-- Không có FK giữa các service; các bảng hạ tầng service_metadata/Flyway không đưa vào bản tổng hợp.
 
 CREATE SCHEMA IF NOT EXISTS user_svc;
 CREATE SCHEMA IF NOT EXISTS catalog_svc;
@@ -21,7 +24,8 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE user_svc.users (
   id uuid NOT NULL,
-  keycloak_id varchar(255) UNIQUE,
+  -- Theo migration user V5: định danh Keycloak là UUID, credential do Keycloak quản lý.
+  keycloak_id uuid UNIQUE,
   email varchar(255) NOT NULL UNIQUE,
   phone varchar(20),
   full_name varchar(255) NOT NULL,
@@ -29,11 +33,10 @@ CREATE TABLE user_svc.users (
   gender varchar(10),
   date_of_birth date,
   address varchar(500),
-  password_hash varchar(255),
   status varchar(20) NOT NULL DEFAULT 'ACTIVE',
   is_deleted boolean NOT NULL DEFAULT false,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  locked_until timestamp,
+  updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   CONSTRAINT chk_users_status CHECK (status IN ('ACTIVE', 'INACTIVE', 'LOCKED', 'SUSPENDED')),
   CONSTRAINT chk_users_gender CHECK (gender IS NULL OR gender IN ('MALE', 'FEMALE', 'OTHER'))
@@ -41,6 +44,24 @@ CREATE TABLE user_svc.users (
 
 CREATE INDEX idx_users_keycloak_id ON user_svc.users(keycloak_id);
 CREATE INDEX idx_users_email ON user_svc.users(email);
+
+-- Nhật ký nghiệp vụ còn được giữ sau khi tách IAM sang Keycloak (user V3/V4).
+-- user_id cho phép NULL để ghi cả thao tác chưa xác định được người dùng; không tạo FK.
+CREATE TABLE user_svc.audit_logs (
+  id uuid NOT NULL,
+  user_id uuid,
+  action varchar(100) NOT NULL,
+  description text,
+  ip_address varchar(100),
+  user_agent varchar(255),
+  status varchar(50) NOT NULL,
+  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+
+CREATE INDEX idx_audit_logs_user ON user_svc.audit_logs(user_id);
+CREATE INDEX idx_audit_logs_action ON user_svc.audit_logs(action);
+CREATE INDEX idx_audit_logs_created_at ON user_svc.audit_logs(created_at);
 
 -- ============================================================================
 -- ===== 2. catalog_svc =====
@@ -50,6 +71,8 @@ CREATE TABLE catalog_svc.categories (
   id uuid NOT NULL,
   parent_id uuid,
   name varchar(255) NOT NULL,
+  -- Theo catalog V3: tên tiếng Việt tùy chọn; migration backfill dữ liệu cũ từ name.
+  name_vi varchar(255),
   level integer NOT NULL DEFAULT 1,
   status varchar(20) NOT NULL DEFAULT 'ACTIVE',
   PRIMARY KEY (id),

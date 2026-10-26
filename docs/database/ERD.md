@@ -1,14 +1,14 @@
 # Database ERD
 
-Generated from service-owned Flyway CREATE TABLE statements by `node scripts/generate-erd.mjs`. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Later ALTER migrations remain authoritative for added columns.
+Generated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Flyway remains authoritative; this diagram does not describe constraints or data backfills.
 
 ## user-service
 
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   users {
     uuid id
@@ -19,12 +19,11 @@ erDiagram
     varchar gender
     date date_of_birth
     varchar address
-    varchar password_hash
     varchar status
     boolean is_deleted
     timestamp created_at
-    integer token_version
-    timestamp locked_until
+    uuid keycloak_id
+    timestamp updated_at
   }
   audit_logs {
     uuid id
@@ -44,8 +43,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   categories {
     uuid id
@@ -53,6 +52,7 @@ erDiagram
     varchar name
     integer level
     varchar status
+    varchar name_vi
   }
   products {
     uuid id
@@ -106,8 +106,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   carts {
     uuid id
@@ -224,8 +224,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   auctions {
     uuid id
@@ -271,8 +271,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   warehouses {
     uuid id
@@ -347,8 +347,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   notifications {
     uuid id
