@@ -141,7 +141,7 @@ Body của `PUT /users/{id}/roles` là JSON array mã role, ví dụ `["ADMIN", 
 |---|---|---|---|---|
 | `ForgotPasswordRequest` | `email` | `string` | Có | Không blank, đúng định dạng email |
 | `ChangePasswordRequest` | `currentPassword` | `string` | Có | Không blank |
-| `ChangePasswordRequest` | `newPassword` | `string` | Có | Từ `6` đến `100` ký tự |
+| `ChangePasswordRequest` | `newPassword` | `string` | Có | Từ `8` đến `100` ký tự, có chữ in hoa, chữ số và dấu/ký hiệu; khoảng trắng không tính là ký tự đặc biệt. Vi phạm trả `422` kèm từng lỗi trong `error.details` |
 
 Forgot-password luôn trả cùng một thông báo dù email có tồn tại hay không để tránh lộ tài khoản. Change-password cập nhật credential tại Keycloak và logout session; FE phải đưa người dùng về màn hình đăng nhập.
 
@@ -154,7 +154,7 @@ Forgot-password luôn trả cùng một thông báo dù email có tồn tại ha
 ```json
 {
   "currentPassword": "old-example-password",
-  "newPassword": "new-example-password"
+  "newPassword": "NexusExample123!"
 }
 ```
 

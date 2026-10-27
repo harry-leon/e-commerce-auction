@@ -1,5 +1,6 @@
 package com.nexus.gateway.controller;
 
+import com.nexus.gateway.config.PasswordPolicy;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
@@ -161,10 +162,19 @@ public class AuthGatewayController {
         String password = body.get("password") instanceof String value ? value : null;
         String fullName = body.get("fullName") instanceof String value ? value.trim() : null;
 
-        if (email == null || email.isBlank() || !email.contains("@") || password == null || password.length() < 6 || password.length() > 100 || fullName == null || fullName.isBlank()) {
+        if (email == null || email.isBlank() || !email.contains("@") || fullName == null || fullName.isBlank()) {
             return Mono.just(ResponseEntity.badRequest().body(Map.of(
                 "success", false,
-                "error", Map.of("code", "INVALID_ARGUMENT", "message", "Email và mật khẩu không được để trống")
+                "error", Map.of("code", "INVALID_ARGUMENT", "message", "Email hợp lệ và họ tên không được để trống")
+            )));
+        }
+
+        // Trả 422 kèm từng điều kiện thiếu trước khi gọi IAM; không tạo tài khoản rồi mới phát hiện mật khẩu yếu.
+        var passwordErrors = PasswordPolicy.errors(password);
+        if (!passwordErrors.isEmpty()) {
+            return Mono.just(ResponseEntity.unprocessableEntity().body(Map.of(
+                "success", false,
+                "error", Map.of("code", "VALIDATION_ERROR", "message", "Mật khẩu chưa đạt yêu cầu", "details", passwordErrors)
             )));
         }
 

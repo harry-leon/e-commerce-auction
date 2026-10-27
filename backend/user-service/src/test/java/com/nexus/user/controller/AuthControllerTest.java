@@ -3,6 +3,8 @@ package com.nexus.user.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,6 +14,7 @@ import com.nexus.user.entity.User;
 import com.nexus.user.repository.UserRepository;
 import com.nexus.user.service.KeycloakClient;
 import com.nexus.user.service.UserService;
+import com.nexus.common.exception.GlobalExceptionHandler;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -24,7 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /** Reset dùng action email Keycloak; change password bắt buộc principal JWT và profile đã liên kết. */
 @WebMvcTest(AuthController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class AuthControllerTest {
     @Autowired private MockMvc mvc;
     @MockitoBean private UserService users;
@@ -54,7 +57,18 @@ class AuthControllerTest {
         when(users.findBySubject(any())).thenReturn(user);
         mvc.perform(post("/api/v1/auth/change-password").with(jwt())
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"currentPassword\":\"old-pass\",\"newPassword\":\"new-pass\"}")).andExpect(status().isOk());
-        verify(keycloak).changePassword(any(), org.mockito.ArgumentMatchers.eq("old-pass"), org.mockito.ArgumentMatchers.eq("new-pass"));
+                .content("{\"currentPassword\":\"old-pass\",\"newPassword\":\"NexusNew1!\"}")).andExpect(status().isOk());
+        verify(keycloak).changePassword(any(), org.mockito.ArgumentMatchers.eq("old-pass"), org.mockito.ArgumentMatchers.eq("NexusNew1!"));
+    }
+
+    /** Hồi quy ảnh lỗi: 123123@ phải trả cả lỗi độ dài/chữ hoa, không gọi service hoặc IAM khi request sai. */
+    @Test
+    void rejectsWeakNewPasswordBeforeAnyMutation() throws Exception {
+        mvc.perform(post("/api/v1/auth/change-password").with(jwt()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"old-pass\",\"newPassword\":\"123123@\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.error.details.length()").value(2));
+        verifyNoInteractions(keycloak, users);
     }
 }
