@@ -68,6 +68,9 @@ public class KeycloakClient {
         return token;
     }
 
+    /** Service token chỉ dùng cho HTTP nội bộ có quyền PROFILE_WRITER; không gửi token quản trị ra trình duyệt. */
+    public String serviceToken() { return adminToken(); }
+
     private RestClient.RequestHeadersSpec<?> get(String path, Object... variables) {
         return client.get().uri("/admin/realms/" + realm + path, variables).headers(headers -> headers.setBearerAuth(adminToken()));
     }

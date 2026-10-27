@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency, formatDate } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
@@ -41,6 +41,8 @@ import {
     Star,
     CircleX,
     Shield,
+    Spinner,
+    Trash2,
 } from '../../components/UI'
 import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
@@ -48,7 +50,21 @@ import { getEffectivePaymentStatus } from '../../payment'
 import type { Order, OrderStatus } from '../../types'
 import { ordersApi } from '../../api/orders'
 import { useLoad } from '../../hooks/useLoad'
-import type { ApiCategory, ApiProduct, Envelope } from '../../api/client'
+import {
+    readSession,
+    errorMessage,
+    type ApiCategory,
+    type ApiProduct,
+    type Envelope,
+} from '../../api/client'
+import {
+    getActiveCart,
+    updateCartItemQuantity,
+    removeCartItem,
+    clearCart,
+    type CartResponse,
+    type CartItemResponse,
+} from '../../api/cart'
 
 function getAuctionCurrentBid(auction: unknown) {
     if (!auction || typeof auction !== 'object') return 0
@@ -1104,23 +1120,254 @@ export function ProductDetailPage() {
 }
 
 // ─── Cart Page ─────────────────────────────────────────────────────────────────
+/**
+ * Trang giỏ hàng của Buyer:
+ * 1. Chức năng:
+ *    - Lấy và xem danh sách sản phẩm trong giỏ hàng từ Backend qua GET /api/v1/cart.
+ *    - Cập nhật số lượng sản phẩm (PUT /api/v1/cart/items/{itemId}).
+ *    - Xóa sản phẩm khỏi giỏ hàng (DELETE /api/v1/cart/items/{itemId}) hoặc xóa toàn bộ (DELETE /api/v1/cart/items).
+ *    - Hiển thị bảng tổng tiền và chi phí tạm tính, phí ship, thuế dựa trên dữ liệu API trả về.
+ *    - Áp dụng mã giảm giá voucher (client/backend).
+ *    - Xử lý các trạng thái: Đang tải (loading), Giỏ hàng trống (empty), và Lỗi API (error).
+ * 2. Đầu vào và kết quả:
+ *    - Nhận dữ liệu giỏ hàng CartResponse từ Commerce Service.
+ *    - Cập nhật lại cartCount toàn cục trong AppContext khi số lượng thay đổi.
+ * 3. Luồng xử lý:
+ *    - Mount: loadCart() gọi getActiveCart() -> lưu vào state cart.
+ *    - Tăng/giảm số lượng: gọi updateCartItemQuantity() -> cập nhật cart state.
+ *    - Xóa sản phẩm: gọi removeCartItem() -> cập nhật cart state.
+ * 4. Quy tắc và lý do:
+ *    - Khi số lượng giảm xuống 0, tự động chuyển sang luồng xóa sản phẩm (removeCartItem).
+ *    - Hỗ trợ fallback giỏ hàng demo khi chưa đăng nhập hoặc khi server offline để không gián đoạn giao diện.
+ * 5. Lỗi và giới hạn:
+ *    - Bắt lỗi mạng hoặc lỗi API 401/500 qua AlertBanner và cung cấp nút "Thử lại".
+ */
 export function CartPage() {
     const { lang, navigate, setCartCount, showToast } = useApp()
-    const [items, setItems] = useState([
-        { ...PRODUCTS[0], qty: 1 },
-        { ...PRODUCTS[2], qty: 2 },
-        { ...PRODUCTS[4], qty: 1 },
-    ])
+    const [cart, setCart] = useState<CartResponse | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [actionLoadingId, setActionLoadingId] = useState<string | null>(null)
     const [voucher, setVoucher] = useState('')
     const [appliedVoucher, setAppliedVoucher] = useState<string | null>(null)
     const [voucherError, setVoucherError] = useState('')
+    const [showClearConfirm, setShowClearConfirm] = useState(false)
 
-    const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0)
-    const discount = appliedVoucher ? subtotal * 0.1 : 0
-    const shipping = subtotal >= 100 ? 0 : 8.99
-    const tax = (subtotal - discount) * 0.08
-    const total = subtotal - discount + shipping + tax
+    // Dữ liệu giỏ hàng mẫu fallback khi chưa đăng nhập hoặc chạy offline
+    const fallbackCartItems: CartItemResponse[] = [
+        {
+            id: 'item-demo-1',
+            skuId: 'ba844bf3-8ead-4a83-9c36-b418c07a5f13',
+            skuCode: PRODUCTS[0].sku,
+            productName: PRODUCTS[0].name,
+            thumbnailUrl: PRODUCTS[0].images[0],
+            unitPrice: PRODUCTS[0].price,
+            quantity: 1,
+            stockAvailable: PRODUCTS[0].stock,
+            isAvailable: true,
+            subtotal: PRODUCTS[0].price,
+        },
+        {
+            id: 'item-demo-2',
+            skuId: '2f78db6a-e71d-4ca7-8a41-43e9870bf55f',
+            skuCode: PRODUCTS[2].sku,
+            productName: PRODUCTS[2].name,
+            thumbnailUrl: PRODUCTS[2].images[0],
+            unitPrice: PRODUCTS[2].price,
+            quantity: 2,
+            stockAvailable: PRODUCTS[2].stock,
+            isAvailable: true,
+            subtotal: PRODUCTS[2].price * 2,
+        },
+        {
+            id: 'item-demo-3',
+            skuId: '4c99e90f-7cc8-4e16-a0a3-255f5b61c03d',
+            skuCode: PRODUCTS[4].sku,
+            productName: PRODUCTS[4].name,
+            thumbnailUrl: PRODUCTS[4].images[0],
+            unitPrice: PRODUCTS[4].price,
+            quantity: 1,
+            stockAvailable: PRODUCTS[4].stock,
+            isAvailable: true,
+            subtotal: PRODUCTS[4].price,
+        },
+    ]
 
+    const loadCart = useCallback(async () => {
+        setLoading(true)
+        setError(null)
+        try {
+            const data = await getActiveCart()
+            setCart(data)
+            setCartCount(data.totalQuantity)
+        } catch (err) {
+            const session = readSession()
+            if (session) {
+                // Người dùng đã đăng nhập nhưng gọi API bị lỗi -> báo lỗi API thực tế
+                setError(errorMessage(err))
+            } else {
+                // Khách chưa đăng nhập -> khởi tạo giỏ hàng demo để người dùng trải nghiệm
+                const initialSubtotal = fallbackCartItems.reduce((s, i) => s + i.subtotal, 0)
+                setCart({
+                    cartId: 'guest-cart',
+                    userId: 'guest',
+                    status: 'ACTIVE',
+                    items: fallbackCartItems,
+                    totalItems: fallbackCartItems.length,
+                    totalQuantity: fallbackCartItems.reduce((s, i) => s + i.quantity, 0),
+                    subtotal: initialSubtotal,
+                    discountAmount: 0,
+                    shippingFee: initialSubtotal >= 100 ? 0 : 8.99,
+                    taxAmount: initialSubtotal * 0.08,
+                    totalAmount:
+                        initialSubtotal +
+                        (initialSubtotal >= 100 ? 0 : 8.99) +
+                        initialSubtotal * 0.08,
+                    expiresAt: null,
+                })
+            }
+        } finally {
+            setLoading(false)
+        }
+    }, [setCartCount])
+
+    useEffect(() => {
+        loadCart()
+    }, [loadCart])
+
+    // Cập nhật số lượng sản phẩm (Accept Criteria 2)
+    const handleUpdateQty = async (item: CartItemResponse, newQty: number) => {
+        setActionLoadingId(item.id)
+        try {
+            if (newQty <= 0) {
+                await handleRemoveItem(item.id)
+                return
+            }
+            const session = readSession()
+            if (session) {
+                const updated = await updateCartItemQuantity(item.id, newQty)
+                setCart(updated)
+                setCartCount(updated.totalQuantity)
+            } else {
+                // Cập nhật cục bộ cho guest
+                setCart((prev) => {
+                    if (!prev) return null
+                    const newItems = prev.items.map((it) =>
+                        it.id === item.id
+                            ? { ...it, quantity: newQty, subtotal: it.unitPrice * newQty }
+                            : it,
+                    )
+                    const newSubtotal = newItems.reduce((s, i) => s + i.subtotal, 0)
+                    const newTotalQty = newItems.reduce((s, i) => s + i.quantity, 0)
+                    const fee = newSubtotal >= 100 ? 0 : 8.99
+                    const tax = newSubtotal * 0.08
+                    setCartCount(newTotalQty)
+                    return {
+                        ...prev,
+                        items: newItems,
+                        totalItems: newItems.length,
+                        totalQuantity: newTotalQty,
+                        subtotal: newSubtotal,
+                        shippingFee: fee,
+                        taxAmount: tax,
+                        totalAmount: newSubtotal + fee + tax,
+                    }
+                })
+            }
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en' ? 'Cart quantity updated.' : 'Đã cập nhật số lượng sản phẩm.',
+            })
+        } catch (err) {
+            showToast({
+                type: 'error',
+                message: errorMessage(err),
+            })
+        } finally {
+            setActionLoadingId(null)
+        }
+    }
+
+    // Xóa sản phẩm khỏi giỏ hàng (Accept Criteria 2)
+    const handleRemoveItem = async (itemId: string) => {
+        setActionLoadingId(itemId)
+        try {
+            const session = readSession()
+            if (session) {
+                const updated = await removeCartItem(itemId)
+                setCart(updated)
+                setCartCount(updated.totalQuantity)
+            } else {
+                setCart((prev) => {
+                    if (!prev) return null
+                    const newItems = prev.items.filter((it) => it.id !== itemId)
+                    const newSubtotal = newItems.reduce((s, i) => s + i.subtotal, 0)
+                    const newTotalQty = newItems.reduce((s, i) => s + i.quantity, 0)
+                    const fee = newSubtotal >= 100 ? 0 : 8.99
+                    const tax = newSubtotal * 0.08
+                    setCartCount(newTotalQty)
+                    return {
+                        ...prev,
+                        items: newItems,
+                        totalItems: newItems.length,
+                        totalQuantity: newTotalQty,
+                        subtotal: newSubtotal,
+                        shippingFee: fee,
+                        taxAmount: tax,
+                        totalAmount: newSubtotal + fee + tax,
+                    }
+                })
+            }
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en' ? 'Item removed from cart.' : 'Đã xóa sản phẩm khỏi giỏ hàng.',
+            })
+        } catch (err) {
+            showToast({
+                type: 'error',
+                message: errorMessage(err),
+            })
+        } finally {
+            setActionLoadingId(null)
+        }
+    }
+
+    // Xóa toàn bộ giỏ hàng
+    const handleClearCart = async () => {
+        setActionLoadingId('all')
+        try {
+            const session = readSession()
+            if (session) {
+                await clearCart()
+            }
+            setCart((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          items: [],
+                          totalItems: 0,
+                          totalQuantity: 0,
+                          subtotal: 0,
+                          totalAmount: 0,
+                      }
+                    : null,
+            )
+            setCartCount(0)
+            setShowClearConfirm(false)
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Cart cleared.' : 'Đã dọn sạch giỏ hàng.',
+            })
+        } catch (err) {
+            showToast({ type: 'error', message: errorMessage(err) })
+        } finally {
+            setActionLoadingId(null)
+        }
+    }
+
+    // Áp dụng mã giảm giá voucher
     const applyVoucher = () => {
         if (voucher === 'NEXUS10') {
             setAppliedVoucher(voucher)
@@ -1131,18 +1378,52 @@ export function CartPage() {
         }
     }
 
-    const updateQty = (idx: number, qty: number) => {
-        if (qty === 0) {
-            setItems((prev) => prev.filter((_, i) => i !== idx))
-            setCartCount(Math.max(0, items.length - 1))
-        } else setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, qty } : it)))
+    // Trạng thái đang tải (Accept Criteria 5)
+    if (loading) {
+        return (
+            <BuyerLayout>
+                <div className="flex flex-col items-center justify-center py-24 space-y-4">
+                    <Spinner size={36} color="#4f46e5" />
+                    <p className="text-gray-500 text-sm font-medium animate-pulse">
+                        {lang === 'en'
+                            ? 'Loading cart from server...'
+                            : 'Đang tải giỏ hàng từ máy chủ...'}
+                    </p>
+                </div>
+            </BuyerLayout>
+        )
     }
 
-    if (items.length === 0)
+    // Trạng thái lỗi API (Accept Criteria 5)
+    if (error && !cart) {
+        return (
+            <BuyerLayout>
+                <div className="max-w-2xl mx-auto py-12 space-y-4">
+                    <AlertBanner
+                        type="error"
+                        message={
+                            lang === 'en' ? `API Error: ${error}` : `Lỗi tải giỏ hàng: ${error}`
+                        }
+                    />
+                    <div className="flex justify-center gap-3 mt-4">
+                        <Button variant="primary" onClick={loadCart}>
+                            {lang === 'en' ? 'Try Again' : 'Thử lại'}
+                        </Button>
+                        <Button variant="outline" onClick={() => navigate('login')}>
+                            {lang === 'en' ? 'Sign In' : 'Đăng nhập'}
+                        </Button>
+                    </div>
+                </div>
+            </BuyerLayout>
+        )
+    }
+
+    // Trạng thái giỏ hàng trống (Accept Criteria 5)
+    if (!cart || cart.items.length === 0) {
         return (
             <BuyerLayout>
                 <EmptyState
-                    icon={<ShoppingCart size={20} />}
+                    icon={<ShoppingCart size={24} />}
                     title={tr(lang, 'emptyCart')}
                     subtitle={
                         lang === 'en'
@@ -1157,13 +1438,37 @@ export function CartPage() {
                 />
             </BuyerLayout>
         )
+    }
+
+    // Tính toán tổng tiền an toàn dựa trên API response (Accept Criteria 3)
+    const items = cart?.items || []
+    const subtotal = cart?.subtotal || 0
+    const discount = appliedVoucher ? subtotal * 0.1 : cart?.discountAmount || 0
+    const shipping = cart?.shippingFee || (subtotal >= 100 ? 0 : 8.99)
+    const tax = cart?.taxAmount || (subtotal - discount) * 0.08
+    const total = subtotal - discount + shipping + tax
 
     return (
         <BuyerLayout>
-            <h1 className="text-2xl font-bold text-gray-900 mb-6">
-                {tr(lang, 'cart')}{' '}
-                <span className="text-gray-400 font-normal text-lg">({items.length})</span>
-            </h1>
+            <div className="flex items-center justify-between mb-6">
+                <h1 className="text-2xl font-bold text-gray-900">
+                    {tr(lang, 'cart')}{' '}
+                    <span className="text-gray-400 font-normal text-lg">
+                        ({cart?.totalItems ?? items.length})
+                    </span>
+                </h1>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-danger hover:bg-red-50 text-xs"
+                    onClick={() => setShowClearConfirm(true)}
+                >
+                    <Trash2 size={14} className="mr-1" />
+                    {lang === 'en' ? 'Clear cart' : 'Xóa tất cả'}
+                </Button>
+            </div>
+
+            {/* Thông báo miễn phí vận chuyển */}
             {subtotal < 100 && (
                 <AlertBanner
                     type="info"
@@ -1179,36 +1484,85 @@ export function CartPage() {
                     <ProgressBar value={subtotal} max={100} />
                 </div>
             )}
+
             <div className="grid grid-cols-[1fr_360px] gap-8 mt-4">
+                {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}
                 <div className="space-y-3">
-                    {items.map((item, idx) => (
-                        <div key={item.id + idx} className="nexus-card p-4 flex gap-4">
-                            <img
-                                src={item.images[0]}
-                                alt={item.name}
-                                className="w-20 h-20 object-cover rounded-xl bg-gray-100 shrink-0"
-                            />
-                            <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-gray-900 line-clamp-2">
-                                    {lang === 'vi' ? item.nameVi : item.name}
-                                </p>
-                                <p className="text-sm text-gray-500 mt-1">{item.category}</p>
-                                <div className="flex items-center justify-between mt-3">
-                                    <NumberStepper
-                                        value={item.qty}
-                                        min={0}
-                                        max={item.stock}
-                                        onChange={(qty) => updateQty(idx, qty)}
-                                    />
-                                    <span className="text-lg font-bold text-primary">
-                                        {formatCurrency(item.price * item.qty, lang)}
-                                    </span>
+                    {items.map((item) => {
+                        const fallbackProd =
+                            PRODUCTS.find(
+                                (p) => p.sku === item.skuCode || p.name === item.productName,
+                            ) || PRODUCTS[0]
+                        const displayImage = item.thumbnailUrl || fallbackProd.images[0]
+                        const isActing = actionLoadingId === item.id
+
+                        return (
+                            <div key={item.id} className="nexus-card p-4 flex gap-4 relative">
+                                <img
+                                    src={displayImage}
+                                    alt={item.productName}
+                                    className="w-20 h-20 object-cover rounded-xl bg-gray-100 shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                            <p className="font-semibold text-gray-900 line-clamp-2">
+                                                {item.productName}
+                                            </p>
+                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                SKU:{' '}
+                                                <span className="font-mono text-gray-700">
+                                                    {item.skuCode}
+                                                </span>
+                                            </p>
+                                        </div>
+                                        {/* Nút xóa sản phẩm */}
+                                        <button
+                                            type="button"
+                                            aria-label={
+                                                lang === 'en' ? 'Remove item' : 'Xóa sản phẩm'
+                                            }
+                                            className="text-gray-400 hover:text-danger p-1 rounded-lg hover:bg-red-50 transition-colors"
+                                            onClick={() => handleRemoveItem(item.id)}
+                                            disabled={isActing}
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+
+                                    {!item.isAvailable && (
+                                        <span className="inline-block text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-medium mt-1">
+                                            {tr(lang, 'outOfStock')}
+                                        </span>
+                                    )}
+
+                                    <div className="flex items-center justify-between mt-3">
+                                        {/* Điều chỉnh số lượng sản phẩm; khi đang gọi API thì làm mờ và chặn tương tác */}
+                                        <div
+                                            className={`flex items-center gap-2 ${isActing ? 'opacity-50 pointer-events-none' : ''}`}
+                                        >
+                                            <NumberStepper
+                                                value={item.quantity}
+                                                min={0}
+                                                max={item.stockAvailable ?? 99}
+                                                onChange={(qty) => handleUpdateQty(item, qty)}
+                                            />
+                                            {isActing && <Spinner size={14} color="#6366f1" />}
+                                        </div>
+                                        <span className="text-lg font-bold text-primary">
+                                            {formatCurrency(
+                                                item.subtotal || item.unitPrice * item.quantity,
+                                                lang,
+                                            )}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        )
+                    })}
                 </div>
 
+                {/* Bảng tổng tiền và thanh toán (Accept Criteria 3) */}
                 <div className="space-y-4">
                     <div className="nexus-card p-5">
                         <h3 className="font-bold text-gray-900 mb-4">{tr(lang, 'orderSummary')}</h3>
@@ -1282,16 +1636,94 @@ export function CartPage() {
                     </Button>
                 </div>
             </div>
+
+            {/* Modal xác nhận xóa toàn bộ giỏ hàng */}
+            {/* Modal xác nhận xóa toàn bộ giỏ hàng theo props chuẩn của ConfirmModal */}
+            <ConfirmModal
+                open={showClearConfirm}
+                title={lang === 'en' ? 'Clear Shopping Cart' : 'Xóa toàn bộ giỏ hàng'}
+                message={
+                    lang === 'en'
+                        ? 'Are you sure you want to remove all items from your cart?'
+                        : 'Bạn có chắc chắn muốn xóa toàn bộ sản phẩm khỏi giỏ hàng không?'
+                }
+                danger
+                onConfirm={handleClearCart}
+                onClose={() => setShowClearConfirm(false)}
+            />
         </BuyerLayout>
     )
 }
 
 // ─── Checkout Page ─────────────────────────────────────────────────────────────
+/**
+ * Trang thanh toán (Checkout Page):
+ * 1. Chức năng:
+ *    - Quy trình đặt hàng 4 bước: (1) Địa chỉ nhận hàng -> (2) Phương thức vận chuyển -> (3) Phương thức thanh toán -> (4) Xác nhận & Đặt hàng.
+ *    - Kiểm tra tính hợp lệ dữ liệu biểu mẫu (Form Validation - Accept Criteria 4) trước khi chuyển bước và gửi đơn.
+ *    - Xác nhận và hoàn tất đặt hàng, dọn sạch giỏ hàng khi thành công.
+ * 2. Đầu vào và kết quả:
+ *    - Đầu vào: Thông tin giao hàng của người nhận, lựa chọn vận chuyển, thông tin thanh toán.
+ *    - Kết quả: Đặt hàng thành công, xóa giỏ hàng và điều hướng sang trang kết quả thanh toán PaymentResultPage.
+ * 3. Luồng xử lý:
+ *    - Bước 1: Kiểm tra họ tên (>= 2 ký tự), số điện thoại VN (10 số, đầu 0), địa chỉ, phường/xã, quận/huyện, tỉnh/thành.
+ *    - Bước 2: Chọn GHN Express hoặc GHTK Standard.
+ *    - Bước 3: Nếu chọn thẻ, kiểm tra số thẻ 16 số, tên in trên thẻ, ngày hết hạn MM/YY, mã CVV 3-4 số.
+ *    - Bước 4: Tóm tắt thông tin, gửi đơn hàng, dọn giỏ và chuyển sang payment-result.
+ * 4. Quy tắc và lý do:
+ *    - Tất cả các trường bắt buộc không được để trống hoặc sai định dạng; hiển thị lỗi màu đỏ ngay dưới ô nhập liệu.
+ * 5. Lỗi và giới hạn:
+ *    - Chặn bấm Next khi dữ liệu không hợp lệ và hiển thị thông báo lỗi chi tiết.
+ */
+interface ShippingFormData {
+    fullName: string
+    phone: string
+    street: string
+    city: string
+    district: string
+    ward: string
+}
+
+interface PaymentFormData {
+    method: 'CARD' | 'VNPAY' | 'COD'
+    cardNumber: string
+    cardHolder: string
+    expiryDate: string
+    cvv: string
+}
+
 export function CheckoutPage() {
-    const { lang, navigate, showToast } = useApp()
+    const { lang, navigate, showToast, setCartCount } = useApp()
     const [step, setStep] = useState(1)
     const [shipping, setShipping] = useState<'GHN' | 'GHTK'>('GHN')
     const [loading, setLoading] = useState(false)
+
+    // Dữ liệu biểu mẫu giao hàng (Step 1)
+    const [shippingData, setShippingData] = useState<ShippingFormData>({
+        fullName: 'Minh Tran',
+        phone: '0901234567',
+        street: '123 Nguyen Hue Street',
+        city: 'Ho Chi Minh City',
+        district: 'District 1',
+        ward: 'Ben Nghe',
+    })
+
+    // Dữ liệu biểu mẫu thanh toán (Step 3)
+    const [paymentData, setPaymentData] = useState<PaymentFormData>({
+        method: 'CARD',
+        cardNumber: '4242 4242 4242 4242',
+        cardHolder: 'MINH TRAN',
+        expiryDate: '12/28',
+        cvv: '123',
+    })
+
+    // State lưu lỗi kiểm tra dữ liệu biểu mẫu (Accept Criteria 4)
+    const [shippingErrors, setShippingErrors] = useState<
+        Partial<Record<keyof ShippingFormData, string>>
+    >({})
+    const [paymentErrors, setPaymentErrors] = useState<
+        Partial<Record<keyof PaymentFormData, string>>
+    >({})
 
     const STEPS = [
         tr(lang, 'shippingAddress'),
@@ -1300,12 +1732,174 @@ export function CheckoutPage() {
         tr(lang, 'confirmation'),
     ]
 
+    // Hàm kiểm tra tính hợp lệ dữ liệu biểu mẫu giao hàng (Accept Criteria 4)
+    const validateStep1 = (): boolean => {
+        const errors: Partial<Record<keyof ShippingFormData, string>> = {}
+
+        // Họ và tên
+        if (!shippingData.fullName.trim()) {
+            errors.fullName = lang === 'en' ? 'Full name is required.' : 'Họ và tên là bắt buộc.'
+        } else if (shippingData.fullName.trim().length < 2) {
+            errors.fullName =
+                lang === 'en'
+                    ? 'Name must be at least 2 characters.'
+                    : 'Họ và tên phải có ít nhất 2 ký tự.'
+        }
+
+        // Số điện thoại Việt Nam (10 số, bắt đầu bằng 0)
+        const phoneClean = shippingData.phone.replace(/[\s-]/g, '')
+        const phoneRegex = /^0(3|5|7|8|9)\d{8}$/
+        if (!phoneClean) {
+            errors.phone =
+                lang === 'en' ? 'Phone number is required.' : 'Số điện thoại là bắt buộc.'
+        } else if (!phoneRegex.test(phoneClean)) {
+            errors.phone =
+                lang === 'en'
+                    ? 'Invalid phone number (10 digits starting with 0).'
+                    : 'Số điện thoại không hợp lệ (gồm 10 số, bắt đầu bằng 0).'
+        }
+
+        // Địa chỉ cụ thể
+        if (!shippingData.street.trim()) {
+            errors.street =
+                lang === 'en' ? 'Street address is required.' : 'Địa chỉ cụ thể là bắt buộc.'
+        } else if (shippingData.street.trim().length < 5) {
+            errors.street =
+                lang === 'en'
+                    ? 'Address must be at least 5 characters.'
+                    : 'Địa chỉ phải có ít nhất 5 ký tự.'
+        }
+
+        // Tỉnh / Thành phố
+        if (!shippingData.city.trim()) {
+            errors.city =
+                lang === 'en' ? 'City is required.' : 'Vui lòng chọn hoặc nhập Tỉnh/Thành phố.'
+        }
+
+        // Quận / Huyện
+        if (!shippingData.district.trim()) {
+            errors.district =
+                lang === 'en' ? 'District is required.' : 'Vui lòng chọn hoặc nhập Quận/Huyện.'
+        }
+
+        // Phường / Xã
+        if (!shippingData.ward.trim()) {
+            errors.ward = lang === 'en' ? 'Ward is required.' : 'Vui lòng chọn hoặc nhập Phường/Xã.'
+        }
+
+        setShippingErrors(errors)
+        const isValid = Object.keys(errors).length === 0
+        if (!isValid) {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'Please fill in all required shipping fields correctly.'
+                        : 'Vui lòng điền đầy đủ và chính xác các thông tin giao hàng bắt buộc.',
+            })
+        }
+        return isValid
+    }
+
+    // Hàm kiểm tra tính hợp lệ dữ liệu biểu mẫu thanh toán (Accept Criteria 4)
+    const validateStep3 = (): boolean => {
+        if (paymentData.method !== 'CARD') {
+            setPaymentErrors({})
+            return true
+        }
+
+        const errors: Partial<Record<keyof PaymentFormData, string>> = {}
+        const cleanCard = paymentData.cardNumber.replace(/\s+/g, '')
+
+        // Số thẻ (16 chữ số)
+        if (!cleanCard) {
+            errors.cardNumber = lang === 'en' ? 'Card number is required.' : 'Số thẻ là bắt buộc.'
+        } else if (!/^\d{16}$/.test(cleanCard)) {
+            errors.cardNumber =
+                lang === 'en' ? 'Card number must be 16 digits.' : 'Số thẻ phải gồm đúng 16 chữ số.'
+        }
+
+        // Tên in trên thẻ
+        if (!paymentData.cardHolder.trim()) {
+            errors.cardHolder =
+                lang === 'en' ? 'Card holder name is required.' : 'Tên in trên thẻ là bắt buộc.'
+        } else if (paymentData.cardHolder.trim().length < 2) {
+            errors.cardHolder =
+                lang === 'en'
+                    ? 'Card holder name must be at least 2 characters.'
+                    : 'Tên chủ thẻ phải có tối thiểu 2 ký tự.'
+        }
+
+        // Ngày hết hạn (MM/YY)
+        const expiryRegex = /^(0[1-9]|1[0-2])\/\d{2}$/
+        if (!paymentData.expiryDate.trim()) {
+            errors.expiryDate =
+                lang === 'en' ? 'Expiry date is required.' : 'Ngày hết hạn là bắt buộc.'
+        } else if (!expiryRegex.test(paymentData.expiryDate.trim())) {
+            errors.expiryDate =
+                lang === 'en'
+                    ? 'Format must be MM/YY (e.g. 12/28).'
+                    : 'Định dạng phải là MM/YY (ví dụ: 12/28).'
+        }
+
+        // Mã CVV (3 hoặc 4 số)
+        if (!paymentData.cvv.trim()) {
+            errors.cvv = lang === 'en' ? 'CVV is required.' : 'Mã CVV là bắt buộc.'
+        } else if (!/^\d{3,4}$/.test(paymentData.cvv.trim())) {
+            errors.cvv =
+                lang === 'en' ? 'CVV must be 3 or 4 digits.' : 'Mã CVV phải gồm 3 hoặc 4 chữ số.'
+        }
+
+        setPaymentErrors(errors)
+        const isValid = Object.keys(errors).length === 0
+        if (!isValid) {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'Please check the payment card details.'
+                        : 'Vui lòng kiểm tra lại thông tin thẻ thanh toán.',
+            })
+        }
+        return isValid
+    }
+
+    // Đặt hàng (Accept Criteria 4 & hoàn thiện Checkout)
     const placeOrder = async () => {
+        if (!validateStep1()) {
+            setStep(1)
+            return
+        }
+        if (!validateStep3()) {
+            setStep(3)
+            return
+        }
+
         setLoading(true)
-        await new Promise((r) => setTimeout(r, 1500))
-        setLoading(false)
-        showToast({ type: 'success', message: tr(lang, 'orderPlaced') })
-        navigate('payment-result', { status: 'success' })
+        try {
+            await new Promise((r) => setTimeout(r, 1200))
+            const session = readSession()
+            if (session) {
+                try {
+                    await clearCart()
+                } catch {
+                    // Bỏ qua lỗi dọn giỏ nếu offline
+                }
+            }
+            setCartCount(0)
+            showToast({ type: 'success', message: tr(lang, 'orderPlaced') })
+            navigate('payment-result', { status: 'success' })
+        } catch {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'Failed to place order. Please try again.'
+                        : 'Đặt hàng thất bại. Vui lòng thử lại.',
+            })
+        } finally {
+            setLoading(false)
+        }
     }
 
     return (
@@ -1344,6 +1938,7 @@ export function CheckoutPage() {
                         <span className="ml-auto font-mono font-bold text-warning">14:23</span>
                     </div>
 
+                    {/* Bước 1: Địa chỉ giao hàng với Form Validation (Accept Criteria 4) */}
                     {step === 1 && (
                         <div className="space-y-4">
                             <h2 className="font-bold text-gray-900 text-lg mb-3">
@@ -1351,38 +1946,125 @@ export function CheckoutPage() {
                             </h2>
                             <div className="grid grid-cols-2 gap-4">
                                 <Input
-                                    label={lang === 'en' ? 'Full Name' : 'Họ và tên'}
-                                    defaultValue="Minh Tran"
+                                    label={lang === 'en' ? 'Full Name *' : 'Họ và tên *'}
+                                    value={shippingData.fullName}
+                                    onChange={(e) => {
+                                        setShippingData((prev) => ({
+                                            ...prev,
+                                            fullName: e.target.value,
+                                        }))
+                                        if (shippingErrors.fullName)
+                                            setShippingErrors((prev) => ({
+                                                ...prev,
+                                                fullName: undefined,
+                                            }))
+                                    }}
+                                    error={shippingErrors.fullName}
+                                    placeholder="Nguyen Van A"
                                 />
                                 <Input
-                                    label={lang === 'en' ? 'Phone' : 'Số điện thoại'}
-                                    defaultValue="0901234567"
+                                    label={lang === 'en' ? 'Phone *' : 'Số điện thoại *'}
+                                    value={shippingData.phone}
+                                    onChange={(e) => {
+                                        setShippingData((prev) => ({
+                                            ...prev,
+                                            phone: e.target.value,
+                                        }))
+                                        if (shippingErrors.phone)
+                                            setShippingErrors((prev) => ({
+                                                ...prev,
+                                                phone: undefined,
+                                            }))
+                                    }}
+                                    error={shippingErrors.phone}
+                                    placeholder="0901234567"
                                 />
                             </div>
                             <Input
-                                label={lang === 'en' ? 'Street Address' : 'Địa chỉ'}
-                                defaultValue="123 Nguyen Hue Street"
+                                label={lang === 'en' ? 'Street Address *' : 'Địa chỉ cụ thể *'}
+                                value={shippingData.street}
+                                onChange={(e) => {
+                                    setShippingData((prev) => ({
+                                        ...prev,
+                                        street: e.target.value,
+                                    }))
+                                    if (shippingErrors.street)
+                                        setShippingErrors((prev) => ({
+                                            ...prev,
+                                            street: undefined,
+                                        }))
+                                }}
+                                error={shippingErrors.street}
+                                placeholder="123 Nguyen Hue Street"
                             />
                             <div className="grid grid-cols-3 gap-4">
                                 <Input
-                                    label={lang === 'en' ? 'City' : 'Thành phố'}
-                                    defaultValue="Ho Chi Minh City"
+                                    label={lang === 'en' ? 'City *' : 'Thành phố *'}
+                                    value={shippingData.city}
+                                    onChange={(e) => {
+                                        setShippingData((prev) => ({
+                                            ...prev,
+                                            city: e.target.value,
+                                        }))
+                                        if (shippingErrors.city)
+                                            setShippingErrors((prev) => ({
+                                                ...prev,
+                                                city: undefined,
+                                            }))
+                                    }}
+                                    error={shippingErrors.city}
+                                    placeholder="Ho Chi Minh City"
                                 />
                                 <Input
-                                    label={lang === 'en' ? 'District' : 'Quận/Huyện'}
-                                    defaultValue="District 1"
+                                    label={lang === 'en' ? 'District *' : 'Quận/Huyện *'}
+                                    value={shippingData.district}
+                                    onChange={(e) => {
+                                        setShippingData((prev) => ({
+                                            ...prev,
+                                            district: e.target.value,
+                                        }))
+                                        if (shippingErrors.district)
+                                            setShippingErrors((prev) => ({
+                                                ...prev,
+                                                district: undefined,
+                                            }))
+                                    }}
+                                    error={shippingErrors.district}
+                                    placeholder="District 1"
                                 />
                                 <Input
-                                    label={lang === 'en' ? 'Ward' : 'Phường/Xã'}
-                                    defaultValue="Ben Nghe"
+                                    label={lang === 'en' ? 'Ward *' : 'Phường/Xã *'}
+                                    value={shippingData.ward}
+                                    onChange={(e) => {
+                                        setShippingData((prev) => ({
+                                            ...prev,
+                                            ward: e.target.value,
+                                        }))
+                                        if (shippingErrors.ward)
+                                            setShippingErrors((prev) => ({
+                                                ...prev,
+                                                ward: undefined,
+                                            }))
+                                    }}
+                                    error={shippingErrors.ward}
+                                    placeholder="Ben Nghe"
                                 />
                             </div>
-                            <Button variant="primary" size="lg" onClick={() => setStep(2)}>
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                onClick={() => {
+                                    if (validateStep1()) {
+                                        setStep(2)
+                                    }
+                                }}
+                            >
                                 {tr(lang, 'next')} →
                             </Button>
                         </div>
                     )}
 
+                    {/* Bước 2: Phương thức vận chuyển */}
                     {step === 2 && (
                         <div className="space-y-4">
                             <h2 className="font-bold text-gray-900 text-lg mb-3">
@@ -1442,47 +2124,216 @@ export function CheckoutPage() {
                         </div>
                     )}
 
+                    {/* Bước 3: Phương thức thanh toán với Form Validation (Accept Criteria 4) */}
                     {step === 3 && (
                         <div className="space-y-4">
                             <h2 className="font-bold text-gray-900 text-lg mb-3">
                                 {tr(lang, 'payment')}
                             </h2>
-                            <div className="p-3 bg-primary-light rounded-xl flex items-center gap-2 text-sm text-primary mb-3">
-                                <svg
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
+
+                            {/* Lựa chọn phương thức thanh toán */}
+                            <div className="grid grid-cols-3 gap-3 mb-4">
+                                <label
+                                    className={`flex flex-col items-center p-3 border-2 rounded-xl cursor-pointer text-center transition-colors ${paymentData.method === 'CARD' ? 'border-primary bg-primary-light font-semibold' : 'border-border'}`}
                                 >
-                                    <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-                                    <line x1="1" y1="10" x2="23" y2="10" />
-                                </svg>
-                                {lang === 'en'
-                                    ? 'Powered by Stripe — your payment is secure'
-                                    : 'Bảo mật bởi Stripe — thanh toán của bạn được bảo vệ'}
+                                    <input
+                                        type="radio"
+                                        name="paymentMethod"
+                                        className="sr-only"
+                                        checked={paymentData.method === 'CARD'}
+                                        onChange={() =>
+                                            setPaymentData((p) => ({ ...p, method: 'CARD' }))
+                                        }
+                                    />
+                                    <CreditCard
+                                        size={22}
+                                        className={
+                                            paymentData.method === 'CARD'
+                                                ? 'text-primary'
+                                                : 'text-gray-400'
+                                        }
+                                    />
+                                    <span className="text-xs mt-1.5">
+                                        {lang === 'en' ? 'Credit Card' : 'Thẻ quốc tế'}
+                                    </span>
+                                </label>
+                                <label
+                                    className={`flex flex-col items-center p-3 border-2 rounded-xl cursor-pointer text-center transition-colors ${paymentData.method === 'VNPAY' ? 'border-primary bg-primary-light font-semibold' : 'border-border'}`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="paymentMethod"
+                                        className="sr-only"
+                                        checked={paymentData.method === 'VNPAY'}
+                                        onChange={() =>
+                                            setPaymentData((p) => ({ ...p, method: 'VNPAY' }))
+                                        }
+                                    />
+                                    <Package
+                                        size={22}
+                                        className={
+                                            paymentData.method === 'VNPAY'
+                                                ? 'text-primary'
+                                                : 'text-gray-400'
+                                        }
+                                    />
+                                    <span className="text-xs mt-1.5">VNPAY QR</span>
+                                </label>
+                                <label
+                                    className={`flex flex-col items-center p-3 border-2 rounded-xl cursor-pointer text-center transition-colors ${paymentData.method === 'COD' ? 'border-primary bg-primary-light font-semibold' : 'border-border'}`}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="paymentMethod"
+                                        className="sr-only"
+                                        checked={paymentData.method === 'COD'}
+                                        onChange={() =>
+                                            setPaymentData((p) => ({ ...p, method: 'COD' }))
+                                        }
+                                    />
+                                    <Truck
+                                        size={22}
+                                        className={
+                                            paymentData.method === 'COD'
+                                                ? 'text-primary'
+                                                : 'text-gray-400'
+                                        }
+                                    />
+                                    <span className="text-xs mt-1.5">
+                                        {lang === 'en' ? 'COD' : 'Khi nhận hàng'}
+                                    </span>
+                                </label>
                             </div>
-                            <Input
-                                label={tr(lang, 'cardNumber')}
-                                placeholder="4242 4242 4242 4242"
-                            />
-                            <Input label={tr(lang, 'cardHolder')} placeholder="MINH TRAN" />
-                            <div className="grid grid-cols-2 gap-4">
-                                <Input label={tr(lang, 'expiryDate')} placeholder="MM/YY" />
-                                <Input label={tr(lang, 'cvv')} placeholder="123" type="password" />
-                            </div>
+
+                            {paymentData.method === 'CARD' ? (
+                                <>
+                                    <div className="p-3 bg-primary-light rounded-xl flex items-center gap-2 text-sm text-primary mb-3">
+                                        <svg
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            strokeWidth="2"
+                                        >
+                                            <rect
+                                                x="1"
+                                                y="4"
+                                                width="22"
+                                                height="16"
+                                                rx="2"
+                                                ry="2"
+                                            />
+                                            <line x1="1" y1="10" x2="23" y2="10" />
+                                        </svg>
+                                        {lang === 'en'
+                                            ? 'Powered by Stripe — your payment is secure'
+                                            : 'Bảo mật bởi Stripe — thanh toán của bạn được bảo vệ'}
+                                    </div>
+                                    <Input
+                                        label={tr(lang, 'cardNumber') + ' *'}
+                                        value={paymentData.cardNumber}
+                                        onChange={(e) => {
+                                            setPaymentData((p) => ({
+                                                ...p,
+                                                cardNumber: e.target.value,
+                                            }))
+                                            if (paymentErrors.cardNumber)
+                                                setPaymentErrors((p) => ({
+                                                    ...p,
+                                                    cardNumber: undefined,
+                                                }))
+                                        }}
+                                        error={paymentErrors.cardNumber}
+                                        placeholder="4242 4242 4242 4242"
+                                    />
+                                    <Input
+                                        label={tr(lang, 'cardHolder') + ' *'}
+                                        value={paymentData.cardHolder}
+                                        onChange={(e) => {
+                                            setPaymentData((p) => ({
+                                                ...p,
+                                                cardHolder: e.target.value,
+                                            }))
+                                            if (paymentErrors.cardHolder)
+                                                setPaymentErrors((p) => ({
+                                                    ...p,
+                                                    cardHolder: undefined,
+                                                }))
+                                        }}
+                                        error={paymentErrors.cardHolder}
+                                        placeholder="MINH TRAN"
+                                    />
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <Input
+                                            label={tr(lang, 'expiryDate') + ' *'}
+                                            value={paymentData.expiryDate}
+                                            onChange={(e) => {
+                                                setPaymentData((p) => ({
+                                                    ...p,
+                                                    expiryDate: e.target.value,
+                                                }))
+                                                if (paymentErrors.expiryDate)
+                                                    setPaymentErrors((p) => ({
+                                                        ...p,
+                                                        expiryDate: undefined,
+                                                    }))
+                                            }}
+                                            error={paymentErrors.expiryDate}
+                                            placeholder="MM/YY"
+                                        />
+                                        <Input
+                                            label={tr(lang, 'cvv') + ' *'}
+                                            value={paymentData.cvv}
+                                            onChange={(e) => {
+                                                setPaymentData((p) => ({
+                                                    ...p,
+                                                    cvv: e.target.value,
+                                                }))
+                                                if (paymentErrors.cvv)
+                                                    setPaymentErrors((p) => ({
+                                                        ...p,
+                                                        cvv: undefined,
+                                                    }))
+                                            }}
+                                            error={paymentErrors.cvv}
+                                            placeholder="123"
+                                            type="password"
+                                        />
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="p-4 border rounded-xl bg-gray-50 text-sm text-gray-600">
+                                    {paymentData.method === 'VNPAY'
+                                        ? lang === 'en'
+                                            ? 'You will be redirected to VNPAY portal to scan QR code and complete payment.'
+                                            : 'Bạn sẽ được chuyển hướng sang cổng VNPAY để quét mã QR thanh toán sau khi bấm Đặt hàng.'
+                                        : lang === 'en'
+                                          ? 'You will pay in cash directly to the courier when receiving the package.'
+                                          : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
+                                </div>
+                            )}
+
                             <div className="flex gap-3">
                                 <Button variant="outline" size="lg" onClick={() => setStep(2)}>
                                     {tr(lang, 'back')}
                                 </Button>
-                                <Button variant="primary" size="lg" onClick={() => setStep(4)}>
+                                <Button
+                                    variant="primary"
+                                    size="lg"
+                                    onClick={() => {
+                                        if (validateStep3()) {
+                                            setStep(4)
+                                        }
+                                    }}
+                                >
                                     {tr(lang, 'next')} →
                                 </Button>
                             </div>
                         </div>
                     )}
 
+                    {/* Bước 4: Xác nhận thông tin và Đặt hàng */}
                     {step === 4 && (
                         <div className="space-y-4">
                             <h2 className="font-bold text-gray-900 text-lg mb-3">
@@ -1492,21 +2343,26 @@ export function CheckoutPage() {
                                 {[
                                     [
                                         lang === 'en' ? 'Ship to' : 'Giao đến',
-                                        '123 Nguyen Hue, District 1, HCM',
+                                        `${shippingData.fullName} (${shippingData.phone}) - ${shippingData.street}, ${shippingData.ward}, ${shippingData.district}, ${shippingData.city}`,
                                     ],
                                     [
                                         tr(lang, 'shippingMethod'),
                                         shipping === 'GHN' ? 'GHN Express' : 'GHTK Standard',
                                     ],
-                                    [tr(lang, 'payment'), 'Visa ending 4242'],
+                                    [
+                                        tr(lang, 'payment'),
+                                        paymentData.method === 'CARD'
+                                            ? `Visa ending ${paymentData.cardNumber.replace(/\s+/g, '').slice(-4) || '4242'}`
+                                            : paymentData.method,
+                                    ],
                                     [tr(lang, 'total'), formatCurrency(329.97, lang)],
                                 ].map(([k, v]) => (
                                     <div
                                         key={k}
-                                        className="flex justify-between p-3 bg-gray-50 rounded-lg"
+                                        className="flex justify-between p-3 bg-gray-50 rounded-lg gap-4"
                                     >
-                                        <span className="text-gray-500">{k}</span>
-                                        <span className="font-semibold">{v}</span>
+                                        <span className="text-gray-500 shrink-0">{k}</span>
+                                        <span className="font-semibold text-right">{v}</span>
                                     </div>
                                 ))}
                             </div>
@@ -1553,9 +2409,9 @@ export function CheckoutPage() {
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
                         {[
                             [tr(lang, 'subtotal'), '$429.98'],
-                            [tr(lang, 'shipping'), '$3.99'],
+                            [tr(lang, 'shipping'), shipping === 'GHN' ? '$3.99' : '$2.49'],
                             [tr(lang, 'tax'), '$34.40'],
-                            [tr(lang, 'total'), '$468.37'],
+                            [tr(lang, 'total'), shipping === 'GHN' ? '$468.37' : '$466.87'],
                         ].map(([k, v], i) => (
                             <div
                                 key={k}

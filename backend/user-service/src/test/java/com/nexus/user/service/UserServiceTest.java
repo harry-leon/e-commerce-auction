@@ -12,9 +12,8 @@ import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.dto.CreateUserProfileRequest;
 import com.nexus.user.dto.UpdateUserRequest;
-import com.nexus.user.entity.AuditLog;
+import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.entity.User;
-import com.nexus.user.repository.AuditLogRepository;
 import com.nexus.user.repository.UserRepository;
 import java.time.LocalDate;
 import java.util.List;
@@ -33,7 +32,6 @@ import org.springframework.data.domain.PageRequest;
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
     @Mock private UserRepository users;
-    @Mock private AuditLogRepository logs;
     @Mock private AuditService audit;
     @Mock private KeycloakClient keycloak;
     private UserService service;
@@ -41,7 +39,7 @@ class UserServiceTest {
 
     @BeforeEach
     void setup() {
-        service = new UserService(users, logs, audit, keycloak);
+        service = new UserService(users, audit, keycloak);
         user = new User();
         user.setId(UUID.randomUUID());
         user.setKeycloakId(UUID.randomUUID());
@@ -128,8 +126,9 @@ class UserServiceTest {
         when(users.searchUsers(eq(""), any())).thenReturn(new PageImpl<>(List.of(user)));
         assertEquals(1, service.searchUsers(null, PageRequest.of(0, 10)).getTotalElements());
         when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
-        var log = new AuditLog(UUID.randomUUID(), user.getId(), "USER_UPDATED", "Cập nhật", null, null, "SUCCESS");
-        when(logs.findByUserId(eq(user.getId()), any())).thenReturn(new PageImpl<>(List.of(log)));
+        // Lịch sử phải được ủy thác notification-service, không phụ thuộc bảng ngoài ERD trong DB User.
+        var log = new ActivityHistoryResponse(UUID.randomUUID(), "USER_UPDATED", "Cập nhật", "SUCCESS", java.time.LocalDateTime.now());
+        when(audit.history(eq(user.getId()), any())).thenReturn(new PageImpl<>(List.of(log)));
         assertEquals("USER_UPDATED", service.getActivityHistory(user.getId(), PageRequest.of(0, 10)).getContent().getFirst().getAction());
         assertEquals(user.getId(), service.getUserById(user.getId()).getId());
     }

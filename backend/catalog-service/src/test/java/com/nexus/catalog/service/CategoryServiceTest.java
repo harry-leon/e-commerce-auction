@@ -40,7 +40,7 @@ class CategoryServiceTest {
     }
 
     private CategoryRequest request(Category parent) {
-        return new CategoryRequest("Updated", "Translated", parent == null ? null : parent.getId(), CategoryStatus.ACTIVE);
+        return new CategoryRequest("Updated", parent == null ? null : parent.getId(), CategoryStatus.ACTIVE);
     }
 
     @Test
@@ -60,7 +60,8 @@ class CategoryServiceTest {
         Category root = category(null);
         var created = service.create(request(root));
         assertEquals(2, created.level());
-        assertEquals("Translated", created.nameVi());
+        // ERD chỉ có name: alias UI phải phản ánh đúng tên đã lưu.
+        assertEquals("Updated", created.nameVi());
     }
 
     @Test
