@@ -21,6 +21,8 @@ x-service: &service
     EUREKA_ENABLED: "true"
     EUREKA_URL: http://discovery-server:8761/eureka/
     CONFIG_SERVER_URL: http://config-server:8888
+    # User gửi/đọc audit qua API notification, không truy cập trực tiếp DB của service khác.
+    NOTIFICATION_SERVICE_URL: http://notification-service:8080
     # JWKS dùng DNS nội bộ; issuer phải khớp URL public Keycloak phát trong JWT.
     KEYCLOAK_URL: http://keycloak:8080
     KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8180/realms/nexus-realm}
