@@ -209,8 +209,8 @@ describe('profile and category writes', () => {
     it('persists category edits and handles cancellation and failed deletion', async () => {
         render(<AdminCategoriesPage />)
         await screen.findByText(/Điện tử ·/)
-        fireEvent.change(screen.getByLabelText('Tên tiếng Anh'), { target: { value: 'Books' } })
-        fireEvent.change(screen.getByLabelText('Tên tiếng Việt'), { target: { value: 'Sách' } })
+        // ERD chỉ có name: form lưu một tên, không gửi bản dịch nameVi riêng.
+        fireEvent.change(screen.getByLabelText('Tên danh mục'), { target: { value: 'Books' } })
         fireEvent.click(screen.getByRole('button', { name: 'Lưu' }))
         await waitFor(() =>
             expect(
