@@ -59,7 +59,44 @@ import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage as SignIn } from '../features/auth/AuthPages'
+import { useEffect } from 'react'
 import { useApp } from '../context'
+import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER, DEMO_SUPPORT } from '../mockData'
+import type { User } from '../types'
+
+/**
+ * Khởi tạo user mock khi mở URL demo trực tiếp, ví dụ `/admin-dashboard` ở Vite dev.
+ * Chỉ thay state trong bộ nhớ của trình duyệt để route guard render đúng giao diện; không ghi token,
+ * không gọi backend và khi tải lại URL demo sẽ khởi tạo lại từ route/query.
+ */
+function DemoRouteBootstrap({ user, setUser }: { user: User; setUser: (user: User | null) => void }) {
+    useEffect(() => {
+        setUser(user)
+    }, [setUser, user])
+
+    return null
+}
+
+/** Chỉ công nhận ba role demo có dữ liệu mock sẵn; query khác vẫn đi theo cơ chế bảo vệ route bình thường. */
+function demoUserFor(role: unknown): User | null {
+    if (role === 'buyer') return DEMO_BUYER
+    if (role === 'seller') return DEMO_SELLER
+    if (role === 'admin') return DEMO_ADMIN
+    return null
+}
+
+/**
+ * Trong Vite dev, Buyer Home và các dashboard mở thẳng để team kiểm thử giao diện mà không cần IAM.
+ * Nhánh này bị loại ở production (`import.meta.env.DEV` là false); API backend vẫn bắt buộc JWT ở mọi môi trường.
+ */
+function demoUserForDashboard(page: string): User | null {
+    if (!import.meta.env.DEV) return null
+    if (page === 'home') return DEMO_BUYER
+    if (page.startsWith('admin-')) return DEMO_ADMIN
+    if (page.startsWith('seller-')) return DEMO_SELLER
+    if (page.startsWith('support-')) return DEMO_SUPPORT
+    return null
+}
 
 /**
  * Chọn màn hình từ route state, yêu cầu đăng nhập cho trang riêng và kiểm tra vai trò cho các khu vực.
@@ -67,8 +104,12 @@ import { useApp } from '../context'
  * Các trang features dùng dữ liệu thật; một số màn của sprint sau vẫn giữ bản demo hiện có.
  */
 export function AppRouter() {
-    const { page, user, pageParams: routeParams } = useApp()
+    const { page, user, setUser, pageParams: routeParams } = useApp()
     const publicPages = ['login', 'register', 'forgot-password', 'home', 'search', 'product-detail']
+    const demoUser = demoUserFor(routeParams.demo) || demoUserForDashboard(page)
+
+    // URL demo chỉ nâng quyền khi chưa có phiên thật; phiên đã đăng nhập vẫn giữ quyền backend cấp.
+    if (!user && demoUser) return <DemoRouteBootstrap user={demoUser} setUser={setUser} />
     if (!user && !publicPages.includes(page)) return <SignIn />
     if (page.startsWith('admin-') && user?.role !== 'admin')
         return <p role="alert">Access denied</p>

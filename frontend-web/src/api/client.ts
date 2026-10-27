@@ -223,10 +223,10 @@ export function mapUser(user: ApiUser): User {
     const role: UserRole = roles.includes('admin')
         ? 'admin'
         : roles.includes('support')
-          ? 'support'
-          : roles.includes('seller')
-            ? 'seller'
-            : 'buyer'
+            ? 'support'
+            : roles.includes('seller')
+                ? 'seller'
+                : 'buyer'
     return {
         id: user.id,
         fullName: user.fullName,

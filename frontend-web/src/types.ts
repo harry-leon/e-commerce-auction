@@ -126,6 +126,14 @@ export interface OrderItem {
     subtotal: number
 }
 
+/** Lưu vết thay đổi trạng thái trong mock để Admin/Seller không mất lý do thao tác sau khi tải lại trang. */
+export interface OrderStatusHistoryEntry {
+    status: OrderStatus
+    reason: string
+    actor: 'buyer' | 'seller' | 'admin' | 'system'
+    changedAt: string
+}
+
 export interface ShipmentEvent {
     status: ShipmentStatus
     description: string
@@ -171,6 +179,7 @@ export interface Order {
     auctionId?: string
     paymentDeadline?: string
     reviewed?: boolean
+    statusHistory?: OrderStatusHistoryEntry[]
 }
 
 export interface Notification {
