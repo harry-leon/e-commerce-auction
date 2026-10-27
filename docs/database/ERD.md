@@ -1,6 +1,6 @@
 # Database ERD
 
-Generated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Flyway remains authoritative; this diagram does not describe constraints or data backfills.
+Generated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. The approved Nerum V2 ERD defines the business tables; these migrations implement it. This diagram does not describe constraints or data backfills.
 
 ## user-service
 
@@ -25,16 +25,6 @@ erDiagram
     uuid keycloak_id
     timestamp updated_at
   }
-  audit_logs {
-    uuid id
-    uuid user_id
-    varchar action
-    text description
-    varchar ip_address
-    varchar user_agent
-    varchar status
-    timestamp created_at
-  }
 
 ```
 
@@ -52,7 +42,6 @@ erDiagram
     varchar name
     integer level
     varchar status
-    varchar name_vi
   }
   products {
     uuid id
@@ -113,7 +102,6 @@ erDiagram
     uuid id
     uuid user_id
     varchar status
-    timestamp created_at
     timestamp expires_at
   }
   cart_items {
@@ -242,7 +230,6 @@ erDiagram
     timestamp end_time
     integer extension_count
     integer version
-    timestamp created_at
   }
   bids {
     uuid id
@@ -298,7 +285,6 @@ erDiagram
     varchar ref_type
     uuid ref_id
     varchar status
-    timestamp created_at
     timestamp expires_at
   }
   inventory_ledger {
@@ -400,9 +386,6 @@ erDiagram
     integer failed_tx
     integer auction_won
     integer auction_failed
-    numeric avg_rating
-    integer total_ratings
-    timestamp updated_at
   }
   ratings {
     uuid id

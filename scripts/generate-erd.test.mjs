@@ -12,17 +12,18 @@ test('user ERD reflects the complete Flyway migration chain', () => {
   const diagram = schemaToMermaid(sql)
   assert.match(diagram, /uuid keycloak_id/)
   assert.match(diagram, /timestamp updated_at/)
-  assert.match(diagram, /audit_logs \{/)
+  // ERD đã chốt đặt audit tại notification.event_logs, không giữ bảng riêng trong User.
+  assert.doesNotMatch(diagram, /audit_logs \{/)
   assert.doesNotMatch(diagram, /password_hash|failed_login_attempts|locked_until|token_version/)
   assert.doesNotMatch(diagram, /\n  (roles|privileges|reputations|ratings|penalties|password_reset_tokens) \{/)
 })
 
-// Catalog V3 backfill tên không được che mất cột name_vi trong sơ đồ dùng để đối chiếu entity.
-test('catalog ERD includes the translated category name', () => {
+// Chuỗi migration Catalog phải kết thúc với một name theo ERD, giữ nguyên quan hệ sản phẩm.
+test('catalog ERD removes the translated category column after V4', () => {
   const directory = 'backend/catalog-service/src/main/resources/db/migration'
-  const diagram = schemaToMermaid(['V2__init_schema.sql', 'V3__category_translations.sql']
+  const diagram = schemaToMermaid(['V2__init_schema.sql', 'V3__category_translations.sql', 'V4__align_categories_with_final_erd.sql']
     .map(file => readFileSync(`${directory}/${file}`, 'utf8')).join('\n'))
-  assert.match(diagram, /varchar name_vi/)
+  assert.doesNotMatch(diagram, /varchar name_vi/)
   assert.match(diagram, /categories \|\|--o\{ products : category_id/)
 })
 
