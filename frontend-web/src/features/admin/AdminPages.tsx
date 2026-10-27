@@ -1718,9 +1718,9 @@ export function AdminCategoriesPage() {
     )
 }
 
-// ─── Admin Orders ──────────────────────────────────────────────────────────────
+// ─── Admin Orders ───
 /**
- * Màn hình Quản lý đơn hàng & Trạng thái ký quỹ của Quản trị viên (Admin) (SRS 3.2.1 & 3.4).
+ * Màn hình Quản lý đơn hàng & Trạng thái ký quỹ của Quản trị viên (Admin)
  * 
  * Chức năng:
  * - Giám sát tổng tiền giữ hộ (Escrow funds), các đơn có khiếu nại đang xử lý và đơn trong thời hạn bảo vệ.
@@ -1749,22 +1749,23 @@ export function AdminOrdersPage() {
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
+    // Nhãn hiển thị trạng thái thanh toán — dùng ngôn ngữ tự nhiên, không dùng thuật ngữ kỹ thuật.
     const paymentLabel = (s: string) =>
         ({
-            held: lang === 'en' ? 'Held by Nexus' : 'Nexus đang giữ',
-            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ Buyer',
-            released: lang === 'en' ? 'Released' : 'Đã giải ngân',
-            on_hold: lang === 'en' ? 'Dispute hold' : 'Giữ do khiếu nại',
+            held: lang === 'en' ? 'Holding' : 'Đang giữ',
+            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ người mua',
+            released: lang === 'en' ? 'Released to seller' : 'Đã vào tài khoản',
+            on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ',
             refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
             partial_refund: lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
         })[s] || s
@@ -1937,14 +1938,14 @@ export function AdminOrdersPage() {
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
                     <option value="all">{tr(lang, 'all')}</option>
-                    <option value="pending">{tr(lang, 'statusPending')}</option>
-                    <option value="paid">{tr(lang, 'statusPaid')}</option>
-                    <option value="processing">{tr(lang, 'statusProcessing')}</option>
-                    <option value="shipped">{tr(lang, 'statusShipped')}</option>
-                    <option value="delivered">{tr(lang, 'statusDelivered')}</option>
-                    <option value="completed">{tr(lang, 'statusCompleted')}</option>
-                    <option value="cancelled">{tr(lang, 'statusCancelled')}</option>
-                    <option value="refunded">{tr(lang, 'statusRefunded')}</option>
+                    <option value="PENDING_PAYMENT">{tr(lang, 'statusPending')}</option>
+                    <option value="PAID">{tr(lang, 'statusPaid')}</option>
+                    <option value="PROCESSING">{tr(lang, 'statusProcessing')}</option>
+                    <option value="SHIPPED">{tr(lang, 'statusShipped')}</option>
+                    <option value="DELIVERED">{tr(lang, 'statusDelivered')}</option>
+                    <option value="COMPLETED">{tr(lang, 'statusCompleted')}</option>
+                    <option value="CANCELLED">{tr(lang, 'statusCancelled')}</option>
+                    <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                 </select>
                 <span className="text-xs text-gray-400 ml-auto">
                     {lang === 'en' ? `Showing ${orders.length} orders` : `Hiển thị ${orders.length} đơn hàng`}
@@ -1988,7 +1989,7 @@ export function AdminOrdersPage() {
                             },
                             {
                                 key: 'paymentStatus',
-                                label: lang === 'en' ? 'Escrow' : 'Ký quỹ Escrow',
+                                label: lang === 'en' ? 'Payment' : 'Thanh toán',
                                 render: (r: Order) => {
                                     const status = getEffectivePaymentStatus(r)
                                     return <StatusBadge status={status} label={paymentLabel(status)} />
@@ -2099,7 +2100,7 @@ export function AdminOrdersPage() {
                                 <p className="font-bold text-primary mt-0.5">{formatCurrency(selectedOrder.total, lang)}</p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment Escrow' : 'Ký quỹ'}</p>
+                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}</p>
                                 <div className="mt-0.5">
                                     <StatusBadge
                                         status={getEffectivePaymentStatus(selectedOrder)}

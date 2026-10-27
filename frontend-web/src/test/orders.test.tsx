@@ -65,22 +65,22 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
 
     it('ordersApi: Buyer hủy đơn hàng, cập nhật trạng thái cancelled và thanh toán refunded', async () => {
         const cancelled = await ordersApi.cancelOrder('ORD-20240305-005', 'Không còn nhu cầu')
-        expect(cancelled.status).toBe('cancelled')
+        expect(cancelled.status).toBe('CANCELLED')
         expect(cancelled.paymentStatus).toBe('refunded')
 
         // Xác minh lưu vết vào storage
         const recheck = await ordersApi.getOrderById('ORD-20240305-005')
-        expect(recheck?.status).toBe('cancelled')
+        expect(recheck?.status).toBe('CANCELLED')
     })
 
     it('ordersApi: Seller cập nhật trạng thái đơn hàng processing -> shipped', async () => {
-        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'shipped', 'Giao cho đơn vị vận chuyển')
-        expect(updated.status).toBe('shipped')
+        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'SHIPPED', 'Giao cho đơn vị vận chuyển')
+        expect(updated.status).toBe('SHIPPED')
 
         const recheck = await ordersApi.getOrderById('ORD-20240220-002')
-        expect(recheck?.status).toBe('shipped')
+        expect(recheck?.status).toBe('SHIPPED')
         expect(recheck?.statusHistory?.at(-1)).toMatchObject({
-            status: 'shipped',
+            status: 'SHIPPED',
             actor: 'seller',
             reason: 'Giao cho đơn vị vận chuyển',
         })
@@ -89,7 +89,7 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     it('ordersApi: Buyer xác nhận đã nhận hàng và mở khiếu nại', async () => {
         // Xác nhận nhận hàng thành công
         const completed = await ordersApi.confirmOrderDelivery('ORD-20240215-001')
-        expect(completed.status).toBe('completed')
+        expect(completed.status).toBe('COMPLETED')
         expect(completed.paymentStatus).toBe('released')
 
         // Mở khiếu nại
@@ -101,7 +101,7 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     it('ordersApi: Admin xử lý giải quyết tranh chấp ký quỹ Escrow', async () => {
         const resolved = await ordersApi.resolveOrderDispute('ORD-20240101-003', 'refunded', 'Chấp nhận khiếu nại của Buyer')
         expect(resolved.paymentStatus).toBe('refunded')
-        expect(resolved.status).toBe('refunded')
+        expect(resolved.status).toBe('REFUNDED')
         expect(resolved.disputeStatus).toBe('resolved')
     })
 
