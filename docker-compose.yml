@@ -81,9 +81,16 @@ services:
       KC_HOSTNAME_URL: http://localhost:8180
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/nexus_keycloak
-      KC_DB_USERNAME: ${LOCAL_DB_USERNAME:-nexus}
-      KC_DB_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
+      # Có thể dùng Supabase qua KEYCLOAK_DB_*; schema riêng tách bảng IAM khỏi dữ liệu nghiệp vụ.
+      # Khi chưa cấu hình remote, giữ database local cũ; URL Supabase cần TLS và session pooler cổng 5432.
+      KC_DB_URL: ${KEYCLOAK_DB_URL:-jdbc:postgresql://postgres:5432/nexus_keycloak}
+      KC_DB_SCHEMA: ${KEYCLOAK_DB_SCHEMA:-public}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Giới hạn số kết nối IAM để không chiếm hết session pool của Supabase dùng chung.
+      KC_DB_POOL_INITIAL_SIZE: 1
+      KC_DB_POOL_MIN_SIZE: 1
+      KC_DB_POOL_MAX_SIZE: ${KEYCLOAK_DB_POOL_MAX_SIZE:-5}
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
