@@ -4,6 +4,8 @@ import com.nexus.catalog.enums.ProductStatus;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
@@ -22,6 +24,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
+/** Ánh xạ sản phẩm theo ERD; thời gian lưu timestamp UTC và trả Instant tại API. */
 @Entity
 @Table(name = "products")
 public class Product {
@@ -55,6 +58,8 @@ public class Product {
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
+    // ERD dùng timestamp không múi giờ; JDBC ghi/đọc UTC, API vẫn trả Instant.
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     private Instant createdAt;
 
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true)

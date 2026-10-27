@@ -17,6 +17,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
+/** Lưu đánh giá/ phản hồi theo ERD; các mốc thời gian dùng timestamp UTC thay vì timestamptz. */
 @Entity
 @Table(name = "product_reviews")
 public class ProductReview {
@@ -59,6 +60,8 @@ public class ProductReview {
     private String sellerReply;
 
     @Column(name = "seller_replied_at")
+    // ERD dùng timestamp không múi giờ; JDBC ghi/đọc UTC, API vẫn trả Instant.
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     private Instant sellerRepliedAt;
 
     @Column(name = "is_hidden", nullable = false)
@@ -66,6 +69,8 @@ public class ProductReview {
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
+    // ERD dùng timestamp không múi giờ; JDBC ghi/đọc UTC, API vẫn trả Instant.
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     private Instant createdAt;
 
     public ProductReview() {}

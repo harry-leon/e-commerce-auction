@@ -9,3 +9,7 @@ Flyway chỉ thực thi các migration SQL đúng quy tắc tên; file này gi�
 - **Kết quả:** dữ liệu cũ có tên hiển thị dự phòng; API tạo/sửa danh mục sau đó có thể lưu bản dịch riêng.
 - **Không thay đổi:** UUID, quan hệ cha–con, sản phẩm đang tham chiếu danh mục.
 - **Lưu ý:** migration này đã được chạy trong lần kiểm chứng local. Không sửa cả comment trong file SQL đã áp dụng vì Flyway lưu checksum; nếu cần thay đổi schema, tạo migration phiên bản tiếp theo. Phần giải thích được đặt tại đây để giữ checksum hiện tại.
+
+## V4__align_categories_with_final_erd.sql
+
+ERD đã chốt chỉ có `name`. V4 bỏ `name_vi`; API chỉ nhận `name` và trả `nameVi = name` như alias tương thích UI. Sao lưu bản dịch riêng trước khi nâng cấp; không sửa V3 đã chạy.
