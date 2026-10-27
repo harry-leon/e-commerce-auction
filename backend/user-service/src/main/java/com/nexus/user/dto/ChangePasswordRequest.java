@@ -1,6 +1,7 @@
 package com.nexus.user.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -15,7 +16,11 @@ public class ChangePasswordRequest {
     private String currentPassword;
 
     @NotBlank(message = "Mật khẩu mới không được để trống")
-    @Size(min = 6, max = 100, message = "Mật khẩu mới phải từ 6 đến 100 ký tự")
+    // Cùng policy với Gateway/Keycloak; mỗi vi phạm thành một error.details để FE hiển thị, không trả lại mật khẩu.
+    @Size(min = 8, max = 100, message = "Mật khẩu mới phải từ 8 đến 100 ký tự")
+    @Pattern(regexp = "(?s).*\\p{Lu}.*", message = "Mật khẩu mới cần ít nhất 1 chữ in hoa")
+    @Pattern(regexp = "(?s).*\\p{Nd}.*", message = "Mật khẩu mới cần ít nhất 1 chữ số")
+    @Pattern(regexp = "(?s).*[\\p{P}\\p{S}].*", message = "Mật khẩu mới cần ít nhất 1 ký tự đặc biệt (ví dụ @, !, #)")
     private String newPassword;
 
     /**
