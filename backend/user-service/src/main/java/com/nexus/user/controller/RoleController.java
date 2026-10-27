@@ -23,7 +23,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST Controller quản lý vai trò và phân quyền (Roles & Privileges N-N) theo SRS mục 3.1.1.
+ * REST Controller giữ contract quản lý vai trò; RoleService gọi realm roles/composites của Keycloak.
+ * Role ID do IAM cấp, không còn đọc bảng roles/privileges trong database profile.
  *
  * @author Nguyễn Tiến Thương
  * @since 06/10/2026
@@ -77,7 +78,7 @@ public class RoleController {
      */
     @PostMapping
     @PreAuthorize("hasAuthority('ROLE.CREATE')")
-    @Operation(summary = "Tạo vai trò mới", description = "Tạo vai trò và gán danh sách đặc quyền liên kết (N-N)")
+    @Operation(summary = "Tạo vai trò mới", description = "Tạo realm role và gán composite privileges tại Keycloak")
     public ResponseEntity<RoleResponse> createRole(@Valid @RequestBody CreateRoleRequest request) {
         RoleResponse response = roleService.createRole(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);

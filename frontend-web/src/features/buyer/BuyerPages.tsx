@@ -47,6 +47,8 @@ import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Order, OrderStatus } from '../../types'
 import { ordersApi } from '../../api/orders'
+import { useLoad } from '../../hooks/useLoad'
+import type { ApiCategory, ApiProduct, Envelope } from '../../api/client'
 
 function getAuctionCurrentBid(auction: unknown) {
     if (!auction || typeof auction !== 'object') return 0
@@ -105,6 +107,47 @@ export function HomePage() {
     const [heroIndex, setHeroIndex] = useState(0)
     const heroAuction =
         activeAuctions.length > 0 ? activeAuctions[heroIndex % activeAuctions.length] : null
+
+    // Tải danh mục thật từ Catalog Service backend (/api/v1/categories)
+    const { data: catData } = useLoad<Envelope<ApiCategory[]>>('/categories')
+    // Tải danh sách sản phẩm thật từ Catalog Service backend (/api/v1/products)
+    const { data: prodData } = useLoad<Envelope<ApiProduct[]>>('/products')
+
+    // Chuyển đổi danh mục backend sang định dạng hiển thị, fallback về CATEGORIES nếu chưa có
+    const liveCategories =
+        catData?.data && catData.data.length > 0
+            ? catData.data.map((c) => ({
+                id: c.id,
+                name: c.name,
+                nameVi: c.nameVi,
+                productCount: c.productCount,
+            }))
+            : CATEGORIES
+
+    // Chuyển đổi sản phẩm backend sang định dạng hiển thị UI, fallback về PRODUCTS nếu chưa có
+    const liveProducts =
+        prodData?.data && prodData.data.length > 0
+            ? prodData.data.map((p) => {
+                const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
+                return {
+                    ...fallback,
+                    id: p.id,
+                    name: p.name,
+                    nameVi: p.name,
+                    categoryId: p.categoryId,
+                    price: p.skus?.[0]?.price ?? fallback.price,
+                    originalPrice: p.skus?.[0]?.originalPrice ?? fallback.originalPrice,
+                    sku: p.skus?.[0]?.skuCode ?? fallback.sku,
+                    images:
+                        p.images && p.images.length > 0
+                            ? p.images.map((img) => img.url)
+                            : fallback.images,
+                    description: p.description || fallback.description,
+                    descriptionVi: p.description || fallback.descriptionVi,
+                    enableAuction: p.auctionEnabled ?? fallback.enableAuction,
+                }
+            })
+            : PRODUCTS
 
     useEffect(() => {
         setHeroIndex((index) => (activeAuctions.length > 0 ? index % activeAuctions.length : 0))
@@ -235,7 +278,7 @@ export function HomePage() {
                         </h2>
                     </div>
                     <div className="grid grid-cols-6 gap-4">
-                        {CATEGORIES.map((cat) => {
+                        {liveCategories.map((cat) => {
                             const Icon = CATEGORY_ICONS[cat.id]
                             return (
                                 <button
@@ -298,7 +341,7 @@ export function HomePage() {
                         </Button>
                     </div>
                     <div className="grid grid-cols-4 gap-5">
-                        {PRODUCTS.slice(0, 4).map((p) => (
+                        {liveProducts.slice(0, 4).map((p) => (
                             <ProductCard key={p.id} product={p} />
                         ))}
                     </div>
@@ -315,7 +358,7 @@ export function HomePage() {
                         </Button>
                     </div>
                     <div className="grid grid-cols-4 gap-5">
-                        {PRODUCTS.slice(2, 6).map((p) => (
+                        {liveProducts.slice(2, 6).map((p) => (
                             <ProductCard key={p.id} product={p} />
                         ))}
                     </div>
@@ -1661,7 +1704,7 @@ export function PaymentResultPage() {
  * 3. Hỗ trợ thao tác hủy đơn trực tiếp (`ordersApi.cancelOrder`) với popup xác nhận và reload danh sách.
  */
 export function OrderHistoryPage() {
-    const { lang, navigate, showToast } = useApp()
+    const { lang, navigate, showToast, user } = useApp()
     const [orders, setOrders] = useState<Order[]>([])
     const [statusFilter, setStatusFilter] = useState<string>('all')
     const [searchQuery, setSearchQuery] = useState<string>('')
@@ -1699,6 +1742,7 @@ export function OrderHistoryPage() {
         try {
             const data = await ordersApi.getOrders({
                 role: 'buyer',
+                userId: user?.id,
                 status: statusFilter,
                 search: searchQuery,
             })
@@ -1881,18 +1925,39 @@ export function OrderHistoryPage() {
             </div>
 
             {/* Modal xác nhận hủy đơn */}
-            <ConfirmModal
+            <Modal
                 open={!!cancelOrderId}
-                onClose={() => setCancelOrderId(null)}
-                onConfirm={handleConfirmCancel}
+                onClose={() => {
+                    setCancelOrderId(null)
+                    setCancelReason('')
+                }}
                 title={tr(lang, 'confirmCancel')}
-                message={
-                    lang === 'en'
-                        ? 'Are you sure you want to cancel this order? This action will release inventory reservations and refund payments if applicable.'
-                        : 'Bạn có chắc chắn muốn hủy đơn hàng này? Thao tác này sẽ giải phóng kho hàng và hoàn tiền (nếu đã thanh toán).'
+                footer={
+                    <>
+                        <Button variant="outline" onClick={() => setCancelOrderId(null)}>
+                            {tr(lang, 'cancel')}
+                        </Button>
+                        <Button variant="danger" onClick={handleConfirmCancel}>
+                            {tr(lang, 'cancelOrder')}
+                        </Button>
+                    </>
                 }
-                danger
-            />
+            >
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-600">
+                        {lang === 'en'
+                            ? 'Cancelling will release inventory reservations and refund payments when applicable.'
+                            : 'Hủy đơn sẽ giải phóng kho hàng và hoàn tiền nếu đơn đã được thanh toán.'}
+                    </p>
+                    <Textarea
+                        label={lang === 'en' ? 'Cancellation reason' : 'Lý do hủy đơn'}
+                        value={cancelReason}
+                        onChange={(event) => setCancelReason(event.target.value)}
+                        placeholder={lang === 'en' ? 'Tell us why you are cancelling...' : 'Nhập lý do hủy đơn...'}
+                        rows={3}
+                    />
+                </div>
+            </Modal>
         </BuyerLayout>
     )
 }

@@ -1,4 +1,67 @@
 import type { User, UserRole } from '../types'
+import type {
+    ApiResponse,
+    ErrorDetail,
+    ValidationErrorDetail,
+    MetaInfo,
+    PaginationInfo,
+    PaginatedResult,
+} from './types'
+
+export type {
+    ApiResponse,
+    ErrorDetail,
+    ValidationErrorDetail,
+    MetaInfo,
+    PaginationInfo,
+    PaginatedResult,
+}
+
+/**
+ * Lớp lỗi chuẩn hóa phía Client khi gọi API thất bại.
+ * Đóng gói đầy đủ HTTP status, mã lỗi nghiệp vụ, message và chi tiết validation.
+ */
+export class ApiClientError<TDetails = unknown> extends Error {
+    readonly code: string
+    readonly status: number
+    readonly details: TDetails | null
+    readonly requestId?: string
+    readonly timestamp?: string
+
+    constructor(
+        message: string,
+        code = 'INTERNAL_SERVER_ERROR',
+        status = 500,
+        details: TDetails | null = null,
+        requestId?: string,
+        timestamp?: string,
+    ) {
+        super(message)
+        this.name = 'ApiClientError'
+        this.code = code
+        this.status = status
+        this.details = details
+        this.requestId = requestId
+        this.timestamp = timestamp
+    }
+
+    /** Kiểm tra xem có phải lỗi validation đầu vào (HTTP 422) hay không */
+    isValidationError(): this is ApiClientError<ValidationErrorDetail[]> {
+        return this.status === 422 && Array.isArray(this.details)
+    }
+
+    /** Lấy map lỗi theo từng field để bind nhanh vào form validation */
+    getFieldErrors(): Record<string, string> {
+        if (!Array.isArray(this.details)) return {}
+        const record: Record<string, string> = {}
+        for (const item of this.details as ValidationErrorDetail[]) {
+            if (item.field && !record[item.field]) {
+                record[item.field] = item.message
+            }
+        }
+        return record
+    }
+}
 
 /**
  * Cổng gọi backend dùng chung: đọc session → gắn Bearer token → gọi API → chuẩn hóa lỗi.
@@ -92,12 +155,26 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     }
     if (response.status === 204) return undefined as T
     const payload = await response.json().catch(() => ({}))
-    if (!response.ok || payload.success === false) {
-        throw new Error(
-            payload.error?.message ||
+    // Nguyên tắc Fail-Fast: Kiểm tra status/success trước tiên.
+    // Nếu false hoặc HTTP status >= 400: dừng ngay lập tức và ném lỗi, không format hay xử lý tiếp để giảm tải hệ thống.
+    const isSuccess = response.ok && payload.success !== false && payload.status !== false
+    if (!isSuccess) {
+        const errorObj: Partial<ErrorDetail> = payload.error || {}
+        const msg =
+            errorObj.message ||
             payload.message ||
             payload.detail ||
-            `Request failed (${response.status})`,
+            `Request failed (${response.status})`
+        const code =
+            errorObj.code ||
+            (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
+        throw new ApiClientError(
+            msg,
+            code,
+            response.status,
+            errorObj.details ?? null,
+            payload.meta?.requestId,
+            payload.meta?.timestamp,
         )
     }
     return payload as T
@@ -126,13 +203,23 @@ export interface AuthPayload {
     refreshToken: string
     user: ApiUser
 }
+
+/** Vai trò và danh sách quyền từ User Service (RoleController) theo SRS §3.1.1 */
+export interface ApiRole {
+    id: string
+    code: string
+    name: string
+    description: string
+    privileges: string[]
+}
 /**
  * Chuyển DTO backend sang User của UI; chọn vai trò điều hướng theo thứ tự admin → support → seller → buyer.
  * Avatar/reputation dùng giá trị mặc định vì UserResponse hiện chưa cung cấp các trường này.
  * Vai trò trong UI chỉ phục vụ hiển thị; backend vẫn là nơi kiểm tra quyền truy cập thực sự.
  */
 export function mapUser(user: ApiUser): User {
-    const roles = user.roles.map((role) => role.toLowerCase())
+    // Backend mới trả role không prefix; chấp nhận ROLE_* trong thời gian chuyển đổi IAM.
+    const roles = (user.roles || []).map((role) => role.replace(/^ROLE_/, '').toLowerCase())
     const role: UserRole = roles.includes('admin')
         ? 'admin'
         : roles.includes('support')

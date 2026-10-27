@@ -1,5 +1,8 @@
 -- Project Nexus: schema theo microservice (PostgreSQL)
--- Moi schema = 1 service/database. Khong co FK giua cac service.
+-- Bản tổng hợp để đọc/đối chiếu: mỗi schema biểu diễn database của một service.
+-- Khi chạy ứng dụng, deploy/postgres/init-databases.sh tạo database riêng;
+-- Flyway trong từng service quản lý bảng ở schema mặc định. Không chạy file này thay Flyway.
+-- Không có FK giữa các service; các bảng hạ tầng service_metadata/Flyway không đưa vào bản tổng hợp.
 
 CREATE SCHEMA IF NOT EXISTS user_svc;
 CREATE SCHEMA IF NOT EXISTS catalog_svc;
@@ -7,16 +10,22 @@ CREATE SCHEMA IF NOT EXISTS commerce_svc;
 CREATE SCHEMA IF NOT EXISTS auction_svc;
 CREATE SCHEMA IF NOT EXISTS fulfillment_svc;
 CREATE SCHEMA IF NOT EXISTS notification_svc;
+CREATE SCHEMA IF NOT EXISTS reputation_svc;
 
 -- Kich hoat extension pg_trgm cho tim kiem full-text / trigram fuzzy search
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ============================================================================
 -- ===== 1. user_svc =====
+-- Lưu trữ hồ sơ cá nhân (Profile) người dùng.
+-- Hệ thống xác thực & phân quyền (Auth/IAM) do Keycloak quản lý tập trung.
+-- Điểm uy tín, điểm phạt và đánh giá được tách sang reputation_svc.
 -- ============================================================================
 
 CREATE TABLE user_svc.users (
   id uuid NOT NULL,
+  -- Theo migration user V5: định danh Keycloak là UUID, credential do Keycloak quản lý.
+  keycloak_id uuid UNIQUE,
   email varchar(255) NOT NULL UNIQUE,
   phone varchar(20),
   full_name varchar(255) NOT NULL,
@@ -24,106 +33,35 @@ CREATE TABLE user_svc.users (
   gender varchar(10),
   date_of_birth date,
   address varchar(500),
-  password_hash varchar(255) NOT NULL,
   status varchar(20) NOT NULL DEFAULT 'ACTIVE',
   is_deleted boolean NOT NULL DEFAULT false,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  token_version integer NOT NULL DEFAULT 1,
-  locked_until timestamp,
+  updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   CONSTRAINT chk_users_status CHECK (status IN ('ACTIVE', 'INACTIVE', 'LOCKED', 'SUSPENDED')),
-  CONSTRAINT chk_users_gender CHECK (gender IS NULL OR gender IN ('MALE', 'FEMALE', 'OTHER')),
-  CONSTRAINT chk_users_token_version CHECK (token_version >= 1)
+  CONSTRAINT chk_users_gender CHECK (gender IS NULL OR gender IN ('MALE', 'FEMALE', 'OTHER'))
 );
 
-CREATE TABLE user_svc.roles (
+CREATE INDEX idx_users_keycloak_id ON user_svc.users(keycloak_id);
+CREATE INDEX idx_users_email ON user_svc.users(email);
+
+-- Nhật ký nghiệp vụ còn được giữ sau khi tách IAM sang Keycloak (user V3/V4).
+-- user_id cho phép NULL để ghi cả thao tác chưa xác định được người dùng; không tạo FK.
+CREATE TABLE user_svc.audit_logs (
   id uuid NOT NULL,
-  code varchar(50) NOT NULL UNIQUE,
-  name varchar(100) NOT NULL,
-  description varchar(500),
+  user_id uuid,
+  action varchar(100) NOT NULL,
+  description text,
+  ip_address varchar(100),
+  user_agent varchar(255),
+  status varchar(50) NOT NULL,
+  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
-CREATE TABLE user_svc.privileges (
-  id uuid NOT NULL,
-  code varchar(100) NOT NULL UNIQUE,
-  description varchar(500),
-  PRIMARY KEY (id)
-);
-
-CREATE TABLE user_svc.user_roles (
-  user_id uuid NOT NULL,
-  role_id uuid NOT NULL,
-  PRIMARY KEY (user_id, role_id),
-  FOREIGN KEY (user_id) REFERENCES user_svc.users(id) ON DELETE CASCADE,
-  FOREIGN KEY (role_id) REFERENCES user_svc.roles(id) ON DELETE CASCADE
-);
-
-CREATE TABLE user_svc.role_privileges (
-  role_id uuid NOT NULL,
-  privilege_id uuid NOT NULL,
-  PRIMARY KEY (role_id, privilege_id),
-  FOREIGN KEY (role_id) REFERENCES user_svc.roles(id) ON DELETE CASCADE,
-  FOREIGN KEY (privilege_id) REFERENCES user_svc.privileges(id) ON DELETE CASCADE
-);
-
-CREATE TABLE user_svc.reputations (
-  user_id uuid NOT NULL,
-  score integer NOT NULL DEFAULT 100,
-  trust_level varchar(20) NOT NULL DEFAULT 'STANDARD',
-  total_tx integer NOT NULL DEFAULT 0,
-  success_tx integer NOT NULL DEFAULT 0,
-  failed_tx integer NOT NULL DEFAULT 0,
-  auction_won integer NOT NULL DEFAULT 0,
-  auction_failed integer NOT NULL DEFAULT 0,
-  PRIMARY KEY (user_id),
-  FOREIGN KEY (user_id) REFERENCES user_svc.users(id) ON DELETE CASCADE,
-  CONSTRAINT chk_reputation_score CHECK (score >= 0),
-  CONSTRAINT chk_reputation_trust_level CHECK (trust_level IN ('LOW', 'STANDARD', 'HIGH', 'VIP')),
-  CONSTRAINT chk_reputation_counts CHECK (
-    total_tx >= 0 AND 
-    success_tx >= 0 AND 
-    failed_tx >= 0 AND 
-    auction_won >= 0 AND 
-    auction_failed >= 0
-  ),
-  CONSTRAINT chk_reputation_tx_consistency CHECK (total_tx >= (success_tx + failed_tx))
-);
-
-CREATE TABLE user_svc.penalties (
-  id uuid NOT NULL,
-  user_id uuid NOT NULL,
-  reason varchar(500) NOT NULL,
-  score_delta integer NOT NULL,
-  ref_type varchar(30) NOT NULL,
-  ref_id uuid,
-  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  FOREIGN KEY (user_id) REFERENCES user_svc.users(id) ON DELETE CASCADE,
-  CONSTRAINT chk_penalties_ref_type CHECK (ref_type IN ('AUCTION', 'ORDER', 'RATING', 'MANUAL')),
-  CONSTRAINT uq_user_penalty_ref UNIQUE (user_id, ref_type, ref_id)
-);
-
-CREATE TABLE user_svc.ratings (
-  id uuid NOT NULL,
-  rater_id uuid NOT NULL,
-  ratee_id uuid NOT NULL,
-  order_id uuid NOT NULL,
-  score integer NOT NULL,
-  comment varchar(1000),
-  is_disputed boolean NOT NULL DEFAULT false,
-  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  FOREIGN KEY (rater_id) REFERENCES user_svc.users(id),
-  FOREIGN KEY (ratee_id) REFERENCES user_svc.users(id),
-  CONSTRAINT chk_no_self_rating CHECK (rater_id <> ratee_id),
-  CONSTRAINT chk_rating_score_range CHECK (score >= 1 AND score <= 5),
-  CONSTRAINT uq_order_rater UNIQUE (order_id, rater_id)
-);
-
-CREATE INDEX idx_penalties_user ON user_svc.penalties(user_id);
-CREATE INDEX idx_ratings_ratee_id ON user_svc.ratings(ratee_id);
-CREATE INDEX idx_ratings_order_id ON user_svc.ratings(order_id);
+CREATE INDEX idx_audit_logs_user ON user_svc.audit_logs(user_id);
+CREATE INDEX idx_audit_logs_action ON user_svc.audit_logs(action);
+CREATE INDEX idx_audit_logs_created_at ON user_svc.audit_logs(created_at);
 
 -- ============================================================================
 -- ===== 2. catalog_svc =====
@@ -133,6 +71,8 @@ CREATE TABLE catalog_svc.categories (
   id uuid NOT NULL,
   parent_id uuid,
   name varchar(255) NOT NULL,
+  -- Theo catalog V3: tên tiếng Việt tùy chọn; migration backfill dữ liệu cũ từ name.
+  name_vi varchar(255),
   level integer NOT NULL DEFAULT 1,
   status varchar(20) NOT NULL DEFAULT 'ACTIVE',
   PRIMARY KEY (id),
@@ -620,3 +560,72 @@ CREATE INDEX idx_notifications_user ON notification_svc.notifications(user_id);
 CREATE INDEX idx_notifications_status ON notification_svc.notifications(status);
 CREATE INDEX idx_event_logs_event ON notification_svc.event_logs(event_id);
 CREATE INDEX idx_event_logs_source ON notification_svc.event_logs(source_service);
+
+-- ============================================================================
+-- ===== 7. reputation_svc =====
+-- Quản lý đánh giá ngang hàng giữa người dùng (Peer-to-Peer), điểm uy tín,
+-- huy hiệu tin cậy và lịch sử các biên bản xử phạt vi phạm.
+-- Tách biệt hoàn toàn khỏi user-service và xử lý đánh giá dạng non-realtime.
+-- ============================================================================
+
+CREATE TABLE reputation_svc.reputations (
+  user_id uuid NOT NULL,
+  score integer NOT NULL DEFAULT 100,
+  trust_level varchar(20) NOT NULL DEFAULT 'STANDARD',
+  total_tx integer NOT NULL DEFAULT 0,
+  success_tx integer NOT NULL DEFAULT 0,
+  failed_tx integer NOT NULL DEFAULT 0,
+  auction_won integer NOT NULL DEFAULT 0,
+  auction_failed integer NOT NULL DEFAULT 0,
+  avg_rating numeric(3, 2) NOT NULL DEFAULT 5.00,
+  total_ratings integer NOT NULL DEFAULT 0,
+  updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  CONSTRAINT chk_reputation_score CHECK (score >= 0),
+  CONSTRAINT chk_reputation_trust_level CHECK (trust_level IN ('LOW', 'STANDARD', 'HIGH', 'VIP')),
+  CONSTRAINT chk_reputation_counts CHECK (
+    total_tx >= 0 AND 
+    success_tx >= 0 AND 
+    failed_tx >= 0 AND 
+    auction_won >= 0 AND 
+    auction_failed >= 0 AND
+    total_ratings >= 0
+  ),
+  CONSTRAINT chk_reputation_tx_consistency CHECK (total_tx >= (success_tx + failed_tx))
+);
+
+CREATE TABLE reputation_svc.ratings (
+  id uuid NOT NULL,
+  rater_id uuid NOT NULL,
+  ratee_id uuid NOT NULL,
+  order_id uuid NOT NULL,
+  score integer NOT NULL,
+  comment varchar(1000),
+  is_aggregated boolean NOT NULL DEFAULT false,
+  is_disputed boolean NOT NULL DEFAULT false,
+  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  FOREIGN KEY (ratee_id) REFERENCES reputation_svc.reputations(user_id) ON DELETE CASCADE,
+  CONSTRAINT chk_no_self_rating CHECK (rater_id <> ratee_id),
+  CONSTRAINT chk_rating_score_range CHECK (score >= 1 AND score <= 5),
+  CONSTRAINT uq_order_rater UNIQUE (order_id, rater_id)
+);
+
+CREATE TABLE reputation_svc.penalties (
+  id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  reason varchar(500) NOT NULL,
+  score_delta integer NOT NULL,
+  ref_type varchar(30) NOT NULL,
+  ref_id uuid,
+  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  FOREIGN KEY (user_id) REFERENCES reputation_svc.reputations(user_id) ON DELETE CASCADE,
+  CONSTRAINT chk_penalties_ref_type CHECK (ref_type IN ('AUCTION', 'ORDER', 'RATING', 'MANUAL')),
+  CONSTRAINT uq_user_penalty_ref UNIQUE (user_id, ref_type, ref_id)
+);
+
+CREATE INDEX idx_ratings_ratee_id ON reputation_svc.ratings(ratee_id);
+CREATE INDEX idx_ratings_order_id ON reputation_svc.ratings(order_id);
+CREATE INDEX idx_ratings_unaggregated ON reputation_svc.ratings(ratee_id) WHERE is_aggregated = false;
+CREATE INDEX idx_penalties_user ON reputation_svc.penalties(user_id);

@@ -118,8 +118,8 @@ export function AppRouter() {
     if (page.startsWith('support-') && user?.role !== 'support' && user?.role !== 'admin')
         return <p role="alert">Access denied</p>
 
-    // Home dùng dữ liệu mock để luôn dựng được giao diện Buyer khi Catalog backend chưa chạy;
-    // các route catalog/chi tiết vẫn dùng key URL để khởi tạo lại bộ lọc hoặc ảnh theo dữ liệu được chọn.
+    // key theo tham số URL buộc catalog/chi tiết khởi tạo lại bộ lọc hoặc ảnh khi điều hướng sang dữ liệu khác.
+    // Trang 'home' hiển thị HomePage (Banner Hero, Đấu giá, Danh mục theo Figma); trang 'search' dùng SearchPage gọi API catalog thật.
     switch (page) {
         case 'login':
             return <LoginPage />

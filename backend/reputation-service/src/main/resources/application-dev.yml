@@ -1,0 +1,8 @@
+# Cấu hình môi trường dev cho reputation-service
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nexus_reputation}
+    username: ${DB_USERNAME:nexus}
+    password: ${DB_PASSWORD:nexus}
+
+app:

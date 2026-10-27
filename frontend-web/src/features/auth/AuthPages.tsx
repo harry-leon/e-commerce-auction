@@ -451,22 +451,20 @@ export function RegisterPage() {
  * Luồng quên mật khẩu: gửi email → nhận link chứa token → nhập mật khẩu mới → gọi reset-password.
  * Nếu mở trực tiếp link từ email, khởi tạo bước 2 và lấy token từ query string; lỗi API giữ người dùng ở form.
  */
+/**
+ * Yêu cầu email UPDATE_PASSWORD từ Keycloak; link trong email mở trang IAM để nhập mật khẩu mới.
+ * Không nhận hoặc lưu reset token tại frontend. Token cũ cần yêu cầu lại email sau khi nâng cấp.
+ */
 export function ForgotPasswordPage() {
     const { lang, navigate } = useApp()
-    const [step, setStep] = useState(
-        new URLSearchParams(window.location.search).has('token') ? 2 : 1,
-    )
-    const [token, setToken] = useState(
-        new URLSearchParams(window.location.search).get('token') || '',
-    )
     const [email, setEmail] = useState('')
-    const [newPw, setNewPw] = useState('')
-    const [confirmPw, setConfirmPw] = useState('')
+    const [sent, setSent] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
 
-    // Backend sinh token và gửi SMTP; frontend chỉ xác nhận yêu cầu, không tự tạo token hoặc gửi email.
+    // Chỉ xác nhận gửi yêu cầu sau khi API thành công; response không tiết lộ tài khoản có tồn tại.
     const sendLink = async () => {
+        setError('')
         if (!email.includes('@')) {
             setError(tr(lang, 'invalidEmail'))
             return
@@ -474,165 +472,46 @@ export function ForgotPasswordPage() {
         setLoading(true)
         try {
             await post('/auth/forgot-password', { email })
-        } catch (error) {
-            setError(errorMessage(error))
+            setSent(true)
+        } catch (failure) {
+            setError(errorMessage(failure))
+        } finally {
             setLoading(false)
-            return
         }
-        setLoading(false)
-        setStep(2)
-    }
-
-    // Chỉ báo hoàn tất sau khi backend chấp nhận token chưa hết hạn/chưa dùng và cập nhật mật khẩu.
-    const resetPw = async () => {
-        if (newPw !== confirmPw) {
-            setError(tr(lang, 'passwordMismatch'))
-            return
-        }
-        if (newPw.length < 8) {
-            setError(tr(lang, 'passwordRule'))
-            return
-        }
-        setLoading(true)
-        try {
-            await post('/auth/reset-password', { token, newPassword: newPw })
-        } catch (error) {
-            setError(errorMessage(error))
-            setLoading(false)
-            return
-        }
-        setLoading(false)
-        setStep(3)
     }
 
     return (
         <AuthCard title={tr(lang, 'forgotPassword')}>
-            {step === 1 && (
-                <div>
-                    <p className="text-gray-500 text-sm mb-5">
-                        {lang === 'en'
-                            ? "Enter your email address and we'll send you a reset link."
-                            : 'Nhập email của bạn và chúng tôi sẽ gửi liên kết đặt lại mật khẩu.'}
-                    </p>
-                    {error && (
-                        <div className="mb-4">
-                            <AlertBanner
-                                type="error"
-                                message={error}
-                                onClose={() => setError('')}
-                            />
-                        </div>
-                    )}
-                    <div className="space-y-4">
-                        <Input
-                            label={tr(lang, 'email')}
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="you@example.com"
-                        />
-                        <Button
-                            variant="primary"
-                            size="lg"
-                            className="w-full"
-                            loading={loading}
-                            onClick={sendLink}
-                        >
-                            {tr(lang, 'sendResetLink')}
-                        </Button>
-                        <button
-                            onClick={() => navigate('login')}
-                            className="w-full text-center text-sm text-gray-500 hover:text-primary"
-                        >
-                            {tr(lang, 'backToLogin')}
-                        </button>
-                    </div>
-                </div>
-            )}
-            {step === 2 && (
-                <div>
-                    <div className="text-center mb-6 p-4 bg-primary-light rounded-xl">
-                        <p className="text-sm text-primary font-medium">
-                            {tr(lang, 'resetEmailSent')}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">{email}</p>
-                    </div>
-                    <p className="text-gray-500 text-sm mb-5">
-                        {lang === 'en' ? 'Enter your new password:' : 'Nhập mật khẩu mới của bạn:'}
-                    </p>
-                    {error && (
-                        <div className="mb-4">
-                            <AlertBanner
-                                type="error"
-                                message={error}
-                                onClose={() => setError('')}
-                            />
-                        </div>
-                    )}
-                    <div className="space-y-4">
-                        <Input
-                            label="Reset token"
-                            value={token}
-                            onChange={(event) => setToken(event.target.value)}
-                            required
-                        />
-                        <PasswordInput
-                            label={tr(lang, 'newPassword')}
-                            value={newPw}
-                            onChange={(e) => setNewPw(e.target.value)}
-                        />
-                        <PasswordInput
-                            label={tr(lang, 'confirmPassword')}
-                            value={confirmPw}
-                            onChange={(e) => setConfirmPw(e.target.value)}
-                        />
-                        <Button
-                            variant="primary"
-                            size="lg"
-                            className="w-full"
-                            loading={loading}
-                            onClick={resetPw}
-                        >
-                            {tr(lang, 'resetPassword')}
-                        </Button>
-                    </div>
-                </div>
-            )}
-            {step === 3 && (
-                <div className="text-center py-4">
-                    <div className="w-16 h-16 bg-success-light rounded-full flex items-center justify-center mx-auto mb-4">
-                        <svg
-                            width="32"
-                            height="32"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="#16A34A"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                        >
-                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                            <polyline points="22 4 12 14.01 9 11.01" />
-                        </svg>
-                    </div>
-                    <h2 className="text-xl font-bold text-gray-900 mb-2">
-                        {tr(lang, 'passwordReset')}
-                    </h2>
-                    <p className="text-gray-500 text-sm mb-6">
-                        {lang === 'en'
-                            ? 'You can now log in with your new password.'
-                            : 'Bạn có thể đăng nhập bằng mật khẩu mới.'}
-                    </p>
+            {error && <AlertBanner type="error" message={error} onClose={() => setError('')} />}
+            {sent ? (
+                <p role="status" className="text-sm mb-5">
+                    {lang === 'en'
+                        ? 'If the account exists, follow the link in your email to set a new password on the secure account page.'
+                        : 'Nếu tài khoản tồn tại, hãy mở liên kết trong email để đặt mật khẩu mới tại trang quản lý tài khoản.'}
+                </p>
+            ) : (
+                <div className="space-y-4">
+                    <Input
+                        label={tr(lang, 'email')}
+                        type="email"
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        placeholder="you@example.com"
+                    />
                     <Button
                         variant="primary"
                         size="lg"
                         className="w-full"
-                        onClick={() => navigate('login')}
+                        loading={loading}
+                        onClick={sendLink}
                     >
-                        {tr(lang, 'backToLogin')}
+                        {tr(lang, 'sendResetLink')}
                     </Button>
                 </div>
             )}
+            <Button variant="primary" className="w-full mt-4" onClick={() => navigate('login')}>
+                {tr(lang, 'backToLogin')}
+            </Button>
         </AuthCard>
     )
 }

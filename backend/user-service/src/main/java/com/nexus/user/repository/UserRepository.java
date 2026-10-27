@@ -19,6 +19,12 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
 
+    /** Subject Keycloak được tra riêng để hỗ trợ profile có id nghiệp vụ khác sub. */
+    Optional<User> findByKeycloakIdAndIsDeletedFalse(UUID keycloakId);
+
+    /** Email unique kể cả hồ sơ đã xóa mềm; tránh đụng constraint khi đăng ký lại. */
+    boolean existsByEmail(String email);
+
     /**
      * Tìm kiếm người dùng theo địa chỉ email và chưa bị đánh dấu xóa mềm.
      *

@@ -1,14 +1,14 @@
 # Database ERD
 
-Generated from service-owned Flyway CREATE TABLE statements by `node scripts/generate-erd.mjs`. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Later ALTER migrations remain authoritative for added columns.
+Generated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Flyway remains authoritative; this diagram does not describe constraints or data backfills.
 
 ## user-service
 
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   users {
     uuid id
@@ -19,68 +19,11 @@ erDiagram
     varchar gender
     date date_of_birth
     varchar address
-    varchar password_hash
     varchar status
     boolean is_deleted
     timestamp created_at
-    integer token_version
-    timestamp locked_until
-  }
-  roles {
-    uuid id
-    varchar code
-    varchar name
-    varchar description
-  }
-  privileges {
-    uuid id
-    varchar code
-    varchar description
-  }
-  user_roles {
-    uuid user_id
-    uuid role_id
-  }
-  role_privileges {
-    uuid role_id
-    uuid privilege_id
-  }
-  reputations {
-    uuid user_id
-    integer score
-    varchar trust_level
-    integer total_tx
-    integer success_tx
-    integer failed_tx
-    integer auction_won
-    integer auction_failed
-  }
-  penalties {
-    uuid id
-    uuid user_id
-    varchar reason
-    integer score_delta
-    varchar ref_type
-    uuid ref_id
-    timestamp created_at
-  }
-  ratings {
-    uuid id
-    uuid rater_id
-    uuid ratee_id
-    uuid order_id
-    integer score
-    varchar comment
-    boolean is_disputed
-    timestamp created_at
-  }
-  password_reset_tokens {
-    uuid id
-    uuid user_id
-    varchar token_hash
-    timestamp expires_at
-    boolean used
-    timestamp created_at
+    uuid keycloak_id
+    timestamp updated_at
   }
   audit_logs {
     uuid id
@@ -92,15 +35,7 @@ erDiagram
     varchar status
     timestamp created_at
   }
-  users ||--o{ user_roles : user_id
-  roles ||--o{ user_roles : role_id
-  roles ||--o{ role_privileges : role_id
-  privileges ||--o{ role_privileges : privilege_id
-  users ||--o{ reputations : user_id
-  users ||--o{ penalties : user_id
-  users ||--o{ ratings : rater_id
-  users ||--o{ ratings : ratee_id
-  users ||--o{ password_reset_tokens : user_id
+
 ```
 
 ## catalog-service
@@ -108,8 +43,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   categories {
     uuid id
@@ -117,6 +52,7 @@ erDiagram
     varchar name
     integer level
     varchar status
+    varchar name_vi
   }
   products {
     uuid id
@@ -170,8 +106,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   carts {
     uuid id
@@ -288,8 +224,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   auctions {
     uuid id
@@ -335,8 +271,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   warehouses {
     uuid id
@@ -411,8 +347,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   notifications {
     uuid id
@@ -449,4 +385,45 @@ erDiagram
     timestamp created_at
   }
   notifications ||--o{ notification_attempts : notification_id
+```
+
+## reputation-service
+
+```mermaid
+erDiagram
+  reputations {
+    uuid user_id
+    integer score
+    varchar trust_level
+    integer total_tx
+    integer success_tx
+    integer failed_tx
+    integer auction_won
+    integer auction_failed
+    numeric avg_rating
+    integer total_ratings
+    timestamp updated_at
+  }
+  ratings {
+    uuid id
+    uuid rater_id
+    uuid ratee_id
+    uuid order_id
+    integer score
+    varchar comment
+    boolean is_aggregated
+    boolean is_disputed
+    timestamp created_at
+  }
+  penalties {
+    uuid id
+    uuid user_id
+    varchar reason
+    integer score_delta
+    varchar ref_type
+    uuid ref_id
+    timestamp created_at
+  }
+  reputations ||--o{ ratings : ratee_id
+  reputations ||--o{ penalties : user_id
 ```

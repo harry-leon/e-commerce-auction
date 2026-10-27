@@ -21,6 +21,10 @@ x-service: &service
     EUREKA_ENABLED: "true"
     EUREKA_URL: http://discovery-server:8761/eureka/
     CONFIG_SERVER_URL: http://config-server:8888
+    # JWKS dùng DNS nội bộ; issuer phải khớp URL public Keycloak phát trong JWT.
+    KEYCLOAK_URL: http://keycloak:8080
+    KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8180/realms/nexus-realm}
+    KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}
 
   depends_on:
     discovery-server:
@@ -67,9 +71,33 @@ services:
       timeout: 3s
       retries: 10
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.5
+    command: start-dev --import-realm
+    environment:
+      # Realm import đọc secret từ biến môi trường; hostname cố định giữ issuer giống nhau qua Gateway/local.
+      KC_HOSTNAME_URL: http://localhost:8180
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/nexus_keycloak
+      KC_DB_USERNAME: ${LOCAL_DB_USERNAME:-nexus}
+      KC_DB_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./deploy/keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   user-service:
     <<: *service
-    build: ./backend/user-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/user-service/Dockerfile
     environment:
       <<: *cloud-env
       SMTP_HOST: mailpit
@@ -81,7 +109,10 @@ services:
 
   catalog-service:
     <<: *service
-    build: ./backend/catalog-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/catalog-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: catalog-service
@@ -91,17 +122,25 @@ services:
 
   commerce-service:
     <<: *service
-    build: ./backend/commerce-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/commerce-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: commerce-service
+      # Cart đọc dữ liệu sản phẩm thật; mock chỉ dùng khi bật profile catalog-mock.
+      CATALOG_SERVICE_URL: http://catalog-service:8080
       DB_URL: jdbc:postgresql://postgres:5432/nexus_commerce
     ports:
       - "8083:8080"
 
   auction-service:
     <<: *service
-    build: ./backend/auction-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/auction-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: auction-service
@@ -111,7 +150,10 @@ services:
 
   fulfillment-service:
     <<: *service
-    build: ./backend/fulfillment-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/fulfillment-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: fulfillment-service
@@ -121,13 +163,30 @@ services:
 
   notification-service:
     <<: *service
-    build: ./backend/notification-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/notification-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: notification-service
       DB_URL: jdbc:postgresql://postgres:5432/nexus_notification
     ports:
       - "8086:8080"
+
+  reputation-service:
+    <<: *service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/reputation-service/Dockerfile
+    environment:
+      <<: *cloud-env
+      SERVICE_NAME: reputation-service
+      SERVER_PORT: 8080
+      DB_URL: jdbc:postgresql://postgres:5432/nexus_reputation
+    ports:
+      - "8087:8080"
 
   # Gateway tra registry Eureka qua các URI lb://... thay vì phụ thuộc IP cố định của container.
   api-gateway:
@@ -140,6 +199,10 @@ services:
       AUCTION_SERVICE_URL: lb://auction-service
       FULFILLMENT_SERVICE_URL: lb://fulfillment-service
       NOTIFICATION_SERVICE_URL: lb://notification-service
+      REPUTATION_SERVICE_URL: lb://reputation-service
+      # URL HTTP riêng cho BFF gọi profile; routes khác tiếp tục dùng Eureka.
+      USER_PROFILE_URL: http://user-service:8080
+      KEYCLOAK_URL: http://keycloak:8080
     ports:
       - "8080:8080"
     healthcheck:

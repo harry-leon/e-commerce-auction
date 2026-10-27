@@ -1,0 +1,7 @@
+# User Service chỉ giữ hồ sơ. Password policy, token lifespan và brute-force policy cấu hình tại Keycloak.
+# JWKS có thể dùng DNS nội bộ; issuer vẫn là địa chỉ public nằm trong JWT.
+app:
+  keycloak:
+    base-url: ${KEYCLOAK_URL:http://localhost:8180}
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/nexus-realm}
+    jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/certs

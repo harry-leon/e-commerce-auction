@@ -39,7 +39,7 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
 
     it('ordersApi: Lấy danh sách đơn hàng cho Buyer, Seller, Admin và fallback mock data thành công', async () => {
         // Kiểm tra danh sách buyer
-        const buyerOrders = await ordersApi.getOrders({ role: 'buyer' })
+        const buyerOrders = await ordersApi.getOrders({ role: 'buyer', userId: DEMO_BUYER.id })
         expect(buyerOrders.length).toBeGreaterThan(0)
         expect(buyerOrders.every((o) => o.buyerId === 'u1')).toBe(true)
 
@@ -49,12 +49,18 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
         expect(order?.id).toBe('ORD-20240215-001')
 
         // Kiểm tra danh sách seller
-        const sellerOrders = await ordersApi.getOrders({ role: 'seller' })
+        const sellerOrders = await ordersApi.getOrders({ role: 'seller', userId: DEMO_SELLER.id })
         expect(sellerOrders.length).toBeGreaterThan(0)
+        expect(await ordersApi.getOrders({ role: 'buyer', userId: DEMO_SELLER.id })).toHaveLength(0)
 
         // Kiểm tra danh sách admin
         const adminOrders = await ordersApi.getOrders({ role: 'admin' })
         expect(adminOrders.length).toBeGreaterThanOrEqual(buyerOrders.length)
+    })
+
+    // Chặn hồi quy: mock không được thay đơn không tồn tại bằng đơn đầu tiên của kho dữ liệu.
+    it('ordersApi: trả về null khi ID đơn không tồn tại', async () => {
+        await expect(ordersApi.getOrderById('ORD-NOT-FOUND')).resolves.toBeNull()
     })
 
     it('ordersApi: Buyer hủy đơn hàng, cập nhật trạng thái cancelled và thanh toán refunded', async () => {
@@ -73,6 +79,11 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
 
         const recheck = await ordersApi.getOrderById('ORD-20240220-002')
         expect(recheck?.status).toBe('shipped')
+        expect(recheck?.statusHistory?.at(-1)).toMatchObject({
+            status: 'shipped',
+            actor: 'seller',
+            reason: 'Giao cho đơn vị vận chuyển',
+        })
     })
 
     it('ordersApi: Buyer xác nhận đã nhận hàng và mở khiếu nại', async () => {
@@ -92,6 +103,17 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
         expect(resolved.paymentStatus).toBe('refunded')
         expect(resolved.status).toBe('refunded')
         expect(resolved.disputeStatus).toBe('resolved')
+    })
+
+    // Withdrawal phải dùng cùng mock storage thay vì chỉ đổi state tạm thời trong màn Admin.
+    it('ordersApi: lưu trạng thái duyệt withdrawal trong mock store', () => {
+        const request = ordersApi.getWithdrawalRequests()[0]
+        const approved = ordersApi.approveWithdrawal(request.id)
+        expect(approved.status).toBe('approved')
+        expect(ordersApi.getWithdrawalRequests()[0]).toMatchObject({
+            id: request.id,
+            status: 'approved',
+        })
     })
 
     it('OrderHistoryPage: Hiển thị danh sách đơn của Buyer và hỗ trợ tìm kiếm', async () => {

@@ -27,7 +27,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,refresh
   endpoint:
     health:
       probes:
@@ -43,9 +43,12 @@ springdoc:
     path: /swagger-ui.html
 
 app:
-  security:
-    # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
-    jwt-secret: ${JWT_SECRET:}
+  # Cấu hình dự phòng cục bộ cho fulfillment-service khi chưa kết nối Config Server
+  fulfillment:
+    shipping:
+      default-delivery-days: ${FULFILLMENT_DEFAULT_DELIVERY_DAYS:3}
+      max-retry-attempts: ${FULFILLMENT_MAX_RETRY_ATTEMPTS:3}
+      auto-confirm-days: ${FULFILLMENT_AUTO_CONFIRM_DAYS:7}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.

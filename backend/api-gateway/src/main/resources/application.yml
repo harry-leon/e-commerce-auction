@@ -2,8 +2,9 @@ server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
 
-# Gateway là điểm vào API: route theo path, chuyển tiếp nguyên request tới service đích.
-# Dev độc lập mặc định dùng localhost; Compose cấp URI lb://... để tra instance qua Eureka.
+# Gateway là điểm vào API duy nhất (Single Point of Entry).
+# Tiếp nhận login/refresh token để gọi Keycloak, xác thực JWT bằng JWKS, gắn header và forward tới microservices.
+# Điều phối luồng đăng ký tài khoản (BFF): gọi Keycloak Admin API tạo credentials rồi gọi user-service tạo profile.
 spring:
   config:
     import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
@@ -12,11 +13,10 @@ spring:
   cloud:
     gateway:
       routes:
-        # URL service lấy từ biến môi trường; mặc định trỏ localhost để chạy từng service khi dev.
         - id: user-service
           uri: ${USER_SERVICE_URL:http://localhost:8081}
           predicates:
-            - Path=/api/v1/auth/**,/api/v1/users/**,/api/v1/roles/**,/api/v1/reputation/**,/api/v1/ping
+            - Path=/api/v1/users/**,/api/v1/roles/**,/api/v1/ping,/api/v1/auth/forgot-password,/api/v1/auth/reset-password,/api/v1/auth/change-password
         - id: catalog-service
           uri: ${CATALOG_SERVICE_URL:http://localhost:8082}
           predicates:
@@ -37,6 +37,24 @@ spring:
           uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8086}
           predicates:
             - Path=/api/v1/notifications/**,/api/v1/event-logs/**
+        - id: reputation-service
+          uri: ${REPUTATION_SERVICE_URL:http://localhost:8087}
+          predicates:
+            - Path=/api/v1/reputations/**
+
+app:
+  keycloak:
+    token-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/token
+    jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/certs
+    client-id: ${KEYCLOAK_CLIENT_ID:nexus-web}
+    base-url: ${KEYCLOAK_URL:http://localhost:8180}
+    realm: ${KEYCLOAK_REALM:nexus-realm}
+    admin-client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:nexus-admin-cli}
+    # Secret lấy từ môi trường, khớp realm import; không có secret mặc định.
+    admin-client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:}
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8180/realms/nexus-realm}
+    # BFF dùng HTTP URL; không đưa lb:// vào WebClient thông thường.
+    user-service-url: ${USER_PROFILE_URL:http://localhost:8081}
 
 management:
   endpoints:
@@ -48,7 +66,6 @@ management:
       probes:
         enabled: true
 
-# Client lấy registry để load balancer phân giải tên service; không tự chọn IP container cố định.
 eureka:
   client:
     enabled: ${EUREKA_ENABLED:false}

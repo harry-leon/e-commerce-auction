@@ -1,5 +1,5 @@
-import { api } from './client'
-import type { Order, OrderStatus, PaymentStatus } from '../types'
+import { api, ApiClientError } from './client'
+import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
 
 /**
@@ -7,6 +7,41 @@ import { ORDERS } from '../mockData'
  * (Buyer hủy, Seller cập nhật, Admin xử lý khiếu nại) có thể lưu vết bền vững khi dev/test.
  */
 const STORAGE_KEY = 'nexus.mock-orders-store'
+const WITHDRAWAL_STORAGE_KEY = 'nexus.mock-withdrawals-store'
+
+export interface WithdrawalRequest {
+    id: string
+    sellerId: string
+    sellerName: string
+    bankName: string
+    accountNumber: string
+    amount: number
+    status: 'pending' | 'approved'
+    approvedAt?: string
+}
+
+const SEED_WITHDRAWALS: WithdrawalRequest[] = [
+    {
+        id: 'WDR-202403-001',
+        sellerId: 'u2',
+        sellerName: 'TechZone Store',
+        bankName: 'Vietcombank',
+        accountNumber: '0123456789',
+        amount: 50_000_000,
+        status: 'pending',
+    },
+]
+
+const ALLOWED_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+    pending: ['paid', 'cancelled'],
+    paid: ['processing', 'cancelled'],
+    processing: ['shipped', 'cancelled'],
+    shipped: ['delivered'],
+    delivered: ['completed'],
+    completed: [],
+    cancelled: [],
+    refunded: [],
+}
 
 /**
  * Danh sách đơn hàng mock mẫu mở rộng, bảo đảm bao phủ đủ các trạng thái nghiệp vụ theo SRS:
@@ -160,6 +195,42 @@ function writeLocalMockOrders(orders: Order[]): void {
     }
 }
 
+/** Chỉ fallback khi Order API chưa triển khai hoặc không truy cập được; lỗi nghiệp vụ phải trả về UI. */
+function canFallbackToMock(error: unknown): boolean {
+    if (error instanceof ApiClientError) {
+        return [404, 502, 503, 504].includes(error.status)
+    }
+    return error instanceof TypeError || error instanceof ReferenceError
+}
+
+/** Kho withdrawal dùng chung localStorage để trạng thái duyệt không chỉ tồn tại trong component Admin. */
+function readLocalMockWithdrawals(): WithdrawalRequest[] {
+    try {
+        const raw = localStorage.getItem(WITHDRAWAL_STORAGE_KEY)
+        if (raw) {
+            const parsed = JSON.parse(raw)
+            if (Array.isArray(parsed)) return parsed
+        }
+    } catch {
+        // Storage không khả dụng thì dùng fixture trong bộ nhớ cho phiên hiện tại.
+    }
+    writeLocalMockWithdrawals(SEED_WITHDRAWALS)
+    return SEED_WITHDRAWALS
+}
+
+function writeLocalMockWithdrawals(requests: WithdrawalRequest[]): void {
+    try {
+        localStorage.setItem(WITHDRAWAL_STORAGE_KEY, JSON.stringify(requests))
+    } catch {
+        // Mock UI vẫn render được khi trình duyệt chặn localStorage.
+    }
+}
+
+/** Trả các trạng thái kế tiếp hợp lệ để UI và mock API áp dụng cùng một rule. */
+export function getAllowedOrderStatusTransitions(status: OrderStatus): OrderStatus[] {
+    return ALLOWED_STATUS_TRANSITIONS[status]
+}
+
 /**
  * Cổng API thống nhất cho Đơn hàng:
  * 1. Thử gọi backend REST API theo chuẩn đường dẫn `/api/v1/orders`.
@@ -175,6 +246,7 @@ export const ordersApi = {
      */
     async getOrders(params?: {
         role?: 'buyer' | 'seller' | 'admin'
+        userId?: string
         status?: string
         search?: string
     }): Promise<Order[]> {
@@ -191,7 +263,8 @@ export const ordersApi = {
             if (Array.isArray(list) && list.length > 0) {
                 return list
             }
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Backend chưa có endpoint hoặc lỗi kết nối -> Fallback sang mock data
         }
 
@@ -200,9 +273,9 @@ export const ordersApi = {
         const { role, status, search } = params || {}
 
         if (role === 'buyer') {
-            orders = orders.filter((o) => o.buyerId === 'u1')
+            orders = params?.userId ? orders.filter((o) => o.buyerId === params.userId) : []
         } else if (role === 'seller') {
-            orders = orders.filter((o) => o.sellerId === 'u2')
+            orders = params?.userId ? orders.filter((o) => o.sellerId === params.userId) : []
         }
 
         if (status && status !== 'all') {
@@ -236,13 +309,14 @@ export const ordersApi = {
             if (order && order.id) {
                 return order
             }
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Fallback mock
         }
 
         // 2. Tìm trong mock data
         const orders = readLocalMockOrders()
-        return orders.find((o) => o.id === id) || orders[0] || null
+        return orders.find((o) => o.id === id) || null
     },
 
     /**
@@ -255,7 +329,8 @@ export const ordersApi = {
                 method: 'POST',
                 body: JSON.stringify({ reason }),
             })
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Bỏ qua lỗi mạng để fallback cập nhật mock
         }
 
@@ -268,6 +343,10 @@ export const ordersApi = {
                 refundStatus: 'initiated',
                 paymentStatus: 'refunded',
                 updatedAt: new Date().toISOString(),
+                statusHistory: [
+                    ...(orders[index].statusHistory || []),
+                    { status: 'cancelled', reason: reason?.trim() || 'Buyer cancellation', actor: 'buyer', changedAt: new Date().toISOString() },
+                ],
             }
             writeLocalMockOrders(orders)
             return orders[index]
@@ -279,19 +358,28 @@ export const ordersApi = {
      * Seller hoặc Admin cập nhật tiến độ trạng thái đơn hàng (VD: processing -> shipped -> delivered).
      * Quy tắc: Ghi nhận sự kiện chuyển trạng thái mới nhất vào mock store.
      */
-    async updateOrderStatus(id: string, status: OrderStatus, reason?: string): Promise<Order> {
+    async updateOrderStatus(
+        id: string,
+        status: OrderStatus,
+        reason?: string,
+        actor: Extract<UserRole, 'seller' | 'admin'> = 'seller',
+    ): Promise<Order> {
         try {
             await api(`/orders/${id}/status`, {
                 method: 'PATCH',
-                body: JSON.stringify({ status, reason }),
+                body: JSON.stringify({ status, reason, actor }),
             })
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Fallback cập nhật mock
         }
 
         const orders = readLocalMockOrders()
         const index = orders.findIndex((o) => o.id === id)
         if (index !== -1) {
+            if (!ALLOWED_STATUS_TRANSITIONS[orders[index].status].includes(status)) {
+                throw new Error('Invalid order status transition')
+            }
             let nextPaymentStatus = orders[index].paymentStatus
             if (status === 'delivered') {
                 nextPaymentStatus = 'protection_period'
@@ -306,6 +394,10 @@ export const ordersApi = {
                 status,
                 paymentStatus: nextPaymentStatus,
                 updatedAt: new Date().toISOString(),
+                statusHistory: [
+                    ...(orders[index].statusHistory || []),
+                    { status, reason: reason?.trim() || 'No reason provided', actor, changedAt: new Date().toISOString() },
+                ],
             }
             writeLocalMockOrders(orders)
             return orders[index]
@@ -319,7 +411,8 @@ export const ordersApi = {
     async confirmOrderDelivery(id: string): Promise<Order> {
         try {
             await api(`/orders/${id}/confirm-delivery`, { method: 'POST' })
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Fallback
         }
 
@@ -347,7 +440,8 @@ export const ordersApi = {
                 method: 'POST',
                 body: JSON.stringify({ reason }),
             })
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Fallback
         }
 
@@ -383,7 +477,8 @@ export const ordersApi = {
                 method: 'POST',
                 body: JSON.stringify({ resolution, note }),
             })
-        } catch {
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
             // Fallback
         }
 
@@ -408,5 +503,21 @@ export const ordersApi = {
      */
     resetOrdersToDefault(): void {
         writeLocalMockOrders(SEED_ORDERS)
+        writeLocalMockWithdrawals(SEED_WITHDRAWALS)
+    },
+
+    /** Danh sách yêu cầu rút tiền mock dùng chung màn Admin; không gọi backend tài chính thật. */
+    getWithdrawalRequests(): WithdrawalRequest[] {
+        return readLocalMockWithdrawals()
+    },
+
+    /** Duyệt yêu cầu rút tiền trong mock store và giữ lại thời điểm duyệt sau khi reload. */
+    approveWithdrawal(id: string): WithdrawalRequest {
+        const requests = readLocalMockWithdrawals()
+        const index = requests.findIndex((request) => request.id === id)
+        if (index === -1) throw new Error('Withdrawal request not found')
+        requests[index] = { ...requests[index], status: 'approved', approvedAt: new Date().toISOString() }
+        writeLocalMockWithdrawals(requests)
+        return requests[index]
     },
 }

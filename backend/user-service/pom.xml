@@ -29,10 +29,15 @@
 
   <dependencies>
     <!-- Eureka client đăng ký/tra cứu service; Config client nạp cấu hình chung. Phiên bản do Spring Cloud BOM quản lý. -->
+    <!-- Module dùng chung Project Nexus: chuẩn hóa Envelope API Response v2 và Global Exception Handling -->
+    <dependency>
+      <groupId>com.nexus</groupId>
+      <artifactId>nexus-common</artifactId>
+      <version>0.0.1-SNAPSHOT</version>
+    </dependency>
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-netflix-eureka-client</artifactId></dependency>
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-config</artifactId></dependency>
-    <!-- Cấp JavaMailSender cho EmailService gửi SMTP thật; provider/credential lấy từ cấu hình môi trường. -->
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-mail</artifactId></dependency>
+    <!-- Email reset thuộc Keycloak; user-service không lưu password/reset token hoặc tự gửi credential email. -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>

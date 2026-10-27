@@ -27,7 +27,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,refresh
   endpoint:
     health:
       probes:
@@ -43,9 +43,13 @@ springdoc:
     path: /swagger-ui.html
 
 app:
-  security:
-    # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
-    jwt-secret: ${JWT_SECRET:}
+  # Cấu hình dự phòng cục bộ cho catalog-service khi chưa kết nối Config Server
+  catalog:
+    product:
+      max-images: ${CATALOG_MAX_IMAGES:5}
+    pagination:
+      default-page-size: ${CATALOG_DEFAULT_PAGE_SIZE:20}
+      max-page-size: ${CATALOG_MAX_PAGE_SIZE:100}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.
