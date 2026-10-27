@@ -8,7 +8,6 @@ import com.nexus.user.dto.CreateUserProfileRequest;
 import com.nexus.user.dto.UpdateUserRequest;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.entity.User;
-import com.nexus.user.repository.AuditLogRepository;
 import com.nexus.user.repository.UserRepository;
 import java.util.Locale;
 import java.util.Set;
@@ -18,17 +17,15 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Quản lý profile/audit trong DB riêng; mọi thao tác IAM được ủy thác Keycloak qua API. */
+/** Quản lý profile trong DB riêng, audit qua notification-service; mọi thao tác IAM được ủy thác Keycloak qua API. */
 @Service
 public class UserService {
     private final UserRepository users;
-    private final AuditLogRepository logs;
     private final AuditService audit;
     private final KeycloakClient keycloak;
 
-    public UserService(UserRepository users, AuditLogRepository logs, AuditService audit, KeycloakClient keycloak) {
+    public UserService(UserRepository users, AuditService audit, KeycloakClient keycloak) {
         this.users = users;
-        this.logs = logs;
         this.audit = audit;
         this.keycloak = keycloak;
     }
@@ -75,7 +72,7 @@ public class UserService {
         return result;
     }
 
-    /** Sửa profile và ghi audit trong transaction; mật khẩu/email đăng nhập vẫn do IAM quản lý. */
+    /** Sửa profile trong transaction và gửi audit sau commit; mật khẩu/email đăng nhập vẫn do IAM quản lý. */
     @Transactional
     public UserResponse updateUser(UUID id, UpdateUserRequest request) {
         User user = getEntity(id);
@@ -115,12 +112,11 @@ public class UserService {
         return toResponse(user);
     }
 
-    /** Lịch sử audit của profile được phân trang; không bao gồm log login nội bộ Keycloak. */
+    /** Kiểm tra profile còn tồn tại rồi phân trang audit từ notification_svc.event_logs; không đọc bảng audit_logs cũ. */
     @Transactional(readOnly = true)
     public Page<ActivityHistoryResponse> getActivityHistory(UUID id, Pageable pageable) {
         getEntity(id);
-        return logs.findByUserId(id, pageable).map(log -> new ActivityHistoryResponse(log.getId(),
-                log.getAction(), log.getDescription(), log.getStatus(), log.getCreatedAt()));
+        return audit.history(id, pageable);
     }
 
     /** Tạo profile từ service account của Gateway; subject hợp lệ là bắt buộc, không tạo profile mồ côi. */

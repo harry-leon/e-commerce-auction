@@ -44,6 +44,9 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  # Audit thuộc event_logs của notification theo ERD; URL nội bộ được Compose ghi đè.
+  notification:
+    base-url: ${NOTIFICATION_SERVICE_URL:http://localhost:8086}
   # Keycloak là nguồn IAM; token admin chỉ dùng gọi API, không lưu credential trong DB profile.
   keycloak:
     base-url: ${KEYCLOAK_URL:http://localhost:8180}
