@@ -369,5 +369,5 @@
     "auth": "false",
     "starttls": "false"
   },
-  "passwordPolicy": "length(6)"
+  "passwordPolicy": "length(8) and maxLength(100) and upperCase(1) and digits(1) and specialChars(1) and regexPattern((?s)^(?=.*\\p{Lu})(?=.*\\p{Nd})(?=.*[\\p{P}\\p{S}]).*$)"
 }
