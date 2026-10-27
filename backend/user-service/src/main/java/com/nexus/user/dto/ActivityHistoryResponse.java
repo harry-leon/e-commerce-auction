@@ -5,7 +5,7 @@ import java.util.UUID;
 
 /**
  * DTO trả về một bản ghi lịch sử hoạt động của người dùng theo SRS §3.1.1.
- * Mỗi bản ghi tương ứng một dòng trong bảng audit_logs.
+ * Mỗi bản ghi được đọc từ payload của notification_svc.event_logs qua API nội bộ.
  *
  * @author Vinh Khang
  * @since 13/10/2026
