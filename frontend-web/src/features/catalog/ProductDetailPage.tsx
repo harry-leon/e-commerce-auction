@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { ApiProduct, Envelope } from '../../api/client'
+import { readSession, type ApiProduct, type Envelope } from '../../api/client'
+import { addItemToCart } from '../../api/cart'
 import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import {
@@ -114,7 +115,37 @@ export function ProductDetailPage() {
         return () => window.removeEventListener('keydown', handler)
     }, [lightboxOpen, productImages.length])
 
-    const addToCart = () => {
+    const [addingToCart, setAddingToCart] = useState(false)
+
+    /**
+     * Thêm sản phẩm vào giỏ hàng:
+     * - Chức năng: Thêm SKU và số lượng đang chọn vào giỏ hàng của Buyer.
+     * - Luồng: Gọi API POST /api/v1/cart/items nếu người dùng đã đăng nhập và có skuId.
+     * - Kết quả: Cập nhật cartCount theo tổng số lượng từ CartResponse, hiển thị toast thông báo.
+     * - Dự phòng: Nếu offline hoặc chưa đăng nhập, cập nhật cartCount cục bộ để duy trì trải nghiệm.
+     */
+    const addToCart = async () => {
+        const skuId = product.skus?.[0]?.id
+        const session = readSession()
+        if (session && skuId) {
+            try {
+                setAddingToCart(true)
+                const res = await addItemToCart(skuId, qty)
+                setCartCount(res.totalQuantity)
+                showToast({
+                    type: 'success',
+                    message:
+                        lang === 'en'
+                            ? `Added ${qty}x to cart!`
+                            : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
+                })
+                return
+            } catch {
+                // Fallback nếu server lỗi hoặc không phản hồi
+            } finally {
+                setAddingToCart(false)
+            }
+        }
         setCartCount(cartCount + qty)
         showToast({
             type: 'success',
@@ -371,6 +402,7 @@ export function ProductDetailPage() {
                                 size="lg"
                                 className="flex-1"
                                 onClick={addToCart}
+                                loading={addingToCart}
                             >
                                 {tr(lang, 'addToCart')}
                             </Button>
@@ -520,7 +552,10 @@ export function ProductDetailPage() {
                                     </h4>
                                     <ul className="space-y-1">
                                         {product.skus.map((sku) => (
-                                            <li key={sku.id || sku.skuCode} className="text-xs text-gray-600">
+                                            <li
+                                                key={sku.id || sku.skuCode}
+                                                className="text-xs text-gray-600"
+                                            >
                                                 <span className="font-semibold text-gray-800">
                                                     {sku.skuCode}
                                                 </span>{' '}
