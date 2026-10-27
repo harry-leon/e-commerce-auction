@@ -10,7 +10,9 @@ const services = ['user', 'catalog', 'commerce', 'auction', 'fulfillment', 'noti
 export function schemaToMermaid(sql) {
   const tables = new Map()
   // Bỏ comment trước khi tách câu lệnh để ví dụ SQL trong comment không tạo bảng/cột giả.
-  const statements = sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\r\n]*/g, '').split(';')
+  // Khối DO chỉ bảo vệ dữ liệu khi nâng cấp; bỏ nguyên khối để dấu ; bên trong không phá tách DDL.
+  const statements = sql.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\r\n]*/g, '')
+    .replace(/\bDO\s+(\$\w*\$)[\s\S]*?\1\s*;/gi, '').split(';')
   for (const statement of statements) {
     const create = statement.match(/^\s*CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(\w+)\s*\(([\s\S]*)\)\s*$/i)
     if (create) {
@@ -43,6 +45,8 @@ export function schemaToMermaid(sql) {
       table.relations = table.relations.filter(({ column }) => column !== remove[1])
     } else if (type) table.fields.set(type[1], type[2].toLowerCase())
     // NULL/default không đổi hình ERD; cú pháp đổi cấu trúc khác phải được hỗ trợ rõ ràng.
+    // Constraint không thêm/bớt cột hay quan hệ được Mermaid mô tả; PostgreSQL smoke kiểm chứng phần này.
+    else if (/^(?:ADD|DROP) CONSTRAINT\b/i.test(alter[2])) continue
     else if (!/^ALTER COLUMN\s+\w+\s+(?:SET|DROP)\s+(?:NOT NULL|DEFAULT)\b/i.test(alter[2])) {
       throw new Error('Unsupported ERD alteration: ' + statement.trim())
     }
@@ -62,7 +66,7 @@ export function schemaToMermaid(sql) {
 
 /** Đọc migration theo phiên bản số (V2 trước V10), ghi lại tài liệu ERD; không truy cập DB. */
 function generateErd() {
-  let output = '# Database ERD\n\nGenerated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Flyway remains authoritative; this diagram does not describe constraints or data backfills.\n'
+  let output = '# Database ERD\n\nGenerated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. The approved Nerum V2 ERD defines the business tables; these migrations implement it. This diagram does not describe constraints or data backfills.\n'
   for (const service of services) {
     const directory = `backend/${service}-service/src/main/resources/db/migration`
     const sql = readdirSync(directory).filter(file => /^V[\d._]+__.*\.sql$/.test(file))

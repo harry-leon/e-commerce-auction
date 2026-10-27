@@ -1,6 +1,6 @@
 // Smoke ERD V2: dựng PostgreSQL/Keycloak tạm, chạy JAR đã build và kiểm chứng luồng qua Gateway.
 // Chỉ tạo container có tên ngẫu nhiên và DB tạm; không đọc .env, không sửa volume hoặc tài khoản nhóm.
-// Chạy: node scripts/smoke-erd-v2.mjs sau khi mvn package các module user/catalog/commerce/gateway.
+// Chạy: node scripts/smoke-erd-v2.mjs sau khi mvn package các module user/catalog/commerce/notification/gateway.
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -87,7 +87,7 @@ try {
     await ready('PostgreSQL', async () => {
         try { docker(['exec', pg, 'pg_isready', '-U', 'postgres']); return true } catch { return false }
     })
-    for (const database of ['nexus_user', 'nexus_catalog', 'nexus_commerce']) {
+    for (const database of ['nexus_user', 'nexus_catalog', 'nexus_commerce', 'nexus_notification']) {
         docker(['exec', pg, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE ' + database])
     }
     // Kiểm tra V5 trên schema V4 có hồ sơ cũ; không chỉ kiểm tra database mới trống.
@@ -117,16 +117,18 @@ try {
     await ready('Keycloak realm import', async () => (await fetch(issuer + '/.well-known/openid-configuration')).ok)
     console.log('PASS isolated PostgreSQL and Keycloak realm import')
 
-    const ports = await Promise.all([freePort(), freePort(), freePort(), freePort()])
+    const ports = await Promise.all([freePort(), freePort(), freePort(), freePort(), freePort()])
     const shared = { KEYCLOAK_URL: iam, KEYCLOAK_ISSUER: issuer, KEYCLOAK_ADMIN_CLIENT_SECRET: secret,
         DB_USERNAME: 'postgres', DB_PASSWORD: secret }
-    const user = launch('user-service', ports[0], { ...shared, DB_URL: 'jdbc:postgresql://127.0.0.1:' + pgPort + '/nexus_user' })
+    // Audit thuộc notification theo ERD; User cần URL thật để kiểm tra service token và lịch sử qua HTTP.
+    const notification = launch('notification-service', ports[4], { ...shared, DB_URL: 'jdbc:postgresql://127.0.0.1:' + pgPort + '/nexus_notification' })
+    const user = launch('user-service', ports[0], { ...shared, NOTIFICATION_SERVICE_URL: notification, DB_URL: 'jdbc:postgresql://127.0.0.1:' + pgPort + '/nexus_user' })
     const catalog = launch('catalog-service', ports[1], { ...shared, DB_URL: 'jdbc:postgresql://127.0.0.1:' + pgPort + '/nexus_catalog' })
     const commerce = launch('commerce-service', ports[2], { ...shared, CATALOG_SERVICE_URL: catalog,
         DB_URL: 'jdbc:postgresql://127.0.0.1:' + pgPort + '/nexus_commerce' })
     const gateway = launch('api-gateway', ports[3], { ...shared, USER_SERVICE_URL: user, USER_PROFILE_URL: user,
         CATALOG_SERVICE_URL: catalog, COMMERCE_SERVICE_URL: commerce })
-    await Promise.all([['User/Flyway V1-V5', user], ['Catalog', catalog], ['Commerce', commerce], ['Gateway', gateway]]
+    await Promise.all([['Notification/Flyway', notification], ['User/Flyway V1-V6', user], ['Catalog', catalog], ['Commerce', commerce], ['Gateway', gateway]]
         .map(([label, url]) => ready(label, async () => (await fetch(url + '/actuator/health')).ok)))
     console.log('PASS Flyway migrations and Hibernate schema validation')
     const base = gateway + '/api/v1'
@@ -201,7 +203,13 @@ try {
         "SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name='users'"])
     assert.ok(schema.includes('updated_at') && schema.includes('keycloak_id'))
     assert.ok(!schema.includes('password_hash') && !schema.includes('token_version'))
-    console.log('PASS ERD V2 user schema has no legacy credential/token columns')
+    assert.equal(docker(['exec', pg, 'psql', '-U', 'postgres', '-d', 'nexus_user', '-tAc',
+        "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='audit_logs'"]), '0')
+    const history = await request(base, '/users/' + profile.id + '/activity-history', 'GET', undefined, appAdmin)
+    assert.ok(history.content.some((event) => event.action === 'CREATE_PROFILE'))
+    assert.equal(docker(['exec', pg, 'psql', '-U', 'postgres', '-d', 'nexus_notification', '-tAc',
+        "SELECT count(*) FROM event_logs WHERE source_service='user-service' AND payload->>'action'='CREATE_PROFILE'"]), '1')
+    console.log('PASS final ERD schema and profile audit persisted in notification.event_logs')
     console.log('ERD V2 SMOKE PASSED')
 } catch (error) {
     console.error(error.message)
