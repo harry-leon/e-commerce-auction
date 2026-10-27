@@ -27,9 +27,67 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 public class FulfillmentProperties {
 
+    /**
+     * Mã kho mặc định sử dụng khi yêu cầu giữ hàng không chỉ định warehouse_id (SRS §2.6: DEFAULT_WAREHOUSE_ID = WH_001).
+     */
+    @NotNull
+    private String defaultWarehouseCode = "WH_001";
+
+    /**
+     * Thời gian hết hạn lệnh giữ hàng tồn kho tính theo phút (SRS §2.6: INVENTORY_RESERVATION_TIMEOUT_MINUTES = 30).
+     */
+    @NotNull
+    @Min(value = 1, message = "Thời gian giữ kho tối thiểu phải là 1 phút")
+    private Integer reservationTimeoutMinutes = 30;
+
+    /**
+     * Quy tắc cho phép bán vượt tồn hay không (SRS §2.6: ALLOW_OVERSELL = false).
+     */
+    @NotNull
+    private Boolean allowOversell = false;
+
+    /**
+     * Chu kỳ quét giải phóng phiếu giữ hàng hết hạn tự động (miligiây, mặc định 60s).
+     */
+    @NotNull
+    @Min(value = 1000, message = "Chu kỳ quét tối thiểu 1000ms")
+    private Long reservationSweepIntervalMs = 60000L;
+
     @Valid
     @NotNull
     private Shipping shipping = new Shipping();
+
+    public String getDefaultWarehouseCode() {
+        return defaultWarehouseCode;
+    }
+
+    public void setDefaultWarehouseCode(String defaultWarehouseCode) {
+        this.defaultWarehouseCode = defaultWarehouseCode;
+    }
+
+    public Integer getReservationTimeoutMinutes() {
+        return reservationTimeoutMinutes;
+    }
+
+    public void setReservationTimeoutMinutes(Integer reservationTimeoutMinutes) {
+        this.reservationTimeoutMinutes = reservationTimeoutMinutes;
+    }
+
+    public Boolean getAllowOversell() {
+        return allowOversell;
+    }
+
+    public void setAllowOversell(Boolean allowOversell) {
+        this.allowOversell = allowOversell;
+    }
+
+    public Long getReservationSweepIntervalMs() {
+        return reservationSweepIntervalMs;
+    }
+
+    public void setReservationSweepIntervalMs(Long reservationSweepIntervalMs) {
+        this.reservationSweepIntervalMs = reservationSweepIntervalMs;
+    }
 
     public Shipping getShipping() {
         return shipping;

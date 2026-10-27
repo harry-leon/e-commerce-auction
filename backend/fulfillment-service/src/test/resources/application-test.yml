@@ -1,3 +1,22 @@
 spring:
   application:
     name: fulfillment-service
+  datasource:
+    url: jdbc:h2:mem:fulfillment_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ''
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+  flyway:
+    enabled: false
+
+app:
+  fulfillment:
+    default-warehouse-code: WH_001
+    reservation-timeout-minutes: 30
+    allow-oversell: false
+    reservation-scheduler:
+      enabled: false

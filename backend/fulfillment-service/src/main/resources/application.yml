@@ -45,6 +45,10 @@ springdoc:
 app:
   # Cấu hình dự phòng cục bộ cho fulfillment-service khi chưa kết nối Config Server
   fulfillment:
+    default-warehouse-code: ${DEFAULT_WAREHOUSE_ID:WH_001}
+    reservation-timeout-minutes: ${INVENTORY_RESERVATION_TIMEOUT_MINUTES:30}
+    allow-oversell: ${ALLOW_OVERSELL:false}
+    reservation-sweep-interval-ms: ${INVENTORY_RESERVATION_SWEEP_INTERVAL_MS:60000}
     shipping:
       default-delivery-days: ${FULFILLMENT_DEFAULT_DELIVERY_DAYS:3}
       max-retry-attempts: ${FULFILLMENT_MAX_RETRY_ATTEMPTS:3}
