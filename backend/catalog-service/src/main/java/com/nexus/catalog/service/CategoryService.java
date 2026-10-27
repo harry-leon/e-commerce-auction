@@ -83,7 +83,6 @@ public class CategoryService {
         }
         category.setParent(parent);
         category.setName(request.name().trim());
-        category.setNameVi(request.nameVi() == null ? request.name().trim() : request.nameVi().trim());
         category.setStatus(request.status());
         setLevels(category, level);
     }
@@ -104,9 +103,10 @@ public class CategoryService {
         return categories.findById(id).orElseThrow(() -> new ResourceNotFoundException("Category not found: " + id));
     }
 
-    /** productCount chỉ đếm sản phẩm gắn trực tiếp với node, không cộng dồn sản phẩm của các node con. */
+    /** nameVi là alias của name để tương thích UI, không có cột bản dịch riêng trong ERD.
+     * productCount chỉ đếm sản phẩm gắn trực tiếp với node, không cộng dồn sản phẩm của các node con. */
     private CategoryResponse response(Category category) {
-        return new CategoryResponse(category.getId(), category.getName(), category.getNameVi(),
+        return new CategoryResponse(category.getId(), category.getName(), category.getName(),
                 category.getParent() == null ? null : category.getParent().getId(),
                 category.getLevel(), category.getStatus(), products.countByCategoryId(category.getId()),
                 category.getChildren().stream().map(this::response).toList());
