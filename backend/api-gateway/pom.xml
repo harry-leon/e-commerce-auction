@@ -34,9 +34,22 @@
   </dependencyManagement>
 
   <dependencies>
+    <!-- Module dung chung Project Nexus: chuan hoa Envelope API Response v2 va Error Handling.
+         Loai tru spring-boot-starter-web de bao toan runtime reactive Netty cua Spring Cloud Gateway. -->
+    <dependency>
+      <groupId>com.nexus</groupId>
+      <artifactId>nexus-common</artifactId>
+      <version>0.0.1-SNAPSHOT</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-starter-web</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-netflix-eureka-client</artifactId></dependency>
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-config</artifactId></dependency>
-    <!-- Load balancer phân giải URI lb://... bằng các instance lấy từ Eureka, không phải route HTTP tĩnh. -->
+    <!-- Load balancer phÃ¢n giáº£i URI lb://... báº±ng cÃ¡c instance láº¥y tá»« Eureka, khÃ´ng pháº£i route HTTP tÄ©nh. -->
     <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-loadbalancer</artifactId></dependency>
     <dependency>
       <groupId>org.springframework.cloud</groupId>
