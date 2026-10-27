@@ -52,7 +52,7 @@
 | Field | Kiểu | Bắt buộc | Validation/xử lý |
 |---|---|---|---|
 | `email` | `string` | Có | Trim, lowercase, phải chứa `@`; user-service kiểm tra email chuẩn lần nữa |
-| `password` | `string` | Có | Từ `6` đến `100` ký tự; chỉ gửi sang Keycloak, không lưu trong profile DB |
+| `password` | `string` | Có | Từ `8` đến `100` ký tự, có chữ in hoa, chữ số và dấu/ký hiệu; khoảng trắng không tính là ký tự đặc biệt. Chỉ gửi sang Keycloak, không lưu trong profile DB |
 | `fullName` | `string` | Có | Không rỗng, trim, tối đa `255` tại user-service |
 | `phone` | `string` | Không | Nếu có: rỗng hoặc `10–11` chữ số |
 | `identifyNumber` | `string` | Không | Source hiện chưa đặt validation độ dài |
