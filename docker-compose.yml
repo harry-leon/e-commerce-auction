@@ -23,6 +23,9 @@ x-service: &service
     CONFIG_SERVER_URL: http://config-server:8888
     # User gửi/đọc audit qua API notification, không truy cập trực tiếp DB của service khác.
     NOTIFICATION_SERVICE_URL: http://notification-service:8080
+    # Không log body HTTP chứa mật khẩu/token khi gọi Keycloak, kể cả khi file .env cũ bật DEBUG.
+    LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB: INFO
+    LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: INFO
     # JWKS dùng DNS nội bộ; issuer phải khớp URL public Keycloak phát trong JWT.
     KEYCLOAK_URL: http://keycloak:8080
     KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8180/realms/nexus-realm}
@@ -112,7 +115,10 @@ services:
       SMTP_HOST: mailpit
       FRONTEND_URL: http://localhost:3000
       SERVICE_NAME: user-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_user
+      # Giữ DB profile Supabase khi triển khai IAM mới; chỉ dùng local nếu chưa cấu hình USER_DB_*.
+      DB_URL: ${USER_DB_URL:-jdbc:postgresql://postgres:5432/nexus_user}
+      DB_USERNAME: ${USER_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${USER_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
     ports:
       - "8081:8080"
 
@@ -199,7 +205,9 @@ services:
 
   # Gateway tra registry Eureka qua các URI lb://... thay vì phụ thuộc IP cố định của container.
   api-gateway:
-    build: ./backend/api-gateway
+    build:
+      context: .
+      dockerfile: backend/api-gateway/Dockerfile
     environment:
       <<: *cloud-env
       USER_SERVICE_URL: lb://user-service
