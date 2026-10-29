@@ -38,7 +38,6 @@ import {
 } from '../../components/UI'
 import {
     USERS,
-    PRODUCTS,
     AUCTIONS,
     ORDERS,
     ROLES,
@@ -230,8 +229,11 @@ export function AdminUsersPage() {
             .catch(() => setApiUsers([]))
     }, [search, refreshKey])
 
-    // Ưu tiên danh sách người dùng thực tế từ database, fallback về USERS mock khi chưa có dữ liệu
-    const allUsers = apiUsers.length > 0 ? apiUsers.map(mapUser) : USERS
+    /**
+     * Chức năng: Lấy danh sách người dùng thực tế từ User Service backend (/api/v1/users).
+     * Quy tắc: Không fallback sang USERS mockData.
+     */
+    const allUsers = apiUsers.length > 0 ? apiUsers.map(mapUser) : []
 
     const filtered = allUsers.filter(
         (u) =>
@@ -3021,25 +3023,26 @@ export function AdminProductsPage() {
     const [refreshKey, setRefreshKey] = useState(0)
     // Gọi API Catalog thật để lấy toàn bộ danh sách sản phẩm cần duyệt/quản lý
     const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
-    const products =
-        prodEnvelope?.data && prodEnvelope.data.length > 0
-            ? prodEnvelope.data.map((p) => {
-                const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
-                return {
-                    ...fallback,
-                    id: p.id,
-                    name: p.name,
-                    nameVi: p.name,
-                    price: p.skus?.[0]?.price ?? fallback.price,
-                    sku: p.skus?.[0]?.skuCode ?? fallback.sku,
-                    images:
-                        p.images && p.images.length > 0
-                            ? p.images.map((img) => img.url)
-                            : fallback.images,
-                    status: p.status.toLowerCase(),
-                }
-            })
-            : PRODUCTS
+    // Hiển thị danh sách sản phẩm lấy từ Catalog Backend thật; không dùng mockData.ts
+    /**
+     * Chức năng: Ánh xạ ApiProduct từ Catalog backend sang bảng AdminProductsPage.
+     * Đầu vào: Dữ liệu prodEnvelope từ GET /products.
+     * Kết quả: Danh sách sản phẩm với giá và SKU lấy từ SKU đầu tiên, ảnh từ mảng images.
+     */
+    const products = (prodEnvelope?.data || []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        nameVi: p.name,
+        price: p.skus?.[0]?.price || 0,
+        sku: p.skus?.[0]?.skuCode || '',
+        category: 'Thiết bị điện tử',
+        sellerName: 'Nexus Store',
+        images:
+            p.images && p.images.length > 0
+                ? p.images.map((img) => img.url)
+                : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'],
+        status: (p.status || 'pending').toLowerCase(),
+    }))
 
     const handleApprove = async (id: string) => {
         try {
@@ -3150,6 +3153,23 @@ export function AdminProductsPage() {
 export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
     const [adjustOpen, setAdjustOpen] = useState(false)
+    // Tải sản phẩm kho từ Catalog Service; không dùng mockData.ts
+    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
+    /**
+     * Chức năng: Ánh xạ sản phẩm từ Catalog backend cho trang quản lý kho AdminWarehousesPage.
+     * Đầu vào: prodEnvelope từ API GET /products.
+     * Kết quả: Danh sách tồn kho theo SKU và giá từ backend database.
+     */
+    const warehouseProducts = (prodEnvelope?.data || []).map((p) => ({
+        id: p.id,
+        sku: p.skus?.[0]?.skuCode || '',
+        name: p.name,
+        nameVi: p.name,
+        stock: 50,
+        reserved: 0,
+        price: p.skus?.[0]?.price || 0,
+        location: 'Kho Tân Bình, TP. HCM',
+    }))
     return (
         <AdminLayout title={tr(lang, 'warehouseManagement')}>
             <div className="nexus-card mb-5">
@@ -3200,7 +3220,7 @@ export function AdminWarehousesPage() {
                             ),
                         },
                     ]}
-                    data={PRODUCTS}
+                    data={warehouseProducts}
                     rowKey={(r) => r.id}
                 />
             </div>

@@ -16,7 +16,6 @@ import {
 import { ProductCard } from '../../components/Cards'
 import { LoadState } from '../../components/LoadState'
 import { useLoad } from '../../hooks/useLoad'
-import { PRODUCTS } from '../../mockData'
 import { tr, formatCurrency, formatDate } from '../../i18n'
 
 /**
@@ -39,43 +38,64 @@ export function ProductDetailPage() {
     )
     const apiProduct = data?.data
 
-    // Tìm dữ liệu dự phòng từ PRODUCTS mock dựa trên ID hoặc SKU
-    const fallbackProduct =
-        PRODUCTS.find(
-            (p) =>
-                p.id === rawId ||
-                p.sku === apiProduct?.skus?.[0]?.skuCode ||
-                (rawId.startsWith('a0000001') && p.id === 'p1') ||
-                (rawId.startsWith('a0000002') && p.id === 'p2') ||
-                (rawId.startsWith('a0000003') && p.id === 'p3') ||
-                (rawId.startsWith('a0000004') && p.id === 'p4') ||
-                (rawId.startsWith('a0000005') && p.id === 'p5') ||
-                (rawId.startsWith('a0000006') && p.id === 'p6'),
-        ) || PRODUCTS[0]
-
-    // Hợp nhất dữ liệu API với mockup Figma để hiển thị hoàn chỉnh
-    // Khai báo rõ ràng mảng skus để TypeScript suy luận type thống nhất cho cả dữ liệu API và mock
+    /**
+     * Chức năng: Ánh xạ sản phẩm thực tế từ API Catalog backend (/api/v1/products/{id}).
+     * Quy tắc: Lấy toàn bộ thông tin giá, SKU, ảnh và mô tả từ backend database; tuyệt đối không dùng PRODUCTS mockData.
+     */
     const product = apiProduct
         ? {
-              ...fallbackProduct,
               id: apiProduct.id,
               name: apiProduct.name,
               nameVi: apiProduct.name,
-              description: apiProduct.description || fallbackProduct.description,
-              descriptionVi: apiProduct.description || fallbackProduct.descriptionVi,
-              price: apiProduct.skus?.[0]?.price ?? fallbackProduct.price,
-              originalPrice: apiProduct.skus?.[0]?.originalPrice ?? fallbackProduct.originalPrice,
-              sku: apiProduct.skus?.[0]?.skuCode ?? fallbackProduct.sku,
+              description: apiProduct.description || '',
+              descriptionVi: apiProduct.description || '',
+              category: 'Thiết bị điện tử',
+              categoryId: apiProduct.categoryId,
+              price: apiProduct.skus?.[0]?.price ?? 0,
+              originalPrice: apiProduct.skus?.[0]?.originalPrice,
+              sku: apiProduct.skus?.[0]?.skuCode ?? '',
               images:
                   apiProduct.images && apiProduct.images.length > 0
                       ? apiProduct.images.map((img) => img.url)
-                      : fallbackProduct.images,
+                      : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
               skus: apiProduct.skus || [],
-              enableAuction: apiProduct.auctionEnabled ?? fallbackProduct.enableAuction,
+              enableAuction: apiProduct.auctionEnabled ?? false,
+              stock: 50,
+              rating: 5.0,
+              reviewCount: 12,
+              location: 'ho-chi-minh',
+              sellerId: apiProduct.sellerId || 'seller-1',
+              sellerName: 'Nexus Official Store',
+              sellerTrust: 'gold' as const,
+              sellerRating: 4.9,
+              weight: 500,
+              createdAt: apiProduct.createdAt || new Date().toISOString(),
+              status: 'active' as const,
           }
         : {
-              ...fallbackProduct,
+              id: rawId || 'product-empty',
+              name: '',
+              nameVi: '',
+              description: '',
+              descriptionVi: '',
+              category: 'Thiết bị điện tử',
+              categoryId: '',
+              price: 0,
+              sku: '',
+              images: ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
               skus: [] as NonNullable<ApiProduct['skus']>,
+              enableAuction: false,
+              stock: 0,
+              rating: 5.0,
+              reviewCount: 0,
+              location: 'ho-chi-minh',
+              sellerId: 'seller-1',
+              sellerName: 'Nexus Official Store',
+              sellerTrust: 'gold' as const,
+              sellerRating: 4.9,
+              weight: 500,
+              createdAt: new Date().toISOString(),
+              status: 'active' as const,
           }
 
     const MAX_PRODUCT_IMAGES = 5
@@ -86,13 +106,36 @@ export function ProductDetailPage() {
     const [qty, setQty] = useState(1)
     const [activeTab, setActiveTab] = useState('description')
 
-    const categoryRoot = product.categoryId ? product.categoryId.split('-')[0] : 'c1'
-    const relatedProducts = PRODUCTS.filter(
-        (candidate) =>
-            candidate.id !== product.id &&
-            candidate.status === 'active' &&
-            candidate.categoryId.split('-')[0] === categoryRoot,
-    ).slice(0, 4)
+    // Tải danh sách sản phẩm khác từ Catalog Service backend để làm gợi ý liên quan
+    const { data: allProductsEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
+    const relatedProducts = (allProductsEnvelope?.data || [])
+        .filter((p) => p.id !== product.id)
+        .map((p) => ({
+            id: p.id,
+            name: p.name,
+            nameVi: p.name,
+            category: 'Thiết bị điện tử',
+            categoryId: p.categoryId,
+            price: p.skus?.[0]?.price ?? 0,
+            originalPrice: p.skus?.[0]?.originalPrice,
+            sku: p.skus?.[0]?.skuCode ?? '',
+            images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+            description: p.description || '',
+            descriptionVi: p.description || '',
+            enableAuction: p.auctionEnabled || false,
+            stock: 50,
+            rating: 5.0,
+            reviewCount: 12,
+            location: 'ho-chi-minh',
+            sellerId: p.sellerId || 'seller-1',
+            sellerName: 'Nexus Official Store',
+            sellerTrust: 'gold' as const,
+            sellerRating: 4.9,
+            weight: 500,
+            createdAt: p.createdAt || new Date().toISOString(),
+            status: 'active' as const,
+        }))
+        .slice(0, 4)
 
     useEffect(() => {
         setActiveImg(0)
@@ -156,7 +199,7 @@ export function ProductDetailPage() {
 
     const TABS = [
         { id: 'description', label: tr(lang, 'description') },
-        { id: 'reviews', label: `${tr(lang, 'reviews')} (${product.reviewCount || 521})` },
+        { id: 'reviews', label: `${tr(lang, 'reviews')} (0)` },
         { id: 'specifications', label: tr(lang, 'specifications') },
     ]
 
@@ -182,6 +225,21 @@ export function ProductDetailPage() {
             helpful: 18,
         },
     ]
+
+    if (!loading && !apiProduct && rawId) {
+        return (
+            <BuyerLayout>
+                <div className="text-center py-20">
+                    <p className="text-lg font-semibold text-gray-700 mb-4">
+                        {lang === 'en' ? 'Product not found in database.' : 'Không tìm thấy sản phẩm trong cơ sở dữ liệu.'}
+                    </p>
+                    <Button variant="primary" onClick={() => navigate('search')}>
+                        {lang === 'en' ? 'Back to Products' : 'Khám phá sản phẩm'}
+                    </Button>
+                </div>
+            </BuyerLayout>
+        )
+    }
 
     return (
         <BuyerLayout>
@@ -572,31 +630,12 @@ export function ProductDetailPage() {
                     )}
 
                     {activeTab === 'reviews' && (
-                        <div className="space-y-5">
-                            {REVIEWS.map((r, i) => (
-                                <div key={i} className="border-b border-border pb-5 last:border-0">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center font-bold text-sm">
-                                                {r.name[0]}
-                                            </div>
-                                            <div>
-                                                <p className="font-semibold text-sm">{r.name}</p>
-                                                <StarRating rating={r.rating} size={12} />
-                                            </div>
-                                        </div>
-                                        <span className="text-xs text-gray-400">
-                                            {formatDate(r.date, lang)}
-                                        </span>
-                                    </div>
-                                    <p className="text-sm text-gray-700">{r.comment}</p>
-                                    <p className="text-xs text-gray-400 mt-2">
-                                        {lang === 'en'
-                                            ? `${r.helpful} found helpful`
-                                            : `${r.helpful} người thấy hữu ích`}
-                                    </p>
-                                </div>
-                            ))}
+                        <div className="py-8 text-center text-gray-500">
+                            <p className="text-sm">
+                                {lang === 'en'
+                                    ? 'No reviews yet for this product.'
+                                    : 'Chưa có đánh giá nào cho sản phẩm này.'}
+                            </p>
                         </div>
                     )}
 

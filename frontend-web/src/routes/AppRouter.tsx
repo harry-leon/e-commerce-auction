@@ -30,6 +30,7 @@ import {
     OrderHistoryPage,
     PaymentResultPage,
     ReputationPage,
+    SandboxPaymentPage,
     SellerShopPage,
 } from '../features/buyer/BuyerPages'
 import {
@@ -105,7 +106,15 @@ function demoUserForDashboard(page: string): User | null {
  */
 export function AppRouter() {
     const { page, user, setUser, pageParams: routeParams } = useApp()
-    const publicPages = ['login', 'register', 'forgot-password', 'home', 'search', 'product-detail']
+    const publicPages = [
+        'login',
+        'register',
+        'forgot-password',
+        'home',
+        'search',
+        'product-detail',
+        'sandbox-payment',
+    ]
     const demoUser = demoUserFor(routeParams.demo) || demoUserForDashboard(page)
 
     // URL demo chỉ nâng quyền khi chưa có phiên thật; phiên đã đăng nhập vẫn giữ quyền backend cấp.
@@ -137,6 +146,8 @@ export function AppRouter() {
             return <CartPage />
         case 'checkout':
             return <CheckoutPage />
+        case 'sandbox-payment':
+            return <SandboxPaymentPage />
         case 'payment-result':
             return <PaymentResultPage />
         case 'order-history':

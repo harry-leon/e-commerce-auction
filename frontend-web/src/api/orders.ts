@@ -1,4 +1,4 @@
-import { api, ApiClientError } from './client'
+import { api, ApiClientError, readSession } from './client'
 import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
 
@@ -8,6 +8,65 @@ import { ORDERS } from '../mockData'
  */
 const STORAGE_KEY = 'nexus.mock-orders-store'
 const WITHDRAWAL_STORAGE_KEY = 'nexus.mock-withdrawals-store'
+
+/**
+ * DTO yêu cầu xem trước tính giá và re-validate đơn hàng khi Checkout.
+ * Khớp với đặc tả API_SPEC_CART_ORDER.md §4.1.
+ */
+export interface CheckoutPreviewRequest {
+    itemIds?: string[]
+    shippingAddress: string
+    voucherCode?: string
+}
+
+/**
+ * DTO kết quả xem trước đơn hàng từ Backend.
+ */
+export interface CheckoutPreviewResponse {
+    subtotal: number
+    discountAmount: number
+    shippingFee: number
+    taxAmount: number
+    totalAmount: number
+    appliedVoucher?: {
+        code: string
+        discountValue: number
+        description: string
+    } | null
+    isOrderable: boolean
+    warnings?: string[]
+}
+
+/**
+ * DTO yêu cầu tạo đơn hàng (Checkout / Place Order) gửi lên Backend.
+ * Khớp với đặc tả API_SPEC_CART_ORDER.md §4.2.
+ */
+export interface CreateOrderRequest {
+    shippingAddress: string
+    recipientName: string
+    recipientPhone: string
+    voucherCode?: string
+    paymentMethod: 'CARD' | 'VNPAY' | 'COD'
+    sourceType?: 'REGULAR' | 'AUCTION'
+    auctionId?: string | null
+    selectedItemIds?: string[]
+}
+
+/**
+ * DTO kết quả tạo đơn hàng phản hồi từ Backend.
+ * Chứa thông tin đơn hàng và paymentUrl chuyển hướng cổng sandbox (nếu có).
+ */
+export interface CreateOrderResponse {
+    id: string
+    orderNo: string
+    status: OrderStatus
+    subtotal: number
+    shippingFee: number
+    discount: number
+    total: number
+    paymentMethod: 'CARD' | 'VNPAY' | 'COD'
+    paymentUrl?: string
+}
 
 export interface WithdrawalRequest {
     id: string
@@ -317,6 +376,196 @@ export const ordersApi = {
         // 2. Tìm trong mock data
         const orders = readLocalMockOrders()
         return orders.find((o) => o.id === id) || null
+    },
+
+    /**
+     * Xem trước tính toán giá và kiểm tra điều kiện đặt hàng (Checkout Preview).
+     * Chức năng: Gọi POST /api/v1/orders/checkout/preview để Backend kiểm tra giá live, tồn kho và tính voucher.
+     * Đầu vào: data (CheckoutPreviewRequest gồm itemIds, shippingAddress, voucherCode).
+     * Kết quả: CheckoutPreviewResponse (subtotal, discountAmount, shippingFee, taxAmount, totalAmount, isOrderable).
+     * Luồng xử lý: Gọi API backend -> nếu backend chưa triển khai (404/503) thì tính toán mock fallback.
+     * Quy tắc & lý do: Không trừ tồn kho hay tạo đơn, chỉ phục vụ hiển thị preview trước khi bấm Đặt Hàng.
+     * Lỗi & giới hạn: Trả về isOrderable=false và warnings nếu có món hàng không hợp lệ.
+     */
+    async checkoutPreview(data: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
+        try {
+            const response = await api<{ success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse>(
+                '/orders/checkout/preview',
+                {
+                    method: 'POST',
+                    body: JSON.stringify(data),
+                },
+            )
+            const result =
+                'data' in response && response.data
+                    ? response.data
+                    : (response as CheckoutPreviewResponse)
+            if (result && typeof result.totalAmount === 'number') {
+                return result
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+        }
+
+        const subtotal = 429.98
+        const discountAmount = data.voucherCode === 'NEXUS10' ? 42.99 : 0
+        const shippingFee = 5.0
+        const taxAmount = (subtotal - discountAmount) * 0.08
+        const totalAmount = subtotal - discountAmount + shippingFee + taxAmount
+
+        return {
+            subtotal,
+            discountAmount,
+            shippingFee,
+            taxAmount,
+            totalAmount,
+            appliedVoucher:
+                data.voucherCode === 'NEXUS10'
+                    ? {
+                          code: 'NEXUS10',
+                          discountValue: 42.99,
+                          description: 'Giảm 10% tổng đơn hàng',
+                      }
+                    : null,
+            isOrderable: true,
+            warnings: [],
+        }
+    },
+
+    /**
+     * Tạo đơn hàng mới từ thông tin Checkout và khởi tạo luồng thanh toán (Place Order).
+     * Chức năng: Gửi yêu cầu đặt hàng tới Backend qua POST /api/v1/orders kèm header Idempotency-Key.
+     * Đầu vào:
+     *   - data: CreateOrderRequest (địa chỉ, người nhận, số điện thoại, phương thức thanh toán, danh sách item).
+     *   - idempotencyKey: UUID chuỗi duy nhất chống click đúp hoặc duplicate request khi gửi lặp ngoài ý muốn.
+     * Kết quả: CreateOrderResponse chứa thông tin đơn hàng và paymentUrl cổng thanh toán sandbox nếu có.
+     * Luồng xử lý:
+     *   1. Gửi request POST /orders kèm header Idempotency-Key và Bearer token.
+     *   2. Nếu Backend xử lý thành công, trả về kết quả đơn hàng thật kèm paymentUrl từ gateway sandbox.
+     *   3. Nếu Backend chưa có endpoint (404/502/503) hoặc lỗi kết nối:
+     *      - Khởi tạo đơn hàng mock và lưu vào localStorage để các màn hình xem chi tiết/lịch sử đơn truy cập được.
+     *      - Nếu phương thức thanh toán là VNPAY, sinh paymentUrl chuyển hướng cổng sandbox mô phỏng (/sandbox-payment).
+     * Quy tắc & lý do:
+     *   - Bắt buộc Idempotency-Key theo đặc tả API_SPEC_CART_ORDER.md §4.2 để chống double-submit khi mạng lag.
+     *   - Chế độ mock giúp kiểm thử trọn vẹn luồng chuyển hướng sandbox khi backend chưa cấp sandbox credentials.
+     * Lỗi & giới hạn: Bắt và ném lại lỗi 422 (validation) hoặc lỗi phân quyền nếu có từ server để UI hiển thị.
+     */
+    async createOrder(
+        data: CreateOrderRequest,
+        idempotencyKey?: string,
+    ): Promise<CreateOrderResponse> {
+        const key =
+            idempotencyKey ||
+            (typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
+
+        try {
+            const response = await api<{ success?: boolean; data?: CreateOrderResponse } | CreateOrderResponse>(
+                '/orders',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Idempotency-Key': key,
+                    },
+                    body: JSON.stringify({
+                        ...data,
+                        sourceType: data.sourceType || 'REGULAR',
+                    }),
+                },
+            )
+            const result =
+                'data' in response && response.data
+                    ? response.data
+                    : (response as CreateOrderResponse)
+            if (result && (result.id || result.orderNo)) {
+                return result
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+        }
+
+        // Mock fallback khi Backend chưa có endpoint /orders
+        const orders = readLocalMockOrders()
+        const now = new Date()
+        const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
+        const seq = String(orders.length + 1).padStart(3, '0')
+        const orderId = `ORD-${dateStr}-${seq}`
+        const session = readSession()
+        const buyerId = session?.user?.id || 'u1'
+        const buyerName = session?.user?.fullName || data.recipientName || 'Minh Tran'
+
+        const calcSubtotal = 429.98
+        const calcDiscount = data.voucherCode ? 42.99 : 0
+        const calcShipping = 5.0
+        const calcTax = (calcSubtotal - calcDiscount) * 0.08
+        const calcTotal = calcSubtotal - calcDiscount + calcShipping + calcTax
+
+        // Sinh Sandbox paymentUrl cho VNPAY nếu thanh toán qua cổng trực tuyến
+        const sandboxPaymentUrl =
+            data.paymentMethod === 'VNPAY'
+                ? `/sandbox-payment?orderId=${encodeURIComponent(orderId)}&amount=${calcTotal.toFixed(2)}&provider=vnpay`
+                : undefined
+
+        const newOrder: Order = {
+            id: orderId,
+            buyerId,
+            buyerName,
+            sellerId: 'u2',
+            sellerName: 'TechZone Store',
+            items: [
+                {
+                    productId: 'p2',
+                    productName: 'Mechanical Gaming Keyboard RGB',
+                    image: 'https://images.unsplash.com/photo-1595225476474-87563907a212?w=100&h=100&fit=crop&auto=format',
+                    quantity: 1,
+                    unitPrice: 89.99,
+                    subtotal: 89.99,
+                },
+                {
+                    productId: 'p1',
+                    productName: 'Sony WH-1000XM5 Wireless Headphones',
+                    image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
+                    quantity: 1,
+                    unitPrice: 279.99,
+                    subtotal: 279.99,
+                },
+            ],
+            subtotal: calcSubtotal,
+            tax: calcTax,
+            discount: calcDiscount,
+            shipping: calcShipping,
+            total: calcTotal,
+            status: 'pending',
+            refundStatus: 'none',
+            paymentStatus: 'held',
+            shippingAddress: data.shippingAddress,
+            paymentMethod:
+                data.paymentMethod === 'VNPAY'
+                    ? 'VNPAY QR'
+                    : data.paymentMethod === 'CARD'
+                      ? 'Credit Card'
+                      : 'COD',
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+            disputeStatus: 'none',
+            reviewed: false,
+        }
+
+        orders.unshift(newOrder)
+        writeLocalMockOrders(orders)
+
+        return {
+            id: orderId,
+            orderNo: orderId,
+            status: 'pending',
+            subtotal: calcSubtotal,
+            shippingFee: calcShipping,
+            discount: calcDiscount,
+            total: calcTotal,
+            paymentMethod: data.paymentMethod,
+            paymentUrl: sandboxPaymentUrl,
+        }
     },
 
     /**

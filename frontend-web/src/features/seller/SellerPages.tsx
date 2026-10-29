@@ -497,25 +497,25 @@ export function SellerProductListPage() {
 
     // Tải danh sách sản phẩm của người bán từ Catalog Service (/api/v1/products)
     const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
+    /**
+     * Chức năng: Ánh xạ danh sách sản phẩm thật của người bán từ Catalog backend (/api/v1/products).
+     * Quy tắc: Không fallback sang PRODUCTS mockData.
+     */
     const liveProducts =
         prodEnvelope?.data && prodEnvelope.data.length > 0
-            ? prodEnvelope.data.map((p) => {
-                const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
-                return {
-                    ...fallback,
-                    id: p.id,
-                    name: p.name,
-                    nameVi: p.name,
-                    price: p.skus?.[0]?.price ?? fallback.price,
-                    sku: p.skus?.[0]?.skuCode ?? fallback.sku,
-                    images:
-                        p.images && p.images.length > 0
-                            ? p.images.map((img) => img.url)
-                            : fallback.images,
-                    status: p.status.toLowerCase() as ProductStatus,
-                }
-            })
-            : PRODUCTS
+            ? prodEnvelope.data.map((p) => ({
+                id: p.id,
+                name: p.name,
+                nameVi: p.name,
+                price: p.skus?.[0]?.price ?? 0,
+                sku: p.skus?.[0]?.skuCode ?? '',
+                images:
+                    p.images && p.images.length > 0
+                        ? p.images.map((img) => img.url)
+                        : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+                status: p.status.toLowerCase() as ProductStatus,
+            }))
+            : []
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
