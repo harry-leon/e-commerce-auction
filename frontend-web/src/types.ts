@@ -259,6 +259,7 @@ export type Page =
     | 'product-detail'
     | 'cart'
     | 'checkout'
+    | 'sandbox-payment'
     | 'payment-result'
     | 'order-history'
     | 'order-detail'

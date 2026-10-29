@@ -187,4 +187,49 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
             expect(screen.getByText(/Can thiệp quản lý trạng thái đơn hàng/i)).toBeDefined()
         })
     })
+
+    it('ordersApi: createOrder tạo đơn hàng VNPAY và sinh URL thanh toán Sandbox', async () => {
+        const payload = {
+            shippingAddress: '123 Nguyen Hue, Ben Nghe, District 1, Ho Chi Minh City',
+            recipientName: 'Minh Tran',
+            recipientPhone: '0901234567',
+            paymentMethod: 'VNPAY' as const,
+            sourceType: 'REGULAR' as const,
+        }
+        const res = await ordersApi.createOrder(payload, 'test-idemp-key-123')
+        expect(res).toBeDefined()
+        expect(res.id).toMatch(/^ORD-/)
+        expect(res.paymentMethod).toBe('VNPAY')
+        expect(res.paymentUrl).toContain('/sandbox-payment')
+        expect(res.paymentUrl).toContain('orderId=')
+
+        // Kiểm tra đơn đã được lưu vào mock store
+        const saved = await ordersApi.getOrderById(res.id)
+        expect(saved).not.toBeNull()
+        expect(saved?.paymentMethod).toBe('VNPAY QR')
+    })
+
+    it('ordersApi: createOrder tạo đơn hàng COD hoàn tất trực tiếp không cần URL Sandbox', async () => {
+        const payload = {
+            shippingAddress: '456 Le Loi, District 1, Ho Chi Minh City',
+            recipientName: 'Hoang Nam',
+            recipientPhone: '0909888777',
+            paymentMethod: 'COD' as const,
+            sourceType: 'REGULAR' as const,
+        }
+        const res = await ordersApi.createOrder(payload)
+        expect(res.paymentMethod).toBe('COD')
+        expect(res.paymentUrl).toBeUndefined()
+    })
+
+    it('ordersApi: checkoutPreview tính toán subtotal, voucher và tổng tiền chính xác', async () => {
+        const preview = await ordersApi.checkoutPreview({
+            shippingAddress: '123 Nguyen Hue',
+            voucherCode: 'NEXUS10',
+        })
+        expect(preview.subtotal).toBeGreaterThan(0)
+        expect(preview.discountAmount).toBeGreaterThan(0)
+        expect(preview.appliedVoucher?.code).toBe('NEXUS10')
+        expect(preview.isOrderable).toBe(true)
+    })
 })

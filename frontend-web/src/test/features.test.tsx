@@ -8,9 +8,15 @@ import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
-import { CartPage, CheckoutPage, PaymentResultPage } from '../features/buyer/BuyerPages'
+import {
+    CartPage,
+    CheckoutPage,
+    PaymentResultPage,
+    SandboxPaymentPage,
+} from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession } from '../api/client'
+import { ordersApi } from '../api/orders'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -597,6 +603,118 @@ describe('Cart, Checkout và Payment Result', () => {
         await waitFor(() =>
             expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible(),
         )
+    })
+
+    it('CheckoutPage: đặt hàng với phương thức VNPAY và chuyển hướng tới sandbox-payment (Accept Criteria 1, 3, 4)', async () => {
+        render(<CheckoutPage />)
+        // Bước 1 -> Bước 2
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+
+        // Bước 2 -> Bước 3
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
+
+        // Chọn VNPAY
+        const vnpayRadio = screen.getByLabelText(/VNPAY QR/i)
+        fireEvent.click(vnpayRadio)
+
+        // Bước 3 -> Bước 4
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() =>
+            expect(
+                screen.getByRole('button', { name: /place order|đặt hàng/i }),
+            ).toBeVisible(),
+        )
+
+        // Bấm Đặt hàng
+        fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
+
+        // Chuyển hướng sang sandbox-payment
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith(
+                'sandbox-payment',
+                expect.objectContaining({ provider: 'vnpay' }),
+            )
+        })
+    })
+
+    it('CheckoutPage: hiển thị thông báo lỗi khi đặt hàng thất bại (Accept Criteria 2, 5)', async () => {
+        const spy = vi
+            .spyOn(ordersApi, 'createOrder')
+            .mockRejectedValueOnce(new Error('Gateway connection timeout'))
+        render(<CheckoutPage />)
+        // 1 -> 2 -> 3 -> 4
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() =>
+            expect(
+                screen.getByRole('button', { name: /place order|đặt hàng/i }),
+            ).toBeVisible(),
+        )
+
+        // Bấm Đặt hàng
+        fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
+
+        // Hiển thị lỗi rõ ràng trên AlertBanner
+        await waitFor(() => {
+            expect(screen.getByText(/Gateway connection timeout/i)).toBeVisible()
+        })
+        expect(holder.current.showToast).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'error', message: 'Gateway connection timeout' }),
+        )
+        spy.mockRestore()
+    })
+
+    it('SandboxPaymentPage: hiển thị giao diện sandbox và mô phỏng thanh toán thành công (Accept Criteria 3)', async () => {
+        holder.current.pageParams = {
+            orderId: 'ORD-TEST-999',
+            amount: 450000,
+            provider: 'vnpay',
+        }
+        render(<SandboxPaymentPage />)
+
+        expect(screen.getByText('ORD-TEST-999')).toBeVisible()
+        expect(screen.getByText(/Sandbox Environment|Môi trường Sandbox/i)).toBeVisible()
+
+        // Bấm Xác nhận thanh toán thành công
+        const successBtn = screen.getByRole('button', {
+            name: /Simulate Success|thanh toán thành công/i,
+        })
+        fireEvent.click(successBtn)
+
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+                status: 'success',
+                orderId: 'ORD-TEST-999',
+            })
+        })
+    })
+
+    it('SandboxPaymentPage: mô phỏng thanh toán thất bại điều hướng về payment-result failed (Accept Criteria 2)', async () => {
+        holder.current.pageParams = {
+            orderId: 'ORD-TEST-999',
+            amount: 450000,
+            provider: 'vnpay',
+        }
+        render(<SandboxPaymentPage />)
+
+        // Bấm Mô phỏng thanh toán thất bại
+        const failBtn = screen.getByRole('button', {
+            name: /Simulate Failure|thanh toán thất bại/i,
+        })
+        fireEvent.click(failBtn)
+
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+                status: 'failed',
+                orderId: 'ORD-TEST-999',
+                reason: 'Sandbox transaction rejected',
+            })
+        })
     })
 
     /**
