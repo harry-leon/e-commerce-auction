@@ -1,4 +1,5 @@
-import { api, ApiClientError, readSession } from './client'
+import { api, post, ApiClientError, readSession } from './client'
+import type { ApiResponse } from './client'
 import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
 
@@ -71,6 +72,10 @@ export interface CreateOrderResponse {
     paymentMethod: 'CARD' | 'VNPAY' | 'COD'
     paymentUrl?: string
 }
+
+export type PlaceOrderRequest = CreateOrderRequest
+export type OrderDetailResponse = Order
+export type OrderSummaryResponse = Order
 
 export interface WithdrawalRequest {
     id: string
@@ -562,7 +567,7 @@ export const ordersApi = {
             discount: calcDiscount,
             shipping: calcShipping,
             total: calcTotal,
-            status: 'pending',
+            status: 'PENDING_PAYMENT',
             refundStatus: 'none',
             paymentStatus: 'held',
             shippingAddress: data.shippingAddress,
@@ -584,7 +589,7 @@ export const ordersApi = {
         return {
             id: orderId,
             orderNo: orderId,
-            status: 'pending',
+            status: 'PENDING_PAYMENT',
             subtotal: calcSubtotal,
             shippingFee: calcShipping,
             discount: calcDiscount,

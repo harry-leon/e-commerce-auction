@@ -2610,7 +2610,7 @@ export function SandboxPaymentPage() {
             await new Promise((r) => setTimeout(r, 600))
             try {
                 // Cố gắng cập nhật trạng thái đơn hàng trong mock store nếu có
-                await ordersApi.updateOrderStatus(orderId, 'paid', 'Sandbox payment approved')
+                await ordersApi.updateOrderStatus(orderId, 'PAID', 'Sandbox payment approved')
             } catch {
                 // Bỏ qua nếu đơn là ID tạm thời
             }
