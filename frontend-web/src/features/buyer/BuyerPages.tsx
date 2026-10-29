@@ -2604,6 +2604,7 @@ export function SandboxPaymentPage() {
             try {
                 // Cố gắng cập nhật trạng thái đơn hàng trong mock store nếu có
                 // Cố gắng cập nhật trạng thái đơn hàng sang PAID theo chuẩn OrderStatus
+
                 await ordersApi.updateOrderStatus(orderId, 'PAID', 'Sandbox payment approved')
             } catch {
                 // Bỏ qua nếu đơn là ID tạm thời

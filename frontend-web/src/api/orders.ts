@@ -1,14 +1,6 @@
 import { api, post, ApiClientError, readSession } from './client'
 import type { ApiResponse } from './client'
-import type {
-    Order,
-    OrderDetailResponse,
-    OrderSummaryResponse,
-    OrderStatus,
-    PaymentStatus,
-    PlaceOrderRequest,
-    UserRole,
-} from '../types'
+import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
 
 /**
@@ -80,6 +72,10 @@ export interface CreateOrderResponse {
     paymentMethod: 'CARD' | 'VNPAY' | 'COD'
     paymentUrl?: string
 }
+
+export type PlaceOrderRequest = CreateOrderRequest
+export type OrderDetailResponse = Order
+export type OrderSummaryResponse = Order
 
 export interface WithdrawalRequest {
     id: string
@@ -618,6 +614,7 @@ export const ordersApi = {
             shipping: calcShipping,
             total: calcTotal,
             // Khởi tạo trạng thái đơn hàng ban đầu là PENDING_PAYMENT theo đúng chuẩn V2 và schema DB
+
             status: 'PENDING_PAYMENT',
             refundStatus: 'none',
             paymentStatus: 'held',
@@ -641,6 +638,7 @@ export const ordersApi = {
             id: orderId,
             orderNo: orderId,
             // Khởi tạo trạng thái đơn hàng ban đầu là PENDING_PAYMENT theo đúng chuẩn V2 và schema DB
+
             status: 'PENDING_PAYMENT',
             subtotal: calcSubtotal,
             shippingFee: calcShipping,
