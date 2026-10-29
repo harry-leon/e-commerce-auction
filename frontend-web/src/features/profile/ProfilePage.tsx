@@ -1,5 +1,12 @@
 import { useState, type FormEvent } from 'react'
-import { api, post, mapUser, errorMessage, extractFieldErrors, type ApiUser } from '../../api/client'
+import {
+    api,
+    post,
+    mapUser,
+    errorMessage,
+    extractFieldErrors,
+    type ApiUser,
+} from '../../api/client'
 import {
     validatePasswordPolicy,
     PasswordRequirementsChecklist,
@@ -68,7 +75,11 @@ export function ProfilePage() {
         const form = new FormData(event.currentTarget)
         const oldPass = ((form.get('oldPassword') as string) || oldPassword || '').trim()
         const newPass = ((form.get('newPassword') as string) || newPassword || '').trim()
-        const confirmPass = ((form.get('confirmPassword') as string) || confirmPassword || '').trim()
+        const confirmPass = (
+            (form.get('confirmPassword') as string) ||
+            confirmPassword ||
+            ''
+        ).trim()
 
         setSaving(true)
         setFailure('')
@@ -81,7 +92,8 @@ export function ProfilePage() {
 
         const policy = validatePasswordPolicy(newPass)
         if (!policy.isValid) {
-            errors.newPassword = 'Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa (A-Z), 1 chữ số, 1 ký tự đặc biệt'
+            errors.newPassword =
+                'Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa (A-Z), 1 chữ số, 1 ký tự đặc biệt'
         }
 
         if (newPass !== confirmPass) {
@@ -99,7 +111,10 @@ export function ProfilePage() {
                 currentPassword: oldPass,
                 newPassword: newPass,
             })
-            showToast({ type: 'success', message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.' })
+            showToast({
+                type: 'success',
+                message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.',
+            })
             setUser(null)
             navigate('login')
         } catch (err) {

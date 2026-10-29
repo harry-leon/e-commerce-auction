@@ -1,7 +1,7 @@
 /**
  * Quy chuẩn API Response & Error Models cho Client (Web & Mobile).
  * Đồng bộ 100% với Backend "QUY CHUẨN API RESPONSE & DANH MỤC MÃ LỖI (v2)".
- * 
+ *
  * Top-level Envelope bắt buộc gồm 4 key:
  * {
  *   "success": boolean,

@@ -146,26 +146,30 @@ describe('Component hiển thị điều kiện mật khẩu (PasswordRequiremen
                 lang="vi"
             />,
         )
-        expect(screen.getByTestId('confirm-password-indicator')).toHaveAttribute('data-match', 'true')
+        expect(screen.getByTestId('confirm-password-indicator')).toHaveAttribute(
+            'data-match',
+            'true',
+        )
         expect(screen.getByText('Mật khẩu xác nhận trùng khớp')).toBeInTheDocument()
     })
 })
 
 describe('Đọc lỗi 422 từ BE (error.details[] và extractFieldErrors)', () => {
     it('trích xuất đúng field và message từ response 422 có envelope chuẩn', () => {
-        const error = new ApiClientError(
-            'Dữ liệu yêu cầu không hợp lệ',
-            'VALIDATION_ERROR',
-            422,
-            [
-                { field: 'password', code: 'SIZE', message: 'Mật khẩu phải từ 8 đến 100 ký tự' },
-                { field: 'password', code: 'UPPERCASE_REQUIRED', message: 'Mật khẩu cần ít nhất 1 chữ in hoa' },
-                { field: 'email', code: 'INVALID', message: 'Email không hợp lệ' },
-            ],
-        )
+        const error = new ApiClientError('Dữ liệu yêu cầu không hợp lệ', 'VALIDATION_ERROR', 422, [
+            { field: 'password', code: 'SIZE', message: 'Mật khẩu phải từ 8 đến 100 ký tự' },
+            {
+                field: 'password',
+                code: 'UPPERCASE_REQUIRED',
+                message: 'Mật khẩu cần ít nhất 1 chữ in hoa',
+            },
+            { field: 'email', code: 'INVALID', message: 'Email không hợp lệ' },
+        ])
 
         const fieldErrors = extractFieldErrors(error)
-        expect(fieldErrors.password).toBe('Mật khẩu phải từ 8 đến 100 ký tự. Mật khẩu cần ít nhất 1 chữ in hoa')
+        expect(fieldErrors.password).toBe(
+            'Mật khẩu phải từ 8 đến 100 ký tự. Mật khẩu cần ít nhất 1 chữ in hoa',
+        )
         expect(fieldErrors.email).toBe('Email không hợp lệ')
     })
 
@@ -214,7 +218,9 @@ describe('Form Đăng ký (RegisterPage)', () => {
         await ui.click(screen.getByRole('button', { name: /Register|Đăng ký/i }))
 
         // Bị chặn và hiển thị thông báo lỗi
-        expect(screen.getByText(/Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa/i)).toBeInTheDocument()
+        expect(
+            screen.getByText(/Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa/i),
+        ).toBeInTheDocument()
         expect(fetch).not.toHaveBeenCalled()
     })
 
@@ -235,7 +241,8 @@ describe('Form Đăng ký (RegisterPage)', () => {
                                 {
                                     field: 'password',
                                     code: 'SYMBOL_REQUIRED',
-                                    message: 'Mật khẩu cần ít nhất 1 ký tự đặc biệt (ví dụ @, !, #)',
+                                    message:
+                                        'Mật khẩu cần ít nhất 1 ký tự đặc biệt (ví dụ @, !, #)',
                                 },
                             ],
                         },
@@ -268,7 +275,9 @@ describe('Form Đăng ký (RegisterPage)', () => {
 
         // Đọc error.details[] và hiển thị lỗi cụ thể của field password
         await waitFor(() => {
-            expect(screen.getByText('Mật khẩu cần ít nhất 1 ký tự đặc biệt (ví dụ @, !, #)')).toBeInTheDocument()
+            expect(
+                screen.getByText('Mật khẩu cần ít nhất 1 ký tự đặc biệt (ví dụ @, !, #)'),
+            ).toBeInTheDocument()
         })
         expect(mockShowToast).toHaveBeenCalledWith({
             type: 'error',
@@ -279,7 +288,10 @@ describe('Form Đăng ký (RegisterPage)', () => {
 
 describe('Form Quên mật khẩu (ForgotPasswordPage)', () => {
     beforeEach(() => {
-        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'OK' }))))
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'OK' }))),
+        )
         mockNavigate.mockClear()
     })
     afterEach(() => vi.unstubAllGlobals())
@@ -289,7 +301,9 @@ describe('Form Quên mật khẩu (ForgotPasswordPage)', () => {
         render(<ForgotPasswordPage />)
 
         await ui.type(screen.getByPlaceholderText('you@example.com'), 'buyer@test.vn')
-        await ui.click(screen.getByRole('button', { name: /Gửi liên kết đặt lại|Send Reset Link/i }))
+        await ui.click(
+            screen.getByRole('button', { name: /Gửi liên kết đặt lại|Send Reset Link/i }),
+        )
 
         // Hiển thị hướng dẫn mở link Keycloak
         expect(await screen.findByRole('status')).toHaveTextContent(/Keycloak/i)
@@ -313,7 +327,9 @@ describe('Form Đổi mật khẩu (ProfilePage)', () => {
             vi.fn((input: string) => {
                 const path = String(input)
                 if (path.includes('/categories')) {
-                    return Promise.resolve(new Response(JSON.stringify({ success: true, data: [] })))
+                    return Promise.resolve(
+                        new Response(JSON.stringify({ success: true, data: [] })),
+                    )
                 }
                 if (path.includes('/users/me/activity-history')) {
                     return Promise.resolve(new Response(JSON.stringify({ content: [] })))
@@ -364,7 +380,11 @@ describe('Form Đổi mật khẩu (ProfilePage)', () => {
 
         await ui.click(screen.getByRole('button', { name: 'Đổi mật khẩu' }))
 
-        expect(screen.getByText('Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa (A-Z), 1 chữ số, 1 ký tự đặc biệt')).toBeInTheDocument()
+        expect(
+            screen.getByText(
+                'Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa (A-Z), 1 chữ số, 1 ký tự đặc biệt',
+            ),
+        ).toBeInTheDocument()
         const changePassCalls = vi
             .mocked(fetch)
             .mock.calls.filter(([url]) => String(url).includes('/auth/change-password'))
@@ -406,7 +426,9 @@ describe('Form Đổi mật khẩu (ProfilePage)', () => {
             vi.fn((input: string) => {
                 const path = String(input)
                 if (path.includes('/categories')) {
-                    return Promise.resolve(new Response(JSON.stringify({ success: true, data: [] })))
+                    return Promise.resolve(
+                        new Response(JSON.stringify({ success: true, data: [] })),
+                    )
                 }
                 if (path.includes('/users/me/activity-history')) {
                     return Promise.resolve(new Response(JSON.stringify({ content: [] })))

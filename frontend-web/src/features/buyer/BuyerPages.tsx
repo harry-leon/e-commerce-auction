@@ -48,11 +48,7 @@ import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../moc
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Order, OrderStatus, Product } from '../../types'
-import {
-    ordersApi,
-    type CreateOrderRequest,
-    type CreateOrderResponse,
-} from '../../api/orders'
+import { ordersApi, type CreateOrderRequest, type CreateOrderResponse } from '../../api/orders'
 import { useLoad } from '../../hooks/useLoad'
 import {
     readSession,
@@ -157,7 +153,9 @@ export function HomePage() {
     const liveProducts: Product[] = (prodData?.data || []).map((p) => {
         const sku = p.skus?.[0]
         const categoryObj = catData?.data?.find((c) => c.id === p.categoryId)
-        const categoryName = categoryObj ? (categoryObj.nameVi || categoryObj.name) : 'Thiết bị điện tử'
+        const categoryName = categoryObj
+            ? categoryObj.nameVi || categoryObj.name
+            : 'Thiết bị điện tử'
         return {
             id: p.id,
             name: p.name,
@@ -167,7 +165,10 @@ export function HomePage() {
             price: sku?.price || 0,
             originalPrice: sku?.originalPrice,
             sku: sku?.skuCode || '',
-            images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+            images:
+                p.images && p.images.length > 0
+                    ? p.images.map((img) => img.url)
+                    : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
             description: p.description || '',
             descriptionVi: p.description || '',
             enableAuction: p.auctionEnabled || false,
@@ -260,7 +261,9 @@ export function HomePage() {
                                     variant="ghost"
                                     size="lg"
                                     className="border-white/40 text-white hover:bg-white/10 border"
-                                    onClick={() => navigate('product-detail', { id: liveProducts[0].id })}
+                                    onClick={() =>
+                                        navigate('product-detail', { id: liveProducts[0].id })
+                                    }
                                 >
                                     <Package size={16} />
                                     {liveProducts[0].name}
@@ -392,7 +395,9 @@ export function HomePage() {
                         </div>
                     ) : (
                         <p className="text-gray-500 py-8 text-center">
-                            {lang === 'en' ? 'No products available.' : 'Chưa có sản phẩm nào trong cơ sở dữ liệu.'}
+                            {lang === 'en'
+                                ? 'No products available.'
+                                : 'Chưa có sản phẩm nào trong cơ sở dữ liệu.'}
                         </p>
                     )}
                 </section>
@@ -837,10 +842,11 @@ export function ProductDetailPage() {
                                                 key={i}
                                                 type="button"
                                                 onClick={() => setActiveImg(i)}
-                                                className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${i === activeImg
-                                                    ? 'border-white scale-110'
-                                                    : 'border-white/25 opacity-50 hover:opacity-80'
-                                                    }`}
+                                                className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                                                    i === activeImg
+                                                        ? 'border-white scale-110'
+                                                        : 'border-white/25 opacity-50 hover:opacity-80'
+                                                }`}
                                             >
                                                 <img
                                                     src={img}
@@ -895,10 +901,11 @@ export function ProductDetailPage() {
                                     key={i}
                                     type="button"
                                     onClick={() => setActiveImg(i)}
-                                    className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${i === activeImg
-                                        ? 'border-primary ring-2 ring-primary/20 scale-105'
-                                        : 'border-transparent opacity-70 hover:opacity-100'
-                                        }`}
+                                    className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${
+                                        i === activeImg
+                                            ? 'border-primary ring-2 ring-primary/20 scale-105'
+                                            : 'border-transparent opacity-70 hover:opacity-100'
+                                    }`}
                                 >
                                     <img src={img} alt="" className="w-full h-full object-cover" />
                                 </button>
@@ -1341,13 +1348,13 @@ export function CartPage() {
             setCart((prev) =>
                 prev
                     ? {
-                        ...prev,
-                        items: [],
-                        totalItems: 0,
-                        totalQuantity: 0,
-                        subtotal: 0,
-                        totalAmount: 0,
-                    }
+                          ...prev,
+                          items: [],
+                          totalItems: 0,
+                          totalQuantity: 0,
+                          subtotal: 0,
+                          totalAmount: 0,
+                      }
                     : null,
             )
             setCartCount(0)
@@ -1485,7 +1492,9 @@ export function CartPage() {
                 {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}
                 <div className="space-y-3">
                     {items.map((item) => {
-                        const displayImage = item.thumbnailUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'
+                        const displayImage =
+                            item.thumbnailUrl ||
+                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'
                         const isActing = actionLoadingId === item.id
 
                         return (
@@ -2426,8 +2435,8 @@ export function CheckoutPage() {
                                             ? 'You will be redirected to VNPAY portal to scan QR code and complete payment.'
                                             : 'Bạn sẽ được chuyển hướng sang cổng VNPAY để quét mã QR thanh toán sau khi bấm Đặt hàng.'
                                         : lang === 'en'
-                                            ? 'You will pay in cash directly to the courier when receiving the package.'
-                                            : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
+                                          ? 'You will pay in cash directly to the courier when receiving the package.'
+                                          : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
                                 </div>
                             )}
 
@@ -2458,12 +2467,7 @@ export function CheckoutPage() {
                             </h2>
 
                             {/* Hiển thị lỗi rõ ràng khi đặt hàng hoặc chuyển hướng thất bại (Accept Criteria 2 & 5) */}
-                            {checkoutError && (
-                                <AlertBanner
-                                    type="error"
-                                    message={checkoutError}
-                                />
-                            )}
+                            {checkoutError && <AlertBanner type="error" message={checkoutError} />}
 
                             <div className="space-y-2 text-sm">
                                 {[
@@ -2481,7 +2485,23 @@ export function CheckoutPage() {
                                             ? `Visa ending ${paymentData.cardNumber.replace(/\s+/g, '').slice(-4) || '4242'}`
                                             : paymentData.method,
                                     ],
-                                    [tr(lang, 'total'), formatCurrency(cartItems.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0) + (shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)), lang)],
+                                    [
+                                        tr(lang, 'total'),
+                                        formatCurrency(
+                                            cartItems.reduce(
+                                                (acc, i) => acc + i.unitPrice * i.quantity,
+                                                0,
+                                            ) +
+                                                (shipping === 'GHN'
+                                                    ? lang === 'vi'
+                                                        ? 55000
+                                                        : 3.99
+                                                    : lang === 'vi'
+                                                      ? 35000
+                                                      : 2.49),
+                                            lang,
+                                        ),
+                                    ],
                                 ].map(([k, v]) => (
                                     <div
                                         key={k}
@@ -2525,7 +2545,10 @@ export function CheckoutPage() {
                             cartItems.map((item) => (
                                 <div key={item.id} className="flex gap-3">
                                     <img
-                                        src={item.thumbnailUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        src={
+                                            item.thumbnailUrl ||
+                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                        }
                                         alt={item.productName}
                                         className="w-12 h-12 object-cover rounded-lg"
                                     />
@@ -2533,9 +2556,7 @@ export function CheckoutPage() {
                                         <p className="text-xs font-semibold line-clamp-1">
                                             {item.productName}
                                         </p>
-                                        <p className="text-xs text-gray-500">
-                                            x{item.quantity}
-                                        </p>
+                                        <p className="text-xs text-gray-500">x{item.quantity}</p>
                                         <p className="text-sm font-bold text-primary mt-0.5">
                                             {formatCurrency(item.unitPrice, lang)}
                                         </p>
@@ -2544,14 +2565,26 @@ export function CheckoutPage() {
                             ))
                         ) : (
                             <p className="text-xs text-gray-400 italic py-2">
-                                {lang === 'en' ? 'Cart is empty' : 'Chưa có sản phẩm trong giỏ hàng'}
+                                {lang === 'en'
+                                    ? 'Cart is empty'
+                                    : 'Chưa có sản phẩm trong giỏ hàng'}
                             </p>
                         )}
                     </div>
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
                         {(() => {
-                            const subtotal = cartItems.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0)
-                            const shippingFee = shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+                            const subtotal = cartItems.reduce(
+                                (acc, i) => acc + i.unitPrice * i.quantity,
+                                0,
+                            )
+                            const shippingFee =
+                                shipping === 'GHN'
+                                    ? lang === 'vi'
+                                        ? 55000
+                                        : 3.99
+                                    : lang === 'vi'
+                                      ? 35000
+                                      : 2.49
                             const total = subtotal > 0 ? subtotal + shippingFee : 0
                             return [
                                 [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
@@ -2906,13 +2939,13 @@ export function PaymentResultPage() {
 // ─── Order History Page ───
 /**
  * Màn hình Lịch sử đơn hàng của Buyer
- * 
+ *
  * Chức năng: Hiển thị danh sách các đơn hàng đã mua của Buyer theo phân loại trạng thái,
  * cho phép tìm kiếm theo mã đơn hoặc sản phẩm, hủy nhanh đơn chưa xử lý, và điều hướng vào xem chi tiết.
- * 
+ *
  * Đầu vào: Bộ lọc tab trạng thái (all, pending, paid, processing, shipped, delivered, completed, cancelled, refunded)
  * và chuỗi từ khóa tìm kiếm.
- * 
+ *
  * Luồng xử lý:
  * 1. Gọi `ordersApi.getOrders({ role: 'buyer', status, search })`.
  * 2. Ưu tiên lấy từ REST API/DB; nếu không có kết nối thì fallback dữ liệu mock JSON trong localStorage.
@@ -2980,7 +3013,8 @@ export function OrderHistoryPage() {
             await ordersApi.cancelOrder(cancelOrderId, cancelReason)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+                message:
+                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
             })
             setCancelOrderId(null)
             setCancelReason('')
@@ -2988,7 +3022,9 @@ export function OrderHistoryPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err.message || (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
+                message:
+                    err.message ||
+                    (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
             })
         }
     }
@@ -3025,7 +3061,11 @@ export function OrderHistoryPage() {
                     {loading ? (
                         <div className="py-12 text-center text-gray-400">
                             <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
-                            <p>{lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}</p>
+                            <p>
+                                {lang === 'en'
+                                    ? 'Loading orders...'
+                                    : 'Đang tải danh sách đơn hàng...'}
+                            </p>
                         </div>
                     ) : orders.length === 0 ? (
                         <EmptyState
@@ -3073,9 +3113,12 @@ export function OrderHistoryPage() {
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
-                                                    onClick={() => navigate('order-detail', { id: order.id })}
+                                                    onClick={() =>
+                                                        navigate('order-detail', { id: order.id })
+                                                    }
                                                 >
-                                                    {tr(lang, 'orderDetail')} <ChevronRight size={14} />
+                                                    {tr(lang, 'orderDetail')}{' '}
+                                                    <ChevronRight size={14} />
                                                 </Button>
                                             </div>
                                         </div>
@@ -3098,7 +3141,11 @@ export function OrderHistoryPage() {
                                                                 {item.productName}
                                                             </p>
                                                             <p className="text-xs text-gray-500 mt-0.5">
-                                                                ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                                                ×{item.quantity} ·{' '}
+                                                                {formatCurrency(
+                                                                    item.unitPrice,
+                                                                    lang,
+                                                                )}
                                                             </p>
                                                         </div>
                                                     </div>
@@ -3124,7 +3171,9 @@ export function OrderHistoryPage() {
                                             </div>
                                             <div className="text-right">
                                                 <span className="text-xs text-gray-500 mr-2">
-                                                    {lang === 'en' ? 'Total payable:' : 'Tổng thanh toán:'}
+                                                    {lang === 'en'
+                                                        ? 'Total payable:'
+                                                        : 'Tổng thanh toán:'}
                                                 </span>
                                                 <span className="font-bold text-base text-primary">
                                                     {formatCurrency(order.total, lang)}
@@ -3168,7 +3217,11 @@ export function OrderHistoryPage() {
                         label={lang === 'en' ? 'Cancellation reason' : 'Lý do hủy đơn'}
                         value={cancelReason}
                         onChange={(event) => setCancelReason(event.target.value)}
-                        placeholder={lang === 'en' ? 'Tell us why you are cancelling...' : 'Nhập lý do hủy đơn...'}
+                        placeholder={
+                            lang === 'en'
+                                ? 'Tell us why you are cancelling...'
+                                : 'Nhập lý do hủy đơn...'
+                        }
                         rows={3}
                     />
                 </div>
@@ -3180,12 +3233,12 @@ export function OrderHistoryPage() {
 // ─── Order Detail Page ───
 /**
  * Màn hình Chi tiết đơn hàng của Buyer
- * 
+ *
  * Chức năng: Hiển thị đầy đủ thông tin một đơn hàng: tiến trình timeline, sản phẩm, địa chỉ,
  * thanh toán, trạng thái ký quỹ Escrow (Bảo vệ Buyer), vận chuyển tracking;
  * cho phép Buyer thực hiện các hành động: Hủy đơn, Xác nhận đã nhận hàng (giải ngân Escrow),
  * Mở khiếu nại (giữ tiền để Admin xử lý), và Đánh giá người bán.
- * 
+ *
  * Luồng dữ liệu:
  * - Gọi `ordersApi.getOrderById(pageParams.id)` để lấy thông tin đơn hàng mới nhất từ API / Mock store.
  * - Các tương tác hành động gọi API tương ứng trong `ordersApi` và cập nhật trực tiếp dữ liệu.
@@ -3226,7 +3279,11 @@ export function OrderDetailPage() {
             <BuyerLayout>
                 <div className="py-20 text-center text-gray-500">
                     <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-3" />
-                    <p>{lang === 'en' ? 'Loading order details...' : 'Đang tải chi tiết đơn hàng...'}</p>
+                    <p>
+                        {lang === 'en'
+                            ? 'Loading order details...'
+                            : 'Đang tải chi tiết đơn hàng...'}
+                    </p>
                 </div>
             </BuyerLayout>
         )
@@ -3249,9 +3306,9 @@ export function OrderDetailPage() {
     const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
     const protectionDays = order.protectionEndsAt
         ? Math.max(
-            0,
-            Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
-        )
+              0,
+              Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
+          )
         : 0
     const isProtectionActive = order.status === 'DELIVERED' && paymentStatus === 'protection_period'
 
@@ -3270,7 +3327,8 @@ export function OrderDetailPage() {
         } catch {
             showToast({
                 type: 'error',
-                message: lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
+                message:
+                    lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
             })
         }
     }
@@ -3305,7 +3363,8 @@ export function OrderDetailPage() {
             setCancelOpen(false)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+                message:
+                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
             })
         } catch {
             showToast({
@@ -3364,7 +3423,9 @@ export function OrderDetailPage() {
 
                     {/* Danh sách sản phẩm mua */}
                     <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-4">{lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}</h3>
+                        <h3 className="font-bold mb-4">
+                            {lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}
+                        </h3>
                         <div className="divide-y divide-border/60">
                             {order.items.map((item) => (
                                 <div
@@ -3377,9 +3438,12 @@ export function OrderDetailPage() {
                                         className="w-16 h-16 object-cover rounded-xl border border-border shrink-0"
                                     />
                                     <div className="flex-1 min-w-0">
-                                        <p className="font-semibold text-gray-900 line-clamp-1">{item.productName}</p>
+                                        <p className="font-semibold text-gray-900 line-clamp-1">
+                                            {item.productName}
+                                        </p>
                                         <p className="text-sm text-gray-500 mt-1">
-                                            ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                            ×{item.quantity} ·{' '}
+                                            {formatCurrency(item.unitPrice, lang)}
                                         </p>
                                     </div>
                                     <p className="font-bold text-primary shrink-0">
@@ -3421,7 +3485,9 @@ export function OrderDetailPage() {
                     {/* Timeline tiến trình đơn hàng */}
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Order Status Timeline' : 'Tiến trình trạng thái đơn hàng'}
+                            {lang === 'en'
+                                ? 'Order Status Timeline'
+                                : 'Tiến trình trạng thái đơn hàng'}
                         </h3>
                         <OrderTimeline status={order.status} />
                     </div>
@@ -3446,14 +3512,23 @@ export function OrderDetailPage() {
                                     </p>
                                     {order.protectionEndsAt && (
                                         <p className="text-xs text-gray-500 mt-2">
-                                            {lang === 'en' ? 'Auto release at' : 'Tự động giải ngân lúc'}:{' '}
-                                            {new Date(order.protectionEndsAt).toLocaleString()}
+                                            {lang === 'en'
+                                                ? 'Auto release at'
+                                                : 'Tự động giải ngân lúc'}
+                                            : {new Date(order.protectionEndsAt).toLocaleString()}
                                         </p>
                                     )}
                                 </div>
                                 <div className="flex sm:flex-col gap-2 shrink-0 w-full sm:w-auto">
-                                    <Button variant="primary" size="sm" onClick={confirmDelivery} className="flex-1 sm:flex-initial">
-                                        {lang === 'en' ? 'Confirm Received' : 'Xác nhận đã nhận hàng'}
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={confirmDelivery}
+                                        className="flex-1 sm:flex-initial"
+                                    >
+                                        {lang === 'en'
+                                            ? 'Confirm Received'
+                                            : 'Xác nhận đã nhận hàng'}
                                     </Button>
                                     <Button
                                         variant="outline"
@@ -3560,7 +3635,9 @@ export function OrderDetailPage() {
                 <div className="space-y-5">
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'shippingAddress')}</h3>
-                        <p className="text-sm text-gray-700 leading-relaxed">{order.shippingAddress}</p>
+                        <p className="text-sm text-gray-700 leading-relaxed">
+                            {order.shippingAddress}
+                        </p>
                     </div>
 
                     <div className="nexus-card p-5">
@@ -3986,22 +4063,23 @@ export function SellerShopPage() {
                                                         ? `Đã theo dõi ${sellerName}`
                                                         : `Followed ${sellerName}`
                                                     : lang === 'vi'
-                                                        ? 'Đã bỏ theo dõi'
-                                                        : 'Unfollowed',
+                                                      ? 'Đã bỏ theo dõi'
+                                                      : 'Unfollowed',
                                             })
                                         }}
-                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${isFollowing
-                                            ? 'bg-white/20 text-white border border-white/40'
-                                            : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
-                                            }`}
+                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                                            isFollowing
+                                                ? 'bg-white/20 text-white border border-white/40'
+                                                : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
+                                        }`}
                                     >
                                         {isFollowing
                                             ? lang === 'vi'
                                                 ? '✓ Đang Theo Dõi'
                                                 : '✓ Following'
                                             : lang === 'vi'
-                                                ? '+ Theo Dõi'
-                                                : '+ Follow'}
+                                              ? '+ Theo Dõi'
+                                              : '+ Follow'}
                                     </button>
                                     <button
                                         onClick={() =>
@@ -4096,10 +4174,11 @@ export function SellerShopPage() {
                             <button
                                 key={tab.id}
                                 onClick={() => setShopTab(tab.id)}
-                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${shopTab === tab.id
-                                    ? 'bg-primary text-white shadow-sm'
-                                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                                    }`}
+                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                                    shopTab === tab.id
+                                        ? 'bg-primary text-white shadow-sm'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                                }`}
                             >
                                 {tab.label} ({tab.count})
                             </button>
@@ -4156,14 +4235,14 @@ export function NotificationPage() {
             type === 'order'
                 ? Package
                 : type === 'auction'
-                    ? Gavel
-                    : type === 'payment'
-                        ? CreditCard
-                        : type === 'promotion'
-                            ? Gift
-                            : type === 'reputation'
-                                ? Star
-                                : Settings2
+                  ? Gavel
+                  : type === 'payment'
+                    ? CreditCard
+                    : type === 'promotion'
+                      ? Gift
+                      : type === 'reputation'
+                        ? Star
+                        : Settings2
         return <Icon size={18} />
     }
 
@@ -4303,14 +4382,14 @@ export function NotificationPage() {
                                                     <td className="text-center py-3">
                                                         <Toggle
                                                             checked={true}
-                                                            onChange={() => { }}
+                                                            onChange={() => {}}
                                                             disabled={item.locked}
                                                         />
                                                     </td>
                                                     <td className="text-center py-3">
                                                         <Toggle
                                                             checked={!item.locked}
-                                                            onChange={() => { }}
+                                                            onChange={() => {}}
                                                             disabled={item.locked}
                                                         />
                                                     </td>

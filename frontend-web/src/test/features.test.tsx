@@ -622,9 +622,7 @@ describe('Cart, Checkout và Payment Result', () => {
         // Bước 3 -> Bước 4
         fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
         await waitFor(() =>
-            expect(
-                screen.getByRole('button', { name: /place order|đặt hàng/i }),
-            ).toBeVisible(),
+            expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
         )
 
         // Bấm Đặt hàng
@@ -651,9 +649,7 @@ describe('Cart, Checkout và Payment Result', () => {
         await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
         fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
         await waitFor(() =>
-            expect(
-                screen.getByRole('button', { name: /place order|đặt hàng/i }),
-            ).toBeVisible(),
+            expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
         )
 
         // Bấm Đặt hàng

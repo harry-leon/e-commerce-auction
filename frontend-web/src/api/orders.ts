@@ -420,13 +420,12 @@ export const ordersApi = {
      */
     async checkoutPreview(data: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
         try {
-            const response = await api<{ success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse>(
-                '/orders/checkout/preview',
-                {
-                    method: 'POST',
-                    body: JSON.stringify(data),
-                },
-            )
+            const response = await api<
+                { success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse
+            >('/orders/checkout/preview', {
+                method: 'POST',
+                body: JSON.stringify(data),
+            })
             const result =
                 'data' in response && response.data
                     ? response.data
@@ -492,19 +491,18 @@ export const ordersApi = {
                 : `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`)
 
         try {
-            const response = await api<{ success?: boolean; data?: CreateOrderResponse } | CreateOrderResponse>(
-                '/orders',
-                {
-                    method: 'POST',
-                    headers: {
-                        'Idempotency-Key': key,
-                    },
-                    body: JSON.stringify({
-                        ...data,
-                        sourceType: data.sourceType || 'REGULAR',
-                    }),
+            const response = await api<
+                { success?: boolean; data?: CreateOrderResponse } | CreateOrderResponse
+            >('/orders', {
+                method: 'POST',
+                headers: {
+                    'Idempotency-Key': key,
                 },
-            )
+                body: JSON.stringify({
+                    ...data,
+                    sourceType: data.sourceType || 'REGULAR',
+                }),
+            })
             const result =
                 'data' in response && response.data
                     ? response.data
@@ -625,7 +623,12 @@ export const ordersApi = {
                 updatedAt: new Date().toISOString(),
                 statusHistory: [
                     ...(orders[index].statusHistory || []),
-                    { status: 'CANCELLED', reason: reason?.trim() || 'Buyer cancellation', actor: 'buyer', changedAt: new Date().toISOString() },
+                    {
+                        status: 'CANCELLED',
+                        reason: reason?.trim() || 'Buyer cancellation',
+                        actor: 'buyer',
+                        changedAt: new Date().toISOString(),
+                    },
                 ],
             }
             writeLocalMockOrders(orders)
@@ -677,7 +680,12 @@ export const ordersApi = {
                 updatedAt: new Date().toISOString(),
                 statusHistory: [
                     ...(orders[index].statusHistory || []),
-                    { status, reason: reason?.trim() || 'No reason provided', actor, changedAt: new Date().toISOString() },
+                    {
+                        status,
+                        reason: reason?.trim() || 'No reason provided',
+                        actor,
+                        changedAt: new Date().toISOString(),
+                    },
                 ],
             }
             writeLocalMockOrders(orders)
@@ -798,7 +806,11 @@ export const ordersApi = {
         const requests = readLocalMockWithdrawals()
         const index = requests.findIndex((request) => request.id === id)
         if (index === -1) throw new Error('Withdrawal request not found')
-        requests[index] = { ...requests[index], status: 'approved', approvedAt: new Date().toISOString() }
+        requests[index] = {
+            ...requests[index],
+            status: 'approved',
+            approvedAt: new Date().toISOString(),
+        }
         writeLocalMockWithdrawals(requests)
         return requests[index]
     },
@@ -815,7 +827,10 @@ export const ordersApi = {
      * Lỗi: Ném ApiClientError nếu backend validation thất bại hoặc giỏ đã hết hạn.
      */
     async previewCheckout(request: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
-        const envelope = await post<ApiResponse<CheckoutPreviewResponse>>('/orders/checkout/preview', request)
+        const envelope = await post<ApiResponse<CheckoutPreviewResponse>>(
+            '/orders/checkout/preview',
+            request,
+        )
         if (!envelope?.data) {
             throw new Error('Không thể tải thông tin xác nhận đơn hàng')
         }

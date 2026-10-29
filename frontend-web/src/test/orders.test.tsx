@@ -74,7 +74,11 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     })
 
     it('ordersApi: Seller cập nhật trạng thái đơn hàng processing -> shipped', async () => {
-        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'SHIPPED', 'Giao cho đơn vị vận chuyển')
+        const updated = await ordersApi.updateOrderStatus(
+            'ORD-20240220-002',
+            'SHIPPED',
+            'Giao cho đơn vị vận chuyển',
+        )
         expect(updated.status).toBe('SHIPPED')
 
         const recheck = await ordersApi.getOrderById('ORD-20240220-002')
@@ -99,7 +103,11 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     })
 
     it('ordersApi: Admin xử lý giải quyết tranh chấp ký quỹ Escrow', async () => {
-        const resolved = await ordersApi.resolveOrderDispute('ORD-20240101-003', 'refunded', 'Chấp nhận khiếu nại của Buyer')
+        const resolved = await ordersApi.resolveOrderDispute(
+            'ORD-20240101-003',
+            'refunded',
+            'Chấp nhận khiếu nại của Buyer',
+        )
         expect(resolved.paymentStatus).toBe('refunded')
         expect(resolved.status).toBe('REFUNDED')
         expect(resolved.disputeStatus).toBe('resolved')

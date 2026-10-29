@@ -476,4 +476,3 @@ export interface CheckoutPreviewResponse {
 export interface CancelOrderRequest {
     reason: string
 }
-
