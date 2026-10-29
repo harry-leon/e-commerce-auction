@@ -472,12 +472,12 @@ export const ordersApi = {
      * Luồng xử lý:
      *   1. Gửi request POST /orders kèm header Idempotency-Key và Bearer token.
      *   2. Nếu Backend xử lý thành công, trả về kết quả đơn hàng thật kèm paymentUrl từ gateway sandbox.
-     *   3. Nếu Backend chưa có endpoint (404/502/503) hoặc lỗi kết nối:
+     *   3. Với COD demo, nếu Backend chưa có endpoint (404/502/503) hoặc lỗi kết nối:
      *      - Khởi tạo đơn hàng mock và lưu vào localStorage để các màn hình xem chi tiết/lịch sử đơn truy cập được.
-     *      - Nếu phương thức thanh toán là VNPAY, sinh paymentUrl chuyển hướng cổng sandbox mô phỏng (/sandbox-payment).
+     *      - VNPAY luôn truyền lỗi lên UI; không dùng mock fallback để giả lập giao dịch thanh toán.
      * Quy tắc & lý do:
      *   - Bắt buộc Idempotency-Key theo đặc tả API_SPEC_CART_ORDER.md §4.2 để chống double-submit khi mạng lag.
-     *   - Chế độ mock giúp kiểm thử trọn vẹn luồng chuyển hướng sandbox khi backend chưa cấp sandbox credentials.
+     *   - VNPAY yêu cầu URL sandbox đã ký từ Backend; thiếu merchant/cổng lỗi phải báo lỗi rõ ràng.
      * Lỗi & giới hạn: Bắt và ném lại lỗi 422 (validation) hoặc lỗi phân quyền nếu có từ server để UI hiển thị.
      */
     async createOrder(
@@ -511,10 +511,14 @@ export const ordersApi = {
                 return result
             }
         } catch (error) {
+            // VNPAY lỗi cấu hình/hạ tầng không được tạo đơn mock hoặc điều hướng sang cổng giả.
+            if (data.paymentMethod === 'VNPAY') throw error
             if (!canFallbackToMock(error)) throw error
         }
 
         // Mock fallback khi Backend chưa có endpoint /orders
+        if (data.paymentMethod === 'VNPAY')
+            throw new Error('Backend chưa trả về đơn thanh toán VNPAY hợp lệ')
         const orders = readLocalMockOrders()
         const now = new Date()
         const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
@@ -529,12 +533,6 @@ export const ordersApi = {
         const calcShipping = 5.0
         const calcTax = (calcSubtotal - calcDiscount) * 0.08
         const calcTotal = calcSubtotal - calcDiscount + calcShipping + calcTax
-
-        // Sinh Sandbox paymentUrl cho VNPAY nếu thanh toán qua cổng trực tuyến
-        const sandboxPaymentUrl =
-            data.paymentMethod === 'VNPAY'
-                ? `/sandbox-payment?orderId=${encodeURIComponent(orderId)}&amount=${calcTotal.toFixed(2)}&provider=vnpay`
-                : undefined
 
         const newOrder: Order = {
             id: orderId,
@@ -569,12 +567,7 @@ export const ordersApi = {
             refundStatus: 'none',
             paymentStatus: 'held',
             shippingAddress: data.shippingAddress,
-            paymentMethod:
-                data.paymentMethod === 'VNPAY'
-                    ? 'VNPAY QR'
-                    : data.paymentMethod === 'CARD'
-                      ? 'Credit Card'
-                      : 'COD',
+            paymentMethod: data.paymentMethod === 'CARD' ? 'Credit Card' : 'COD',
             createdAt: now.toISOString(),
             updatedAt: now.toISOString(),
             disputeStatus: 'none',
@@ -593,7 +586,6 @@ export const ordersApi = {
             discount: calcDiscount,
             total: calcTotal,
             paymentMethod: data.paymentMethod,
-            paymentUrl: sandboxPaymentUrl,
         }
     },
 

@@ -47,6 +47,7 @@ import {
 import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
+import { VnpayPaymentResult } from './VnpayPaymentResult'
 import type { Order, OrderStatus, Product } from '../../types'
 import { ordersApi, type CreateOrderRequest, type CreateOrderResponse } from '../../api/orders'
 import { useLoad } from '../../hooks/useLoad'
@@ -2825,6 +2826,14 @@ export function PaymentResultPage() {
     const status = (pageParams?.status as string) || 'success'
     const orderId = (pageParams?.orderId as string) || 'ORD-20240301-004'
     const [retries, setRetries] = useState(0)
+    // VNPAY return tra DB bằng TxnRef; query status/responseCode của browser không chứng minh đã thu tiền.
+    const paymentId = (pageParams?.vnp_TxnRef || pageParams?.paymentId) as string | undefined
+    if (paymentId)
+        return (
+            <BuyerLayout>
+                <VnpayPaymentResult key={paymentId} paymentId={paymentId} />
+            </BuyerLayout>
+        )
     return (
         <BuyerLayout>
             <div className="max-w-lg mx-auto text-center py-12">

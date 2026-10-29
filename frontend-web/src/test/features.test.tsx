@@ -606,6 +606,18 @@ describe('Cart, Checkout và Payment Result', () => {
     })
 
     it('CheckoutPage: đặt hàng với phương thức VNPAY và chuyển hướng tới sandbox-payment (Accept Criteria 1, 3, 4)', async () => {
+        // Cô lập kiểm tra điều hướng UI bằng response fixture; VNPAY production không còn fallback URL mock.
+        const createSpy = vi.spyOn(ordersApi, 'createOrder').mockResolvedValueOnce({
+            id: 'test-order',
+            orderNo: 'ORD-TEST',
+            status: 'PENDING_PAYMENT',
+            subtotal: 100,
+            shippingFee: 0,
+            discount: 0,
+            total: 100,
+            paymentMethod: 'VNPAY',
+            paymentUrl: '/sandbox-payment?provider=vnpay',
+        })
         render(<CheckoutPage />)
         // Bước 1 -> Bước 2
         fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
@@ -635,6 +647,7 @@ describe('Cart, Checkout và Payment Result', () => {
                 expect.objectContaining({ provider: 'vnpay' }),
             )
         })
+        createSpy.mockRestore()
     })
 
     it('CheckoutPage: hiển thị thông báo lỗi khi đặt hàng thất bại (Accept Criteria 2, 5)', async () => {
