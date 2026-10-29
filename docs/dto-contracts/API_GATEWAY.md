@@ -6,6 +6,10 @@
 >
 > **Quy chuẩn Response:** Toàn bộ Auth Gateway tuân thủ chuẩn `ApiResponse<T>` theo [COMMON.md](COMMON.md).
 
+> **VNPAY IPN:** Chỉ `GET /api/v1/payments/vnpay/ipn` được phép không có JWT để provider gửi callback.
+> Commerce xác minh HMAC trước cập nhật DB và trả JSON `RspCode`/`Message` theo protocol VNPAY.
+> POST IPN và các API payment buyer vẫn cần JWT. Chi tiết: [TT-S1-3](../PAYMENT_SANDBOX_INTEGRATION.md).
+
 ## 1. Endpoint matrix
 
 | Method | Path | Request | Success response | HTTP | Xác thực |

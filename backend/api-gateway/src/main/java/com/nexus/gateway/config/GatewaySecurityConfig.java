@@ -48,6 +48,9 @@ public class GatewaySecurityConfig {
                 .pathMatchers("/v3/api-docs/**", "/swagger-ui/**",
                     "/swagger-ui.html").permitAll()
                 .pathMatchers("/api/v1/ping").permitAll()
+                // VNPAY dùng HMAC tại Commerce, các API khác vẫn cần JWT.
+                .pathMatchers(HttpMethod.GET,
+                    "/api/v1/payments/vnpay/ipn").permitAll()
                 .pathMatchers("/api/v1/auth/login",
                     "/api/v1/auth/refresh-token", "/api/v1/auth/refresh")
                     .permitAll()
