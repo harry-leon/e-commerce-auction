@@ -18,6 +18,24 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
+# Cấu hình kênh thông báo giao dịch (SRS §2.6 & §3.2.3)
+notification:
+  email-enabled: ${EMAIL_NOTIFICATION_ENABLED:true}
+  retry-limit: ${NOTIFICATION_RETRY_LIMIT:3}
+  transactional-mandatory: ${TRANSACTIONAL_NOTIFICATION_MANDATORY:true}
+  sender-from: ${MAIL_FROM:no-reply@nexus.com}
 
 server:
   port: ${SERVER_PORT:8080}
