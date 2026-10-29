@@ -1,3 +1,4 @@
+import { addGuestCartItem } from '../features/buyer/guestCart'
 import { useApp } from '../context'
 import { tr, formatCurrency } from '../i18n'
 import { CountdownTimer, StarRating, StatusBadge, Gavel, ShoppingCart } from './UI'
@@ -9,9 +10,24 @@ export function ProductCard({ product }: { product: Product }) {
     const discount = product.originalPrice
         ? Math.round((1 - product.price / product.originalPrice) * 100)
         : 0
+    /**
+     * Chức năng: Thêm nhanh sản phẩm từ thẻ card vào giỏ hàng mà không cần mở trang chi tiết.
+     * Đầu vào và kết quả: Sự kiện click `e`; lưu sản phẩm vào guestCart/localStorage và cập nhật cartCount.
+     * Luồng xử lý: Chặn nổi bọt sự kiện -> gọi addGuestCartItem để lưu SKU/giá/ảnh -> cập nhật cartCount.
+     * Quy tắc và lý do: Giữ giỏ hàng đồng bộ cho khách vãng lai, mở trang /cart thấy ngay sản phẩm vừa chọn.
+     * Lỗi và giới hạn: Dùng SKU mặc định của sản phẩm; tự động bắt lỗi an toàn nếu storage bị chặn.
+     */
     const addToCart = (e: React.MouseEvent) => {
         e.stopPropagation()
-        setCartCount(cartCount + 1)
+        const guestCart = addGuestCartItem({
+            skuId: product.id,
+            skuCode: product.sku || `SKU-${product.id}`,
+            productName: lang === 'en' ? product.name : (product.nameVi || product.name),
+            thumbnailUrl: product.images?.[0],
+            unitPrice: product.price,
+            quantity: 1,
+        })
+        setCartCount(guestCart.totalQuantity)
         showToast({
             type: 'success',
             message:

@@ -48,6 +48,7 @@ import {
 import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
+import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import type { Order, OrderStatus, Product } from '../../types'
 import {
     ordersApi,
@@ -1206,22 +1207,10 @@ export function CartPage() {
                 // Người dùng đã đăng nhập nhưng gọi API bị lỗi -> báo lỗi API thực tế
                 setError(errorMessage(err))
             } else {
-                // Khách chưa đăng nhập -> hiển thị giỏ hàng rỗng thật, không nạp dữ liệu mẫu
-                setCart({
-                    cartId: 'guest-cart',
-                    userId: 'guest',
-                    status: 'ACTIVE',
-                    items: [],
-                    totalItems: 0,
-                    totalQuantity: 0,
-                    subtotal: 0,
-                    discountAmount: 0,
-                    shippingFee: 0,
-                    taxAmount: 0,
-                    totalAmount: 0,
-                    expiresAt: null,
-                })
-                setCartCount(0)
+                // Khách chưa đăng nhập -> nạp dữ liệu từ giỏ hàng khách guestCart trong localStorage
+                const guestCart = getGuestCart()
+                setCart(guestCart)
+                setCartCount(guestCart.totalQuantity)
             }
         } finally {
             setLoading(false)
@@ -1246,7 +1235,8 @@ export function CartPage() {
                 setCart(updated)
                 setCartCount(updated.totalQuantity)
             } else {
-                // Cập nhật cục bộ cho guest
+                // Cập nhật cục bộ cho guest và đồng bộ vào localStorage
+                updateGuestCartItem(item.id, newQty)
                 setCart((prev) => {
                     if (!prev) return null
                     const newItems = prev.items.map((it) =>
@@ -1296,6 +1286,7 @@ export function CartPage() {
                 setCart(updated)
                 setCartCount(updated.totalQuantity)
             } else {
+                removeGuestCartItem(itemId)
                 setCart((prev) => {
                     if (!prev) return null
                     const newItems = prev.items.filter((it) => it.id !== itemId)
@@ -1339,18 +1330,8 @@ export function CartPage() {
             if (session) {
                 await clearCart()
             }
-            setCart((prev) =>
-                prev
-                    ? {
-                        ...prev,
-                        items: [],
-                        totalItems: 0,
-                        totalQuantity: 0,
-                        subtotal: 0,
-                        totalAmount: 0,
-                    }
-                    : null,
-            )
+            const emptyCart = clearGuestCart()
+            setCart(emptyCart)
             setCartCount(0)
             setShowClearConfirm(false)
             showToast({
@@ -1730,10 +1711,20 @@ export function CheckoutPage() {
             .then((res) => {
                 if (isMounted && res?.items && res.items.length > 0) {
                     setCartItems(res.items)
+                } else if (isMounted) {
+                    const guest = getGuestCart()
+                    if (guest.items.length > 0) {
+                        setCartItems(guest.items)
+                    }
                 }
             })
             .catch(() => {
-                // Giữ giỏ fallback mẫu nếu chưa tải được từ backend
+                if (isMounted) {
+                    const guest = getGuestCart()
+                    if (guest.items.length > 0) {
+                        setCartItems(guest.items)
+                    }
+                }
             })
         return () => {
             isMounted = false
@@ -1944,6 +1935,7 @@ export function CheckoutPage() {
                     // Bỏ qua lỗi dọn giỏ phụ
                 }
             }
+            clearGuestCart()
             setCartCount(0)
 
             // Chuyển hướng đến cổng thanh toán sandbox khi Backend trả về URL hợp lệ (Accept Criteria 3)
