@@ -255,7 +255,7 @@ stateDiagram-v2
     SHIPPED --> DELIVERED : Giao hàng thành công đến tay người mua
     SHIPPED --> CANCELLED : Giao hàng thất bại / Khách từ chối nhận
     
-    DELIVERED --> COMPLETED : Người mua bấm xác nhận / Tự động sau 7 ngày
+    DELIVERED --> COMPLETED : Đơn vị vận chuyển (Shipper/Carrier) xác nhận / Tự động sau 7 ngày
     DELIVERED --> REFUNDED : Khiếu nại/Trả hàng thành công
     
     CANCELLED --> [*] : Giải phóng tồn kho (RELEASED)
@@ -266,12 +266,12 @@ stateDiagram-v2
 | Từ trạng thái | Sang trạng thái | Tác nhân kích hoạt | Tác động tồn kho / Ghi chú |
 | :--- | :--- | :--- | :--- |
 | `PENDING_PAYMENT` | `PAID` | Hệ thống (Payment Callback) / COD | Chuyển `Reservation` sang `CONFIRMED`, trừ tồn kho thực |
-| `PENDING_PAYMENT` | `CANCELLED` | Buyer / Hệ thống (Timeout 15p) | Giải phóng `Reservation` (`RELEASED`) |
+| `PENDING_PAYMENT` | `CANCELLED` | Buyer / Admin / Hệ thống (Timeout 15p) | Giải phóng `Reservation` (`RELEASED`) |
 | `PAID` | `PROCESSING` | Seller / Admin | Chuẩn bị hàng |
-| `PAID` | `REFUNDED` | Seller / Admin / Buyer thỏa thuận | Kích hoạt hoàn tiền qua Gateway, hoàn kho |
+| `PAID` | `REFUNDED` | Buyer / Seller / Admin / Hệ thống | Kích hoạt hoàn tiền qua Gateway, hoàn kho |
 | `PROCESSING` | `SHIPPED` | Seller / Fulfillment Service | Cập nhật `tracking_no` |
 | `SHIPPED` | `DELIVERED` | Carrier Webhook / Admin | Đã giao |
-| `DELIVERED` | `COMPLETED` | Buyer / Hệ thống (sau 7 ngày) | Hoàn tất giao dịch |
+| `DELIVERED` | `COMPLETED` | Shipper (Carrier) / Logistics / Admin / Hệ thống (sau 7 ngày) | Hoàn tất giao dịch (chặn Buyer tự bấm hoàn tất) |
 
 ---
 
