@@ -15,7 +15,12 @@ giá/seller lấy từ Catalog thật, reserve/release qua Fulfillment và chố
 Contract, mã lỗi và giới hạn: `docs/dto-contracts/COMMERCE_SERVICE.md` mục 4.
 Chạy Catalog mới có `sellerId` trước Commerce; cấu hình `CATALOG_SERVICE_URL` và `FULFILLMENT_SERVICE_URL`
 (Compose đã cấp URL nội bộ). Migration V4 do Flyway chạy tự động. Phí ship mặc định 0, cấu hình
-`APP_COMMERCE_ORDER_SHIPPING_FEE`; chưa có voucher, payment online hoặc báo giá vận chuyển thực tế.
+`APP_COMMERCE_ORDER_SHIPPING_FEE`; chưa có voucher hoặc báo giá vận chuyển thực tế.
+
+TT-S1-3 bổ sung VNPAY sandbox: checkout `paymentMethod=VNPAY` trả URL đã ký, IPN xác minh chữ ký rồi cập nhật
+Order/Payment và outbox confirm/release kho. Cần Flyway V5, merchant VNPAY và service account Keycloak.
+Thiếu cấu hình thì VNPAY trả 503, COD vẫn chạy. Hướng dẫn setup, API, retry/đối soát và review:
+`docs/PAYMENT_SANDBOX_INTEGRATION.md`. Trang sandbox demo cũ và query browser không chứng minh đã thanh toán.
 
 Test transaction/đồng thời cần PostgreSQL **tạm, riêng cho test**, user `postgres`, trust authentication;
 đặt `NEXUS_TEST_DB_URL=jdbc:postgresql://localhost:<port>/<test_db>` rồi chạy `mvn verify checkstyle:check`.

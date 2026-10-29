@@ -61,6 +61,8 @@ class CheckoutPostgresTest {
     @Autowired private JdbcTemplate jdbc;
     @MockitoBean private CatalogClient catalog;
     @MockitoBean private InventoryClient inventory;
+    // Các ca transaction COD cô lập cổng payment; suite PaymentPostgresTest kiểm tra payment thật trong DB.
+    @MockitoBean private PaymentService payments;
     private UUID buyer;
     private UUID item;
     private UUID cart;

@@ -156,6 +156,13 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
       FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
+      # Merchant VNPAY và service account outbox được cấp ngoài repo; để trống thì chỉ dùng được COD.
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-}
+      PAYMENT_INVENTORY_TOKEN_URL: ${PAYMENT_INVENTORY_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
+      PAYMENT_INVENTORY_CLIENT_ID: ${PAYMENT_INVENTORY_CLIENT_ID:-}
+      PAYMENT_INVENTORY_CLIENT_SECRET: ${PAYMENT_INVENTORY_CLIENT_SECRET:-}
       # Dùng Supabase khi cấu hình COMMERCE_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${COMMERCE_DB_URL:-jdbc:postgresql://postgres:5432/nexus_commerce}
       DB_USERNAME: ${COMMERCE_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}

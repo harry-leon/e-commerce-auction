@@ -48,7 +48,8 @@ class OrderControllerTest {
     void createsWithJwtOwnerAndForwardsBearerToken() throws Exception {
         var result = new CreateOrderResponse(UUID.randomUUID(), "ORD-1", "PENDING_PAYMENT", BigDecimal.TEN,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.TEN, "COD");
-        when(checkout.create(any(), any(), any(), any())).thenReturn(result);
+        // Controller truyền IP peer để tạo URL VNPAY; buyer/token vẫn lấy từ JWT đã xác minh.
+        when(checkout.create(any(), any(), any(), any(), any())).thenReturn(result);
         mvc.perform(post("/api/v1/orders").with(jwt().jwt(j -> j.subject(buyer.toString()))
                         .authorities(new SimpleGrantedAuthority("ORDER.CREATE")))
                         .header("X-User-Id", UUID.randomUUID()).header("Idempotency-Key", key)
@@ -56,7 +57,7 @@ class OrderControllerTest {
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.id").value(result.id().toString()))
                 .andExpect(jsonPath("$.error").isEmpty()).andExpect(jsonPath("$.meta.timestamp").exists());
-        verify(checkout).create(eq(buyer), eq(key), any(), eq("token"));
+        verify(checkout).create(eq(buyer), eq(key), any(), eq("token"), eq("127.0.0.1"));
     }
 
     /** Chưa xác thực/không có privilege bị chặn trước khi chạy checkout. */
@@ -87,7 +88,7 @@ class OrderControllerTest {
     /** Thiếu hàng phải trả 409 với mã rõ ràng, không bọc thành success hoặc lỗi 500. */
     @Test
     void returnsInsufficientStockAsConflict() throws Exception {
-        when(checkout.create(any(), any(), any(), any())).thenThrow(new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT));
+        when(checkout.create(any(), any(), any(), any(), any())).thenThrow(new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT));
         mvc.perform(post("/api/v1/orders").with(jwt().jwt(j -> j.subject(buyer.toString()))
                         .authorities(new SimpleGrantedAuthority("ORDER.CREATE"))).header("Idempotency-Key", key)
                         .contentType(MediaType.APPLICATION_JSON).content(body))

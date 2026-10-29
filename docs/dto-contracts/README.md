@@ -22,7 +22,7 @@ Tài liệu chỉ đánh dấu một contract là `CURRENT` khi controller/DTO t
 | API Gateway | [API_GATEWAY.md](API_GATEWAY.md) | Login, refresh, register đã triển khai |
 | User Service | [USER_SERVICE.md](USER_SERVICE.md) | User, role, password đã triển khai |
 | Catalog Service | [CATALOG_SERVICE.md](CATALOG_SERVICE.md) | Product, SKU, image, category, search đã triển khai |
-| Commerce Service | [COMMERCE_SERVICE.md](COMMERCE_SERVICE.md) | Cart, checkout preview và tạo đơn REGULAR/COD đã triển khai; payment và đọc/hủy đơn chưa có controller |
+| Commerce Service | [COMMERCE_SERVICE.md](COMMERCE_SERVICE.md) | Cart, checkout COD/VNPAY và sandbox payment/IPN đã triển khai; đọc/hủy đơn chưa có controller |
 | Auction Service | [AUCTION_SERVICE.md](AUCTION_SERVICE.md) | Chưa có DTO nghiệp vụ |
 | Fulfillment Service | [FULFILLMENT_SERVICE.md](FULFILLMENT_SERVICE.md) | Chưa có DTO nghiệp vụ |
 | Notification Service | [NOTIFICATION_SERVICE.md](NOTIFICATION_SERVICE.md) | Chưa có DTO nghiệp vụ |

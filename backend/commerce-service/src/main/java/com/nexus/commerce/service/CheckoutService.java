@@ -60,6 +60,7 @@ public class CheckoutService {
     private final InventoryClient inventory;
     private final CommerceProperties properties;
     private final ObjectMapper mapper;
+    private final PaymentService payments;
 
     /** Preview dùng giá hiện tại, cảnh báo đổi giá/thiếu kho; không thay đổi giỏ hoặc tạo reservation. */
     @Transactional(readOnly = true)
@@ -87,11 +88,17 @@ public class CheckoutService {
     }
 
     /**
-     * Tạo đơn REGULAR/COD, key bắt buộc UUID. Replay trước khi đọc giỏ vì lần đầu đã xóa items.
+     * Tạo đơn REGULAR/COD hoặc VNPAY, key bắt buộc UUID. Replay trước khi đọc giỏ vì lần đầu đã xóa items.
      * Hash bao gồm buyer/nội dung và sắp xếp item IDs để thứ tự chọn không làm phát sinh xung đột giả.
      */
     @Transactional
     public CreateOrderResponse create(UUID buyer, String key, CreateOrderRequest request, String token) {
+        return create(buyer, key, request, token, "127.0.0.1");
+    }
+
+    /** Biến thể HTTP nhận IP peer để ký URL VNPAY; cùng transaction đơn, phiếu giữ kho và Payment. */
+    @Transactional
+    public CreateOrderResponse create(UUID buyer, String key, CreateOrderRequest request, String token, String ip) {
         String normalizedKey = normalizeKey(key);
         String hash = fingerprint(buyer, request);
         locks.acquire("key:" + normalizedKey);
@@ -101,7 +108,7 @@ public class CheckoutService {
             if (!buyer.equals(order.getBuyerId()) || !hash.equals(order.getRequestHash())) {
                 throw new BusinessException(ErrorCode.ORDER_IDEMPOTENCY_CONFLICT);
             }
-            return response(order);
+            return response(order, ip);
         }
         // Khóa buyer giữ hạn mức ngày và các key khác nhau của cùng giỏ nhất quán trên nhiều instance.
         locks.acquire("buyer:" + buyer);
@@ -135,13 +142,15 @@ public class CheckoutService {
                 }
             }
         });
-        inventory.reserve(orderId, selected.stream().map(i -> new InventoryClient.Item(i.getSkuId(), null, i.getQuantity())).toList(), token);
+        // Lưu ID phiếu từ response kho đã kiểm tra; outbox sau IPN không cần giữ token người mua để confirm.
+        order.setReservationIds(new ArrayList<>(inventory.reserve(orderId,
+                selected.stream().map(i -> new InventoryClient.Item(i.getSkuId(), null, i.getQuantity())).toList(), token)));
         // Chỉ xóa items đã mua; những sản phẩm không được chọn vẫn giữ trong giỏ.
         cart.getItems().removeIf(i -> selected.stream().anyMatch(s -> s.getId().equals(i.getId())));
         cartItems.deleteAll(selected);
         cartItems.flush();
         if (cartItems.findByCartId(cart.getId()).isEmpty()) { cart.setStatus(CartStatus.CONVERTED); }
-        return response(order);
+        return response(order, ip);
     }
 
     /** Chặn giỏ hết hạn, chọn trùng hoặc item thuộc giỏ khác trước khi gọi service kho. */
@@ -224,10 +233,13 @@ public class CheckoutService {
         return order;
     }
 
-    /** Chưa tích hợp payment/voucher/auction ở ticket này: từ chối tường minh, không tính giảm giá hay URL giả. */
+    /** Chỉ COD/VNPAY; VNPAY phải đủ cấu hình merchant trước reserve, voucher/auction vẫn chưa hỗ trợ. */
     private void validateOptions(CreateOrderRequest request) {
         rejectVoucher(request.voucherCode());
-        if (!"COD".equals(request.paymentMethod())) { throw new BusinessException(ErrorCode.PAYMENT_METHOD_UNSUPPORTED); }
+        if (!"COD".equals(request.paymentMethod()) && !"VNPAY".equals(request.paymentMethod())) {
+            throw new BusinessException(ErrorCode.PAYMENT_METHOD_UNSUPPORTED);
+        }
+        if ("VNPAY".equals(request.paymentMethod())) { payments.requireConfigured(); }
         if ((request.sourceType() != null && !"REGULAR".equals(request.sourceType())) || request.auctionId() != null) {
             throw invalid("CHECKOUT_SOURCE_UNSUPPORTED", "Checkout giỏ hàng chỉ hỗ trợ đơn REGULAR");
         }
@@ -244,9 +256,11 @@ public class CheckoutService {
         return lines.stream().map(CheckoutPreviewResponse.Line::itemTotal).reduce(ZERO, BigDecimal::add);
     }
 
-    private CreateOrderResponse response(Order order) {
+    private CreateOrderResponse response(Order order, String ip) {
+        String paymentUrl = "VNPAY".equals(order.getPaymentMethod())
+                ? payments.checkoutUrl(order, ip) : null;
         return new CreateOrderResponse(order.getId(), order.getOrderNo(), order.getStatus(), order.getSubtotal(),
-                order.getShippingFee(), order.getDiscount(), order.getTotal(), order.getPaymentMethod());
+                order.getShippingFee(), order.getDiscount(), order.getTotal(), order.getPaymentMethod(), paymentUrl);
     }
 
     private String normalizeKey(String key) {

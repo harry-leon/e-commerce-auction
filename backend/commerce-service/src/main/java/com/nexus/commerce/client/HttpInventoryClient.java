@@ -48,7 +48,7 @@ public class HttpInventoryClient implements InventoryClient {
 
     /** Giữ kho 15 phút theo checkout draft; caller phải bù trừ nếu response mất hoặc transaction Order rollback. */
     @Override
-    public void reserve(UUID orderId, List<Item> items, String token) {
+    public List<UUID> reserve(UUID orderId, List<Item> items, String token) {
         var receipt = post("/reserve", Map.of("refType", "ORDER", "refId", orderId, "items", items, "timeoutMinutes", 15),
                 token, new ParameterizedTypeReference<ApiResponse<Receipt>>() { });
         // Chỉ chấp nhận đủ SKU/quantity của đúng đơn; success=true với payload rỗng không chứng minh kho đã được giữ.
@@ -62,12 +62,24 @@ public class HttpInventoryClient implements InventoryClient {
                 throw unavailable();
             }
         }
+        return receipt.items().stream().map(Reserved::reservationId).toList();
+    }
+
+    /** Timeout có thể xảy ra sau commit kho; lỗi ALREADY_COMMITTED chính xác được xem là replay thành công. */
+    @Override
+    public void confirm(UUID reservationId, String token) {
+        try {
+            post("/reservations/" + reservationId + "/confirm", Map.of(), token,
+                    new ParameterizedTypeReference<ApiResponse<Object>>() { });
+        } catch (ApiException error) {
+            if (!"INVENTORY_RESERVATION_ALREADY_COMMITTED".equals(error.getCode())) { throw error; }
+        }
     }
 
     /** Release theo ref hoàn toàn bộ items; API hiện có bỏ qua phiếu đã release nên có thể gọi bù trừ an toàn. */
     @Override
     public void release(UUID orderId, String token) {
-        post("/release", Map.of("refType", "ORDER", "refId", orderId, "reason", "ORDER_CREATION_FAILED"),
+        post("/release", Map.of("refType", "ORDER", "refId", orderId, "reason", "ORDER_OR_PAYMENT_FAILED"),
                 token, new ParameterizedTypeReference<ApiResponse<Object>>() { });
     }
 
