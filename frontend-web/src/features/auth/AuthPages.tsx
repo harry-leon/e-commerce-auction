@@ -15,10 +15,16 @@ import {
     saveSession,
     mapUser,
     errorMessage,
+    extractFieldErrors,
     readRememberedEmail,
     saveRememberedEmail,
     type AuthPayload,
 } from '../../api/client'
+import {
+    validatePasswordPolicy,
+    PasswordRequirementsChecklist,
+    PasswordConfirmIndicator,
+} from './PasswordValidation'
 import type { Page } from '../../types'
 import { Gavel } from '../../components/UI'
 
@@ -169,12 +175,12 @@ function PasswordStrength({ password }: { password: string }) {
             /[A-Z]/.test(password) &&
             /[0-9]/.test(password) &&
             /[^A-Za-z0-9]/.test(password)
-          ? 4
-          : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
-            ? 3
-            : password.length >= 8
-              ? 2
-              : 1
+            ? 4
+            : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
+                ? 3
+                : password.length >= 8
+                    ? 2
+                    : 1
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very Strong']
     const colors = ['', 'bg-danger', 'bg-warning', 'bg-success', 'bg-primary']
     const { lang } = useApp()
@@ -235,15 +241,36 @@ export function RegisterPage() {
         setErrors(e)
         return Object.keys(e).length === 0
     }
+    /**
+     * Xác thực bước 3 (bảo mật):
+     * 1. Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ hoa (A-Z), 1 số, 1 ký tự đặc biệt.
+     *    Chữ in hoa chỉ tính A-Z (không tính chữ tiếng Việt như Đ, Â...).
+     * 2. Khoảng trắng không tính là ký tự đặc biệt.
+     * 3. Mật khẩu xác nhận phải trùng khớp hoàn toàn với mật khẩu mới.
+     */
     const validate3 = () => {
         const e: Partial<typeof form> = {}
-        if (form.password.length < 8) e.password = tr(lang, 'passwordRule')
-        if (form.password !== form.confirmPassword) e.confirmPassword = tr(lang, 'passwordMismatch')
+        const policy = validatePasswordPolicy(form.password)
+        if (!policy.isValid) {
+            e.password =
+                lang === 'en'
+                    ? 'Password must be 8–100 characters, include at least 1 uppercase letter (A-Z), 1 number, and 1 special character'
+                    : 'Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa (A-Z), 1 chữ số, 1 ký tự đặc biệt'
+            4
+        }
+        if (form.password !== form.confirmPassword) {
+            e.confirmPassword = tr(lang, 'passwordMismatch')
+        }
         setErrors(e)
         return Object.keys(e).length === 0
     }
 
-    // Chuyển tên trường và enum theo DTO backend; đăng ký xong quay về login, không tự giả lập user đã lưu.
+    /**
+     * Gửi đăng ký tới Gateway (POST /api/v1/auth/register).
+     * Luồng: validate bước 3 → gửi API → nếu lỗi 422, phân tích error.details[] để hiển thị
+     * lỗi cụ thể theo từng trường (field + message) và chuyển về đúng bước chứa trường lỗi.
+     * Thành công thì điều hướng về trang đăng nhập.
+     */
     const handleSubmit = async () => {
         if (!validate3()) return
         setLoading(true)
@@ -254,7 +281,30 @@ export function RegisterPage() {
                 gender: form.gender.toUpperCase(),
             })
         } catch (error) {
-            showToast({ type: 'error', message: errorMessage(error) })
+            // Khi BE trả 422, đọc error.details[], dùng field và message để hiển thị từng lỗi
+            const fieldErrors = extractFieldErrors(error)
+            if (Object.keys(fieldErrors).length > 0) {
+                setErrors((prev) => ({ ...prev, ...fieldErrors }))
+                // Tự động chuyển về đúng bước chứa trường bị lỗi để người dùng dễ theo dõi
+                if (fieldErrors.password) {
+                    setStep(3)
+                } else if (
+                    fieldErrors.fullName ||
+                    fieldErrors.identifyNumber ||
+                    fieldErrors.idNumber ||
+                    fieldErrors.gender ||
+                    fieldErrors.dateOfBirth ||
+                    fieldErrors.address
+                ) {
+                    setStep(2)
+                } else if (fieldErrors.email || fieldErrors.phone) {
+                    setStep(1)
+                }
+                const firstMsg = Object.values(fieldErrors)[0]
+                showToast({ type: 'error', message: firstMsg })
+            } else {
+                showToast({ type: 'error', message: errorMessage(error) })
+            }
             setLoading(false)
             return
         }
@@ -401,16 +451,23 @@ export function RegisterPage() {
                             value={form.password}
                             onChange={set('password')}
                             error={errors.password}
-                            helper={tr(lang, 'passwordRule')}
                         />
+                        <PasswordRequirementsChecklist password={form.password} lang={lang} />
                         <PasswordStrength password={form.password} />
                     </div>
-                    <PasswordInput
-                        label={tr(lang, 'confirmPassword')}
-                        value={form.confirmPassword}
-                        onChange={set('confirmPassword')}
-                        error={errors.confirmPassword}
-                    />
+                    <div>
+                        <PasswordInput
+                            label={tr(lang, 'confirmPassword')}
+                            value={form.confirmPassword}
+                            onChange={set('confirmPassword')}
+                            error={errors.confirmPassword}
+                        />
+                        <PasswordConfirmIndicator
+                            password={form.password}
+                            confirmPassword={form.confirmPassword}
+                            lang={lang}
+                        />
+                    </div>
                     <div className="flex gap-3">
                         <Button
                             variant="outline"
@@ -448,12 +505,9 @@ export function RegisterPage() {
 
 // ─── Forgot Password Page ──────────────────────────────────────────────────────
 /**
- * Luồng quên mật khẩu: gửi email → nhận link chứa token → nhập mật khẩu mới → gọi reset-password.
- * Nếu mở trực tiếp link từ email, khởi tạo bước 2 và lấy token từ query string; lỗi API giữ người dùng ở form.
- */
-/**
- * Yêu cầu email UPDATE_PASSWORD từ Keycloak; link trong email mở trang IAM để nhập mật khẩu mới.
- * Không nhận hoặc lưu reset token tại frontend. Token cũ cần yêu cầu lại email sau khi nâng cấp.
+ * Yêu cầu email UPDATE_PASSWORD từ Keycloak (POST /api/v1/auth/forgot-password).
+ * Sau khi gửi thành công, người dùng được hướng dẫn mở liên kết trong email để đặt mật khẩu tại trang Keycloak.
+ * Form và endpoint reset token cũ (/auth/reset-password) đã ngừng hỗ trợ và trả về HTTP 410 (AUTH_RESET_FLOW_CHANGED).
  */
 export function ForgotPasswordPage() {
     const { lang, navigate } = useApp()
@@ -484,11 +538,18 @@ export function ForgotPasswordPage() {
         <AuthCard title={tr(lang, 'forgotPassword')}>
             {error && <AlertBanner type="error" message={error} onClose={() => setError('')} />}
             {sent ? (
-                <p role="status" className="text-sm mb-5">
-                    {lang === 'en'
-                        ? 'If the account exists, follow the link in your email to set a new password on the secure account page.'
-                        : 'Nếu tài khoản tồn tại, hãy mở liên kết trong email để đặt mật khẩu mới tại trang quản lý tài khoản.'}
-                </p>
+                <div className="space-y-3 mb-5" role="status">
+                    <p className="text-sm text-gray-700 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        {lang === 'en'
+                            ? 'If the account exists, follow the link in your email to set a new password on Keycloak.'
+                            : 'Nếu tài khoản tồn tại, hãy mở liên kết trong email để đặt mật khẩu mới tại trang quản lý tài khoản Keycloak.'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en'
+                            ? 'Notice: Legacy reset password tokens (/auth/reset-password) are no longer supported (HTTP 410). Password updates are handled securely via Keycloak.'
+                            : 'Lưu ý: Endpoint đặt lại mật khẩu cũ (/auth/reset-password) đã ngừng hỗ trợ (HTTP 410). Quá trình đặt lại được thực hiện an toàn qua Keycloak.'}
+                    </p>
+                </div>
             ) : (
                 <div className="space-y-4">
                     <Input

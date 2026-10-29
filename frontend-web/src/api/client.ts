@@ -50,17 +50,62 @@ export class ApiClientError<TDetails = unknown> extends Error {
         return this.status === 422 && Array.isArray(this.details)
     }
 
-    /** Lấy map lỗi theo từng field để bind nhanh vào form validation */
+    /**
+     * Lấy map lỗi theo từng field để bind nhanh vào form validation.
+     * Khi một field có nhiều lỗi (ví dụ mật khẩu vừa thiếu chữ hoa vừa thiếu số),
+     * gộp các message phân tách bằng dấu chấm để không bỏ sót thông báo.
+     */
     getFieldErrors(): Record<string, string> {
         if (!Array.isArray(this.details)) return {}
         const record: Record<string, string> = {}
         for (const item of this.details as ValidationErrorDetail[]) {
-            if (item.field && !record[item.field]) {
-                record[item.field] = item.message
+            if (item.field) {
+                if (record[item.field]) {
+                    record[item.field] += '. ' + item.message
+                } else {
+                    record[item.field] = item.message
+                }
             }
         }
         return record
     }
+
+    /** Lấy danh sách toàn bộ message chi tiết từ details */
+    getAllDetailMessages(): string[] {
+        if (!Array.isArray(this.details)) return []
+        return (this.details as ValidationErrorDetail[])
+            .map((d) => d.message)
+            .filter(Boolean)
+    }
+}
+
+/**
+ * Trích xuất map lỗi theo field từ ApiClientError hoặc error object bất kỳ.
+ * Hỗ trợ đọc cấu trúc error.details[] hoặc details[] từ response 422 của Backend/Gateway.
+ */
+export function extractFieldErrors(error: unknown): Record<string, string> {
+    if (error instanceof ApiClientError) {
+        return error.getFieldErrors()
+    }
+    const anyErr = error as {
+        details?: ValidationErrorDetail[]
+        error?: { details?: ValidationErrorDetail[] }
+    }
+    const details = anyErr?.details || anyErr?.error?.details
+    if (Array.isArray(details)) {
+        const record: Record<string, string> = {}
+        for (const item of details) {
+            if (item?.field) {
+                if (record[item.field]) {
+                    record[item.field] += '. ' + item.message
+                } else {
+                    record[item.field] = item.message
+                }
+            }
+        }
+        return record
+    }
+    return {}
 }
 
 /**
@@ -172,7 +217,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             msg,
             code,
             response.status,
-            errorObj.details ?? null,
+            errorObj.details ?? payload.details ?? null,
             payload.meta?.requestId,
             payload.meta?.timestamp,
         )
