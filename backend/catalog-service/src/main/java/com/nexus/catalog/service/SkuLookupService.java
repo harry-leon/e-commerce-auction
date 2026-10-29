@@ -15,17 +15,17 @@ public class SkuLookupService {
     private final SkuRepository skus;
     public SkuLookupService(SkuRepository skus) { this.skus = skus; }
 
-    /** Đọc SKU và product trong transaction để không truy cập lazy relation ngoài session. */
+    /** Đọc SKU/product trong transaction; trả sellerId thật để Checkout chặn tự mua và đơn nhiều shop. */
     @Transactional(readOnly = true)
     public SkuSnapshot get(UUID id) {
         var sku = skus.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy SKU"));
         var product = sku.getProduct();
         String image = product.getImages().isEmpty() ? null : product.getImages().getFirst().getUrl();
         return new SkuSnapshot(id, sku.getSkuCode(), product.getName(), image, sku.getPrice(), null,
-                sku.getStatus() == SkuStatus.ACTIVE && product.getStatus() == ProductStatus.ACTIVE);
+                sku.getStatus() == SkuStatus.ACTIVE && product.getStatus() == ProductStatus.ACTIVE, product.getSellerId());
     }
 
-    /** Contract đọc giữa Catalog/Commerce; null stock không có nghĩa là kho vô hạn hoặc đã reserve. */
+    /** Contract đọc giữa Catalog/Commerce; sellerId thuộc product, null stock chưa được kiểm tra tại Fulfillment. */
     public record SkuSnapshot(UUID skuId, String skuCode, String productName, String thumbnailUrl,
-                              BigDecimal price, Integer stockQuantity, Boolean isActive) { }
+                              BigDecimal price, Integer stockQuantity, Boolean isActive, UUID sellerId) { }
 }

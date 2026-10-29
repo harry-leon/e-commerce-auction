@@ -26,10 +26,12 @@ class SkuLookupServiceTest {
     @Mock private SkuRepository skus;
 
     @Test
+    // Snapshot phải mang seller từ Product thật để Commerce kiểm tra chủ shop, không dùng ID client.
     void returnsPriceAndMarksInactiveProductUnavailable() {
         UUID id = UUID.randomUUID();
         var product = new Product();
         product.setName("Product");
+        product.setSellerId(UUID.randomUUID());
         product.setStatus(ProductStatus.DRAFT);
         var sku = new Sku();
         sku.setId(id);
@@ -40,6 +42,7 @@ class SkuLookupServiceTest {
         when(skus.findById(id)).thenReturn(Optional.of(sku));
         var snapshot = new SkuLookupService(skus).get(id);
         assertEquals(new BigDecimal("125000"), snapshot.price());
+        assertEquals(product.getSellerId(), snapshot.sellerId());
         assertNull(snapshot.stockQuantity());
         assertNull(snapshot.thumbnailUrl());
         assertFalse(snapshot.isActive());
