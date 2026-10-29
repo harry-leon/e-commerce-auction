@@ -1341,13 +1341,13 @@ export function CartPage() {
             setCart((prev) =>
                 prev
                     ? {
-                          ...prev,
-                          items: [],
-                          totalItems: 0,
-                          totalQuantity: 0,
-                          subtotal: 0,
-                          totalAmount: 0,
-                      }
+                        ...prev,
+                        items: [],
+                        totalItems: 0,
+                        totalQuantity: 0,
+                        subtotal: 0,
+                        totalAmount: 0,
+                    }
                     : null,
             )
             setCartCount(0)
@@ -2426,8 +2426,8 @@ export function CheckoutPage() {
                                             ? 'You will be redirected to VNPAY portal to scan QR code and complete payment.'
                                             : 'Bạn sẽ được chuyển hướng sang cổng VNPAY để quét mã QR thanh toán sau khi bấm Đặt hàng.'
                                         : lang === 'en'
-                                          ? 'You will pay in cash directly to the courier when receiving the package.'
-                                          : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
+                                            ? 'You will pay in cash directly to the courier when receiving the package.'
+                                            : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
                                 </div>
                             )}
 
@@ -2903,9 +2903,9 @@ export function PaymentResultPage() {
     )
 }
 
-// ─── Order History Page ─────────────────────────────────────────────────────────
+// ─── Order History Page ───
 /**
- * Màn hình Lịch sử đơn hàng của Buyer (SRS 3.2.1 & ORDER-02).
+ * Màn hình Lịch sử đơn hàng của Buyer
  * 
  * Chức năng: Hiển thị danh sách các đơn hàng đã mua của Buyer theo phân loại trạng thái,
  * cho phép tìm kiếm theo mã đơn hoặc sản phẩm, hủy nhanh đơn chưa xử lý, và điều hướng vào xem chi tiết.
@@ -2929,26 +2929,26 @@ export function OrderHistoryPage() {
 
     const STATUS_TABS = [
         { id: 'all', label: tr(lang, 'all') },
-        { id: 'pending', label: tr(lang, 'statusPending') },
-        { id: 'paid', label: tr(lang, 'statusPaid') },
-        { id: 'processing', label: tr(lang, 'statusProcessing') },
-        { id: 'shipped', label: tr(lang, 'statusShipped') },
-        { id: 'delivered', label: tr(lang, 'statusDelivered') },
-        { id: 'completed', label: tr(lang, 'statusCompleted') },
-        { id: 'cancelled', label: tr(lang, 'statusCancelled') },
-        { id: 'refunded', label: tr(lang, 'statusRefunded') },
+        { id: 'PENDING_PAYMENT', label: tr(lang, 'statusPending') },
+        { id: 'PAID', label: tr(lang, 'statusPaid') },
+        { id: 'PROCESSING', label: tr(lang, 'statusProcessing') },
+        { id: 'SHIPPED', label: tr(lang, 'statusShipped') },
+        { id: 'DELIVERED', label: tr(lang, 'statusDelivered') },
+        { id: 'COMPLETED', label: tr(lang, 'statusCompleted') },
+        { id: 'CANCELLED', label: tr(lang, 'statusCancelled') },
+        { id: 'REFUNDED', label: tr(lang, 'statusRefunded') },
     ]
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
     // Tải danh sách đơn hàng từ API hoặc kho mock store
@@ -3040,7 +3040,7 @@ export function OrderHistoryPage() {
                     ) : (
                         <div className="space-y-5">
                             {orders.map((order) => {
-                                const canCancel = ['pending', 'paid'].includes(order.status)
+                                const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
                                 return (
                                     <div
                                         key={order.id}
@@ -3177,9 +3177,9 @@ export function OrderHistoryPage() {
     )
 }
 
-// ─── Order Detail Page ─────────────────────────────────────────────────────────
+// ─── Order Detail Page ───
 /**
- * Màn hình Chi tiết đơn hàng của Buyer (SRS 3.2.1 & ORDER-02, ORDER-03, PAYMENT-01).
+ * Màn hình Chi tiết đơn hàng của Buyer
  * 
  * Chức năng: Hiển thị đầy đủ thông tin một đơn hàng: tiến trình timeline, sản phẩm, địa chỉ,
  * thanh toán, trạng thái ký quỹ Escrow (Bảo vệ Buyer), vận chuyển tracking;
@@ -3236,24 +3236,24 @@ export function OrderDetailPage() {
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
-    const canCancel = ['pending', 'paid'].includes(order.status)
+    const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
     const protectionDays = order.protectionEndsAt
         ? Math.max(
             0,
             Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
         )
         : 0
-    const isProtectionActive = order.status === 'delivered' && paymentStatus === 'protection_period'
+    const isProtectionActive = order.status === 'DELIVERED' && paymentStatus === 'protection_period'
 
     // Xác nhận đã nhận hàng -> chuyển sang completed và giải ngân tiền cho Seller
     const confirmDelivery = async () => {
@@ -3435,7 +3435,7 @@ export function OrderDetailPage() {
                                         <Shield size={20} className="text-primary" />
                                         <h3 className="font-bold text-gray-900">
                                             {lang === 'en'
-                                                ? '7-day buyer protection escrow'
+                                                ? 'Bảo vệ người mua 7 ngày'
                                                 : 'Bảo vệ người mua & Giữ tiền an toàn trong 7 ngày'}
                                         </h3>
                                     </div>
@@ -3538,7 +3538,7 @@ export function OrderDetailPage() {
                     )}
 
                     {/* Đánh giá đơn hàng */}
-                    {order.status === 'delivered' && !reviewed && (
+                    {order.status === 'DELIVERED' && !reviewed && (
                         <div className="nexus-card p-5 border-primary/20 bg-primary-light/30">
                             <h3 className="font-bold mb-2">{tr(lang, 'leaveReview')}</h3>
                             <p className="text-sm text-gray-500 mb-3">
@@ -3568,7 +3568,7 @@ export function OrderDetailPage() {
                         <p className="text-sm text-gray-700">{order.paymentMethod}</p>
                         <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
                             <span className="text-xs text-gray-500">
-                                {lang === 'en' ? 'Escrow status' : 'Trạng thái ký quỹ Escrow'}
+                                {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}
                             </span>
                             <StatusBadge
                                 status={paymentStatus}
