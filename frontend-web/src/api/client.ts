@@ -185,8 +185,9 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             false,
         )
             .then((payload) => {
-                saveSession({ ...payload, user: mapUser(payload.user) })
-                return payload.accessToken
+                const auth = (payload as any)?.data || payload
+                saveSession({ ...auth, user: mapUser(auth.user) })
+                return auth.accessToken
             })
             .catch((error) => {
                 saveSession(null)
@@ -262,32 +263,50 @@ export interface ApiRole {
  * Avatar/reputation dùng giá trị mặc định vì UserResponse hiện chưa cung cấp các trường này.
  * Vai trò trong UI chỉ phục vụ hiển thị; backend vẫn là nơi kiểm tra quyền truy cập thực sự.
  */
-export function mapUser(user: ApiUser): User {
-    // Backend mới trả role không prefix; chấp nhận ROLE_* trong thời gian chuyển đổi IAM.
-    const roles = (user.roles || []).map((role) => role.replace(/^ROLE_/, '').toLowerCase())
-    const role: UserRole = roles.includes('admin')
-        ? 'admin'
-        : roles.includes('support')
-            ? 'support'
-            : roles.includes('seller')
-                ? 'seller'
-                : 'buyer'
-    return {
-        id: user.id,
-        fullName: user.fullName,
-        email: user.email,
-        phone: user.phone || '',
-        idNumber: user.identifyNumber || '',
-        gender: (user.gender?.toLowerCase() || 'other') as User['gender'],
-        dateOfBirth: user.dateOfBirth || '',
-        address: user.address || '',
-        role,
-        status: user.status === 'ACTIVE' ? 'active' : 'locked',
-        createdAt: user.createdAt,
-        avatar: '/avatar.svg',
-        trustLevel: 'bronze',
-        reputationScore: 0,
+export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
+    const raw: any = user && typeof user === "object" && "data" in user ? (user as any).data : user;
+    if (!raw) {
+        return {
+            id: "",
+            fullName: "",
+            email: "",
+            phone: "",
+            idNumber: "",
+            gender: "other",
+            dateOfBirth: "",
+            address: "",
+            role: "buyer",
+            trustLevel: "bronze",
+            reputationScore: 100,
+            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&auto=format",
+            status: "active",
+            createdAt: new Date().toISOString(),
+        };
     }
+    const roles: string[] = ((raw.roles || []) as string[]).map((role: string) => role.replace(/^ROLE_/, "").toLowerCase());
+    const role: UserRole = roles.includes("admin")
+        ? "admin"
+        : roles.includes("support")
+            ? "support"
+            : roles.includes("seller")
+                ? "seller"
+                : "buyer";
+    return {
+        id: raw.id || "",
+        fullName: raw.fullName || "",
+        email: raw.email || "",
+        phone: raw.phone || "",
+        idNumber: raw.identifyNumber || "",
+        gender: (raw.gender?.toLowerCase() || "other") as User["gender"],
+        dateOfBirth: raw.dateOfBirth || "",
+        address: raw.address || "",
+        role,
+        status: (raw.status?.toUpperCase() === "ACTIVE" || raw.status === "active") ? "active" : "locked",
+        createdAt: raw.createdAt || new Date().toISOString(),
+        avatar: "/avatar.svg",
+        trustLevel: "bronze",
+        reputationScore: 0,
+    };
 }
 
 /** Catalog bọc kết quả trong data, kèm meta phân trang zero-based; khác với DTO trả trực tiếp của User Service. */

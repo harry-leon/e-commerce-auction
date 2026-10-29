@@ -75,9 +75,10 @@ export function LoginPage() {
         setLoading(true)
         setError('')
         try {
-            const response = await post<AuthPayload>('/auth/login', { email, password })
-            const user = mapUser(response.user)
-            saveSession({ ...response, user })
+            const rawResponse = await post<AuthPayload | { data: AuthPayload }>('/auth/login', { email, password })
+            const payload: AuthPayload = (rawResponse as any)?.data || rawResponse
+            const user = mapUser(payload.user)
+            saveSession({ ...payload, user })
             saveRememberedEmail(email, remember)
             setUser(user)
             const pages: Record<string, Page> = {
