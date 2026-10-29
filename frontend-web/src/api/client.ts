@@ -50,17 +50,62 @@ export class ApiClientError<TDetails = unknown> extends Error {
         return this.status === 422 && Array.isArray(this.details)
     }
 
-    /** Lấy map lỗi theo từng field để bind nhanh vào form validation */
+    /**
+     * Lấy map lỗi theo từng field để bind nhanh vào form validation.
+     * Khi một field có nhiều lỗi (ví dụ mật khẩu vừa thiếu chữ hoa vừa thiếu số),
+     * gộp các message phân tách bằng dấu chấm để không bỏ sót thông báo.
+     */
     getFieldErrors(): Record<string, string> {
         if (!Array.isArray(this.details)) return {}
         const record: Record<string, string> = {}
         for (const item of this.details as ValidationErrorDetail[]) {
-            if (item.field && !record[item.field]) {
-                record[item.field] = item.message
+            if (item.field) {
+                if (record[item.field]) {
+                    record[item.field] += '. ' + item.message
+                } else {
+                    record[item.field] = item.message
+                }
             }
         }
         return record
     }
+
+    /** Lấy danh sách toàn bộ message chi tiết từ details */
+    getAllDetailMessages(): string[] {
+        if (!Array.isArray(this.details)) return []
+        return (this.details as ValidationErrorDetail[])
+            .map((d) => d.message)
+            .filter(Boolean)
+    }
+}
+
+/**
+ * Trích xuất map lỗi theo field từ ApiClientError hoặc error object bất kỳ.
+ * Hỗ trợ đọc cấu trúc error.details[] hoặc details[] từ response 422 của Backend/Gateway.
+ */
+export function extractFieldErrors(error: unknown): Record<string, string> {
+    if (error instanceof ApiClientError) {
+        return error.getFieldErrors()
+    }
+    const anyErr = error as {
+        details?: ValidationErrorDetail[]
+        error?: { details?: ValidationErrorDetail[] }
+    }
+    const details = anyErr?.details || anyErr?.error?.details
+    if (Array.isArray(details)) {
+        const record: Record<string, string> = {}
+        for (const item of details) {
+            if (item?.field) {
+                if (record[item.field]) {
+                    record[item.field] += '. ' + item.message
+                } else {
+                    record[item.field] = item.message
+                }
+            }
+        }
+        return record
+    }
+    return {}
 }
 
 /**
@@ -140,8 +185,9 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             false,
         )
             .then((payload) => {
-                saveSession({ ...payload, user: mapUser(payload.user) })
-                return payload.accessToken
+                const auth = (payload as any)?.data || payload
+                saveSession({ ...auth, user: mapUser(auth.user) })
+                return auth.accessToken
             })
             .catch((error) => {
                 saveSession(null)
@@ -172,7 +218,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             msg,
             code,
             response.status,
-            errorObj.details ?? null,
+            errorObj.details ?? payload.details ?? null,
             payload.meta?.requestId,
             payload.meta?.timestamp,
         )
@@ -217,32 +263,50 @@ export interface ApiRole {
  * Avatar/reputation dùng giá trị mặc định vì UserResponse hiện chưa cung cấp các trường này.
  * Vai trò trong UI chỉ phục vụ hiển thị; backend vẫn là nơi kiểm tra quyền truy cập thực sự.
  */
-export function mapUser(user: ApiUser): User {
-    // Backend mới trả role không prefix; chấp nhận ROLE_* trong thời gian chuyển đổi IAM.
-    const roles = (user.roles || []).map((role) => role.replace(/^ROLE_/, '').toLowerCase())
-    const role: UserRole = roles.includes('admin')
-        ? 'admin'
-        : roles.includes('support')
-            ? 'support'
-            : roles.includes('seller')
-                ? 'seller'
-                : 'buyer'
-    return {
-        id: user.id,
-        fullName: user.fullName,
-        email: user.email,
-        phone: user.phone || '',
-        idNumber: user.identifyNumber || '',
-        gender: (user.gender?.toLowerCase() || 'other') as User['gender'],
-        dateOfBirth: user.dateOfBirth || '',
-        address: user.address || '',
-        role,
-        status: user.status === 'ACTIVE' ? 'active' : 'locked',
-        createdAt: user.createdAt,
-        avatar: '/avatar.svg',
-        trustLevel: 'bronze',
-        reputationScore: 0,
+export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
+    const raw: any = user && typeof user === "object" && "data" in user ? (user as any).data : user;
+    if (!raw) {
+        return {
+            id: "",
+            fullName: "",
+            email: "",
+            phone: "",
+            idNumber: "",
+            gender: "other",
+            dateOfBirth: "",
+            address: "",
+            role: "buyer",
+            trustLevel: "bronze",
+            reputationScore: 100,
+            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&auto=format",
+            status: "active",
+            createdAt: new Date().toISOString(),
+        };
     }
+    const roles: string[] = ((raw.roles || []) as string[]).map((role: string) => role.replace(/^ROLE_/, "").toLowerCase());
+    const role: UserRole = roles.includes("admin")
+        ? "admin"
+        : roles.includes("support")
+            ? "support"
+            : roles.includes("seller")
+                ? "seller"
+                : "buyer";
+    return {
+        id: raw.id || "",
+        fullName: raw.fullName || "",
+        email: raw.email || "",
+        phone: raw.phone || "",
+        idNumber: raw.identifyNumber || "",
+        gender: (raw.gender?.toLowerCase() || "other") as User["gender"],
+        dateOfBirth: raw.dateOfBirth || "",
+        address: raw.address || "",
+        role,
+        status: (raw.status?.toUpperCase() === "ACTIVE" || raw.status === "active") ? "active" : "locked",
+        createdAt: raw.createdAt || new Date().toISOString(),
+        avatar: "/avatar.svg",
+        trustLevel: "bronze",
+        reputationScore: 0,
+    };
 }
 
 /** Catalog bọc kết quả trong data, kèm meta phân trang zero-based; khác với DTO trả trực tiếp của User Service. */

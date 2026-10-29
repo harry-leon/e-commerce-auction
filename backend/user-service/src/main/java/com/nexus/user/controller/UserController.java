@@ -1,5 +1,7 @@
 package com.nexus.user.controller;
 
+import com.nexus.common.response.ApiResponse;
+import java.util.List;
 import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.dto.CreateUserProfileRequest;
 import org.springframework.http.HttpStatus;
@@ -62,10 +64,10 @@ public class UserController {
     @GetMapping("/me")
     @PreAuthorize("hasAuthority('PROFILE.VIEW')")
     @Operation(summary = "Xem hồ sơ cá nhân", description = "Lấy thông tin tài khoản của chính mình")
-    public ResponseEntity<UserResponse> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
+    public ResponseEntity<ApiResponse<UserResponse>> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
         // Tra JWT sub qua keycloak_id, hỗ trợ profile cũ có id riêng.
         UUID userId = userService.findBySubject(jwt.getSubject()).getId();
-        return ResponseEntity.ok(userService.getUserById(userId));
+        return ResponseEntity.ok(ApiResponse.ok(userService.getUserById(userId)));
     }
 
     /**
@@ -78,12 +80,12 @@ public class UserController {
     @PutMapping("/me")
     @PreAuthorize("hasAuthority('PROFILE.UPDATE')")
     @Operation(summary = "Cập nhật hồ sơ cá nhân", description = "Cập nhật thông tin tài khoản của chính mình")
-    public ResponseEntity<UserResponse> updateMyProfile(
+    public ResponseEntity<ApiResponse<UserResponse>> updateMyProfile(
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody UpdateUserRequest request) {
         // Tra subject Keycloak thay vì giả định bằng profile id.
         UUID userId = userService.findBySubject(jwt.getSubject()).getId();
-        return ResponseEntity.ok(userService.updateUser(userId, request));
+        return ResponseEntity.ok(ApiResponse.ok(userService.updateUser(userId, request)));
     }
 
     /**
@@ -95,8 +97,8 @@ public class UserController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('USER.VIEW')")
     @Operation(summary = "Xem chi tiết người dùng", description = "Lấy thông tin người dùng theo ID")
-    public ResponseEntity<UserResponse> getUserById(@PathVariable UUID id) {
-        return ResponseEntity.ok(userService.getUserById(id));
+    public ResponseEntity<ApiResponse<UserResponse>> getUserById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.getUserById(id)));
     }
 
     /**
@@ -109,10 +111,10 @@ public class UserController {
     @GetMapping
     @PreAuthorize("hasAuthority('USER.LIST')")
     @Operation(summary = "Danh sách người dùng", description = "Tìm kiếm và phân trang người dùng trong hệ thống")
-    public ResponseEntity<Page<UserResponse>> listUsers(
+    public ResponseEntity<ApiResponse<List<UserResponse>>> listUsers(
             @RequestParam(required = false) String keyword,
             @PageableDefault(sort = "fullName", direction = Sort.Direction.ASC) Pageable pageable) {
-        return ResponseEntity.ok(userService.searchUsers(keyword, pageable));
+        return ResponseEntity.ok(ApiResponse.ok(userService.searchUsers(keyword, pageable)));
     }
 
     /**
@@ -125,10 +127,10 @@ public class UserController {
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('USER.UPDATE')")
     @Operation(summary = "Cập nhật người dùng", description = "Admin/Support cập nhật thông tin người dùng")
-    public ResponseEntity<UserResponse> updateUser(
+    public ResponseEntity<ApiResponse<UserResponse>> updateUser(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateUserRequest request) {
-        return ResponseEntity.ok(userService.updateUser(id, request));
+        return ResponseEntity.ok(ApiResponse.ok(userService.updateUser(id, request)));
     }
 
     /**
@@ -140,9 +142,9 @@ public class UserController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('USER.DELETE')")
     @Operation(summary = "Xóa người dùng", description = "Xóa mềm tài khoản người dùng khỏi hệ thống")
-    public ResponseEntity<Map<String, String>> deleteUser(@PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> deleteUser(@PathVariable UUID id) {
         userService.deleteUser(id);
-        return ResponseEntity.ok(Map.of("message", "Đã xóa người dùng thành công"));
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("message", "Đã xóa người dùng thành công")));
     }
 
     /**
@@ -156,10 +158,10 @@ public class UserController {
     // USER.UPDATE của Support không được dùng để tự cấp ADMIN; chỉ quản trị viên thay đổi role.
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Gán vai trò cho người dùng", description = "Gán danh sách vai trò cho người dùng")
-    public ResponseEntity<UserResponse> assignRoles(
+    public ResponseEntity<ApiResponse<UserResponse>> assignRoles(
             @PathVariable UUID id,
             @RequestBody Set<String> roleCodes) {
-        return ResponseEntity.ok(userService.assignRoles(id, roleCodes));
+        return ResponseEntity.ok(ApiResponse.ok(userService.assignRoles(id, roleCodes)));
     }
 
     /**
@@ -174,12 +176,12 @@ public class UserController {
     @Operation(summary = "Xem lịch sử hoạt động cá nhân",
             description = "Lấy lịch sử các thao tác của tài khoản mình (login, update...)"
     )
-    public ResponseEntity<Page<ActivityHistoryResponse>> getMyActivityHistory(
+    public ResponseEntity<ApiResponse<List<ActivityHistoryResponse>>> getMyActivityHistory(
             @AuthenticationPrincipal Jwt jwt,
             @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
         // Tra subject Keycloak thay vì giả định bằng profile id.
         UUID userId = userService.findBySubject(jwt.getSubject()).getId();
-        return ResponseEntity.ok(userService.getActivityHistory(userId, pageable));
+        return ResponseEntity.ok(ApiResponse.ok(userService.getActivityHistory(userId, pageable)));
     }
 
     /**
@@ -194,10 +196,10 @@ public class UserController {
     @Operation(summary = "Xem lịch sử hoạt động người dùng",
             description = "Admin/Support xem lịch sử thao tác của một người dùng"
     )
-    public ResponseEntity<Page<ActivityHistoryResponse>> getUserActivityHistory(
+    public ResponseEntity<ApiResponse<List<ActivityHistoryResponse>>> getUserActivityHistory(
             @PathVariable UUID id,
             @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return ResponseEntity.ok(userService.getActivityHistory(id, pageable));
+        return ResponseEntity.ok(ApiResponse.ok(userService.getActivityHistory(id, pageable)));
     }
 
     /**
@@ -210,9 +212,9 @@ public class UserController {
     @PostMapping
     @PreAuthorize("hasRole('PROFILE_WRITER')")
     @Operation(summary = "Tạo hồ sơ người dùng mới", description = "Được gọi từ API Gateway kèm token service account và header X-Profile-Subject sau khi Keycloak đã tạo tài khoản")
-    public ResponseEntity<UserResponse> createUserProfile(
+    public ResponseEntity<ApiResponse<UserResponse>> createUserProfile(
             @RequestHeader(value = "X-Profile-Subject", required = true) String headerUserId,
             @Valid @RequestBody CreateUserProfileRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUserProfile(headerUserId, request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(userService.createUserProfile(headerUserId, request)));
     }
 }

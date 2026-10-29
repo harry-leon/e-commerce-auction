@@ -1,6 +1,7 @@
 package com.nexus.gateway.controller;
 
 import com.nexus.gateway.config.PasswordPolicy;
+import com.nexus.common.response.ApiResponse;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
@@ -72,16 +73,19 @@ public class AuthGatewayController {
      * @param body Payload JSON chứa email/username và password
      * @return Mono chứa JWT token trả về từ Keycloak hoặc lỗi HTTP 401
      */
+    /**
+     * Luồng Đăng nhập: Tiếp nhận email/username và password dạng JSON,
+     * ủy thác xác thực hoàn toàn cho Keycloak và trả về ApiResponse chứa AuthPayload.
+     */
     @PostMapping(value = "/login", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<ResponseEntity<Map>> login(@RequestBody Map<String, String> body) {
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> login(@RequestBody Map<String, String> body) {
         String username = body.getOrDefault("username", body.get("email"));
         String password = body.get("password");
 
         if (username == null || password == null) {
-            return Mono.just(ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", Map.of("code", "AUTH_CREDENTIALS_INVALID", "message", "Username and password are required")
-            )));
+            return Mono.just(ResponseEntity.badRequest().body(
+                ApiResponse.error("AUTH_CREDENTIALS_INVALID", "Username and password are required")
+            ));
         }
 
         return webClient.post()
@@ -98,10 +102,9 @@ public class AuthGatewayController {
             .flatMap(this::withProfile)
             .onErrorResume(WebClientResponseException.class, ex -> {
                 HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
-                return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.UNAUTHORIZED).body(Map.of(
-                    "success", false,
-                    "error", Map.of("code", "AUTH_CREDENTIALS_INVALID", "message", "Email hoặc mật khẩu không chính xác hoặc tài khoản bị khóa")
-                )));
+                return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.UNAUTHORIZED).body(
+                    ApiResponse.error("AUTH_CREDENTIALS_INVALID", "Email hoặc mật khẩu không chính xác hoặc tài khoản bị khóa")
+                ));
             });
     }
 
@@ -111,18 +114,21 @@ public class AuthGatewayController {
      * @param body Payload JSON chứa refreshToken
      * @return Mono chứa cặp token mới
      */
+    /**
+     * Luồng Cấp mới Token: Tiếp nhận refreshToken dạng JSON và gửi yêu cầu cấp mới tới Keycloak.
+     * Kết quả trả về bọc trong ApiResponse chứa AuthPayload.
+     */
     @PostMapping(value = {"/refresh-token", "/refresh"}, consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<ResponseEntity<Map>> refreshToken(@RequestBody Map<String, String> body) {
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> refreshToken(@RequestBody Map<String, String> body) {
         String refreshToken = body.get("refreshToken");
         if (refreshToken == null) {
             refreshToken = body.get("refresh_token");
         }
 
         if (refreshToken == null) {
-            return Mono.just(ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", Map.of("code", "AUTH_REFRESH_TOKEN_EXPIRED", "message", "Refresh token is required")
-            )));
+            return Mono.just(ResponseEntity.badRequest().body(
+                ApiResponse.error("AUTH_REFRESH_TOKEN_EXPIRED", "Refresh token is required")
+            ));
         }
 
         return webClient.post()
@@ -136,10 +142,9 @@ public class AuthGatewayController {
             .timeout(java.time.Duration.ofSeconds(15))
             .flatMap(this::withProfile)
             .onErrorResume(WebClientResponseException.class, ex -> Mono.just(
-                ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
-                    "success", false,
-                    "error", Map.of("code", "AUTH_REFRESH_TOKEN_EXPIRED", "message", "Refresh token không hợp lệ hoặc đã hết hạn")
-                ))
+                ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                    ApiResponse.error("AUTH_REFRESH_TOKEN_EXPIRED", "Refresh token không hợp lệ hoặc đã hết hạn")
+                )
             ));
     }
 
@@ -155,27 +160,32 @@ public class AuthGatewayController {
      * @param body Payload JSON chứa thông tin đăng ký và hồ sơ người dùng
      * @return Mono chứa thông tin hồ sơ đã tạo hoặc thông báo lỗi
      */
+    /**
+     * Luồng Đăng ký & Đồng bộ Hồ sơ (BFF Orchestration):
+     * 1. Kiểm tra validation cơ bản (email, password theo PasswordPolicy).
+     * 2. Lấy access token quản trị từ Keycloak qua luồng client_credentials.
+     * 3. Gọi Keycloak Admin API tạo tài khoản IAM.
+     * 4. Gọi user-service tạo hồ sơ cá nhân và bọc UserResponse trong ApiResponse<Object> (HTTP 201 Created).
+     */
     @PostMapping(value = "/register", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<ResponseEntity<Map>> register(@RequestBody Map<String, Object> body) {
+    public Mono<ResponseEntity<ApiResponse<Object>>> register(@RequestBody Map<String, Object> body) {
         // Từ chối scalar sai kiểu trước khi gọi IAM, tránh ClassCastException trả 500 cho payload không hợp lệ.
         String email = body.get("email") instanceof String value ? value.trim().toLowerCase(java.util.Locale.ROOT) : null;
         String password = body.get("password") instanceof String value ? value : null;
         String fullName = body.get("fullName") instanceof String value ? value.trim() : null;
 
         if (email == null || email.isBlank() || !email.contains("@") || fullName == null || fullName.isBlank()) {
-            return Mono.just(ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", Map.of("code", "INVALID_ARGUMENT", "message", "Email hợp lệ và họ tên không được để trống")
-            )));
+            return Mono.just(ResponseEntity.badRequest().body(
+                ApiResponse.error("INVALID_ARGUMENT", "Email hợp lệ và họ tên không được để trống")
+            ));
         }
 
         // Trả 422 kèm từng điều kiện thiếu trước khi gọi IAM; không tạo tài khoản rồi mới phát hiện mật khẩu yếu.
         var passwordErrors = PasswordPolicy.errors(password);
         if (!passwordErrors.isEmpty()) {
-            return Mono.just(ResponseEntity.unprocessableEntity().body(Map.of(
-                "success", false,
-                "error", Map.of("code", "VALIDATION_ERROR", "message", "Mật khẩu chưa đạt yêu cầu", "details", passwordErrors)
-            )));
+            return Mono.just(ResponseEntity.unprocessableEntity().body(
+                ApiResponse.error("VALIDATION_ERROR", "Mật khẩu chưa đạt yêu cầu", passwordErrors)
+            ));
         }
 
         // Bước 1: Lấy Admin Access Token từ Keycloak
@@ -195,8 +205,12 @@ public class AuthGatewayController {
                             .bodyValue(profilePayload)
                             .retrieve()
                             .bodyToMono(Map.class)
-            .timeout(java.time.Duration.ofSeconds(15))
-                            .map(userProfileResponse -> ResponseEntity.status(HttpStatus.CREATED).body(userProfileResponse))
+                            .timeout(java.time.Duration.ofSeconds(15))
+                            .map(userProfileResponse -> {
+                                // Tương thích cả khi user-service trả ApiResponse ({ data: ... }) hoặc DTO thô
+                                Object data = userProfileResponse.containsKey("data") ? userProfileResponse.get("data") : userProfileResponse;
+                                return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(data));
+                            })
                             .onErrorResume(error -> {
                                 log.error("Lỗi khi tạo hồ sơ tại user-service, tiến hành rollback Keycloak user: {}", keycloakId, error);
                                 // Bù trừ: Xóa tài khoản Keycloak đã tạo để đảm bảo toàn vẹn dữ liệu
@@ -207,10 +221,9 @@ public class AuthGatewayController {
             })
             .onErrorResume(ResponseStatusException.class, ex -> {
                 HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
-                return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.BAD_REQUEST).body(Map.of(
-                    "success", false,
-                    "error", Map.of("code", "REGISTRATION_FAILED", "message", ex.getReason() != null ? ex.getReason() : "Đăng ký thất bại")
-                )));
+                return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.BAD_REQUEST).body(
+                    ApiResponse.error("REGISTRATION_FAILED", ex.getReason() != null ? ex.getReason() : "Đăng ký thất bại")
+                ));
             })
             .onErrorResume(WebClientResponseException.class, ex -> {
                 HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
@@ -218,17 +231,15 @@ public class AuthGatewayController {
                 if (status == HttpStatus.CONFLICT || ex.getStatusCode().value() == 409) {
                     message = "Email đã được đăng ký trong hệ thống";
                 }
-                return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.BAD_REQUEST).body(Map.of(
-                    "success", false,
-                    "error", Map.of("code", "REGISTRATION_FAILED", "message", message.isEmpty() ? "Đăng ký tài khoản thất bại" : message)
-                )));
+                return Mono.just(ResponseEntity.status(status != null ? status : HttpStatus.BAD_REQUEST).body(
+                    ApiResponse.error("REGISTRATION_FAILED", message.isEmpty() ? "Đăng ký tài khoản thất bại" : message)
+                ));
             })
             .onErrorResume(Exception.class, ex -> {
                 log.error("Lỗi hệ thống trong luồng đăng ký:", ex);
-                return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
-                    "success", false,
-                    "error", Map.of("code", "INTERNAL_SERVER_ERROR", "message", "Không thể hoàn tất đăng ký, vui lòng thử lại sau")
-                )));
+                return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                    ApiResponse.error("INTERNAL_SERVER_ERROR", "Không thể hoàn tất đăng ký, vui lòng thử lại sau")
+                ));
             });
     }
 
@@ -236,7 +247,13 @@ public class AuthGatewayController {
      * Giữ contract frontend accessToken/refreshToken/user; lấy profile qua API bằng JWT đã được Keycloak cấp.
      * Lỗi profile dừng login/refresh, không tạo session UI thiếu user.
      */
-    private Mono<ResponseEntity<Map>> withProfile(Map tokens) {
+    /**
+     * Bọc kết quả token từ Keycloak và hồ sơ người dùng từ user-service vào ApiResponse chuẩn.
+     * Chức năng: Đóng gói { success: true, data: { accessToken, refreshToken, expiresIn, tokenType, user }, error: null, meta: ... }.
+     * Đầu vào: Map tokens từ Keycloak.
+     * Kết quả: ResponseEntity chứa ApiResponse<Map<String, Object>>.
+     */
+    private Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> withProfile(Map tokens) {
         String accessToken = (String) tokens.get("access_token");
         return webClient.get().uri(userServiceUrl + "/api/v1/users/me")
             .headers(headers -> headers.setBearerAuth(accessToken))
@@ -248,7 +265,7 @@ public class AuthGatewayController {
                 result.put("expiresIn", tokens.get("expires_in"));
                 result.put("tokenType", "Bearer");
                 result.put("user", profile.containsKey("data") ? profile.get("data") : profile);
-                return ResponseEntity.ok((Map) result);
+                return ResponseEntity.ok(ApiResponse.ok(result));
             });
     }
 

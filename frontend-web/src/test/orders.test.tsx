@@ -65,22 +65,22 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
 
     it('ordersApi: Buyer hủy đơn hàng, cập nhật trạng thái cancelled và thanh toán refunded', async () => {
         const cancelled = await ordersApi.cancelOrder('ORD-20240305-005', 'Không còn nhu cầu')
-        expect(cancelled.status).toBe('cancelled')
+        expect(cancelled.status).toBe('CANCELLED')
         expect(cancelled.paymentStatus).toBe('refunded')
 
         // Xác minh lưu vết vào storage
         const recheck = await ordersApi.getOrderById('ORD-20240305-005')
-        expect(recheck?.status).toBe('cancelled')
+        expect(recheck?.status).toBe('CANCELLED')
     })
 
     it('ordersApi: Seller cập nhật trạng thái đơn hàng processing -> shipped', async () => {
-        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'shipped', 'Giao cho đơn vị vận chuyển')
-        expect(updated.status).toBe('shipped')
+        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'SHIPPED', 'Giao cho đơn vị vận chuyển')
+        expect(updated.status).toBe('SHIPPED')
 
         const recheck = await ordersApi.getOrderById('ORD-20240220-002')
-        expect(recheck?.status).toBe('shipped')
+        expect(recheck?.status).toBe('SHIPPED')
         expect(recheck?.statusHistory?.at(-1)).toMatchObject({
-            status: 'shipped',
+            status: 'SHIPPED',
             actor: 'seller',
             reason: 'Giao cho đơn vị vận chuyển',
         })
@@ -89,7 +89,7 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     it('ordersApi: Buyer xác nhận đã nhận hàng và mở khiếu nại', async () => {
         // Xác nhận nhận hàng thành công
         const completed = await ordersApi.confirmOrderDelivery('ORD-20240215-001')
-        expect(completed.status).toBe('completed')
+        expect(completed.status).toBe('COMPLETED')
         expect(completed.paymentStatus).toBe('released')
 
         // Mở khiếu nại
@@ -101,7 +101,7 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     it('ordersApi: Admin xử lý giải quyết tranh chấp ký quỹ Escrow', async () => {
         const resolved = await ordersApi.resolveOrderDispute('ORD-20240101-003', 'refunded', 'Chấp nhận khiếu nại của Buyer')
         expect(resolved.paymentStatus).toBe('refunded')
-        expect(resolved.status).toBe('refunded')
+        expect(resolved.status).toBe('REFUNDED')
         expect(resolved.disputeStatus).toBe('resolved')
     })
 
@@ -186,5 +186,50 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
         await waitFor(() => {
             expect(screen.getByText(/Can thiệp quản lý trạng thái đơn hàng/i)).toBeDefined()
         })
+    })
+
+    it('ordersApi: createOrder tạo đơn hàng VNPAY và sinh URL thanh toán Sandbox', async () => {
+        const payload = {
+            shippingAddress: '123 Nguyen Hue, Ben Nghe, District 1, Ho Chi Minh City',
+            recipientName: 'Minh Tran',
+            recipientPhone: '0901234567',
+            paymentMethod: 'VNPAY' as const,
+            sourceType: 'REGULAR' as const,
+        }
+        const res = await ordersApi.createOrder(payload, 'test-idemp-key-123')
+        expect(res).toBeDefined()
+        expect(res.id).toMatch(/^ORD-/)
+        expect(res.paymentMethod).toBe('VNPAY')
+        expect(res.paymentUrl).toContain('/sandbox-payment')
+        expect(res.paymentUrl).toContain('orderId=')
+
+        // Kiểm tra đơn đã được lưu vào mock store
+        const saved = await ordersApi.getOrderById(res.id)
+        expect(saved).not.toBeNull()
+        expect(saved?.paymentMethod).toBe('VNPAY QR')
+    })
+
+    it('ordersApi: createOrder tạo đơn hàng COD hoàn tất trực tiếp không cần URL Sandbox', async () => {
+        const payload = {
+            shippingAddress: '456 Le Loi, District 1, Ho Chi Minh City',
+            recipientName: 'Hoang Nam',
+            recipientPhone: '0909888777',
+            paymentMethod: 'COD' as const,
+            sourceType: 'REGULAR' as const,
+        }
+        const res = await ordersApi.createOrder(payload)
+        expect(res.paymentMethod).toBe('COD')
+        expect(res.paymentUrl).toBeUndefined()
+    })
+
+    it('ordersApi: checkoutPreview tính toán subtotal, voucher và tổng tiền chính xác', async () => {
+        const preview = await ordersApi.checkoutPreview({
+            shippingAddress: '123 Nguyen Hue',
+            voucherCode: 'NEXUS10',
+        })
+        expect(preview.subtotal).toBeGreaterThan(0)
+        expect(preview.discountAmount).toBeGreaterThan(0)
+        expect(preview.appliedVoucher?.code).toBe('NEXUS10')
+        expect(preview.isOrderable).toBe(true)
     })
 })

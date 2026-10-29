@@ -122,14 +122,14 @@ export function SellerDashboardPage() {
     ]
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
     return (
@@ -497,25 +497,25 @@ export function SellerProductListPage() {
 
     // Tải danh sách sản phẩm của người bán từ Catalog Service (/api/v1/products)
     const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
+    /**
+     * Chức năng: Ánh xạ danh sách sản phẩm thật của người bán từ Catalog backend (/api/v1/products).
+     * Quy tắc: Không fallback sang PRODUCTS mockData.
+     */
     const liveProducts =
         prodEnvelope?.data && prodEnvelope.data.length > 0
-            ? prodEnvelope.data.map((p) => {
-                const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
-                return {
-                    ...fallback,
-                    id: p.id,
-                    name: p.name,
-                    nameVi: p.name,
-                    price: p.skus?.[0]?.price ?? fallback.price,
-                    sku: p.skus?.[0]?.skuCode ?? fallback.sku,
-                    images:
-                        p.images && p.images.length > 0
-                            ? p.images.map((img) => img.url)
-                            : fallback.images,
-                    status: p.status.toLowerCase() as ProductStatus,
-                }
-            })
-            : PRODUCTS
+            ? prodEnvelope.data.map((p) => ({
+                id: p.id,
+                name: p.name,
+                nameVi: p.name,
+                price: p.skus?.[0]?.price ?? 0,
+                sku: p.skus?.[0]?.skuCode ?? '',
+                images:
+                    p.images && p.images.length > 0
+                        ? p.images.map((img) => img.url)
+                        : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+                status: p.status.toLowerCase() as ProductStatus,
+            }))
+            : []
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
@@ -1371,9 +1371,9 @@ export function CreateAuctionPage() {
     )
 }
 
-// ─── Seller Orders ─────────────────────────────────────────────────────────────
+// ─── Seller Orders ───
 /**
- * Màn hình Quản lý đơn hàng của Seller (SRS 3.2.1 & ORDER-02).
+ * Màn hình Quản lý đơn hàng của Seller
  * 
  * Chức năng:
  * - Thống kê số lượng đơn hàng theo các trạng thái (Tổng, Đang xử lý, Đang giao, Đã giao, Doanh thu tạm tính).
@@ -1397,22 +1397,23 @@ export function SellerOrdersPage() {
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
+    // Nhãn hiển thị trạng thái thanh toán — dùng ngôn ngữ tự nhiên, không dùng thuật ngữ kỹ thuật.
     const paymentLabel = (s: string) =>
         ({
-            held: lang === 'en' ? 'Held by Nexus' : 'Nexus đang giữ',
-            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ Buyer',
-            released: lang === 'en' ? 'In seller balance' : 'Trong số dư',
-            on_hold: lang === 'en' ? 'Dispute hold' : 'Giữ do khiếu nại',
+            held: lang === 'en' ? 'Holding' : 'Đang giữ',
+            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ người mua',
+            released: lang === 'en' ? 'Released to seller' : 'Đã vào tài khoản',
+            on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ',
             refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
             partial_refund: lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
         })[s] || s
@@ -1465,11 +1466,11 @@ export function SellerOrdersPage() {
 
     // Thống kê nhanh số lượng đơn
     const totalRevenue = orders
-        .filter((o) => !['cancelled', 'refunded'].includes(o.status))
+        .filter((o) => !['CANCELLED', 'REFUNDED'].includes(o.status))
         .reduce((sum, o) => sum + o.total, 0)
-    const processingCount = orders.filter((o) => o.status === 'processing').length
-    const shippedCount = orders.filter((o) => o.status === 'shipped').length
-    const deliveredCount = orders.filter((o) => ['delivered', 'completed'].includes(o.status)).length
+    const processingCount = orders.filter((o) => o.status === 'PROCESSING').length
+    const shippedCount = orders.filter((o) => o.status === 'SHIPPED').length
+    const deliveredCount = orders.filter((o) => ['DELIVERED', 'COMPLETED'].includes(o.status)).length
 
     return (
         <SellerLayout title={tr(lang, 'orders')}>
@@ -1519,14 +1520,14 @@ export function SellerOrdersPage() {
                             onChange={(e) => setStatusFilter(e.target.value)}
                         >
                             <option value="all">{tr(lang, 'all')}</option>
-                            <option value="pending">{tr(lang, 'statusPending')}</option>
-                            <option value="paid">{tr(lang, 'statusPaid')}</option>
-                            <option value="processing">{tr(lang, 'statusProcessing')}</option>
-                            <option value="shipped">{tr(lang, 'statusShipped')}</option>
-                            <option value="delivered">{tr(lang, 'statusDelivered')}</option>
-                            <option value="completed">{tr(lang, 'statusCompleted')}</option>
-                            <option value="cancelled">{tr(lang, 'statusCancelled')}</option>
-                            <option value="refunded">{tr(lang, 'statusRefunded')}</option>
+                            <option value="PENDING_PAYMENT">{tr(lang, 'statusPending')}</option>
+                            <option value="PAID">{tr(lang, 'statusPaid')}</option>
+                            <option value="PROCESSING">{tr(lang, 'statusProcessing')}</option>
+                            <option value="SHIPPED">{tr(lang, 'statusShipped')}</option>
+                            <option value="DELIVERED">{tr(lang, 'statusDelivered')}</option>
+                            <option value="COMPLETED">{tr(lang, 'statusCompleted')}</option>
+                            <option value="CANCELLED">{tr(lang, 'statusCancelled')}</option>
+                            <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                         </select>
                     </div>
                     <span className="text-xs text-gray-400">
@@ -1627,27 +1628,37 @@ export function SellerOrdersPage() {
                                             {lang === 'en' ? 'View' : 'Chi tiết'}
                                         </Button>
 
-                                        {/* Dropdown cập nhật trạng thái hợp lệ */}
-                                        <select
-                                            className="nexus-input text-xs py-1 px-2 w-32 font-medium"
-                                            value=""
-                                            disabled={updatingId === r.id || ['cancelled', 'completed', 'refunded'].includes(r.status)}
-                                            onChange={(e) => handleStatusChange(r.id, e.target.value)}
-                                        >
-                                            <option value="">{lang === 'en' ? 'Change status' : 'Đổi trạng thái'}</option>
-                                            {r.status === 'paid' && (
-                                                <option value="processing">{lang === 'en' ? 'To Processing' : 'Sang Đóng gói'}</option>
-                                            )}
-                                            {['paid', 'processing'].includes(r.status) && (
-                                                <option value="shipped">{lang === 'en' ? 'To Shipped' : 'Sang Đang giao'}</option>
-                                            )}
-                                            {r.status === 'shipped' && (
-                                                <option value="delivered">{lang === 'en' ? 'To Delivered' : 'Sang Đã giao'}</option>
-                                            )}
-                                            {['pending', 'paid', 'processing'].includes(r.status) && (
-                                                <option value="cancelled">{lang === 'en' ? 'Cancel Order' : 'Hủy đơn hàng'}</option>
-                                            )}
-                                        </select>
+                                        {/* Dropdown cập nhật trạng thái hợp lệ theo state machine.
+                                            DELIVERED bị disable vì bước tiếp (COMPLETED) do Buyer xác nhận,
+                                            CANCELLED/COMPLETED/REFUNDED là trạng thái cuối không thể chuyển tiếp. */}
+                                        {['DELIVERED', 'CANCELLED', 'COMPLETED', 'REFUNDED'].includes(r.status) ? (
+                                            <span className="text-xs text-gray-400 italic px-2">
+                                                {r.status === 'DELIVERED'
+                                                    ? (lang === 'en' ? 'Awaiting buyer confirmation' : 'Chờ Buyer xác nhận')
+                                                    : (lang === 'en' ? 'Final status' : 'Trạng thái cuối')}
+                                            </span>
+                                        ) : (
+                                            <select
+                                                className="nexus-input text-xs py-1 px-2 w-32 font-medium"
+                                                value=""
+                                                disabled={updatingId === r.id}
+                                                onChange={(e) => handleStatusChange(r.id, e.target.value)}
+                                            >
+                                                <option value="">{lang === 'en' ? 'Change status' : 'Đổi trạng thái'}</option>
+                                                {r.status === 'PAID' && (
+                                                    <option value="PROCESSING">{lang === 'en' ? 'To Processing' : 'Sang Đóng gói'}</option>
+                                                )}
+                                                {['PAID', 'PROCESSING'].includes(r.status) && (
+                                                    <option value="SHIPPED">{lang === 'en' ? 'To Shipped' : 'Sang Đang giao'}</option>
+                                                )}
+                                                {r.status === 'SHIPPED' && (
+                                                    <option value="DELIVERED">{lang === 'en' ? 'To Delivered' : 'Sang Đã giao'}</option>
+                                                )}
+                                                {['PENDING_PAYMENT', 'PAID', 'PROCESSING'].includes(r.status) && (
+                                                    <option value="CANCELLED">{lang === 'en' ? 'Cancel Order' : 'Hủy đơn hàng'}</option>
+                                                )}
+                                            </select>
+                                        )}
                                     </div>
                                 ),
                             },
@@ -1674,7 +1685,7 @@ export function SellerOrdersPage() {
                                 <p className="font-semibold text-gray-900 mt-0.5">{selectedOrder.buyerName}</p>
                             </div>
                             <div>
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment Escrow' : 'Ký quỹ thanh toán'}</p>
+                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}</p>
                                 <div className="mt-1">
                                     <StatusBadge
                                         status={getEffectivePaymentStatus(selectedOrder)}

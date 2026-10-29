@@ -4,16 +4,16 @@
 >
 > **Nguồn:** `AuthGatewayController` và route trong `api-gateway/application.yml`
 >
-> **Lưu ý:** Auth Gateway hiện là ngoại lệ, chưa dùng `ApiResponse<T>` chuẩn.
+> **Quy chuẩn Response:** Toàn bộ Auth Gateway tuân thủ chuẩn `ApiResponse<T>` theo [COMMON.md](COMMON.md).
 
 ## 1. Endpoint matrix
 
 | Method | Path | Request | Success response | HTTP | Xác thực |
 |---|---|---|---|---|---|
-| `POST` | `/auth/login` | `LoginRequest` | `AuthPayload` trực tiếp | `200` | Public |
-| `POST` | `/auth/refresh` | `RefreshTokenRequest` | `AuthPayload` trực tiếp | `200` | Public |
-| `POST` | `/auth/refresh-token` | `RefreshTokenRequest` | `AuthPayload` trực tiếp | `200` | Public, alias |
-| `POST` | `/auth/register` | `RegisterRequest` | `UserResponse` trực tiếp | `201` | Public |
+| `POST` | `/auth/login` | `LoginRequest` | `ApiResponse<AuthPayload>` | `200` | Public |
+| `POST` | `/auth/refresh` | `RefreshTokenRequest` | `ApiResponse<AuthPayload>` | `200` | Public |
+| `POST` | `/auth/refresh-token` | `RefreshTokenRequest` | `ApiResponse<AuthPayload>` | `200` | Public, alias |
+| `POST` | `/auth/register` | `RegisterRequest` | `ApiResponse<UserResponse>` | `201` | Public |
 
 `Content-Type: application/json` là bắt buộc cho bốn endpoint trên.
 
@@ -89,17 +89,50 @@ interface AuthPayload {
 }
 ```
 
-Payload không có `success`, `data`, `error`, `meta`. `user` là nội dung `UserResponse` lấy từ User Service; chi tiết field xem [USER_SERVICE.md](USER_SERVICE.md#3-response-dto).
+Dữ liệu `AuthPayload` được bọc bên trong trường `data` của `ApiResponse<AuthPayload>`. `user` là nội dung `UserResponse` lấy từ User Service; chi tiết field xem [USER_SERVICE.md](USER_SERVICE.md#3-response-dto).
 
-Ví dụ response của login/refresh:
+Ví dụ response của login/refresh (`200 OK`):
 
 ```json
 {
-  "accessToken": "eyJhbGciOiJSUzI1NiJ9.example-access-token",
-  "refreshToken": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token",
-  "expiresIn": 3600,
-  "tokenType": "Bearer",
-  "user": {
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJSUzI1NiJ9.example-access-token",
+    "refreshToken": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token",
+    "expiresIn": 3600,
+    "tokenType": "Bearer",
+    "user": {
+      "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
+      "email": "buyer@nexus.vn",
+      "phone": "0901234567",
+      "fullName": "Nguyễn Văn An",
+      "identifyNumber": "079203001234",
+      "gender": "MALE",
+      "dateOfBirth": "2003-05-20",
+      "address": "Quận 1, TP. Hồ Chí Minh",
+      "status": "ACTIVE",
+      "createdAt": "2026-10-25T08:15:30",
+      "updatedAt": "2026-10-25T08:15:30",
+      "roles": ["BUYER"],
+      "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
+    }
+  },
+  "error": null,
+  "meta": {
+    "requestId": "req_8cb579f0",
+    "timestamp": "2026-10-27T14:00:00.000Z"
+  }
+}
+```
+
+### Register response
+
+`POST /auth/register` trả về `ApiResponse<UserResponse>` (`201 Created`). Trường `data` chứa thông tin hồ sơ vừa tạo từ User Service. Endpoint này chưa cấp token, FE chuyển người dùng về màn hình đăng nhập để xác thực.
+
+```json
+{
+  "success": true,
+  "data": {
     "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
     "email": "buyer@nexus.vn",
     "phone": "0901234567",
@@ -113,59 +146,36 @@ Ví dụ response của login/refresh:
     "updatedAt": "2026-10-25T08:15:30",
     "roles": ["BUYER"],
     "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
+  },
+  "error": null,
+  "meta": {
+    "requestId": "req_8cb579f1",
+    "timestamp": "2026-10-27T14:00:00.000Z"
   }
 }
 ```
 
-### Register response
+## 4. Error response
 
-`POST /auth/register` forward nguyên `UserResponse` của User Service, không bọc envelope. FE không dùng `AuthPayload` cho response đăng ký vì endpoint chưa cấp token.
-
-```json
-{
-  "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
-  "email": "buyer@nexus.vn",
-  "phone": "0901234567",
-  "fullName": "Nguyễn Văn An",
-  "identifyNumber": "079203001234",
-  "gender": "MALE",
-  "dateOfBirth": "2003-05-20",
-  "address": "Quận 1, TP. Hồ Chí Minh",
-  "status": "ACTIVE",
-  "createdAt": "2026-10-25T08:15:30",
-  "updatedAt": "2026-10-25T08:15:30",
-  "roles": ["BUYER"],
-  "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
-}
-```
-
-## 4. Error response hiện tại
-
-Gateway auth trả cấu trúc tối giản:
-
-```ts
-interface GatewayAuthError {
-  success: false
-  error: {
-    code: string
-    message: string
-  }
-}
-```
-
-Các mã đang được tạo trực tiếp gồm `AUTH_CREDENTIALS_INVALID`, `AUTH_REFRESH_TOKEN_EXPIRED`, `INVALID_ARGUMENT`, `REGISTRATION_FAILED`, `INTERNAL_SERVER_ERROR`. Payload này không có `data`, `meta` hoặc `error.details`.
-
-Ví dụ login thất bại:
+Gateway auth tuân thủ chuẩn `ApiResponse` lỗi:
 
 ```json
 {
   "success": false,
+  "data": null,
   "error": {
     "code": "AUTH_CREDENTIALS_INVALID",
-    "message": "Email hoặc mật khẩu không chính xác hoặc tài khoản bị khóa"
+    "message": "Email hoặc mật khẩu không chính xác hoặc tài khoản bị khóa",
+    "details": null
+  },
+  "meta": {
+    "requestId": "req_8cb579f2",
+    "timestamp": "2026-10-27T14:00:00.000Z"
   }
 }
 ```
+
+Các mã lỗi thường gặp: `AUTH_CREDENTIALS_INVALID` (401), `AUTH_REFRESH_TOKEN_EXPIRED` (401), `INVALID_ARGUMENT` (400), `VALIDATION_ERROR` (422), `REGISTRATION_FAILED` (400/409), `INTERNAL_SERVER_ERROR` (500).
 
 ## 5. Phân tuyến service
 

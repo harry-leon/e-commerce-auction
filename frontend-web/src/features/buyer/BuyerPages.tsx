@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency, formatDate } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
@@ -47,8 +47,12 @@ import {
 import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
-import type { Order, OrderStatus } from '../../types'
-import { ordersApi } from '../../api/orders'
+import type { Order, OrderStatus, Product } from '../../types'
+import {
+    ordersApi,
+    type CreateOrderRequest,
+    type CreateOrderResponse,
+} from '../../api/orders'
 import { useLoad } from '../../hooks/useLoad'
 import {
     readSession,
@@ -114,6 +118,12 @@ const BUYER_REGIONS = [
 // ─── Home Page ─────────────────────────────────────────────────────────────────
 export function HomePage() {
     const { lang, navigate, createdAuctions, auctionReviews } = useApp()
+
+    /**
+     * Chức năng: Lấy danh sách các phiên đấu giá đang diễn ra (Live Auctions) trên trang chủ.
+     * Đầu vào: createdAuctions (các phiên do người dùng tạo trong phiên làm việc) kết hợp AUCTIONS đang hoạt động.
+     * Quy tắc: Lọc các phiên có trạng thái 'active' và có ảnh sản phẩm để hiển thị trên Carousel Hero và Section Đấu giá trực tiếp.
+     */
     const activeAuctions = [...createdAuctions, ...AUCTIONS]
         .map((auction) => ({
             ...auction,
@@ -129,41 +139,52 @@ export function HomePage() {
     // Tải danh sách sản phẩm thật từ Catalog Service backend (/api/v1/products)
     const { data: prodData } = useLoad<Envelope<ApiProduct[]>>('/products')
 
-    // Chuyển đổi danh mục backend sang định dạng hiển thị, fallback về CATEGORIES nếu chưa có
-    const liveCategories =
-        catData?.data && catData.data.length > 0
-            ? catData.data.map((c) => ({
-                id: c.id,
-                name: c.name,
-                nameVi: c.nameVi,
-                productCount: c.productCount,
-            }))
-            : CATEGORIES
+    /**
+     * Chức năng: Ánh xạ danh mục trực tiếp từ Catalog backend kết nối Supabase; không dùng CATEGORIES mockData.
+     */
+    const liveCategories = (catData?.data || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        nameVi: c.nameVi || c.name,
+        productCount: c.productCount ?? 0,
+    }))
 
-    // Chuyển đổi sản phẩm backend sang định dạng hiển thị UI, fallback về PRODUCTS nếu chưa có
-    const liveProducts =
-        prodData?.data && prodData.data.length > 0
-            ? prodData.data.map((p) => {
-                const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
-                return {
-                    ...fallback,
-                    id: p.id,
-                    name: p.name,
-                    nameVi: p.name,
-                    categoryId: p.categoryId,
-                    price: p.skus?.[0]?.price ?? fallback.price,
-                    originalPrice: p.skus?.[0]?.originalPrice ?? fallback.originalPrice,
-                    sku: p.skus?.[0]?.skuCode ?? fallback.sku,
-                    images:
-                        p.images && p.images.length > 0
-                            ? p.images.map((img) => img.url)
-                            : fallback.images,
-                    description: p.description || fallback.description,
-                    descriptionVi: p.description || fallback.descriptionVi,
-                    enableAuction: p.auctionEnabled ?? fallback.enableAuction,
-                }
-            })
-            : PRODUCTS
+    /**
+     * Chức năng: Ánh xạ sản phẩm trực tiếp từ Catalog backend (/api/v1/products); không dùng PRODUCTS mockData.
+     * Đầu vào: Dữ liệu thực tế từ Supabase qua prodData.
+     * Kết quả: Danh sách sản phẩm với giá, SKU và ảnh từ database.
+     */
+    const liveProducts: Product[] = (prodData?.data || []).map((p) => {
+        const sku = p.skus?.[0]
+        const categoryObj = catData?.data?.find((c) => c.id === p.categoryId)
+        const categoryName = categoryObj ? (categoryObj.nameVi || categoryObj.name) : 'Thiết bị điện tử'
+        return {
+            id: p.id,
+            name: p.name,
+            nameVi: p.name,
+            category: categoryName,
+            categoryId: p.categoryId,
+            price: sku?.price || 0,
+            originalPrice: sku?.originalPrice,
+            sku: sku?.skuCode || '',
+            images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+            description: p.description || '',
+            descriptionVi: p.description || '',
+            enableAuction: p.auctionEnabled || false,
+            stock: 50,
+            rating: 5.0,
+            reviewCount: 0,
+            condition: 'new' as const,
+            location: 'ho-chi-minh',
+            createdAt: p.createdAt || new Date().toISOString(),
+            status: (p.status || 'active').toLowerCase() as any,
+            sellerId: (p as any).sellerId || 'seller-nexus-1',
+            sellerName: 'Nexus Official Store',
+            sellerTrust: 'gold' as const,
+            sellerRating: 4.9,
+            weight: 500,
+        }
+    })
 
     useEffect(() => {
         setHeroIndex((index) => (activeAuctions.length > 0 ? index % activeAuctions.length : 0))
@@ -176,69 +197,75 @@ export function HomePage() {
 
     return (
         <BuyerLayout noPad>
-            {/* Hero Banner */}
-            <section className="relative min-h-[520px] overflow-hidden bg-gray-950 text-white">
-                {activeAuctions.map((auction, index) => (
+            {/* Hero Banner - Thể hiện dữ liệu thực tế từ Database */}
+            <section className="relative min-h-[500px] overflow-hidden bg-gray-950 text-white">
+                {activeAuctions.length > 0 ? (
+                    activeAuctions.map((auction, index) => (
+                        <img
+                            key={auction.id}
+                            src={auction.product.images[0]
+                                .replace(/w=\d+/, 'w=1800')
+                                .replace(/h=\d+/, 'h=720')}
+                            alt=""
+                            aria-hidden={index !== heroIndex}
+                            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out ${index === heroIndex ? 'opacity-100' : 'opacity-0'}`}
+                        />
+                    ))
+                ) : (
                     <img
-                        key={auction.id}
-                        src={auction.product.images[0]
-                            .replace(/w=\d+/, 'w=1800')
-                            .replace(/h=\d+/, 'h=720')}
-                        alt=""
-                        aria-hidden={index !== heroIndex}
-                        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ease-in-out ${index === heroIndex ? 'opacity-100' : 'opacity-0'}`}
+                        src="https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=1800&h=720&fit=crop&auto=format"
+                        alt="Nexus Marketplace"
+                        className="absolute inset-0 h-full w-full object-cover opacity-85"
                     />
-                ))}
+                )}
                 <div className="absolute inset-0 bg-black/60" />
 
-                <div className="relative z-10 max-w-[1440px] min-h-[520px] mx-auto px-8 py-14 flex items-center">
+                <div className="relative z-10 max-w-[1440px] min-h-[500px] mx-auto px-8 py-14 flex items-center">
                     <div className="max-w-2xl">
-                        <div className="inline-flex items-center gap-2 border border-white/30 rounded-full px-4 py-1.5 text-sm font-semibold mb-5">
-                            <span className="w-2 h-2 bg-white rounded-full" />
+                        <div className="inline-flex items-center gap-2 border border-white/30 rounded-full px-4 py-1.5 text-sm font-semibold mb-5 bg-white/10 backdrop-blur-sm">
+                            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
                             {lang === 'en'
-                                ? `${activeAuctions.length} live auctions in progress`
-                                : `${activeAuctions.length} phiên đấu giá đang diễn ra`}
+                                ? `${liveProducts.length} verified products in database`
+                                : `${liveProducts.length} sản phẩm thực tế từ Database`}
                         </div>
                         <h1 className="text-5xl font-black leading-tight mb-5">
                             {lang === 'en' ? (
                                 <>
                                     Buy, Sell &<br />
-                                    <span className="text-gray-300">Bid Smart</span>
+                                    <span className="text-gray-300">Nexus Marketplace</span>
                                 </>
                             ) : (
                                 <>
                                     Mua, Bán &<br />
-                                    <span className="text-gray-300">Đấu giá thông minh</span>
+                                    <span className="text-gray-300">Đấu giá chính hãng</span>
                                 </>
                             )}
                         </h1>
                         <p className="text-white/80 text-lg mb-8 max-w-md">
                             {lang === 'en'
-                                ? 'The trusted Vietnamese marketplace for shopping and live auctions.'
-                                : 'Sàn thương mại điện tử Việt Nam uy tín cho mua sắm và đấu giá trực tiếp.'}
+                                ? 'Real-time verified catalog and inventory directly queried from Cloud Supabase Database.'
+                                : 'Toàn bộ danh mục và sản phẩm được truy vấn trực tiếp từ cơ sở dữ liệu Cloud Supabase.'}
                         </p>
                         <div className="flex gap-3">
                             <Button
                                 variant="primary"
                                 size="lg"
-                                className="bg-white text-gray-900 hover:bg-gray-100"
+                                className="bg-white text-gray-900 hover:bg-gray-100 font-semibold"
                                 onClick={() => navigate('search')}
                             >
                                 {lang === 'en' ? 'Shop Now' : 'Mua sắm ngay'}
                             </Button>
-                            <Button
-                                variant="ghost"
-                                size="lg"
-                                className="border-white/40 text-white hover:bg-white/10 border"
-                                onClick={() =>
-                                    heroAuction
-                                        ? navigate('auction-detail', { id: heroAuction.id })
-                                        : navigate('auction-list')
-                                }
-                            >
-                                <Gavel size={16} />
-                                {lang === 'en' ? 'View This Auction' : 'Xem phiên đấu giá'}
-                            </Button>
+                            {liveProducts[0] && (
+                                <Button
+                                    variant="ghost"
+                                    size="lg"
+                                    className="border-white/40 text-white hover:bg-white/10 border"
+                                    onClick={() => navigate('product-detail', { id: liveProducts[0].id })}
+                                >
+                                    <Package size={16} />
+                                    {liveProducts[0].name}
+                                </Button>
+                            )}
                         </div>
 
                         {heroAuction && (
@@ -302,7 +329,8 @@ export function HomePage() {
                                     onClick={() => navigate('search', { category: cat.id })}
                                     className="nexus-card p-5 flex flex-col items-center gap-3 hover:border-primary hover:shadow-md transition-all group cursor-pointer"
                                 >
-                                    <div className="w-14 h-14 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500">
+                                    {/* Icon danh mục kiểu Shopee: nền cam nhạt bg-orange-50 và hover chuyển sang nền cam đậm */}
+                                    <div className="w-14 h-14 rounded-2xl bg-orange-50 text-primary flex items-center justify-center group-hover:scale-105 group-hover:bg-primary group-hover:text-white transition-all shadow-2xs">
                                         {Icon && <Icon width="28" height="28" strokeWidth="1.4" />}
                                     </div>
                                     <span className="text-sm font-semibold text-gray-700 group-hover:text-primary text-center leading-tight">
@@ -346,7 +374,7 @@ export function HomePage() {
                     </section>
                 )}
 
-                {/* Popular Products */}
+                {/* Popular Products - Danh sách sản phẩm thực tế từ Database */}
                 <section>
                     <div className="flex items-center justify-between mb-5">
                         <h2 className="text-2xl font-bold text-gray-900">
@@ -356,29 +384,37 @@ export function HomePage() {
                             {tr(lang, 'viewAll')} →
                         </Button>
                     </div>
-                    <div className="grid grid-cols-4 gap-5">
-                        {liveProducts.slice(0, 4).map((p) => (
-                            <ProductCard key={p.id} product={p} />
-                        ))}
-                    </div>
+                    {liveProducts.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                            {liveProducts.map((p) => (
+                                <ProductCard key={p.id} product={p} />
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-gray-500 py-8 text-center">
+                            {lang === 'en' ? 'No products available.' : 'Chưa có sản phẩm nào trong cơ sở dữ liệu.'}
+                        </p>
+                    )}
                 </section>
 
-                {/* New Arrivals */}
-                <section>
-                    <div className="flex items-center justify-between mb-5">
-                        <h2 className="text-2xl font-bold text-gray-900">
-                            {tr(lang, 'newArrivals')}
-                        </h2>
-                        <Button variant="outline" size="sm" onClick={() => navigate('search')}>
-                            {tr(lang, 'viewAll')} →
-                        </Button>
-                    </div>
-                    <div className="grid grid-cols-4 gap-5">
-                        {liveProducts.slice(2, 6).map((p) => (
-                            <ProductCard key={p.id} product={p} />
-                        ))}
-                    </div>
-                </section>
+                {/* New Arrivals - Hiển thị các sản phẩm mới nhất từ Database */}
+                {liveProducts.length >= 3 && (
+                    <section>
+                        <div className="flex items-center justify-between mb-5">
+                            <h2 className="text-2xl font-bold text-gray-900">
+                                {tr(lang, 'newArrivals')}
+                            </h2>
+                            <Button variant="outline" size="sm" onClick={() => navigate('search')}>
+                                {tr(lang, 'viewAll')} →
+                            </Button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                            {[...liveProducts].reverse().map((p) => (
+                                <ProductCard key={p.id} product={p} />
+                            ))}
+                        </div>
+                    </section>
+                )}
             </div>
         </BuyerLayout>
     )
@@ -1153,45 +1189,8 @@ export function CartPage() {
     const [voucherError, setVoucherError] = useState('')
     const [showClearConfirm, setShowClearConfirm] = useState(false)
 
-    // Dữ liệu giỏ hàng mẫu fallback khi chưa đăng nhập hoặc chạy offline
-    const fallbackCartItems: CartItemResponse[] = [
-        {
-            id: 'item-demo-1',
-            skuId: 'ba844bf3-8ead-4a83-9c36-b418c07a5f13',
-            skuCode: PRODUCTS[0].sku,
-            productName: PRODUCTS[0].name,
-            thumbnailUrl: PRODUCTS[0].images[0],
-            unitPrice: PRODUCTS[0].price,
-            quantity: 1,
-            stockAvailable: PRODUCTS[0].stock,
-            isAvailable: true,
-            subtotal: PRODUCTS[0].price,
-        },
-        {
-            id: 'item-demo-2',
-            skuId: '2f78db6a-e71d-4ca7-8a41-43e9870bf55f',
-            skuCode: PRODUCTS[2].sku,
-            productName: PRODUCTS[2].name,
-            thumbnailUrl: PRODUCTS[2].images[0],
-            unitPrice: PRODUCTS[2].price,
-            quantity: 2,
-            stockAvailable: PRODUCTS[2].stock,
-            isAvailable: true,
-            subtotal: PRODUCTS[2].price * 2,
-        },
-        {
-            id: 'item-demo-3',
-            skuId: '4c99e90f-7cc8-4e16-a0a3-255f5b61c03d',
-            skuCode: PRODUCTS[4].sku,
-            productName: PRODUCTS[4].name,
-            thumbnailUrl: PRODUCTS[4].images[0],
-            unitPrice: PRODUCTS[4].price,
-            quantity: 1,
-            stockAvailable: PRODUCTS[4].stock,
-            isAvailable: true,
-            subtotal: PRODUCTS[4].price,
-        },
-    ]
+    // Giỏ hàng mặc định là rỗng; không tự nạp sản phẩm mẫu PRODUCTS
+    const fallbackCartItems: CartItemResponse[] = []
 
     const loadCart = useCallback(async () => {
         setLoading(true)
@@ -1206,25 +1205,22 @@ export function CartPage() {
                 // Người dùng đã đăng nhập nhưng gọi API bị lỗi -> báo lỗi API thực tế
                 setError(errorMessage(err))
             } else {
-                // Khách chưa đăng nhập -> khởi tạo giỏ hàng demo để người dùng trải nghiệm
-                const initialSubtotal = fallbackCartItems.reduce((s, i) => s + i.subtotal, 0)
+                // Khách chưa đăng nhập -> hiển thị giỏ hàng rỗng thật, không nạp dữ liệu mẫu
                 setCart({
                     cartId: 'guest-cart',
                     userId: 'guest',
                     status: 'ACTIVE',
-                    items: fallbackCartItems,
-                    totalItems: fallbackCartItems.length,
-                    totalQuantity: fallbackCartItems.reduce((s, i) => s + i.quantity, 0),
-                    subtotal: initialSubtotal,
+                    items: [],
+                    totalItems: 0,
+                    totalQuantity: 0,
+                    subtotal: 0,
                     discountAmount: 0,
-                    shippingFee: initialSubtotal >= 100 ? 0 : 8.99,
-                    taxAmount: initialSubtotal * 0.08,
-                    totalAmount:
-                        initialSubtotal +
-                        (initialSubtotal >= 100 ? 0 : 8.99) +
-                        initialSubtotal * 0.08,
+                    shippingFee: 0,
+                    taxAmount: 0,
+                    totalAmount: 0,
                     expiresAt: null,
                 })
+                setCartCount(0)
             }
         } finally {
             setLoading(false)
@@ -1345,13 +1341,13 @@ export function CartPage() {
             setCart((prev) =>
                 prev
                     ? {
-                          ...prev,
-                          items: [],
-                          totalItems: 0,
-                          totalQuantity: 0,
-                          subtotal: 0,
-                          totalAmount: 0,
-                      }
+                        ...prev,
+                        items: [],
+                        totalItems: 0,
+                        totalQuantity: 0,
+                        subtotal: 0,
+                        totalAmount: 0,
+                    }
                     : null,
             )
             setCartCount(0)
@@ -1383,7 +1379,7 @@ export function CartPage() {
         return (
             <BuyerLayout>
                 <div className="flex flex-col items-center justify-center py-24 space-y-4">
-                    <Spinner size={36} color="#4f46e5" />
+                    <Spinner size={36} color="#ee4d2d" />
                     <p className="text-gray-500 text-sm font-medium animate-pulse">
                         {lang === 'en'
                             ? 'Loading cart from server...'
@@ -1489,11 +1485,7 @@ export function CartPage() {
                 {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}
                 <div className="space-y-3">
                     {items.map((item) => {
-                        const fallbackProd =
-                            PRODUCTS.find(
-                                (p) => p.sku === item.skuCode || p.name === item.productName,
-                            ) || PRODUCTS[0]
-                        const displayImage = item.thumbnailUrl || fallbackProd.images[0]
+                        const displayImage = item.thumbnailUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'
                         const isActing = actionLoadingId === item.id
 
                         return (
@@ -1725,6 +1717,28 @@ export function CheckoutPage() {
         Partial<Record<keyof PaymentFormData, string>>
     >({})
 
+    // State lưu lỗi chung khi xử lý checkout / API backend (Accept Criteria 2 & 5)
+    const [checkoutError, setCheckoutError] = useState<string | null>(null)
+    // Ref chặn click đúp / gửi request lặp ngoài ý muốn (Accept Criteria 4)
+    const isSubmittingRef = useRef(false)
+    const [cartItems, setCartItems] = useState<CartItemResponse[]>([])
+
+    useEffect(() => {
+        let isMounted = true
+        getActiveCart()
+            .then((res) => {
+                if (isMounted && res?.items && res.items.length > 0) {
+                    setCartItems(res.items)
+                }
+            })
+            .catch(() => {
+                // Giữ giỏ fallback mẫu nếu chưa tải được từ backend
+            })
+        return () => {
+            isMounted = false
+        }
+    }, [])
+
     const STEPS = [
         tr(lang, 'shippingAddress'),
         tr(lang, 'shippingMethod'),
@@ -1864,8 +1878,29 @@ export function CheckoutPage() {
         return isValid
     }
 
-    // Đặt hàng (Accept Criteria 4 & hoàn thiện Checkout)
+    /**
+     * Gửi thông tin Checkout đến Backend và chuyển hướng thanh toán Sandbox.
+     * Chức năng: Đặt hàng theo đặc tả API_SPEC_CART_ORDER.md §4.2, xử lý phản hồi thành công/thất bại
+     *            và chuyển hướng Buyer tới cổng Sandbox nếu thanh toán trực tuyến.
+     * Đầu vào: Dữ liệu giao hàng (Step 1) và thông tin thanh toán (Step 3).
+     * Luồng xử lý:
+     *   1. Kiểm tra validation Step 1 và Step 3; nếu lỗi thì dừng và chuyển về bước tương ứng.
+     *   2. Bật loading và chặn isSubmittingRef để hạn chế gửi yêu cầu nhiều lần ngoài ý muốn (Accept Criteria 4).
+     *   3. Sinh UUID Idempotency-Key và gọi ordersApi.createOrder() gửi thông tin đến Backend (Accept Criteria 1).
+     *   4. Khi thành công:
+     *      - Dọn giỏ hàng của Buyer qua clearCart().
+     *      - Nếu chọn VNPAY (hoặc Backend phản hồi paymentUrl):
+     *        Kiểm tra tính hợp lệ của paymentUrl và chuyển hướng đến cổng sandbox (Accept Criteria 3).
+     *      - Nếu thanh toán thẻ trực tiếp hoặc COD: Điều hướng tới trang /payment-result?status=success.
+     *   5. Khi thất bại:
+     *      - Bắt lỗi API / mạng, hiển thị thông báo lỗi rõ ràng qua AlertBanner và Toast (Accept Criteria 2 & 5).
+     *      - Dữ liệu form của Buyer được giữ nguyên vẹn để người dùng kiểm tra và thử lại.
+     * Lỗi & giới hạn: Kiểm tra tính hợp lệ của paymentUrl trước khi redirect để phòng tránh URL giả mạo/lỗi.
+     */
     const placeOrder = async () => {
+        // Hạn chế việc gửi yêu cầu nhiều lần ngoài ý muốn (Accept Criteria 4)
+        if (isSubmittingRef.current || loading) return
+
         if (!validateStep1()) {
             setStep(1)
             return
@@ -1876,29 +1911,111 @@ export function CheckoutPage() {
         }
 
         setLoading(true)
+        setCheckoutError(null)
+        isSubmittingRef.current = true
+
         try {
-            await new Promise((r) => setTimeout(r, 1200))
+            const fullAddress = `${shippingData.street.trim()}, ${shippingData.ward.trim()}, ${shippingData.district.trim()}, ${shippingData.city.trim()}`
+            const orderPayload: CreateOrderRequest = {
+                shippingAddress: fullAddress,
+                recipientName: shippingData.fullName.trim(),
+                recipientPhone: shippingData.phone.replace(/[\s-]/g, ''),
+                paymentMethod: paymentData.method,
+                sourceType: 'REGULAR',
+                selectedItemIds: cartItems.map((item) => item.id),
+            }
+
+            // Sinh UUID Idempotency-Key chống duplicate do mạng lag hoặc retry
+            const idempotencyKey =
+                typeof crypto !== 'undefined' && crypto.randomUUID
+                    ? crypto.randomUUID()
+                    : `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+
+            // Gửi thông tin Checkout đến Backend (Accept Criteria 1)
+            const response = await ordersApi.createOrder(orderPayload, idempotencyKey)
+
+            // Dọn sạch giỏ sau khi đặt hàng thành công
             const session = readSession()
             if (session) {
                 try {
                     await clearCart()
                 } catch {
-                    // Bỏ qua lỗi dọn giỏ nếu offline
+                    // Bỏ qua lỗi dọn giỏ phụ
                 }
             }
             setCartCount(0)
+
+            // Chuyển hướng đến cổng thanh toán sandbox khi Backend trả về URL hợp lệ (Accept Criteria 3)
+            if (paymentData.method === 'VNPAY' || response.paymentUrl) {
+                const url = response.paymentUrl
+                if (!url) {
+                    throw new Error(
+                        lang === 'en'
+                            ? 'No sandbox payment URL received from backend.'
+                            : 'Không nhận được đường dẫn thanh toán sandbox từ Backend.',
+                    )
+                }
+
+                const isExternal = /^https?:\/\//i.test(url)
+                const isInternal = url.startsWith('/')
+
+                if (!isExternal && !isInternal) {
+                    throw new Error(
+                        lang === 'en'
+                            ? `Invalid payment gateway URL: ${url}`
+                            : `Đường dẫn cổng thanh toán sandbox không hợp lệ: ${url}`,
+                    )
+                }
+
+                showToast({
+                    type: 'info',
+                    message:
+                        lang === 'en'
+                            ? 'Redirecting to sandbox payment portal...'
+                            : 'Đang chuyển hướng sang cổng thanh toán sandbox...',
+                })
+
+                if (isExternal) {
+                    // Chuyển hướng tới cổng sandbox ngoài (VNPAY sandbox)
+                    window.location.assign(url)
+                    return
+                }
+
+                // Chuyển hướng nội bộ tới màn hình Sandbox Payment Portal
+                const [targetPage, search] = url.replace(/^\//, '').split('?')
+                const params = search
+                    ? Object.fromEntries(new URLSearchParams(search).entries())
+                    : {}
+                navigate(targetPage as any, {
+                    ...params,
+                    orderId: response.id || response.orderNo,
+                    amount: response.total,
+                })
+                return
+            }
+
+            // Phản hồi Checkout thành công cho COD hoặc thẻ (Accept Criteria 2)
             showToast({ type: 'success', message: tr(lang, 'orderPlaced') })
-            navigate('payment-result', { status: 'success' })
-        } catch {
+            navigate('payment-result', {
+                status: 'success',
+                orderId: response.id || response.orderNo,
+            })
+        } catch (err: unknown) {
+            // Xử lý và hiển thị phản hồi Checkout thất bại rõ ràng (Accept Criteria 2 & 5)
+            const msg =
+                err instanceof Error
+                    ? err.message
+                    : lang === 'en'
+                      ? 'Failed to process checkout. Please try again.'
+                      : 'Đặt hàng thất bại. Vui lòng thử lại.'
+            setCheckoutError(msg)
             showToast({
                 type: 'error',
-                message:
-                    lang === 'en'
-                        ? 'Failed to place order. Please try again.'
-                        : 'Đặt hàng thất bại. Vui lòng thử lại.',
+                message: msg,
             })
         } finally {
             setLoading(false)
+            isSubmittingRef.current = false
         }
     }
 
@@ -2309,8 +2426,8 @@ export function CheckoutPage() {
                                             ? 'You will be redirected to VNPAY portal to scan QR code and complete payment.'
                                             : 'Bạn sẽ được chuyển hướng sang cổng VNPAY để quét mã QR thanh toán sau khi bấm Đặt hàng.'
                                         : lang === 'en'
-                                          ? 'You will pay in cash directly to the courier when receiving the package.'
-                                          : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
+                                            ? 'You will pay in cash directly to the courier when receiving the package.'
+                                            : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
                                 </div>
                             )}
 
@@ -2339,6 +2456,15 @@ export function CheckoutPage() {
                             <h2 className="font-bold text-gray-900 text-lg mb-3">
                                 {tr(lang, 'confirmation')}
                             </h2>
+
+                            {/* Hiển thị lỗi rõ ràng khi đặt hàng hoặc chuyển hướng thất bại (Accept Criteria 2 & 5) */}
+                            {checkoutError && (
+                                <AlertBanner
+                                    type="error"
+                                    message={checkoutError}
+                                />
+                            )}
+
                             <div className="space-y-2 text-sm">
                                 {[
                                     [
@@ -2355,7 +2481,7 @@ export function CheckoutPage() {
                                             ? `Visa ending ${paymentData.cardNumber.replace(/\s+/g, '').slice(-4) || '4242'}`
                                             : paymentData.method,
                                     ],
-                                    [tr(lang, 'total'), formatCurrency(329.97, lang)],
+                                    [tr(lang, 'total'), formatCurrency(cartItems.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0) + (shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)), lang)],
                                 ].map(([k, v]) => (
                                     <div
                                         key={k}
@@ -2367,13 +2493,19 @@ export function CheckoutPage() {
                                 ))}
                             </div>
                             <div className="flex gap-3">
-                                <Button variant="outline" size="lg" onClick={() => setStep(3)}>
+                                <Button
+                                    variant="outline"
+                                    size="lg"
+                                    disabled={loading}
+                                    onClick={() => setStep(3)}
+                                >
                                     {tr(lang, 'back')}
                                 </Button>
                                 <Button
                                     variant="primary"
                                     size="lg"
                                     loading={loading}
+                                    disabled={loading}
                                     onClick={placeOrder}
                                     className="flex-1"
                                 >
@@ -2387,40 +2519,266 @@ export function CheckoutPage() {
                 {/* Order summary sidebar */}
                 <div className="nexus-card p-5 h-fit">
                     <h3 className="font-bold mb-4">{tr(lang, 'orderSummary')}</h3>
+                    {/* Danh sách sản phẩm thực tế trong giỏ hàng (không dùng PRODUCTS mock) */}
                     <div className="space-y-3 mb-4">
-                        {[PRODUCTS[0], PRODUCTS[2]].map((p) => (
-                            <div key={p.id} className="flex gap-3">
-                                <img
-                                    src={p.images[0]}
-                                    alt=""
-                                    className="w-12 h-12 object-cover rounded-lg"
-                                />
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-semibold line-clamp-1">
-                                        {lang === 'vi' ? p.nameVi : p.name}
-                                    </p>
-                                    <p className="text-sm font-bold text-primary mt-0.5">
-                                        {formatCurrency(p.price, lang)}
-                                    </p>
+                        {cartItems.length > 0 ? (
+                            cartItems.map((item) => (
+                                <div key={item.id} className="flex gap-3">
+                                    <img
+                                        src={item.thumbnailUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        alt={item.productName}
+                                        className="w-12 h-12 object-cover rounded-lg"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-semibold line-clamp-1">
+                                            {item.productName}
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            x{item.quantity}
+                                        </p>
+                                        <p className="text-sm font-bold text-primary mt-0.5">
+                                            {formatCurrency(item.unitPrice, lang)}
+                                        </p>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))
+                        ) : (
+                            <p className="text-xs text-gray-400 italic py-2">
+                                {lang === 'en' ? 'Cart is empty' : 'Chưa có sản phẩm trong giỏ hàng'}
+                            </p>
+                        )}
                     </div>
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
-                        {[
-                            [tr(lang, 'subtotal'), '$429.98'],
-                            [tr(lang, 'shipping'), shipping === 'GHN' ? '$3.99' : '$2.49'],
-                            [tr(lang, 'tax'), '$34.40'],
-                            [tr(lang, 'total'), shipping === 'GHN' ? '$468.37' : '$466.87'],
-                        ].map(([k, v], i) => (
-                            <div
-                                key={k}
-                                className={`flex justify-between ${i === 3 ? 'font-bold text-base border-t border-border pt-2 mt-2 text-primary' : 'text-gray-600'}`}
+                        {(() => {
+                            const subtotal = cartItems.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0)
+                            const shippingFee = shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+                            const total = subtotal > 0 ? subtotal + shippingFee : 0
+                            return [
+                                [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
+                                [tr(lang, 'shipping'), formatCurrency(shippingFee, lang)],
+                                [tr(lang, 'total'), formatCurrency(total, lang)],
+                            ].map(([k, v], i) => (
+                                <div
+                                    key={k}
+                                    className={`flex justify-between ${i === 2 ? 'font-bold text-base border-t border-border pt-2 mt-2 text-primary' : 'text-gray-600'}`}
+                                >
+                                    <span>{k}</span>
+                                    <span>{v}</span>
+                                </div>
+                            ))
+                        })()}
+                    </div>
+                </div>
+            </div>
+        </BuyerLayout>
+    )
+}
+
+// ─── Sandbox Payment Page ───────────────────────────────────────────────────────
+/**
+ * Màn hình Cổng thanh toán Sandbox (Sandbox Payment Portal):
+ * Chức năng: Giả lập giao diện cổng thanh toán sandbox (như VNPAY / Ngân hàng trực tuyến)
+ *            khi Buyer được chuyển hướng từ luồng Checkout (Accept Criteria 3).
+ * Đầu vào: pageParams chứa orderId, amount, provider.
+ * Luồng xử lý:
+ *   - Hiển thị thông tin giao dịch cần thanh toán.
+ *   - Cung cấp các nút tương tác mô phỏng:
+ *     + "Xác nhận thanh toán thành công": Cập nhật trạng thái đơn sang 'paid' và điều hướng tới /payment-result?status=success.
+ *     + "Mô phỏng thanh toán thất bại": Điều hướng tới /payment-result?status=failed.
+ *     + "Hủy bỏ": Quay lại trang Checkout.
+ * Quy tắc & lý do: Đóng vai trò là sandbox testbed cho cả Developer và QA kiểm thử toàn vẹn luồng thanh toán
+ *                  khi backend trả về URL sandbox chuyển hướng.
+ * Lỗi & giới hạn: Môi trường sandbox chỉ ghi nhận dữ liệu kiểm thử, không xử lý giao dịch tiền thật.
+ */
+export function SandboxPaymentPage() {
+    const { lang, navigate, pageParams, showToast } = useApp()
+    const [simulating, setSimulating] = useState(false)
+
+    const orderId = (pageParams?.orderId as string) || 'ORD-SANDBOX-DEMO'
+    const amount =
+        typeof pageParams?.amount === 'number'
+            ? pageParams.amount
+            : typeof pageParams?.amount === 'string'
+              ? parseFloat(pageParams.amount) || 329.97
+              : 329.97
+    const provider = (pageParams?.provider as string) || 'vnpay'
+
+    // Mô phỏng thanh toán thành công
+    const handleSimulateSuccess = async () => {
+        setSimulating(true)
+        try {
+            await new Promise((r) => setTimeout(r, 600))
+            try {
+                // Cố gắng cập nhật trạng thái đơn hàng trong mock store nếu có
+                await ordersApi.updateOrderStatus(orderId, 'PAID', 'Sandbox payment approved')
+            } catch {
+                // Bỏ qua nếu đơn là ID tạm thời
+            }
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Sandbox payment successful!'
+                        : 'Thanh toán Sandbox thành công!',
+            })
+            navigate('payment-result', { status: 'success', orderId })
+        } catch {
+            navigate('payment-result', { status: 'success', orderId })
+        } finally {
+            setSimulating(false)
+        }
+    }
+
+    // Mô phỏng thanh toán thất bại
+    const handleSimulateFailure = async () => {
+        setSimulating(true)
+        await new Promise((r) => setTimeout(r, 400))
+        setSimulating(false)
+        showToast({
+            type: 'error',
+            message:
+                lang === 'en'
+                    ? 'Payment declined by sandbox provider.'
+                    : 'Giao dịch bị từ chối bởi cổng Sandbox.',
+        })
+        navigate('payment-result', {
+            status: 'failed',
+            orderId,
+            reason: 'Sandbox transaction rejected',
+        })
+    }
+
+    return (
+        <BuyerLayout>
+            <div className="max-w-xl mx-auto py-8">
+                {/* Header Sandbox Gateway */}
+                <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white rounded-t-2xl p-6 shadow-md">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs uppercase tracking-wider font-semibold bg-white/20 px-2.5 py-1 rounded-full border border-white/30">
+                            🛡️ {lang === 'en' ? 'Sandbox Environment' : 'Môi trường Sandbox'}
+                        </span>
+                        <span className="text-xs text-blue-100 font-mono">
+                            Gateway: {provider.toUpperCase()}
+                        </span>
+                    </div>
+                    <h1 className="text-xl font-bold">
+                        {lang === 'en'
+                            ? 'Nexus Payment Sandbox Portal'
+                            : 'Cổng thanh toán Sandbox Nexus'}
+                    </h1>
+                    <p className="text-xs text-blue-100 mt-1">
+                        {lang === 'en'
+                            ? 'Simulated Payment Gateway for testing checkout integration.'
+                            : 'Cổng thanh toán giả lập hỗ trợ kiểm thử tích hợp luồng Checkout.'}
+                    </p>
+                </div>
+
+                {/* Thân giao diện thanh toán */}
+                <div className="nexus-card rounded-t-none border-t-0 p-6 space-y-6 shadow-md">
+                    {/* Thông tin đơn hàng */}
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2.5 text-sm">
+                        <div className="flex justify-between items-center">
+                            <span className="text-gray-500">
+                                {lang === 'en' ? 'Order Reference:' : 'Mã đơn hàng:'}
+                            </span>
+                            <span className="font-mono font-bold text-gray-800">{orderId}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-gray-500">
+                                {lang === 'en' ? 'Payable Amount:' : 'Số tiền thanh toán:'}
+                            </span>
+                            <span className="text-xl font-bold text-primary">
+                                {formatCurrency(amount, lang)}
+                            </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-gray-500">
+                                {lang === 'en' ? 'Payment Method:' : 'Phương thức:'}
+                            </span>
+                            <span className="font-medium text-gray-700">
+                                VNPAY QR / Banking Sandbox
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Giả lập quét mã QR VNPAY */}
+                    <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-200 rounded-xl bg-blue-50/50">
+                        <div className="w-44 h-44 bg-white border border-gray-300 rounded-lg p-2 flex flex-col items-center justify-center shadow-inner relative">
+                            <svg
+                                className="w-full h-full text-gray-800"
+                                viewBox="0 0 100 100"
+                                fill="currentColor"
                             >
-                                <span>{k}</span>
-                                <span>{v}</span>
-                            </div>
-                        ))}
+                                <rect x="5" y="5" width="30" height="30" rx="4" fill="#1e40af" />
+                                <rect x="10" y="10" width="20" height="20" rx="2" fill="#fff" />
+                                <rect x="15" y="15" width="10" height="10" fill="#1e40af" />
+
+                                <rect x="65" y="5" width="30" height="30" rx="4" fill="#1e40af" />
+                                <rect x="70" y="10" width="20" height="20" rx="2" fill="#fff" />
+                                <rect x="75" y="15" width="10" height="10" fill="#1e40af" />
+
+                                <rect x="5" y="65" width="30" height="30" rx="4" fill="#1e40af" />
+                                <rect x="10" y="70" width="20" height="20" rx="2" fill="#fff" />
+                                <rect x="15" y="75" width="10" height="10" fill="#1e40af" />
+
+                                <circle cx="50" cy="50" r="8" fill="#1e40af" />
+                                <rect x="42" y="20" width="6" height="16" fill="#1e40af" />
+                                <rect x="70" y="50" width="16" height="6" fill="#1e40af" />
+                                <rect x="50" y="72" width="14" height="6" fill="#1e40af" />
+                                <rect x="72" y="72" width="14" height="14" fill="#1e40af" />
+                            </svg>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-3 text-center">
+                            {lang === 'en'
+                                ? 'Scan QR with banking app or click simulation buttons below'
+                                : 'Mã QR thanh toán mô phỏng cổng VNPAY Sandbox'}
+                        </p>
+                    </div>
+
+                    {/* Các nút hành động giả lập */}
+                    <div className="space-y-3 pt-2">
+                        <Button
+                            variant="primary"
+                            size="lg"
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                            loading={simulating}
+                            onClick={handleSimulateSuccess}
+                        >
+                            ✓{' '}
+                            {lang === 'en'
+                                ? 'Simulate Success'
+                                : 'Xác nhận thanh toán thành công (Simulate Success)'}
+                        </Button>
+                        <Button
+                            variant="danger"
+                            size="lg"
+                            className="w-full"
+                            disabled={simulating}
+                            onClick={handleSimulateFailure}
+                        >
+                            ✕{' '}
+                            {lang === 'en'
+                                ? 'Simulate Failure'
+                                : 'Mô phỏng thanh toán thất bại (Simulate Failure)'}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="lg"
+                            className="w-full"
+                            disabled={simulating}
+                            onClick={() => navigate('checkout')}
+                        >
+                            ←{' '}
+                            {lang === 'en'
+                                ? 'Cancel and Return to Checkout'
+                                : 'Hủy bỏ và quay lại thanh toán'}
+                        </Button>
+                    </div>
+
+                    <div className="text-center text-xs text-gray-400">
+                        {lang === 'en'
+                            ? 'Test Mode: No real funds are deducted.'
+                            : 'Chế độ Sandbox: Không thực hiện trừ tiền thật.'}
                     </div>
                 </div>
             </div>
@@ -2432,6 +2790,7 @@ export function CheckoutPage() {
 export function PaymentResultPage() {
     const { lang, navigate, pageParams } = useApp()
     const status = (pageParams?.status as string) || 'success'
+    const orderId = (pageParams?.orderId as string) || 'ORD-20240301-004'
     const [retries, setRetries] = useState(0)
     return (
         <BuyerLayout>
@@ -2446,8 +2805,8 @@ export function PaymentResultPage() {
                         </h1>
                         <p className="text-gray-500 mb-2">
                             {lang === 'en'
-                                ? 'Order #ORD-20240301-004 confirmed.'
-                                : 'Đơn hàng #ORD-20240301-004 đã được xác nhận.'}
+                                ? `Order #${orderId} confirmed.`
+                                : `Đơn hàng #${orderId} đã được xác nhận.`}
                         </p>
                         <p className="text-sm text-gray-500 mb-2">
                             {lang === 'en'
@@ -2544,9 +2903,9 @@ export function PaymentResultPage() {
     )
 }
 
-// ─── Order History Page ─────────────────────────────────────────────────────────
+// ─── Order History Page ───
 /**
- * Màn hình Lịch sử đơn hàng của Buyer (SRS 3.2.1 & ORDER-02).
+ * Màn hình Lịch sử đơn hàng của Buyer
  * 
  * Chức năng: Hiển thị danh sách các đơn hàng đã mua của Buyer theo phân loại trạng thái,
  * cho phép tìm kiếm theo mã đơn hoặc sản phẩm, hủy nhanh đơn chưa xử lý, và điều hướng vào xem chi tiết.
@@ -2570,26 +2929,26 @@ export function OrderHistoryPage() {
 
     const STATUS_TABS = [
         { id: 'all', label: tr(lang, 'all') },
-        { id: 'pending', label: tr(lang, 'statusPending') },
-        { id: 'paid', label: tr(lang, 'statusPaid') },
-        { id: 'processing', label: tr(lang, 'statusProcessing') },
-        { id: 'shipped', label: tr(lang, 'statusShipped') },
-        { id: 'delivered', label: tr(lang, 'statusDelivered') },
-        { id: 'completed', label: tr(lang, 'statusCompleted') },
-        { id: 'cancelled', label: tr(lang, 'statusCancelled') },
-        { id: 'refunded', label: tr(lang, 'statusRefunded') },
+        { id: 'PENDING_PAYMENT', label: tr(lang, 'statusPending') },
+        { id: 'PAID', label: tr(lang, 'statusPaid') },
+        { id: 'PROCESSING', label: tr(lang, 'statusProcessing') },
+        { id: 'SHIPPED', label: tr(lang, 'statusShipped') },
+        { id: 'DELIVERED', label: tr(lang, 'statusDelivered') },
+        { id: 'COMPLETED', label: tr(lang, 'statusCompleted') },
+        { id: 'CANCELLED', label: tr(lang, 'statusCancelled') },
+        { id: 'REFUNDED', label: tr(lang, 'statusRefunded') },
     ]
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
     // Tải danh sách đơn hàng từ API hoặc kho mock store
@@ -2681,7 +3040,7 @@ export function OrderHistoryPage() {
                     ) : (
                         <div className="space-y-5">
                             {orders.map((order) => {
-                                const canCancel = ['pending', 'paid'].includes(order.status)
+                                const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
                                 return (
                                     <div
                                         key={order.id}
@@ -2818,9 +3177,9 @@ export function OrderHistoryPage() {
     )
 }
 
-// ─── Order Detail Page ─────────────────────────────────────────────────────────
+// ─── Order Detail Page ───
 /**
- * Màn hình Chi tiết đơn hàng của Buyer (SRS 3.2.1 & ORDER-02, ORDER-03, PAYMENT-01).
+ * Màn hình Chi tiết đơn hàng của Buyer
  * 
  * Chức năng: Hiển thị đầy đủ thông tin một đơn hàng: tiến trình timeline, sản phẩm, địa chỉ,
  * thanh toán, trạng thái ký quỹ Escrow (Bảo vệ Buyer), vận chuyển tracking;
@@ -2877,24 +3236,24 @@ export function OrderDetailPage() {
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
-    const canCancel = ['pending', 'paid'].includes(order.status)
+    const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
     const protectionDays = order.protectionEndsAt
         ? Math.max(
             0,
             Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
         )
         : 0
-    const isProtectionActive = order.status === 'delivered' && paymentStatus === 'protection_period'
+    const isProtectionActive = order.status === 'DELIVERED' && paymentStatus === 'protection_period'
 
     // Xác nhận đã nhận hàng -> chuyển sang completed và giải ngân tiền cho Seller
     const confirmDelivery = async () => {
@@ -3076,7 +3435,7 @@ export function OrderDetailPage() {
                                         <Shield size={20} className="text-primary" />
                                         <h3 className="font-bold text-gray-900">
                                             {lang === 'en'
-                                                ? '7-day buyer protection escrow'
+                                                ? 'Bảo vệ người mua 7 ngày'
                                                 : 'Bảo vệ người mua & Giữ tiền an toàn trong 7 ngày'}
                                         </h3>
                                     </div>
@@ -3179,7 +3538,7 @@ export function OrderDetailPage() {
                     )}
 
                     {/* Đánh giá đơn hàng */}
-                    {order.status === 'delivered' && !reviewed && (
+                    {order.status === 'DELIVERED' && !reviewed && (
                         <div className="nexus-card p-5 border-primary/20 bg-primary-light/30">
                             <h3 className="font-bold mb-2">{tr(lang, 'leaveReview')}</h3>
                             <p className="text-sm text-gray-500 mb-3">
@@ -3209,7 +3568,7 @@ export function OrderDetailPage() {
                         <p className="text-sm text-gray-700">{order.paymentMethod}</p>
                         <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
                             <span className="text-xs text-gray-500">
-                                {lang === 'en' ? 'Escrow status' : 'Trạng thái ký quỹ Escrow'}
+                                {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}
                             </span>
                             <StatusBadge
                                 status={paymentStatus}

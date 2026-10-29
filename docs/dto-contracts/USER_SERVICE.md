@@ -2,7 +2,7 @@
 
 > **Gateway paths:** `/api/v1/users/**`, `/api/v1/roles/**`, `/api/v1/auth/forgot-password`, `/api/v1/auth/reset-password`, `/api/v1/auth/change-password`
 >
-> **Success wrapper hiện tại:** JSON DTO/array/Page/Map trực tiếp, không bọc `ApiResponse<T>`
+> **Success wrapper:** Chuẩn hóa toàn bộ theo `ApiResponse<T>` (Envelope Pattern v2, chi tiết tại [COMMON.md](COMMON.md))
 >
 > **Error wrapper:** envelope chuẩn trong [COMMON.md](COMMON.md), trừ response `410` của reset-password
 
@@ -27,29 +27,29 @@
 
 | Method | Path | Request | Success response | HTTP | Quyền |
 |---|---|---|---|---|---|
-| `GET` | `/users/me` | — | `UserResponse` | `200` | `PROFILE.VIEW` |
-| `PUT` | `/users/me` | `UpdateUserRequest` | `UserResponse` | `200` | `PROFILE.UPDATE` |
-| `GET` | `/users/{id}` | — | `UserResponse` | `200` | `USER.VIEW` |
-| `GET` | `/users` | Query phân trang | `SpringPage<UserResponse>` | `200` | `USER.LIST` |
-| `PUT` | `/users/{id}` | `UpdateUserRequest` | `UserResponse` | `200` | `USER.UPDATE` |
-| `DELETE` | `/users/{id}` | — | `{ "message": string }` | `200` | `USER.DELETE` |
-| `PUT` | `/users/{id}/roles` | `string[]` không null | `UserResponse` | `200` | role `ADMIN` |
-| `GET` | `/users/me/activity-history` | Query phân trang | `SpringPage<ActivityHistoryResponse>` | `200` | `PROFILE.VIEW` |
-| `GET` | `/users/{id}/activity-history` | Query phân trang | `SpringPage<ActivityHistoryResponse>` | `200` | `USER.VIEW` |
-| `POST` | `/users` | `CreateUserProfileRequest` | `UserResponse` | `201` | nội bộ: role `PROFILE_WRITER` và header `X-Profile-Subject` |
+| `GET` | `/users/me` | — | `ApiResponse<UserResponse>` | `200` | `PROFILE.VIEW` |
+| `PUT` | `/users/me` | `UpdateUserRequest` | `ApiResponse<UserResponse>` | `200` | `PROFILE.UPDATE` |
+| `GET` | `/users/{id}` | — | `ApiResponse<UserResponse>` | `200` | `USER.VIEW` |
+| `GET` | `/users` | Query phân trang | `ApiResponse<List<UserResponse>>` | `200` | `USER.LIST` |
+| `PUT` | `/users/{id}` | `UpdateUserRequest` | `ApiResponse<UserResponse>` | `200` | `USER.UPDATE` |
+| `DELETE` | `/users/{id}` | — | `ApiResponse<{ message: string }>` | `200` | `USER.DELETE` |
+| `PUT` | `/users/{id}/roles` | `string[]` không null | `ApiResponse<UserResponse>` | `200` | role `ADMIN` |
+| `GET` | `/users/me/activity-history` | Query phân trang | `ApiResponse<List<ActivityHistoryResponse>>` | `200` | `PROFILE.VIEW` |
+| `GET` | `/users/{id}/activity-history` | Query phân trang | `ApiResponse<List<ActivityHistoryResponse>>` | `200` | `USER.VIEW` |
+| `POST` | `/users` | `CreateUserProfileRequest` | `ApiResponse<UserResponse>` | `201` | nội bộ: role `PROFILE_WRITER` và header `X-Profile-Subject` |
 
 ### Role và password
 
 | Method | Path | Request | Success response | HTTP | Quyền |
 |---|---|---|---|---|---|
-| `GET` | `/roles` | — | `RoleResponse[]` | `200` | `ROLE.LIST` |
-| `GET` | `/roles/{id}` | — | `RoleResponse` | `200` | `ROLE.VIEW` |
-| `POST` | `/roles` | `CreateRoleRequest` | `RoleResponse` | `201` | `ROLE.CREATE` |
-| `PUT` | `/roles/{id}` | `UpdateRoleRequest` | `RoleResponse` | `200` | `ROLE.UPDATE` |
-| `DELETE` | `/roles/{id}` | — | `{ "message": string }` | `200` | `ROLE.DELETE` |
-| `POST` | `/auth/forgot-password` | `ForgotPasswordRequest` | `{ "message": string }` | `200` | Public |
-| `POST` | `/auth/change-password` | `ChangePasswordRequest` | `{ "message": string }` | `200` | JWT hợp lệ |
-| `POST` | `/auth/reset-password` | Không dùng | lỗi migration flow | `410` | Public |
+| `GET` | `/roles` | — | `ApiResponse<List<RoleResponse>>` | `200` | `ROLE.LIST` |
+| `GET` | `/roles/{id}` | — | `ApiResponse<RoleResponse>` | `200` | `ROLE.VIEW` |
+| `POST` | `/roles` | `CreateRoleRequest` | `ApiResponse<RoleResponse>` | `201` | `ROLE.CREATE` |
+| `PUT` | `/roles/{id}` | `UpdateRoleRequest` | `ApiResponse<RoleResponse>` | `200` | `ROLE.UPDATE` |
+| `DELETE` | `/roles/{id}` | — | `ApiResponse<{ message: string }>` | `200` | `ROLE.DELETE` |
+| `POST` | `/auth/forgot-password` | `ForgotPasswordRequest` | `ApiResponse<{ message: string }>` | `200` | Public |
+| `POST` | `/auth/change-password` | `ChangePasswordRequest` | `ApiResponse<{ message: string }>` | `200` | JWT hợp lệ |
+| `POST` | `/auth/reset-password` | Không dùng | `ApiResponse` lỗi 410 | `410` | Public |
 
 ## 2. Request DTO
 
@@ -178,23 +178,31 @@ Forgot-password luôn trả cùng một thông báo dù email có tồn tại ha
 | `roles` | `string[]` | Không theo mapper hiện tại | Mã realm role ứng dụng đã bỏ prefix `ROLE_`, ví dụ `ADMIN`, `BUYER` |
 | `privileges` | `string[]` | Không theo mapper hiện tại | Mã composite privilege từ Keycloak |
 
-Success response của `GET /users/me`, `GET /users/{id}` và các endpoint update trả JSON thô:
+Success response của `GET /users/me`, `GET /users/{id}` và các endpoint update được bọc trong `ApiResponse<UserResponse>`:
 
 ```json
 {
-  "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
-  "email": "buyer@nexus.vn",
-  "phone": "0901234567",
-  "fullName": "Nguyễn Văn An",
-  "identifyNumber": "079203001234",
-  "gender": "MALE",
-  "dateOfBirth": "2003-05-20",
-  "address": "Quận 1, TP. Hồ Chí Minh",
-  "status": "ACTIVE",
-  "createdAt": "2026-10-25T08:15:30",
-  "updatedAt": "2026-10-25T09:40:12",
-  "roles": ["BUYER"],
-  "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
+  "success": true,
+  "data": {
+    "id": "26d7aa54-8284-45cd-b07b-5ca1581ba72f",
+    "email": "buyer@nexus.vn",
+    "phone": "0901234567",
+    "fullName": "Nguyễn Văn An",
+    "identifyNumber": "079203001234",
+    "gender": "MALE",
+    "dateOfBirth": "2003-05-20",
+    "address": "Quận 1, TP. Hồ Chí Minh",
+    "status": "ACTIVE",
+    "createdAt": "2026-10-25T08:15:30",
+    "updatedAt": "2026-10-25T09:40:12",
+    "roles": ["BUYER"],
+    "privileges": ["PROFILE.VIEW", "PROFILE.UPDATE"]
+  },
+  "error": null,
+  "meta": {
+    "requestId": "req_8cb579f3",
+    "timestamp": "2026-10-27T14:00:00.000Z"
+  }
 }
 ```
 

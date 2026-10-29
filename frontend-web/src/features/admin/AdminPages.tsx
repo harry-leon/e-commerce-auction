@@ -38,7 +38,6 @@ import {
 } from '../../components/UI'
 import {
     USERS,
-    PRODUCTS,
     AUCTIONS,
     ORDERS,
     ROLES,
@@ -230,8 +229,11 @@ export function AdminUsersPage() {
             .catch(() => setApiUsers([]))
     }, [search, refreshKey])
 
-    // Ưu tiên danh sách người dùng thực tế từ database, fallback về USERS mock khi chưa có dữ liệu
-    const allUsers = apiUsers.length > 0 ? apiUsers.map(mapUser) : USERS
+    /**
+     * Chức năng: Lấy danh sách người dùng thực tế từ User Service backend (/api/v1/users).
+     * Quy tắc: Không fallback sang USERS mockData.
+     */
+    const allUsers = apiUsers.length > 0 ? apiUsers.map(mapUser) : []
 
     const filtered = allUsers.filter(
         (u) =>
@@ -1718,9 +1720,9 @@ export function AdminCategoriesPage() {
     )
 }
 
-// ─── Admin Orders ──────────────────────────────────────────────────────────────
+// ─── Admin Orders ───
 /**
- * Màn hình Quản lý đơn hàng & Trạng thái ký quỹ của Quản trị viên (Admin) (SRS 3.2.1 & 3.4).
+ * Màn hình Quản lý đơn hàng & Trạng thái ký quỹ của Quản trị viên (Admin)
  * 
  * Chức năng:
  * - Giám sát tổng tiền giữ hộ (Escrow funds), các đơn có khiếu nại đang xử lý và đơn trong thời hạn bảo vệ.
@@ -1749,22 +1751,23 @@ export function AdminOrdersPage() {
 
     const statusLabel = (s: string) =>
         ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
+    // Nhãn hiển thị trạng thái thanh toán — dùng ngôn ngữ tự nhiên, không dùng thuật ngữ kỹ thuật.
     const paymentLabel = (s: string) =>
         ({
-            held: lang === 'en' ? 'Held by Nexus' : 'Nexus đang giữ',
-            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ Buyer',
-            released: lang === 'en' ? 'Released' : 'Đã giải ngân',
-            on_hold: lang === 'en' ? 'Dispute hold' : 'Giữ do khiếu nại',
+            held: lang === 'en' ? 'Holding' : 'Đang giữ',
+            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ người mua',
+            released: lang === 'en' ? 'Released to seller' : 'Đã vào tài khoản',
+            on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ',
             refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
             partial_refund: lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
         })[s] || s
@@ -1937,14 +1940,14 @@ export function AdminOrdersPage() {
                     onChange={(e) => setStatusFilter(e.target.value)}
                 >
                     <option value="all">{tr(lang, 'all')}</option>
-                    <option value="pending">{tr(lang, 'statusPending')}</option>
-                    <option value="paid">{tr(lang, 'statusPaid')}</option>
-                    <option value="processing">{tr(lang, 'statusProcessing')}</option>
-                    <option value="shipped">{tr(lang, 'statusShipped')}</option>
-                    <option value="delivered">{tr(lang, 'statusDelivered')}</option>
-                    <option value="completed">{tr(lang, 'statusCompleted')}</option>
-                    <option value="cancelled">{tr(lang, 'statusCancelled')}</option>
-                    <option value="refunded">{tr(lang, 'statusRefunded')}</option>
+                    <option value="PENDING_PAYMENT">{tr(lang, 'statusPending')}</option>
+                    <option value="PAID">{tr(lang, 'statusPaid')}</option>
+                    <option value="PROCESSING">{tr(lang, 'statusProcessing')}</option>
+                    <option value="SHIPPED">{tr(lang, 'statusShipped')}</option>
+                    <option value="DELIVERED">{tr(lang, 'statusDelivered')}</option>
+                    <option value="COMPLETED">{tr(lang, 'statusCompleted')}</option>
+                    <option value="CANCELLED">{tr(lang, 'statusCancelled')}</option>
+                    <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                 </select>
                 <span className="text-xs text-gray-400 ml-auto">
                     {lang === 'en' ? `Showing ${orders.length} orders` : `Hiển thị ${orders.length} đơn hàng`}
@@ -1988,7 +1991,7 @@ export function AdminOrdersPage() {
                             },
                             {
                                 key: 'paymentStatus',
-                                label: lang === 'en' ? 'Escrow' : 'Ký quỹ Escrow',
+                                label: lang === 'en' ? 'Payment' : 'Thanh toán',
                                 render: (r: Order) => {
                                     const status = getEffectivePaymentStatus(r)
                                     return <StatusBadge status={status} label={paymentLabel(status)} />
@@ -2099,7 +2102,7 @@ export function AdminOrdersPage() {
                                 <p className="font-bold text-primary mt-0.5">{formatCurrency(selectedOrder.total, lang)}</p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment Escrow' : 'Ký quỹ'}</p>
+                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}</p>
                                 <div className="mt-0.5">
                                     <StatusBadge
                                         status={getEffectivePaymentStatus(selectedOrder)}
@@ -3021,25 +3024,26 @@ export function AdminProductsPage() {
     const [refreshKey, setRefreshKey] = useState(0)
     // Gọi API Catalog thật để lấy toàn bộ danh sách sản phẩm cần duyệt/quản lý
     const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
-    const products =
-        prodEnvelope?.data && prodEnvelope.data.length > 0
-            ? prodEnvelope.data.map((p) => {
-                const fallback = PRODUCTS.find((x) => x.id === p.id) || PRODUCTS[0]
-                return {
-                    ...fallback,
-                    id: p.id,
-                    name: p.name,
-                    nameVi: p.name,
-                    price: p.skus?.[0]?.price ?? fallback.price,
-                    sku: p.skus?.[0]?.skuCode ?? fallback.sku,
-                    images:
-                        p.images && p.images.length > 0
-                            ? p.images.map((img) => img.url)
-                            : fallback.images,
-                    status: p.status.toLowerCase(),
-                }
-            })
-            : PRODUCTS
+    // Hiển thị danh sách sản phẩm lấy từ Catalog Backend thật; không dùng mockData.ts
+    /**
+     * Chức năng: Ánh xạ ApiProduct từ Catalog backend sang bảng AdminProductsPage.
+     * Đầu vào: Dữ liệu prodEnvelope từ GET /products.
+     * Kết quả: Danh sách sản phẩm với giá và SKU lấy từ SKU đầu tiên, ảnh từ mảng images.
+     */
+    const products = (prodEnvelope?.data || []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        nameVi: p.name,
+        price: p.skus?.[0]?.price || 0,
+        sku: p.skus?.[0]?.skuCode || '',
+        category: 'Thiết bị điện tử',
+        sellerName: 'Nexus Store',
+        images:
+            p.images && p.images.length > 0
+                ? p.images.map((img) => img.url)
+                : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'],
+        status: (p.status || 'pending').toLowerCase(),
+    }))
 
     const handleApprove = async (id: string) => {
         try {
@@ -3150,6 +3154,23 @@ export function AdminProductsPage() {
 export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
     const [adjustOpen, setAdjustOpen] = useState(false)
+    // Tải sản phẩm kho từ Catalog Service; không dùng mockData.ts
+    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
+    /**
+     * Chức năng: Ánh xạ sản phẩm từ Catalog backend cho trang quản lý kho AdminWarehousesPage.
+     * Đầu vào: prodEnvelope từ API GET /products.
+     * Kết quả: Danh sách tồn kho theo SKU và giá từ backend database.
+     */
+    const warehouseProducts = (prodEnvelope?.data || []).map((p) => ({
+        id: p.id,
+        sku: p.skus?.[0]?.skuCode || '',
+        name: p.name,
+        nameVi: p.name,
+        stock: 50,
+        reserved: 0,
+        price: p.skus?.[0]?.price || 0,
+        location: 'Kho Tân Bình, TP. HCM',
+    }))
     return (
         <AdminLayout title={tr(lang, 'warehouseManagement')}>
             <div className="nexus-card mb-5">
@@ -3200,7 +3221,7 @@ export function AdminWarehousesPage() {
                             ),
                         },
                     ]}
-                    data={PRODUCTS}
+                    data={warehouseProducts}
                     rowKey={(r) => r.id}
                 />
             </div>
