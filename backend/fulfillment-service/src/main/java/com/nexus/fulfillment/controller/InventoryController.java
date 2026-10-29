@@ -2,6 +2,8 @@ package com.nexus.fulfillment.controller;
 
 import com.nexus.common.response.ApiResponse;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
+import com.nexus.fulfillment.dto.request.OrderFailureEventRequest;
+import com.nexus.fulfillment.dto.request.OrderPaidEventRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
 import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
 import com.nexus.fulfillment.dto.request.StockAdjustmentRequest;
@@ -37,12 +39,13 @@ import org.springframework.web.bind.annotation.RestController;
  * Chức năng:
  * - Cung cấp API tra cứu tồn kho, kiểm tra tính khả dụng của SKU cho giỏ hàng.
  * - Nhận yêu cầu giữ kho nguyên tử (Atomic Reservation) từ Commerce Service khi người dùng checkout.
- * - Cung cấp API xác nhận xuất kho (Confirm), giải phóng hoàn kho (Release), và kích hoạt hoàn kho quá hạn.
+ * - Cung cấp API xác nhận xuất kho (Confirm/Commit theo reservation hoặc orderId), giải phóng hoàn kho (Release),
+ *   và tiếp nhận các sự kiện thanh toán OrderPaid, OrderPaymentFailed, OrderCancelled.
  * - Cung cấp API tra cứu Sổ cái tồn kho bất biến (Immutable Inventory Ledger).
  *
  * Quy tắc và lý do:
  * - Chuẩn hóa toàn bộ phản hồi theo cấu trúc ApiResponse v2 (Envelope Pattern).
- * - Sử dụng @Valid để kích hoạt kiểm tra tính hợp lệ của tham số đầu vào.
+ * - Mọi API Commit và Release được thiết kế bảo đảm Idempotency, cho phép retry/webhook lặp an toàn.
  */
 @RestController
 @RequestMapping("/api/v1/inventory")
@@ -93,15 +96,23 @@ public class InventoryController {
 
     @PostMapping("/reservations/{reservationId}/confirm")
     @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "Xác nhận phiếu giữ kho (Commit/Outbound)", description = "Chốt xuất kho vật lý sau khi đơn hàng thanh toán thành công")
+    @Operation(summary = "Xác nhận phiếu giữ kho (Commit/Outbound)", description = "Chốt xuất kho vật lý sau khi đơn hàng thanh toán thành công (Idempotent)")
     public ApiResponse<ReservationResponse> confirmReservation(@PathVariable UUID reservationId) {
         ReservationResponse response = inventoryService.confirmReservation(reservationId);
         return ApiResponse.ok(response);
     }
 
+    @PostMapping("/orders/{orderId}/commit")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Xác nhận trừ kho thực tế cho đơn hàng (Commit Order Inventory)", description = "Trừ vĩnh viễn reserved_qty và total_qty cho toàn bộ SKU của đơn khi thanh toán thành công (Idempotent)")
+    public ApiResponse<ReservationResponse> commitByOrder(@PathVariable UUID orderId) {
+        ReservationResponse response = inventoryService.commitByOrder(orderId);
+        return ApiResponse.ok(response);
+    }
+
     @PostMapping("/reservations/{reservationId}/release")
     @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "Giải phóng phiếu giữ hàng", description = "Hoàn trả số lượng đang giữ về tồn khả dụng khi người dùng hủy đơn hoặc thanh toán lỗi")
+    @Operation(summary = "Giải phóng phiếu giữ hàng", description = "Hoàn trả số lượng đang giữ về tồn khả dụng khi người dùng hủy đơn hoặc thanh toán lỗi (Idempotent)")
     public ApiResponse<Void> releaseReservation(
             @PathVariable UUID reservationId,
             @RequestParam(required = false) String reason
@@ -112,9 +123,59 @@ public class InventoryController {
 
     @PostMapping("/release")
     @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "Giải phóng phiếu giữ kho theo mã tham chiếu đơn hàng", description = "Hoàn kho tất cả các mặt hàng gắn với order_id hoặc auction_id")
+    @Operation(summary = "Giải phóng phiếu giữ kho theo mã tham chiếu", description = "Hoàn kho tất cả các mặt hàng gắn với order_id hoặc auction_id (Idempotent)")
     public ApiResponse<Void> releaseReservationsByRef(@Valid @RequestBody ReleaseReservationRequest request) {
         inventoryService.releaseReservationsByRef(request);
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/orders/{orderId}/release")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Giải phóng tồn kho theo mã đơn hàng", description = "Hoàn trả hàng đã giữ về tồn khả dụng khi đơn hàng bị hủy hoặc thanh toán thất bại (Idempotent)")
+    public ApiResponse<Void> releaseByOrder(
+            @PathVariable UUID orderId,
+            @RequestParam(required = false, defaultValue = "ORDER_CANCELLED") String reason
+    ) {
+        inventoryService.releaseByOrder(orderId, reason);
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/events/order-paid")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Xử lý sự kiện OrderPaid (Webhook/Sync)", description = "Tiếp nhận sự kiện đơn hàng thanh toán thành công để trừ kho xuất thực tế (Idempotent)")
+    public ApiResponse<ReservationResponse> handleOrderPaidEvent(@Valid @RequestBody OrderPaidEventRequest request) {
+        ReservationResponse response;
+        if (request.reservationId() != null) {
+            response = inventoryService.confirmReservation(request.reservationId());
+        } else {
+            response = inventoryService.commitByOrder(request.orderId());
+        }
+        return ApiResponse.ok(response);
+    }
+
+    @PostMapping("/events/order-payment-failed")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Xử lý sự kiện OrderPaymentFailed (Webhook/Sync)", description = "Tiếp nhận sự kiện thanh toán thất bại để giải phóng hàng giữ kho về available_qty (Idempotent)")
+    public ApiResponse<Void> handleOrderPaymentFailedEvent(@Valid @RequestBody OrderFailureEventRequest request) {
+        String reason = (request.reason() != null && !request.reason().isBlank()) ? request.reason() : "PAYMENT_FAILED";
+        if (request.reservationId() != null) {
+            inventoryService.releaseReservation(request.reservationId(), reason);
+        } else {
+            inventoryService.releaseByOrder(request.orderId(), reason);
+        }
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/events/order-cancelled")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Xử lý sự kiện OrderCancelled (Webhook/Sync)", description = "Tiếp nhận sự kiện hủy đơn hàng để giải phóng hàng giữ kho về available_qty (Idempotent)")
+    public ApiResponse<Void> handleOrderCancelledEvent(@Valid @RequestBody OrderFailureEventRequest request) {
+        String reason = (request.reason() != null && !request.reason().isBlank()) ? request.reason() : "ORDER_CANCELLED";
+        if (request.reservationId() != null) {
+            inventoryService.releaseReservation(request.reservationId(), reason);
+        } else {
+            inventoryService.releaseByOrder(request.orderId(), reason);
+        }
         return ApiResponse.ok();
     }
 

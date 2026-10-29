@@ -34,9 +34,14 @@
 | `GET` | `/api/v1/inventory/sku/{skuId}/all` | Public | Lấy danh sách tồn kho của SKU trên tất cả các kho lưu trữ |
 | `POST` | `/api/v1/inventory/check` | Public | Kiểm tra số lượng tồn khả dụng cho danh sách SKU (Cart / Checkout pre-validation) |
 | `POST` | `/api/v1/inventory/reserve` | `Authenticated` | Khóa giữ hàng nguyên tử khi Checkout (Atomic Reservation) |
-| `POST` | `/api/v1/inventory/reservations/{id}/confirm` | `Authenticated` | Xác nhận đơn hàng thành công, trừ tồn kho vật lý (OUTBOUND) |
-| `POST` | `/api/v1/inventory/reservations/{id}/release` | `Authenticated` | Giải phóng phiếu giữ hàng theo ID khi hủy đơn hoặc lỗi thanh toán |
-| `POST` | `/api/v1/inventory/release` | `Authenticated` | Giải phóng tất cả phiếu giữ hàng của một đơn hàng (theo `refType`, `refId`) |
+| `POST` | `/api/v1/inventory/reservations/{id}/confirm` | `Authenticated` | Xác nhận đơn hàng thành công theo ID phiếu giữ, trừ tồn kho vật lý (OUTBOUND - Idempotent) |
+| `POST` | `/api/v1/inventory/orders/{orderId}/commit` | `Authenticated` | Xác nhận trừ kho thực tế cho toàn bộ SKU của đơn hàng khi thanh toán thành công (OUTBOUND - Idempotent) |
+| `POST` | `/api/v1/inventory/reservations/{id}/release` | `Authenticated` | Giải phóng phiếu giữ hàng theo ID khi hủy đơn hoặc lỗi thanh toán (RELEASE - Idempotent) |
+| `POST` | `/api/v1/inventory/release` | `Authenticated` | Giải phóng tất cả phiếu giữ hàng của một đơn hàng (theo `refType`, `refId` - Idempotent) |
+| `POST` | `/api/v1/inventory/orders/{orderId}/release` | `Authenticated` | Giải phóng tồn kho giữ tạm theo mã đơn hàng khi hủy đơn hoặc lỗi thanh toán (RELEASE - Idempotent) |
+| `POST` | `/api/v1/inventory/events/order-paid` | `Authenticated` | Webhook/Sync: Tiếp nhận sự kiện `OrderPaid`, trừ vĩnh viễn reserved_qty và total_qty (Idempotent) |
+| `POST` | `/api/v1/inventory/events/order-payment-failed` | `Authenticated` | Webhook/Sync: Tiếp nhận sự kiện `OrderPaymentFailed`, hoàn trả reserved_qty về available_qty (Idempotent) |
+| `POST` | `/api/v1/inventory/events/order-cancelled` | `Authenticated` | Webhook/Sync: Tiếp nhận sự kiện `OrderCancelled`, hoàn trả reserved_qty về available_qty (Idempotent) |
 | `POST` | `/api/v1/inventory/inbound` | `ADMIN`, `SELLER` | Nhập kho hàng hóa cho SKU, tăng `total_qty` và ghi sổ cái `INBOUND` |
 | `POST` | `/api/v1/inventory/adjust` | `ADMIN` | Điều chỉnh kiểm kê tồn kho thực tế, ghi sổ cái `ADJUSTMENT` |
 | `GET` | `/api/v1/inventory/ledger` | `ADMIN`, `SUPPORT` | Tra cứu lịch sử Sổ cái tồn kho bất biến (phân trang, lọc theo `skuId`/`refId`) |
@@ -132,8 +137,14 @@
 
 ## 4. Danh mục Domain Events (SRS §2.8)
 
+### 4.1. Sự kiện phát sinh từ Fulfillment Service (Outbound Events)
 1. `InventoryCheckedEvent`: Phát khi kiểm tra tính khả dụng của SKU.
 2. `InventoryReservedEvent`: Phát khi hàng được khóa giữ thành công cho đơn hàng.
 3. `InventoryReleasedEvent`: Phát khi lệnh giữ hàng được mở khóa hoàn trả.
 4. `InventoryReservationExpiredEvent`: Phát khi lệnh giữ hàng bị hết hạn 30 phút và tự động hoàn trả.
-5. `InventoryCommittedEvent`: Phát khi đơn hàng thanh toán thành công và hàng hóa được chốt xuất kho.
+5. `InventoryCommittedEvent`: Phát khi đơn hàng thanh toán thành công và hàng hóa được chốt xuất kho (OUTBOUND).
+
+### 4.2. Sự kiện tiếp nhận để đồng bộ tồn kho (Inbound Events)
+1. `OrderPaidEvent`: Nhận khi đơn hàng thanh toán thành công qua Webhook sandbox/gateway; kích hoạt commit xuất kho thực tế (trừ vĩnh viễn `reserved_qty` và `total_qty`, ghi sổ cái `OUTBOUND`, phát sinh `InventoryCommittedEvent`, đảm bảo Idempotent).
+2. `OrderPaymentFailedEvent`: Nhận khi thanh toán thất bại; kích hoạt giải phóng giữ kho (giảm `reserved_qty` hoàn về `available_qty`, ghi sổ cái `RELEASE`, phát sinh `InventoryReleasedEvent`, đảm bảo Idempotent).
+3. `OrderCancelledEvent`: Nhận khi đơn hàng bị hủy bỏ; kích hoạt giải phóng giữ kho (giảm `reserved_qty` hoàn về `available_qty`, ghi sổ cái `RELEASE`, phát sinh `InventoryReleasedEvent`, đảm bảo Idempotent).

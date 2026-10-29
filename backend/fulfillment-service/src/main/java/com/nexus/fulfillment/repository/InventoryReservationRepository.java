@@ -52,4 +52,16 @@ public interface InventoryReservationRepository extends JpaRepository<InventoryR
             @Param("refId") UUID refId,
             @Param("status") ReservationStatus status
     );
+
+    /**
+     * Tra cứu và khóa toàn bộ danh sách phiếu giữ hàng của một mã tham chiếu (ORDER/AUCTION).
+     * Sắp xếp theo ID tăng dần để đảm bảo thứ tự khóa nhất quán, chống Deadlock.
+     * Dùng cho kiểm tra Idempotency khi commit hoặc release toàn bộ đơn hàng.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM InventoryReservation r WHERE r.refType = :refType AND r.refId = :refId ORDER BY r.id ASC")
+    List<InventoryReservation> findByRefTypeAndRefIdForUpdate(
+            @Param("refType") ReservationRefType refType,
+            @Param("refId") UUID refId
+    );
 }

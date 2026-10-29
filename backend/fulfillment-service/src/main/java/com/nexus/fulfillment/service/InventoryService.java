@@ -50,11 +50,23 @@ public interface InventoryService {
 
     /**
      * Xác nhận đơn hàng đã thanh toán thành công (Commit Reservation), trừ tồn kho vật lý và chuyển thành OUTBOUND.
+     * Đảm bảo Idempotent: nếu đã xác nhận trước đó thì không trừ kho lần hai.
      */
     ReservationResponse confirmReservation(UUID reservationId);
 
     /**
+     * Xác nhận trừ kho thực tế cho toàn bộ các mặt hàng của đơn hàng khi thanh toán thành công (SRS §3.6.1).
+     * Trừ vĩnh viễn reserved_qty và total_qty, ghi sổ cái OUTBOUND và phát sinh sự kiện InventoryCommittedEvent.
+     * Đảm bảo tính Idempotent: nếu nhận trùng webhook hoặc retry sự kiện nhiều lần thì tồn kho vẫn chỉ bị trừ 1 lần duy nhất.
+     *
+     * @param orderId Mã đơn hàng cần xác nhận xuất kho
+     * @return Phản hồi thông tin giữ kho đã được xác nhận (CONFIRMED)
+     */
+    ReservationResponse commitByOrder(UUID orderId);
+
+    /**
      * Giải phóng một phiếu giữ hàng cụ thể theo reservationId, hoàn trả số lượng về tồn khả dụng.
+     * Đảm bảo Idempotent: nếu đã RELEASED hoặc EXPIRED thì không hoàn kho lần hai.
      */
     void releaseReservation(UUID reservationId, String reason);
 
@@ -62,6 +74,16 @@ public interface InventoryService {
      * Giải phóng toàn bộ các phiếu giữ hàng gắn với mã tham chiếu đơn hàng/phiên đấu giá (ref_id).
      */
     void releaseReservationsByRef(ReleaseReservationRequest request);
+
+    /**
+     * Giải phóng toàn bộ hàng giữ kho cho đơn hàng khi thanh toán thất bại hoặc đơn bị hủy (SRS §3.6.1).
+     * Giảm reserved_qty để hoàn trả đầy đủ số lượng về lại available_qty, ghi sổ cái RELEASE và phát sinh InventoryReleasedEvent.
+     * Đảm bảo tính Idempotent: nếu nhận trùng webhook hoặc retry sự kiện nhiều lần thì tồn kho vẫn chỉ được hoàn lại 1 lần duy nhất.
+     *
+     * @param orderId Mã đơn hàng cần giải phóng
+     * @param reason Lý do giải phóng (vd: PAYMENT_FAILED, ORDER_CANCELLED)
+     */
+    void releaseByOrder(UUID orderId, String reason);
 
     /**
      * Quét và tự động hoàn kho các phiếu giữ hàng PENDING đã quá thời hạn 30 phút.
