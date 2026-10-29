@@ -154,6 +154,8 @@ services:
       SERVICE_NAME: commerce-service
       # Cart đọc dữ liệu sản phẩm thật; mock chỉ dùng khi bật profile catalog-mock.
       CATALOG_SERVICE_URL: http://catalog-service:8080
+      # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
+      FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
       # Dùng Supabase khi cấu hình COMMERCE_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${COMMERCE_DB_URL:-jdbc:postgresql://postgres:5432/nexus_commerce}
       DB_USERNAME: ${COMMERCE_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
