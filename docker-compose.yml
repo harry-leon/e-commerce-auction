@@ -131,7 +131,15 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: catalog-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_catalog
+      # Dùng Supabase khi cấu hình CATALOG_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${CATALOG_DB_URL:-jdbc:postgresql://postgres:5432/nexus_catalog}
+      DB_USERNAME: ${CATALOG_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${CATALOG_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${CATALOG_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8082:8080"
 
@@ -146,7 +154,15 @@ services:
       SERVICE_NAME: commerce-service
       # Cart đọc dữ liệu sản phẩm thật; mock chỉ dùng khi bật profile catalog-mock.
       CATALOG_SERVICE_URL: http://catalog-service:8080
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_commerce
+      # Dùng Supabase khi cấu hình COMMERCE_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${COMMERCE_DB_URL:-jdbc:postgresql://postgres:5432/nexus_commerce}
+      DB_USERNAME: ${COMMERCE_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${COMMERCE_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${COMMERCE_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8083:8080"
 
@@ -159,7 +175,15 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: auction-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_auction
+      # Dùng Supabase khi cấu hình AUCTION_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${AUCTION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_auction}
+      DB_USERNAME: ${AUCTION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${AUCTION_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${AUCTION_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8084:8080"
 
@@ -172,7 +196,15 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: fulfillment-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_fulfillment
+      # Dùng Supabase khi cấu hình FULFILLMENT_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${FULFILLMENT_DB_URL:-jdbc:postgresql://postgres:5432/nexus_fulfillment}
+      DB_USERNAME: ${FULFILLMENT_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${FULFILLMENT_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${FULFILLMENT_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8085:8080"
 
@@ -185,7 +217,15 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: notification-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_notification
+      # Dùng Supabase khi cấu hình NOTIFICATION_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${NOTIFICATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_notification}
+      DB_USERNAME: ${NOTIFICATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${NOTIFICATION_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8086:8080"
 
@@ -199,7 +239,15 @@ services:
       <<: *cloud-env
       SERVICE_NAME: reputation-service
       SERVER_PORT: 8080
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_reputation
+      # Dùng Supabase khi cấu hình REPUTATION_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${REPUTATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_reputation}
+      DB_USERNAME: ${REPUTATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${REPUTATION_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${REPUTATION_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8087:8080"
 
