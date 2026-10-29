@@ -51,6 +51,8 @@
 
 ## 2. Request DTO
 
+Lookup `GET /api/v1/products/skus/{id}` bổ sung `sellerId` UUID từ Product vào `SkuSnapshot` để Commerce kiểm tra chủ shop khi checkout. Các field cũ giữ nguyên: `skuId`, `skuCode`, `productName`, `thumbnailUrl`, `price`, `stockQuantity`, `isActive`. `stockQuantity` vẫn null vì tồn kho thuộc Fulfillment. Triển khai Catalog mới trước Commerce checkout; Cart cũ vẫn đọc được snapshot có thêm field.
+
 ### `ProductRequest`
 
 | Field | Kiểu | Bắt buộc | Validation/quy tắc |
