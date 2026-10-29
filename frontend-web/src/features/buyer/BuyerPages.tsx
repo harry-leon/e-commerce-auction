@@ -20,7 +20,6 @@ import {
     OrderTimeline,
     ReputationBar,
     ProgressBar,
-    Toggle,
     Checkbox,
     Breadcrumb,
     Pagination,
@@ -36,15 +35,12 @@ import {
     Package,
     ShoppingCart,
     CreditCard,
-    Settings2,
-    Gift,
-    Star,
     CircleX,
     Shield,
     Spinner,
     Trash2,
 } from '../../components/UI'
-import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
+import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
@@ -4233,185 +4229,5 @@ export function SellerShopPage() {
     )
 }
 
-// ─── Notification Center ───────────────────────────────────────────────────────
-export function NotificationPage() {
-    const { lang } = useApp()
-    const [activeTab, setActiveTab] = useState('history')
-    const [notifications, setNotifications] = useState(NOTIFICATIONS)
-
-    const notificationIcon = (type: string) => {
-        const Icon =
-            type === 'order'
-                ? Package
-                : type === 'auction'
-                  ? Gavel
-                  : type === 'payment'
-                    ? CreditCard
-                    : type === 'promotion'
-                      ? Gift
-                      : type === 'reputation'
-                        ? Star
-                        : Settings2
-        return <Icon size={18} />
-    }
-
-    return (
-        <BuyerLayout>
-            <div className="max-w-3xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                    <h1 className="text-2xl font-bold">{tr(lang, 'notificationCenter')}</h1>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                            setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-                        }
-                    >
-                        {tr(lang, 'markAllRead')}
-                    </Button>
-                </div>
-                <div className="nexus-card">
-                    <Tabs
-                        tabs={[
-                            {
-                                id: 'history',
-                                label: lang === 'en' ? 'Notifications' : 'Thông báo',
-                                count: notifications.filter((n) => !n.read).length,
-                            },
-                            { id: 'preferences', label: tr(lang, 'notifPreferences') },
-                        ]}
-                        active={activeTab}
-                        onChange={setActiveTab}
-                    />
-                    <div className="p-0">
-                        {activeTab === 'history' && (
-                            <div>
-                                {notifications.map((n) => (
-                                    <div
-                                        key={n.id}
-                                        onClick={() =>
-                                            setNotifications((prev) =>
-                                                prev.map((x) =>
-                                                    x.id === n.id ? { ...x, read: true } : x,
-                                                ),
-                                            )
-                                        }
-                                        className={`flex gap-4 p-4 border-b border-border last:border-0 cursor-pointer transition-colors ${!n.read ? 'bg-primary-light/40' : 'hover:bg-gray-50'}`}
-                                    >
-                                        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-gray-100 text-gray-500">
-                                            {notificationIcon(n.type)}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <p
-                                                    className={`text-sm font-semibold ${!n.read ? 'text-gray-900' : 'text-gray-700'}`}
-                                                >
-                                                    {lang === 'vi' ? n.titleVi : n.title}
-                                                </p>
-                                                {!n.read && (
-                                                    <span className="w-2 h-2 rounded-full bg-primary" />
-                                                )}
-                                            </div>
-                                            <p className="text-xs text-gray-500 mt-0.5">
-                                                {lang === 'vi' ? n.bodyVi : n.body}
-                                            </p>
-                                            <p className="text-xs text-gray-400 mt-1">
-                                                {new Date(n.timestamp).toLocaleString()}
-                                            </p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        {activeTab === 'preferences' && (
-                            <div className="p-5">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full">
-                                        <thead>
-                                            <tr className="border-b border-border">
-                                                <th className="text-left py-3 text-sm text-gray-500">
-                                                    Type
-                                                </th>
-                                                <th className="text-center py-3 text-sm text-gray-500">
-                                                    {tr(lang, 'emailChannel')}
-                                                </th>
-                                                <th className="text-center py-3 text-sm text-gray-500">
-                                                    {tr(lang, 'pushChannel')}
-                                                </th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {[
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'Order Updates'
-                                                            : 'Cập nhật đơn hàng',
-                                                    locked: true,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'Payment Notifications'
-                                                            : 'Thông báo thanh toán',
-                                                    locked: true,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'Auction Alerts'
-                                                            : 'Thông báo đấu giá',
-                                                    locked: false,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en' ? 'Promotions' : 'Khuyến mãi',
-                                                    locked: false,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'System News'
-                                                            : 'Tin tức hệ thống',
-                                                    locked: false,
-                                                },
-                                            ].map((item) => (
-                                                <tr
-                                                    key={item.type}
-                                                    className="border-b border-border last:border-0"
-                                                >
-                                                    <td className="py-3 text-sm font-medium flex items-center gap-2">
-                                                        {item.type}
-                                                        {item.locked && (
-                                                            <span className="badge badge-gray text-[10px]">
-                                                                {tr(lang, 'alwaysOn')}
-                                                            </span>
-                                                        )}
-                                                    </td>
-                                                    <td className="text-center py-3">
-                                                        <Toggle
-                                                            checked={true}
-                                                            onChange={() => {}}
-                                                            disabled={item.locked}
-                                                        />
-                                                    </td>
-                                                    <td className="text-center py-3">
-                                                        <Toggle
-                                                            checked={!item.locked}
-                                                            onChange={() => {}}
-                                                            disabled={item.locked}
-                                                        />
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </BuyerLayout>
-    )
-}
+/** Hộp thư đơn/thanh toán dùng API thật, thay cho thông báo và tùy chọn email/push mock. */
+export { NotificationInbox as NotificationPage } from './NotificationInbox'
