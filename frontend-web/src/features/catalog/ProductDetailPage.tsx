@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { readSession, type ApiProduct, type Envelope } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
+import { addGuestCartItem } from '../buyer/guestCart'
 import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import {
@@ -189,12 +190,36 @@ export function ProductDetailPage() {
                 setAddingToCart(false)
             }
         }
-        setCartCount(cartCount + qty)
+        const guestCart = addGuestCartItem({
+            skuId: skuId || product.id,
+            skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
+            productName: lang === 'en' ? product.name : (product.nameVi || product.name),
+            thumbnailUrl: productImages[0],
+            unitPrice: product.price,
+            quantity: qty,
+        })
+        setCartCount(guestCart.totalQuantity)
         showToast({
             type: 'success',
             message:
                 lang === 'en' ? `Added ${qty}x to cart!` : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
         })
+    }
+
+    /**
+     * Chức năng: Mua ngay sản phẩm đang xem, thêm vào giỏ và chuyển thẳng sang màn hình Thanh toán.
+     */
+    const handleBuyNow = () => {
+        const skuId = product.skus?.[0]?.id
+        addGuestCartItem({
+            skuId: skuId || product.id,
+            skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
+            productName: lang === 'en' ? product.name : (product.nameVi || product.name),
+            thumbnailUrl: productImages[0],
+            unitPrice: product.price,
+            quantity: qty,
+        })
+        navigate('checkout')
     }
 
     const TABS = [
@@ -468,7 +493,7 @@ export function ProductDetailPage() {
                                 variant="primary"
                                 size="lg"
                                 className="flex-1 bg-primary hover:bg-primary-dark"
-                                onClick={() => navigate('checkout')}
+                                onClick={handleBuyNow}
                             >
                                 {tr(lang, 'buyNow')}
                             </Button>

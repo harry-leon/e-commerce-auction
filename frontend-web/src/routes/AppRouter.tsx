@@ -87,12 +87,15 @@ function demoUserFor(role: unknown): User | null {
 }
 
 /**
- * Trong Vite dev, Buyer Home và các dashboard mở thẳng để team kiểm thử giao diện mà không cần IAM.
- * Nhánh này bị loại ở production (`import.meta.env.DEV` là false); API backend vẫn bắt buộc JWT ở mọi môi trường.
+ * Chức năng: Khởi tạo vai trò demo khi dev màn hình Buyer và Dashboard không qua Keycloak IAM.
+ * Đầu vào và kết quả: Nhận `page` hiện tại; trả về đối tượng `User` (DEMO_BUYER/ADMIN/SELLER/SUPPORT) hoặc null.
+ * Luồng xử lý: Kiểm tra biến môi trường dev; nếu đúng, gán quyền demo tương ứng cho route.
+ * Quy tắc và lý do: Màn home, cart, checkout, payment-result dùng DEMO_BUYER; production tắt hoàn toàn để bảo vệ bảo mật.
+ * Lỗi và giới hạn: Dữ liệu demo chỉ lưu trong React state, không có JWT thật trên server backend.
  */
 function demoUserForDashboard(page: string): User | null {
     if (!import.meta.env.DEV) return null
-    if (page === 'home') return DEMO_BUYER
+    if (page === 'home' || page === 'cart' || page === 'checkout' || page === 'payment-result') return DEMO_BUYER
     if (page.startsWith('admin-')) return DEMO_ADMIN
     if (page.startsWith('seller-')) return DEMO_SELLER
     if (page.startsWith('support-')) return DEMO_SUPPORT
@@ -106,6 +109,11 @@ function demoUserForDashboard(page: string): User | null {
  */
 export function AppRouter() {
     const { page, user, setUser, pageParams: routeParams } = useApp()
+    /**
+     * Danh sách các trang công khai (public pages) không yêu cầu đăng nhập:
+     * - Bao gồm auth, home, search, product-detail, cart, sandbox-payment, payment-result.
+     * - Khách vãng lai xem giỏ hàng hoặc nhận kết quả thanh toán callback từ sandbox không bị đá về Login.
+     */
     const publicPages = [
         'login',
         'register',
@@ -113,7 +121,9 @@ export function AppRouter() {
         'home',
         'search',
         'product-detail',
+        'cart',
         'sandbox-payment',
+        'payment-result',
     ]
     const demoUser = demoUserFor(routeParams.demo) || demoUserForDashboard(page)
 

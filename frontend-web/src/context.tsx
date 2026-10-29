@@ -31,7 +31,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const [page, setPage] = useState<Page>(() => readRoute().page)
     const [pageParams, setPageParams] = useState<Record<string, unknown>>(() => readRoute().params)
     const { user, setUser } = useSessionStore()
-    const [cartCount, setCartCount] = useState(0)
+    const [cartCount, setCartCount] = useState(() => {
+        try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+                const raw = window.localStorage.getItem('nexus_guest_cart')
+                if (raw) {
+                    const parsed = JSON.parse(raw)
+                    if (Array.isArray(parsed)) {
+                        return parsed.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+                    }
+                }
+            }
+        } catch {
+            // Bỏ qua lỗi storage
+        }
+        return 0
+    })
     const [toasts, setToasts] = useState<Toast[]>([])
     const [auctionReviews, setAuctionReviews] = useState<Partial<Record<string, AuctionReview>>>({})
     const [createdAuctions, setCreatedAuctions] = useState<Auction[]>([])
