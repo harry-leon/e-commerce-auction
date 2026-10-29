@@ -3,11 +3,11 @@
 
 @theme {
     --font-sans: 'Inter', system-ui, sans-serif;
-    --color-primary: #4f46e5;
-    --color-primary-dark: #4338ca;
-    --color-primary-light: #eef2ff;
-    --color-auction: #f97316;
-    --color-auction-light: #fff7ed;
+    --color-primary: #ee4d2d;
+    --color-primary-dark: #d73211;
+    --color-primary-light: #fff5f2;
+    --color-auction: #ff5722;
+    --color-auction-light: #fff3ef;
     --color-success: #16a34a;
     --color-success-light: #dcfce7;
     --color-warning: #f59e0b;
@@ -16,7 +16,7 @@
     --color-danger-light: #fee2e2;
     --color-info: #0284c7;
     --color-info-light: #e0f2fe;
-    --color-page: #f9fafb;
+    --color-page: #f5f5f5;
     --color-card: #ffffff;
     --color-border: #e5e7eb;
     --color-navy: #1e293b;
@@ -80,8 +80,8 @@ body {
         box-shadow 150ms;
 }
 .nexus-input:focus {
-    border-color: #4f46e5;
-    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+    border-color: #ee4d2d;
+    box-shadow: 0 0 0 3px rgba(238, 77, 45, 0.15);
 }
 .nexus-input:disabled {
     background: #f9fafb;
@@ -115,20 +115,21 @@ body {
     cursor: not-allowed;
 }
 .nexus-btn-primary {
-    background: #4f46e5;
+    background: #ee4d2d;
     color: #fff;
     padding: 9px 16px;
 }
 .nexus-btn-primary:hover:not(:disabled) {
-    background: #4338ca;
+    background: #d73211;
 }
 .nexus-btn-secondary {
-    background: #eef2ff;
-    color: #4f46e5;
+    background: #fff5f2;
+    color: #ee4d2d;
+    border: 1px solid #ee4d2d;
     padding: 9px 16px;
 }
 .nexus-btn-secondary:hover:not(:disabled) {
-    background: #e0e7ff;
+    background: #ffeae4;
 }
 .nexus-btn-outline {
     background: transparent;
@@ -253,7 +254,7 @@ body {
     color: #fff;
 }
 .sidebar-link.active {
-    background: #4f46e5;
+    background: #ee4d2d;
     color: #fff;
 }
 
@@ -275,7 +276,7 @@ body {
     color: #e2e8f0;
 }
 .admin-sidebar-link.active {
-    background: #4f46e5;
+    background: #ee4d2d;
     color: #fff;
 }
 
@@ -290,12 +291,12 @@ body {
     white-space: nowrap;
 }
 .badge-indigo {
-    background: #eef2ff;
-    color: #4f46e5;
+    background: #fff5f2;
+    color: #ee4d2d;
 }
 .badge-orange {
-    background: #fff7ed;
-    color: #f97316;
+    background: #fff5f2;
+    color: #ee4d2d;
 }
 .badge-green {
     background: #dcfce7;
@@ -345,7 +346,7 @@ body {
     user-select: none;
 }
 .sortable-header:hover {
-    color: #4f46e5;
+    color: #ee4d2d;
 }
 
 .toast-container {
@@ -359,7 +360,7 @@ body {
 }
 
 .star-filled {
-    color: #374151;
+    color: #ffb800;
 }
 .star-empty {
     color: #d1d5db;
@@ -387,7 +388,7 @@ body {
 .rep-bar-fill {
     height: 100%;
     border-radius: 999px;
-    background: #4f46e5;
+    background: #ee4d2d;
     transition: width 0.6s ease;
 }
 
@@ -398,7 +399,7 @@ body {
     transition: border-color 150ms;
 }
 .gallery-thumb.active {
-    border-color: #4f46e5;
+    border-color: #ee4d2d;
 }
 
 .filter-chip {
@@ -417,9 +418,9 @@ body {
 }
 .filter-chip:hover,
 .filter-chip.active {
-    border-color: #4f46e5;
-    background: #eef2ff;
-    color: #4f46e5;
+    border-color: #ee4d2d;
+    background: #fff5f2;
+    color: #ee4d2d;
 }
 
 .checkout-step {
@@ -440,23 +441,23 @@ body {
     font-weight: 700;
 }
 .checkout-step.done .checkout-step-num {
-    background: #4f46e5;
+    background: #ee4d2d;
     color: #fff;
 }
 .checkout-step.current .checkout-step-num {
-    background: #4f46e5;
+    background: #ee4d2d;
     color: #fff;
-    box-shadow: 0 0 0 4px #eef2ff;
+    box-shadow: 0 0 0 4px #fff5f2;
 }
 .checkout-step.pending .checkout-step-num {
     background: #e5e7eb;
     color: #9ca3af;
 }
 .checkout-step.done {
-    color: #4f46e5;
+    color: #ee4d2d;
 }
 .checkout-step.current {
-    color: #4f46e5;
+    color: #ee4d2d;
 }
 .checkout-step.pending {
     color: #9ca3af;
@@ -467,5 +468,5 @@ body {
     background: #e5e7eb;
 }
 .checkout-connector.done {
-    background: #4f46e5;
+    background: #ee4d2d;
 }
