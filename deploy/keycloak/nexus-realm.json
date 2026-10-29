@@ -300,6 +300,10 @@
       {
         "name": "ROLE_PROFILE_WRITER",
         "description": "Internal profile creation only"
+      },
+      {
+        "name": "ROLE_NOTIFICATION_WRITER",
+        "description": "Commerce service account notification ingestion only"
       }
     ]
   },

@@ -25,7 +25,7 @@ Tài liệu chỉ đánh dấu một contract là `CURRENT` khi controller/DTO t
 | Commerce Service | [COMMERCE_SERVICE.md](COMMERCE_SERVICE.md) | Cart, checkout COD/VNPAY và sandbox payment/IPN đã triển khai; đọc/hủy đơn chưa có controller |
 | Auction Service | [AUCTION_SERVICE.md](AUCTION_SERVICE.md) | Chưa có DTO nghiệp vụ |
 | Fulfillment Service | [FULFILLMENT_SERVICE.md](FULFILLMENT_SERVICE.md) | Chưa có DTO nghiệp vụ |
-| Notification Service | [NOTIFICATION_SERVICE.md](NOTIFICATION_SERVICE.md) | Chưa có DTO nghiệp vụ |
+| Notification Service | [NOTIFICATION_SERVICE.md](NOTIFICATION_SERVICE.md) | Hộp thư IN_APP, đọc/đọc tất cả và ingestion Commerce đã triển khai |
 | Reputation Service | [REPUTATION_SERVICE.md](REPUTATION_SERVICE.md) | Chưa có controller/DTO nghiệp vụ |
 
 ## 3. Quy ước đọc bảng DTO

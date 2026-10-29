@@ -157,6 +157,10 @@ services:
       # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
       FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
       # Merchant VNPAY và service account outbox được cấp ngoài repo; để trống thì chỉ dùng được COD.
+      # OAuth thông báo riêng; thiếu config giữ backlog, không chặn checkout hoặc IPN.
+      NOTIFICATION_TOKEN_URL: ${NOTIFICATION_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
+      NOTIFICATION_CLIENT_ID: ${NOTIFICATION_CLIENT_ID:-}
+      NOTIFICATION_CLIENT_SECRET: ${NOTIFICATION_CLIENT_SECRET:-}
       VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
       VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
       VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-}
