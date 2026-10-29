@@ -40,6 +40,7 @@ import {
     Gift,
     Star,
     CircleX,
+    Clock,
     Shield,
     Spinner,
     Trash2,
@@ -2610,7 +2611,8 @@ export function SandboxPaymentPage() {
             await new Promise((r) => setTimeout(r, 600))
             try {
                 // Cố gắng cập nhật trạng thái đơn hàng trong mock store nếu có
-                await ordersApi.updateOrderStatus(orderId, 'paid', 'Sandbox payment approved')
+                // Cố gắng cập nhật trạng thái đơn hàng sang PAID theo chuẩn OrderStatus
+                await ordersApi.updateOrderStatus(orderId, 'PAID', 'Sandbox payment approved')
             } catch {
                 // Bỏ qua nếu đơn là ID tạm thời
             }
@@ -2761,17 +2763,20 @@ export function SandboxPaymentPage() {
                                 ? 'Simulate Failure'
                                 : 'Mô phỏng thanh toán thất bại (Simulate Failure)'}
                         </Button>
+                        {/* Hủy thanh toán → chuyển sang payment-result với status cancelled thay vì quay về Checkout */}
                         <Button
                             variant="outline"
                             size="lg"
                             className="w-full"
                             disabled={simulating}
-                            onClick={() => navigate('checkout')}
+                            onClick={() =>
+                                navigate('payment-result', { status: 'cancelled', orderId })
+                            }
                         >
                             ←{' '}
                             {lang === 'en'
-                                ? 'Cancel and Return to Checkout'
-                                : 'Hủy bỏ và quay lại thanh toán'}
+                                ? 'Cancel Payment'
+                                : 'Hủy thanh toán'}
                         </Button>
                     </div>
 
@@ -2787,47 +2792,294 @@ export function SandboxPaymentPage() {
 }
 
 // ─── Payment Result Page ───────────────────────────────────────────────────────
+type ResolvedPaymentStatus = 'success' | 'failed' | 'cancelled' | 'pending' | 'unknown'
+
+/**
+ * Hàm phân tích và chuẩn hóa tham số phản hồi từ Cổng thanh toán Sandbox hoặc Backend.
+ * 
+ * 1. Chức năng: Đọc và chuẩn hóa dữ liệu kết quả thanh toán từ query/pageParams, hỗ trợ cả tham số sandbox (như VNPay vnp_ResponseCode) và backend.
+ * 2. Đầu vào và kết quả:
+ *    - Đầu vào: params (pageParams hoặc query params).
+ *    - Kết quả: Object chứa { status, orderId, amount, paymentMethod, transactionId, reason }.
+ * 3. Luồng xử lý:
+ *    - Trích xuất orderId từ orderId / orderNo / vnp_TxnRef (fallback 'ORD-20240301-004').
+ *    - Trích xuất và chuẩn hóa số tiền (quy đổi từ VNPay x100 nếu có, chống số âm/NaN).
+ *    - Trích xuất phương thức thanh toán và mã giao dịch.
+ *    - Xác định trạng thái nghiệp vụ theo mã VNPay hoặc chuỗi status (hỗ trợ case-insensitive).
+ * 4. Quy tắc và lý do:
+ *    - Mã '00' từ VNPay là thành công, '24' là khách hủy, '01'/'02' là đang xử lý, còn lại là thất bại.
+ *    - Chấp nhận các biến thể chữ hoa/thường: SUCCESS, PAID, CANCELLED, PENDING, FAILED để tương thích hoàn toàn với backend DTO và schema constraint.
+ * 5. Lỗi và giới hạn: Trả về 'unknown' khi nhận chuỗi trạng thái không xác định để UI hiển thị thông báo lỗi rõ ràng.
+ */
+function parsePaymentParams(params?: Record<string, unknown>) {
+    if (!params) {
+        return {
+            status: 'success' as ResolvedPaymentStatus,
+            orderId: 'ORD-20240301-004',
+            amount: 0,
+            paymentMethod: '',
+            transactionId: '',
+            reason: '',
+        }
+    }
+
+    // 1. Trích xuất mã đơn hàng
+    const orderId =
+        (params.orderId as string)?.trim() ||
+        (params.orderNo as string)?.trim() ||
+        (params.vnp_TxnRef as string)?.trim() ||
+        'ORD-20240301-004'
+
+    // 2. Trích xuất và chuẩn hóa số tiền (chống số âm hoặc NaN)
+    let amount = 0
+    if (typeof params.amount === 'number') {
+        amount = Math.max(0, params.amount)
+    } else if (typeof params.amount === 'string') {
+        amount = Math.max(0, parseFloat(params.amount) || 0)
+    } else if (params.vnp_Amount) {
+        const rawVal =
+            typeof params.vnp_Amount === 'number'
+                ? params.vnp_Amount
+                : parseFloat(String(params.vnp_Amount)) || 0
+        amount = Math.max(0, rawVal >= 1000 ? rawVal / 100 : rawVal)
+    }
+
+    // 3. Trích xuất phương thức thanh toán
+    let paymentMethod =
+        (params.paymentMethod as string)?.trim() ||
+        (params.provider as string)?.trim() ||
+        ''
+    if (params.vnp_BankCode) {
+        paymentMethod = paymentMethod
+            ? `${paymentMethod} (${params.vnp_BankCode})`
+            : `VNPAY (${params.vnp_BankCode})`
+    } else if (params.vnp_ResponseCode && !paymentMethod) {
+        paymentMethod = 'VNPAY QR'
+    }
+
+    // 4. Trích xuất mã giao dịch & lý do
+    const transactionId =
+        (params.transactionId as string)?.trim() ||
+        (params.vnp_TransactionNo as string)?.trim() ||
+        (params.paymentId as string)?.trim() ||
+        ''
+
+    const reason =
+        (params.reason as string)?.trim() ||
+        (params.message as string)?.trim() ||
+        ''
+
+    // 5. Xác định trạng thái thanh toán từ mã phản hồi VNPay hoặc status string
+    let status: ResolvedPaymentStatus = 'unknown'
+
+    const vnpCode = (params.vnp_ResponseCode as string)?.trim()
+    const vnpTxStatus = (params.vnp_TransactionStatus as string)?.trim()
+
+    if (vnpCode) {
+        if (vnpCode === '00' && (!vnpTxStatus || vnpTxStatus === '00')) {
+            status = 'success'
+        } else if (vnpCode === '24') {
+            status = 'cancelled' // Khách hàng hủy giao dịch tại cổng sandbox
+        } else if (vnpCode === '01' || vnpCode === '02' || vnpTxStatus === '01') {
+            status = 'pending' // Giao dịch đang chờ xử lý
+        } else {
+            status = 'failed'
+        }
+    } else {
+        const rawStatus = (params.status as string)?.trim()?.toLowerCase()
+        if (!rawStatus) {
+            status = 'success'
+        } else if (['success', 'paid', 'completed'].includes(rawStatus)) {
+            status = 'success'
+        } else if (['cancelled', 'canceled', 'cancel'].includes(rawStatus)) {
+            status = 'cancelled'
+        } else if (['pending', 'processing', 'in_progress', 'pending_payment'].includes(rawStatus)) {
+            status = 'pending'
+        } else if (['failed', 'failure', 'error', 'declined', 'rejected'].includes(rawStatus)) {
+            status = 'failed'
+        } else {
+            status = 'unknown'
+        }
+    }
+
+    return {
+        status,
+        orderId,
+        amount,
+        paymentMethod,
+        transactionId,
+        reason,
+    }
+}
+
+/**
+ * Màn hình Kết quả Thanh toán (Payment Result Page).
+ * 
+ * 1. Chức năng: Hiển thị kết quả thanh toán cho người mua sau khi đặt hàng hoặc hoàn tất từ cổng sandbox/backend.
+ * 2. Đầu vào và kết quả:
+ *    - Đầu vào: pageParams qua hook useApp().
+ *    - Kết quả: Render giao diện tương ứng với trạng thái (success, cancelled, pending, failed, unknown), kèm thông tin chi tiết đơn hàng.
+ * 3. Luồng xử lý:
+ *    - Gọi parsePaymentParams để chuẩn hóa các tham số đầu vào từ sandbox/backend.
+ *    - Gọi ordersApi.getOrderById(orderId) để tải thông tin đơn hàng mới nhất (địa chỉ, tổng tiền, phương thức, mặt hàng).
+ *    - Bắt lỗi API tải đơn hàng vào state orderError (không để crash màn hình).
+ *    - Render UI tương ứng với từng trạng thái:
+ *        + 'success': Huy hiệu hoàn tất xanh lá, xác nhận giữ tiền ký quỹ, chi tiết số tiền/phương thức/địa chỉ, nút tiếp tục mua sắm hoặc xem đơn.
+ *        + 'cancelled': Huy hiệu hủy bỏ, ghi chú không bị trừ tiền, nút quay lại giỏ hàng hoặc về trang chủ.
+ *        + 'pending': Huy hiệu chờ xử lý màu vàng, giải thích trạng thái, nút kiểm tra lại trong lịch sử đơn.
+ *        + 'failed': Thông báo lỗi đỏ, bộ đếm thử lại tối đa 3 lần, nút hủy hoặc thử lại.
+ *        + 'unknown': Thông báo lỗi dữ liệu không hợp lệ, nút về trang chủ hoặc xem đơn.
+ * 4. Quy tắc và lý do:
+ *    - Giữ orderId độc nhất trong tiêu đề phụ (không lặp lại trong card con) để đảm bảo các câu test getByText không bị lỗi multiple elements.
+ *    - Người mua chủ động thực hiện retry hoặc chuyển trang, không tự động kích hoạt vòng lặp thanh toán.
+ * 5. Lỗi và giới hạn:
+ *    - Khi API getOrderById lỗi mạng, giao diện vẫn hiển thị kết quả từ pageParams và cảnh báo nhẹ nhàng, không gây màn hình trắng.
+ */
 export function PaymentResultPage() {
     const { lang, navigate, pageParams } = useApp()
-    const status = (pageParams?.status as string) || 'success'
-    const orderId = (pageParams?.orderId as string) || 'ORD-20240301-004'
+    const parsed = parsePaymentParams(pageParams)
+    const { status, orderId, transactionId } = parsed
+    const hasExplicitOrderId = Boolean(pageParams?.orderId || pageParams?.orderNo || pageParams?.vnp_TxnRef)
+
+    const [order, setOrder] = useState<Order | null>(null)
+    const [, setLoadingOrder] = useState<boolean>(false)
+    const [orderError, setOrderError] = useState<string | null>(null)
     const [retries, setRetries] = useState(0)
+
+    // Tải thông tin đơn hàng từ Backend / Mock Store để hiển thị bổ sung khi có mã đơn
+    useEffect(() => {
+        let isMounted = true
+        if (!orderId) return
+
+        setLoadingOrder(true)
+        setOrderError(null)
+
+        ordersApi
+            .getOrderById(orderId)
+            .then((data) => {
+                if (isMounted && data) {
+                    setOrder(data)
+                }
+            })
+            .catch((err) => {
+                if (isMounted) {
+                    const msg =
+                        err instanceof Error
+                            ? err.message
+                            : lang === 'en'
+                              ? 'Failed to load order info'
+                              : 'Không thể tải thông tin đơn hàng'
+                    setOrderError(msg)
+                }
+            })
+            .finally(() => {
+                if (isMounted) setLoadingOrder(false)
+            })
+
+        return () => {
+            isMounted = false
+        }
+    }, [orderId, lang])
+
+    // Lấy số tiền và phương thức ưu tiên từ order nếu pageParams chưa có
+    const displayAmount = parsed.amount > 0 ? parsed.amount : (order?.total || 0)
+    const displayMethod = parsed.paymentMethod || order?.paymentMethod || ''
+    const displayAddress = order?.shippingAddress || ''
+    const failureReason = parsed.reason || (orderError ? orderError : '')
+
     return (
         <BuyerLayout>
             <div className="max-w-lg mx-auto text-center py-12">
+                {/* ── Trạng thái Thành công ── */}
                 {status === 'success' && (
                     <>
-                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <CheckCircle size={40} className="text-gray-600" />
+                        {/* Icon thành công màu xanh lá */}
+                        <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-5">
+                            <CheckCircle size={40} className="text-emerald-600" />
                         </div>
                         <h1 className="text-2xl font-bold text-gray-900 mb-2">
                             {tr(lang, 'orderPlaced')}
                         </h1>
-                        <p className="text-gray-500 mb-2">
-                            {lang === 'en'
-                                ? `Order #${orderId} confirmed.`
-                                : `Đơn hàng #${orderId} đã được xác nhận.`}
-                        </p>
+                        {orderId && (
+                            <p className="text-gray-500 mb-2">
+                                {lang === 'en'
+                                    ? `Order #${orderId} confirmed.`
+                                    : `Đơn hàng #${orderId} đã được xác nhận.`}
+                            </p>
+                        )}
                         <p className="text-sm text-gray-500 mb-2">
                             {lang === 'en'
                                 ? 'Payment received and securely held by Nexus until the order is completed.'
                                 : 'Thanh toán thành công và đang được Nexus giữ an toàn cho đến khi đơn hàng hoàn tất.'}
                         </p>
-                        <p className="text-sm text-gray-400 mb-8">
+                        <p className="text-sm text-gray-400 mb-6">
                             {lang === 'en'
                                 ? "You'll receive a confirmation email shortly."
                                 : 'Bạn sẽ nhận được email xác nhận sớm.'}
                         </p>
-                        <div className="flex gap-3 justify-center">
+
+                        {/* Hiển thị tóm tắt thông tin đơn hàng nếu có dữ liệu liên quan */}
+                        {(displayAmount > 0 || displayMethod || transactionId || displayAddress) && (
+                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2.5">
+                                {displayAmount > 0 && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Amount Paid:' : 'Số tiền thanh toán:'}
+                                        </span>
+                                        <span className="font-bold text-emerald-700">
+                                            {formatCurrency(displayAmount, lang)}
+                                        </span>
+                                    </div>
+                                )}
+                                {displayMethod && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Method:' : 'Phương thức:'}
+                                        </span>
+                                        <span className="font-medium text-gray-800">{displayMethod}</span>
+                                    </div>
+                                )}
+                                {transactionId && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Transaction ID:' : 'Mã giao dịch:'}
+                                        </span>
+                                        <span className="font-mono text-xs text-gray-700">{transactionId}</span>
+                                    </div>
+                                )}
+                                {displayAddress && (
+                                    <div className="flex justify-between pt-2 border-t border-border/60">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Delivery Address:' : 'Địa chỉ giao hàng:'}
+                                        </span>
+                                        <span className="text-xs text-gray-700 text-right max-w-[240px] truncate">
+                                            {displayAddress}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-3 justify-center">
                             <Button variant="outline" onClick={() => navigate('home')}>
                                 {lang === 'en' ? 'Continue Shopping' : 'Tiếp tục mua sắm'}
                             </Button>
                             <Button variant="primary" onClick={() => navigate('order-history')}>
                                 {tr(lang, 'orderHistory')}
                             </Button>
+                            {orderId && (
+                                <Button
+                                    variant="outline"
+                                    onClick={() => navigate('order-detail', { id: orderId })}
+                                >
+                                    {tr(lang, 'orderDetail')}
+                                </Button>
+                            )}
                         </div>
                     </>
                 )}
+
+                {/* ── Trạng thái Thất bại ── */}
                 {status === 'failed' && (
                     <>
                         <div className="w-20 h-20 bg-danger-light rounded-full flex items-center justify-center mx-auto mb-5">
@@ -2848,6 +3100,42 @@ export function PaymentResultPage() {
                         <h1 className="text-2xl font-bold text-gray-900 mb-2">
                             {tr(lang, 'paymentFailed')}
                         </h1>
+                        {hasExplicitOrderId && (
+                            <p className="text-gray-500 mb-2">
+                                {lang === 'en'
+                                    ? `Payment for order #${orderId} failed.`
+                                    : `Thanh toán cho đơn hàng #${orderId} không thành công.`}
+                            </p>
+                        )}
+                        {failureReason && (
+                            <p className="text-sm text-danger mb-4 font-medium">
+                                {failureReason}
+                            </p>
+                        )}
+
+                        {(displayAmount > 0 || displayMethod) && (
+                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2">
+                                {displayAmount > 0 && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Order Total:' : 'Tổng giá trị đơn:'}
+                                        </span>
+                                        <span className="font-bold text-gray-800">
+                                            {formatCurrency(displayAmount, lang)}
+                                        </span>
+                                    </div>
+                                )}
+                                {displayMethod && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Attempted Method:' : 'Phương thức thử:'}
+                                        </span>
+                                        <span className="font-medium text-gray-800">{displayMethod}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {retries < 3 ? (
                             <>
                                 <p className="text-sm text-gray-400 mb-1">
@@ -2877,25 +3165,171 @@ export function PaymentResultPage() {
                                         ? 'Maximum retries reached. Please contact support.'
                                         : 'Đã hết số lần thử. Vui lòng liên hệ hỗ trợ.'}
                                 </p>
-                                <Button variant="outline" onClick={() => navigate('home')}>
-                                    {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
-                                </Button>
+                                <div className="flex gap-3 justify-center">
+                                    <Button variant="outline" onClick={() => navigate('home')}>
+                                        {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
+                                    </Button>
+                                    <Button variant="primary" onClick={() => navigate('order-history')}>
+                                        {tr(lang, 'orderHistory')}
+                                    </Button>
+                                </div>
                             </>
                         )}
                     </>
                 )}
-                {status === 'pending' && (
+
+                {/* ── Trạng thái Đã hủy ── */}
+                {status === 'cancelled' && (
                     <>
                         <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <AlertTriangle size={40} className="text-gray-600" />
+                            <CircleX size={40} className="text-gray-500" />
+                        </div>
+                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                            {lang === 'en' ? 'Payment Cancelled' : 'Đã hủy thanh toán'}
+                        </h1>
+                        {orderId && (
+                            <p className="text-gray-500 mb-2">
+                                {lang === 'en'
+                                    ? `Order #${orderId} was not completed.`
+                                    : `Đơn hàng #${orderId} chưa được hoàn tất.`}
+                            </p>
+                        )}
+                        <p className="text-sm text-gray-500 mb-6">
+                            {lang === 'en'
+                                ? 'Your payment was cancelled. No charges have been made. You can review your cart or return to shopping.'
+                                : 'Thanh toán đã bị hủy. Không có khoản phí nào bị trừ. Bạn có thể xem lại giỏ hàng hoặc quay về mua sắm.'}
+                        </p>
+
+                        {(displayAmount > 0 || displayMethod || failureReason) && (
+                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2">
+                                {displayAmount > 0 && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Amount Uncharged:' : 'Số tiền chưa thu:'}
+                                        </span>
+                                        <span className="font-bold text-gray-700">
+                                            {formatCurrency(displayAmount, lang)}
+                                        </span>
+                                    </div>
+                                )}
+                                {displayMethod && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Method:' : 'Phương thức:'}
+                                        </span>
+                                        <span className="font-medium text-gray-800">{displayMethod}</span>
+                                    </div>
+                                )}
+                                {failureReason && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Note:' : 'Ghi chú:'}
+                                        </span>
+                                        <span className="text-xs text-gray-600">{failureReason}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-3 justify-center">
+                            <Button variant="outline" onClick={() => navigate('home')}>
+                                {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
+                            </Button>
+                            <Button variant="primary" onClick={() => navigate('cart')}>
+                                {lang === 'en' ? 'Return to Cart' : 'Quay lại giỏ hàng'}
+                            </Button>
+                            <Button variant="outline" onClick={() => navigate('order-history')}>
+                                {tr(lang, 'orderHistory')}
+                            </Button>
+                        </div>
+                    </>
+                )}
+
+                {/* ── Trạng thái Đang xử lý ── */}
+                {status === 'pending' && (
+                    <>
+                        {/* Icon đang xử lý màu vàng/amber */}
+                        <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-5">
+                            <Clock size={40} className="text-amber-500" />
                         </div>
                         <h1 className="text-2xl font-bold mb-2">
                             {lang === 'en' ? 'Payment Pending' : 'Đang xử lý thanh toán'}
                         </h1>
-                        <p className="text-gray-500 mb-8">{tr(lang, 'paymentPending')}</p>
-                        <Button variant="outline" onClick={() => navigate('order-history')}>
-                            {tr(lang, 'orderHistory')}
-                        </Button>
+                        {orderId && (
+                            <p className="text-gray-500 mb-2">
+                                {lang === 'en'
+                                    ? `Order #${orderId} is being processed.`
+                                    : `Đơn hàng #${orderId} đang được xử lý.`}
+                            </p>
+                        )}
+                        <p className="text-gray-500 mb-6">{tr(lang, 'paymentPending')}</p>
+
+                        {(displayAmount > 0 || displayMethod) && (
+                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2">
+                                {displayAmount > 0 && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Expected Amount:' : 'Số tiền thanh toán:'}
+                                        </span>
+                                        <span className="font-bold text-amber-700">
+                                            {formatCurrency(displayAmount, lang)}
+                                        </span>
+                                    </div>
+                                )}
+                                {displayMethod && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">
+                                            {lang === 'en' ? 'Method:' : 'Phương thức:'}
+                                        </span>
+                                        <span className="font-medium text-gray-800">{displayMethod}</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">
+                                        {lang === 'en' ? 'Status:' : 'Tình trạng:'}
+                                    </span>
+                                    <span className="text-amber-600 font-medium">
+                                        {lang === 'en'
+                                            ? 'Awaiting gateway confirmation'
+                                            : 'Chờ xác nhận từ cổng thanh toán'}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-3 justify-center">
+                            <Button variant="outline" onClick={() => navigate('home')}>
+                                {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
+                            </Button>
+                            <Button variant="primary" onClick={() => navigate('order-history')}>
+                                {tr(lang, 'orderHistory')}
+                            </Button>
+                        </div>
+                    </>
+                )}
+
+                {/* ── Trạng thái không xác định ── */}
+                {status === 'unknown' && (
+                    <>
+                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
+                            <AlertTriangle size={40} className="text-gray-500" />
+                        </div>
+                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                            {lang === 'en' ? 'Unknown Payment Status' : 'Trạng thái thanh toán không xác định'}
+                        </h1>
+                        <p className="text-gray-500 mb-8">
+                            {lang === 'en'
+                                ? 'We could not determine your payment status. Please check your order history or contact support.'
+                                : 'Không thể xác định trạng thái thanh toán của bạn. Vui lòng kiểm tra lịch sử đơn hàng hoặc liên hệ hỗ trợ.'}
+                        </p>
+                        <div className="flex gap-3 justify-center">
+                            <Button variant="outline" onClick={() => navigate('home')}>
+                                {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
+                            </Button>
+                            <Button variant="primary" onClick={() => navigate('order-history')}>
+                                {tr(lang, 'orderHistory')}
+                            </Button>
+                        </div>
                     </>
                 )}
             </div>

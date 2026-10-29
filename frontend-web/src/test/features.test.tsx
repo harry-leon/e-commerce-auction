@@ -751,6 +751,264 @@ describe('Cart, Checkout và Payment Result', () => {
             expect(screen.getByRole('heading', { name: /pending|đang xử lý/i })).toBeVisible(),
         )
     })
+
+    /**
+     * Kiểm tra trạng thái đã hủy: hiển thị thông báo đã hủy và cho phép quay lại giỏ hàng.
+     */
+    it('PaymentResultPage: hiển thị trạng thái đã hủy và cho phép quay lại giỏ hàng', async () => {
+        holder.current.pageParams = { status: 'cancelled', orderId: 'ORD-TEST-CANCEL' }
+        render(<PaymentResultPage />)
+        await waitFor(() =>
+            expect(
+                screen.getByRole('heading', { name: /cancelled|đã hủy/i }),
+            ).toBeVisible(),
+        )
+        expect(screen.getByText(/ORD-TEST-CANCEL/i)).toBeVisible()
+        fireEvent.click(screen.getByRole('button', { name: /return to cart|quay lại giỏ hàng/i }))
+        expect(holder.current.navigate).toHaveBeenCalledWith('cart')
+    })
+
+    /**
+     * Kiểm tra trạng thái không xác định: hiển thị thông báo lỗi rõ ràng, không gây màn hình trắng.
+     */
+    it('PaymentResultPage: hiển thị thông báo lỗi cho trạng thái không xác định', async () => {
+        holder.current.pageParams = { status: 'unknown_state' }
+        render(<PaymentResultPage />)
+        await waitFor(() =>
+            expect(
+                screen.getByRole('heading', { name: /unknown|không xác định/i }),
+            ).toBeVisible(),
+        )
+        const homeBtn = screen.getByRole('button', { name: /back to home|về trang chủ/i })
+        expect(homeBtn).toBeVisible()
+        fireEvent.click(homeBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('home')
+    })
+
+    /**
+     * Kiểm tra nút Hủy thanh toán tại SandboxPaymentPage điều hướng về payment-result cancelled.
+     */
+    it('SandboxPaymentPage: nút hủy thanh toán chuyển sang payment-result cancelled', async () => {
+        holder.current.pageParams = {
+            orderId: 'ORD-CANCEL-TEST',
+            amount: 200000,
+            provider: 'vnpay',
+        }
+        render(<SandboxPaymentPage />)
+        const cancelBtn = screen.getByRole('button', {
+            name: /cancel payment|hủy thanh toán/i,
+        })
+        expect(cancelBtn).toBeVisible()
+        fireEvent.click(cancelBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+            status: 'cancelled',
+            orderId: 'ORD-CANCEL-TEST',
+        })
+    })
+
+    /**
+     * Kiểm tra xử lý tham số phản hồi VNPay thành công (vnp_ResponseCode = '00')
+     * Tự động quy đổi vnp_Amount từ đơn vị nhân 100 và hiển thị thông tin ngân hàng.
+     */
+    it('PaymentResultPage: xử lý phản hồi VNPay sandbox thành công (vnp_ResponseCode = 00)', async () => {
+        holder.current.pageParams = {
+            vnp_ResponseCode: '00',
+            vnp_TxnRef: 'ORD-VNPAY-SUCCESS',
+            vnp_Amount: 5000000, // 50,000 VND
+            vnp_BankCode: 'NCB',
+            vnp_TransactionNo: '14567890',
+        }
+        render(<PaymentResultPage />)
+
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /placed|thành công/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-VNPAY-SUCCESS/i)).toBeVisible()
+        expect(screen.getByText(/14567890/i)).toBeVisible()
+        expect(screen.getByText(/NCB/i)).toBeVisible()
+    })
+
+    /**
+     * Kiểm tra xử lý tham số phản hồi VNPay khi khách hàng hủy giao dịch tại cổng (vnp_ResponseCode = '24').
+     */
+    it('PaymentResultPage: xử lý phản hồi VNPay sandbox khi khách hủy (vnp_ResponseCode = 24)', async () => {
+        holder.current.pageParams = {
+            vnp_ResponseCode: '24',
+            vnp_TxnRef: 'ORD-VNPAY-CANCEL',
+            vnp_Amount: 3200000,
+            vnp_BankCode: 'VNPAYQR',
+        }
+        render(<PaymentResultPage />)
+
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /cancelled|đã hủy/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-VNPAY-CANCEL/i)).toBeVisible()
+        const returnBtn = screen.getByRole('button', { name: /return to cart|quay lại giỏ hàng/i })
+        expect(returnBtn).toBeVisible()
+        fireEvent.click(returnBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('cart')
+    })
+
+    /**
+     * Kiểm tra xử lý tham số phản hồi VNPay đang chờ xử lý (vnp_ResponseCode = '01').
+     */
+    it('PaymentResultPage: xử lý phản hồi VNPay sandbox trạng thái đang chờ xử lý (vnp_ResponseCode = 01)', async () => {
+        holder.current.pageParams = {
+            vnp_ResponseCode: '01',
+            vnp_TxnRef: 'ORD-VNPAY-PENDING',
+            vnp_Amount: 1500000,
+        }
+        render(<PaymentResultPage />)
+
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /pending|đang xử lý/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-VNPAY-PENDING/i)).toBeVisible()
+        expect(screen.getByText(/awaiting gateway confirmation|chờ xác nhận từ cổng thanh toán/i)).toBeVisible()
+    })
+
+    /**
+     * Kiểm tra chuẩn hóa trạng thái case-insensitive từ Backend (PAID, CANCELLED, PENDING, FAILED).
+     */
+    it('PaymentResultPage: chuẩn hóa trạng thái UPPERCASE từ backend spec', async () => {
+        // 1. PAID -> hiển thị thành công
+        holder.current.pageParams = { status: 'PAID', orderId: 'ORD-UPPER-PAID' }
+        const { unmount } = render(<PaymentResultPage />)
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /placed|thành công/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-UPPER-PAID/i)).toBeVisible()
+        unmount()
+
+        // 2. CANCELLED -> hiển thị đã hủy
+        holder.current.pageParams = { status: 'CANCELLED', orderId: 'ORD-UPPER-CANCEL' }
+        const { unmount: unmount2 } = render(<PaymentResultPage />)
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /cancelled|đã hủy/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-UPPER-CANCEL/i)).toBeVisible()
+        unmount2()
+
+        // 3. PENDING -> hiển thị đang xử lý
+        holder.current.pageParams = { status: 'PENDING', orderId: 'ORD-UPPER-PENDING' }
+        const { unmount: unmount3 } = render(<PaymentResultPage />)
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /pending|đang xử lý/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-UPPER-PENDING/i)).toBeVisible()
+        unmount3()
+    })
+
+    /**
+     * Kiểm tra hiển thị thông tin đơn hàng đầy đủ khi có dữ liệu từ backend/mock store.
+     */
+    it('PaymentResultPage: tải và hiển thị chi tiết đơn hàng kèm nút xem chi tiết đơn', async () => {
+        holder.current.pageParams = {
+            status: 'success',
+            orderId: 'ORD-20240301-004',
+        }
+        render(<PaymentResultPage />)
+
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /placed|thành công/i })).toBeVisible()
+        })
+        // Kiểm tra nút Chi tiết đơn hàng xuất hiện và điều hướng đúng id
+        const detailBtn = await screen.findByRole('button', { name: /order detail|chi tiết đơn/i })
+        expect(detailBtn).toBeVisible()
+        fireEvent.click(detailBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('order-detail', { id: 'ORD-20240301-004' })
+    })
+
+    /**
+     * Kiểm tra xử lý an toàn dữ liệu không hợp lệ (số tiền âm, mã trạng thái lạ) không gây crash giao diện.
+     */
+    it('PaymentResultPage: xử lý an toàn dữ liệu không hợp lệ không làm crash giao diện', async () => {
+        holder.current.pageParams = {
+            status: 'SOME_CORRUPT_STATUS',
+            amount: -500000,
+        }
+        render(<PaymentResultPage />)
+
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /unknown|không xác định/i })).toBeVisible()
+        })
+        // Các nút điều hướng fallback hoạt động bình thường
+        const homeBtn = screen.getByRole('button', { name: /back to home|về trang chủ/i })
+        expect(homeBtn).toBeVisible()
+        fireEvent.click(homeBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('home')
+    })
+
+    /**
+     * Kiểm thử luồng liên thông toàn vẹn: Giỏ hàng → Checkout → Cổng Sandbox → Kết quả thanh toán (Accept Criteria 5)
+     */
+    it('Kiểm thử luồng toàn vẹn: Giỏ hàng → Checkout → Cổng Sandbox VNPAY → Kết quả thanh toán', async () => {
+        // 1. Khởi đầu từ Giỏ hàng
+        const { unmount: unmountCart } = render(<CartPage />)
+        const checkoutBtn = await screen.findByRole('button', { name: /checkout|thanh toán/i })
+        fireEvent.click(checkoutBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+        unmountCart()
+
+        // 2. Chuyển sang CheckoutPage và chọn VNPAY
+        const { unmount: unmountCheckout } = render(<CheckoutPage />)
+        // B1 -> B2 -> B3
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
+        // Chọn VNPAY và sang B4
+        fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
+        // Kỳ vọng điều hướng sang sandbox-payment
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith(
+                'sandbox-payment',
+                expect.objectContaining({ provider: 'vnpay' }),
+            )
+        })
+        unmountCheckout()
+
+        // 3. Mở SandboxPaymentPage và hoàn tất thanh toán
+        holder.current.pageParams = {
+            orderId: 'ORD-E2E-FLOW-101',
+            amount: 250000,
+            provider: 'vnpay',
+        }
+        const { unmount: unmountSandbox } = render(<SandboxPaymentPage />)
+        expect(screen.getByText('ORD-E2E-FLOW-101')).toBeVisible()
+        const successBtn = screen.getByRole('button', { name: /simulate success|thanh toán thành công/i })
+        fireEvent.click(successBtn)
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+                status: 'success',
+                orderId: 'ORD-E2E-FLOW-101',
+            })
+        })
+        unmountSandbox()
+
+        // 4. Mở PaymentResultPage và xác nhận hiển thị thành công
+        holder.current.pageParams = {
+            status: 'success',
+            orderId: 'ORD-E2E-FLOW-101',
+            amount: 250000,
+            paymentMethod: 'VNPAY QR',
+        }
+        const { unmount: unmountResult } = render(<PaymentResultPage />)
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: /placed|thành công/i })).toBeVisible()
+        })
+        expect(screen.getByText(/ORD-E2E-FLOW-101/i)).toBeVisible()
+        expect(screen.getByText(/VNPAY QR/i)).toBeVisible()
+        const historyBtn = screen.getByRole('button', { name: /order history|lịch sử/i })
+        expect(historyBtn).toBeVisible()
+        fireEvent.click(historyBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('order-history')
+        unmountResult()
+    })
 })
 
 describe('ProductDetailPage (catalog) – Add to Cart và Tab', () => {

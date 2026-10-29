@@ -1,5 +1,14 @@
-import { api, ApiClientError, readSession } from './client'
-import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
+import { api, post, ApiClientError, readSession } from './client'
+import type { ApiResponse } from './client'
+import type {
+    Order,
+    OrderDetailResponse,
+    OrderSummaryResponse,
+    OrderStatus,
+    PaymentStatus,
+    PlaceOrderRequest,
+    UserRole,
+} from '../types'
 import { ORDERS } from '../mockData'
 
 /**
@@ -149,6 +158,7 @@ const SEED_ORDERS: Order[] = [
             estimatedDelivery: '2024-03-05',
             events: [
                 {
+                    // Trạng thái vận chuyển khởi tạo
                     status: 'pending',
                     description: 'Người bán đã đóng gói xong',
                     timestamp: '2024-03-01T11:00:00Z',
@@ -562,7 +572,8 @@ export const ordersApi = {
             discount: calcDiscount,
             shipping: calcShipping,
             total: calcTotal,
-            status: 'pending',
+            // Khởi tạo trạng thái đơn hàng ban đầu là PENDING_PAYMENT theo đúng chuẩn V2 và schema DB
+            status: 'PENDING_PAYMENT',
             refundStatus: 'none',
             paymentStatus: 'held',
             shippingAddress: data.shippingAddress,
@@ -584,7 +595,8 @@ export const ordersApi = {
         return {
             id: orderId,
             orderNo: orderId,
-            status: 'pending',
+            // Khởi tạo trạng thái đơn hàng ban đầu là PENDING_PAYMENT theo đúng chuẩn V2 và schema DB
+            status: 'PENDING_PAYMENT',
             subtotal: calcSubtotal,
             shippingFee: calcShipping,
             discount: calcDiscount,
