@@ -50,6 +50,18 @@ reputation-service:image:
     - if: '$CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_TAG'
       changes: [backend/reputation-service/**/*, backend/common/**/*, .ci/**/*]
 
+# PostgreSQL riêng cho job Commerce để test khóa đồng thời/rollback không bị skip trên CI.
+# Trust chỉ áp dụng service DB tạm trong mạng job; không tái sử dụng cấu hình này cho môi trường triển khai.
+commerce-service:test:
+  services:
+    - name: postgres:16-alpine
+      alias: checkout-postgres
+  variables:
+    POSTGRES_DB: nexus_checkout_test
+    POSTGRES_USER: postgres
+    POSTGRES_HOST_AUTH_METHOD: trust
+    NEXUS_TEST_DB_URL: jdbc:postgresql://checkout-postgres:5432/nexus_checkout_test
+
 # Common chứa converter quyền: thay đổi thư viện phải chạy toàn bộ suite dùng converter.
 common:test:
   extends: .be-base

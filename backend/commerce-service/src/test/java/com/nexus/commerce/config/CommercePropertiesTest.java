@@ -2,6 +2,10 @@ package com.nexus.commerce.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.math.BigDecimal;
+import jakarta.validation.Validation;
 
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +14,17 @@ import org.junit.jupiter.api.Test;
  * Đảm bảo các giá trị mặc định chuẩn xác và hỗ trợ thay đổi runtime qua @RefreshScope.
  */
 class CommercePropertiesTest {
+
+    /** Phí ship từ config không được âm; validate nested Order trước khi có thể làm sai giá preview. */
+    @Test
+    void rejectsNegativeShippingFee() {
+        CommerceProperties properties = new CommerceProperties();
+        properties.getOrder().setShippingFee(new BigDecimal("-1.00"));
+        try (var factory = Validation.buildDefaultValidatorFactory()) {
+            assertTrue(factory.getValidator().validate(properties).stream()
+                    .anyMatch(v -> v.getPropertyPath().toString().equals("order.shippingFee")));
+        }
+    }
 
     @Test
     void defaultValues_shouldBeValid() {

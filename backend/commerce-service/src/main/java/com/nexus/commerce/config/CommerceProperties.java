@@ -2,6 +2,9 @@ package com.nexus.commerce.config;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.DecimalMin;
+import java.math.BigDecimal;
+import jakarta.validation.Valid;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -24,7 +27,10 @@ import org.springframework.validation.annotation.Validated;
 @Setter
 public class CommerceProperties {
 
+    // Validate cả cấu hình lồng nhau; phí ship âm hoặc hạn mức sai phải bị chặn khi nạp/refresh config.
+    @Valid
     private Cart cart = new Cart();
+    @Valid
     private Order order = new Order();
 
     /**
@@ -65,6 +71,11 @@ public class CommerceProperties {
     @Getter
     @Setter
     public static class Order {
+
+        /** Phí ship cố định cho checkout ban đầu; chưa có báo giá vận chuyển, mặc định miễn phí. */
+        @NotNull
+        @DecimalMin("0.00")
+        private BigDecimal shippingFee = new BigDecimal("0.00");
 
         /**
          * Số lượng đơn hàng tối đa 1 người dùng được tạo trong ngày.

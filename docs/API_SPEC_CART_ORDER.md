@@ -9,6 +9,11 @@
 > - BA: **Linh Đặng**  
 > - Inventory / Backend: **Vĩnh Khang**  
 
+> **Triển khai TT-S1-2:** preview và tạo đơn REGULAR/COD đã có backend. Contract callable và giới hạn hiện tại xem
+> [COMMERCE_SERVICE.md mục 4](dto-contracts/COMMERCE_SERVICE.md#4-checkout--tạo-đơn--tt-s1-2).
+> Ví dụ trong bản draft bên dưới mô tả cả đích đến tương lai; source hiện dùng envelope v2 `success/data/error/meta`,
+> xác minh JWT tại service, chưa hỗ trợ voucher/payment online/đọc-hủy đơn. Không dùng mẫu draft như API đã hoàn thành.
+
 ---
 
 ## 1. Mục tiêu và Phạm vi (Scope & Objectives)

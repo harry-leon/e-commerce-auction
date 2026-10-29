@@ -173,8 +173,40 @@ Ví dụ:
 
 Mọi endpoint thêm, sửa, xóa một item và merge đều trả lại toàn bộ `CartResponse` trong `data`, cùng shape với ví dụ trên. Lỗi validation và lỗi nghiệp vụ dùng JSON envelope trong [COMMON.md](COMMON.md#2-errordetail-và-validationerrordetail).
 
-## 4. Contract chưa triển khai
+## 4. Checkout & tạo đơn — TT-S1-2
 
-Các route `/checkout/**`, `/orders/**`, `/payments/**` đã được Gateway dành sẵn và `docs/API_SPEC_CART_ORDER.md` có thiết kế draft, nhưng source hiện chưa có controller/DTO tương ứng. Trạng thái của chúng là `PLANNED`, không phải contract callable.
+Hai endpoint sau đã có backend, đều trả `ApiResponse` v2. Buyer lấy từ subject UUID trong JWT đã xác minh; `X-User-Id` không được sử dụng.
 
-FE có thể chuẩn bị UI model nội bộ nhưng không được coi payload draft là API ổn định cho đến khi DTO/controller/test Backend được thêm và file này được cập nhật.
+| Method | Path | Quyền | HTTP | Request / data |
+|---|---|---|---|---|
+| POST | `/api/v1/orders/checkout/preview` | `CHECKOUT.START` | 200 | `CheckoutPreviewRequest` / `CheckoutPreviewResponse` |
+| POST | `/api/v1/orders` | `ORDER.CREATE` | 201 kể cả replay | `CreateOrderRequest` / `CreateOrderResponse` |
+
+Preview nhận `shippingAddress` bắt buộc (tối đa 500 ký tự), `itemIds` tùy chọn và `voucherCode` tùy chọn. Tạo đơn nhận:
+
+```json
+{
+  "shippingAddress": "123 Lê Lợi, TP. Hồ Chí Minh",
+  "recipientName": "Nguyễn Văn A",
+  "recipientPhone": "0901234567",
+  "paymentMethod": "COD",
+  "sourceType": "REGULAR",
+  "selectedItemIds": ["2cc1f09f-c128-45ae-97d8-f8c569120387"]
+}
+```
+
+Header `Idempotency-Key` bắt buộc là UUID chuẩn; cùng key + buyer + nội dung trả đơn đã lưu trước khi đọc lại giỏ. Khác nội dung hoặc buyer trả `409 ORDER_IDEMPOTENCY_CONFLICT`. Thứ tự item IDs không ảnh hưởng fingerprint, `sourceType` bỏ trống tương đương `REGULAR`. Key được lưu lâu dài trong DB, không chỉ cache RAM. Khóa PostgreSQL theo key rồi buyer ngăn request đồng thời tạo trùng đơn/reservation và kiểm soát giới hạn đơn/ngày (ngày tại `Asia/Ho_Chi_Minh`).
+
+`recipientName` tối đa 255 ký tự; số điện thoại 8–15 chữ số với dấu `+` tùy chọn. Item IDs là UUID, nếu có phải từ 1–50 phần tử, không null/trùng và đều thuộc giỏ ACTIVE còn hạn của buyer. Bỏ danh sách nghĩa là chọn toàn bộ giỏ. Chặn giỏ rỗng, SKU ngừng bán, quantity sai, tự mua và đơn chứa nhiều shop vì schema Order chỉ có một seller.
+
+Backend tải giá/tên/mã/seller mới nhất từ Catalog, tính `BigDecimal` scale 2 `HALF_UP`, lưu snapshot vào `orders`/`order_items`. Preview trả `subtotal`, `discountAmount`, `shippingFee`, `taxAmount`, `totalAmount`, `appliedVoucher: null`, `items`, `isOrderable`, `warnings`. Mỗi item có `skuId`, `sellerId`, `productName`, `skuCode`, `unitPrice`, `cartUnitPrice`, `quantity`, `itemTotal`. Giá khác giỏ tạo cảnh báo; giá lúc tạo đơn luôn lấy lại từ Catalog. Preview thiếu kho trả `isOrderable: false`; bước tạo đơn dùng reserve nguyên tử làm kiểm tra cuối.
+
+Kết quả tạo đơn có `id`, `orderNo`, `status: PENDING_PAYMENT`, `subtotal`, `shippingFee`, `discount`, `total`, `paymentMethod: COD`. Không trả payment URL giả. Sau reserve thành công chỉ xóa items đã mua; giỏ hết item chuyển `CONVERTED`. Đơn/items/giỏ commit cùng transaction.
+
+Phí ship tạm dùng `app.commerce.order.shipping-fee` (mặc định 0), VAT đã gồm trong giá nên `taxAmount = 0`. Voucher khác rỗng trả `422 CHECKOUT_VOUCHER_UNSUPPORTED`. Ticket này chỉ tạo đơn REGULAR/COD; online payment trả `422 PAYMENT_METHOD_UNSUPPORTED`, source auction trả `422 CHECKOUT_SOURCE_UNSUPPORTED`. Chưa tính ship theo cân nặng/khoảng cách hoặc triển khai payment lifecycle.
+
+Commerce gọi Fulfillment qua `FULFILLMENT_SERVICE_URL` và chuyển tiếp JWT cho reserve/release. Reservation hết hạn sau 15 phút. Khi reserve timeout hoặc transaction rollback sau reserve, callback gọi `/inventory/release` theo orderId; nếu release lỗi mạng/process chết, scheduler Fulfillment hoàn kho khi TTL hết. Chưa có outbox retry bền vững. Nếu kết quả commit không xác định, chỉ ghi log đối soát, không release ngay vì đơn có thể đã commit.
+
+Các lỗi đáng chú ý: `409 INVENTORY_INSUFFICIENT`, `409 CART_SKU_NOT_AVAILABLE`, `404 CART_ITEM_NOT_FOUND`, `422 CHECKOUT_EXPIRED`, `422 CHECKOUT_MULTIPLE_SELLERS`, `422 ORDER_DAILY_LIMIT_EXCEEDED`, `422 CHECKOUT_INVALID_IDEMPOTENCY_KEY`, `502 CATALOG_INVALID_RESPONSE`/`INVENTORY_UNAVAILABLE`. Thiếu header trả 400; DTO không hợp lệ trả 422.
+
+Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; cột mới nullable cho dữ liệu cũ. Cần triển khai Catalog có `sellerId` trước Commerce mới; không sửa migration V1–V3. Các route đọc/hủy đơn và `/payments/**` vẫn `PLANNED`. FE hiện còn mock fallback; thành công trên UI chưa chứng minh giao dịch backend đã hoàn tất.

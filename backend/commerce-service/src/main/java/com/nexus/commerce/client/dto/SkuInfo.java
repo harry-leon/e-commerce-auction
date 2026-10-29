@@ -13,6 +13,7 @@ import java.util.UUID;
  * @param price         Current unit listing price
  * @param stockQuantity Available inventory quantity in stock
  * @param isActive      Whether the SKU variant is currently active for purchase
+ * @param sellerId      Chủ shop từ Catalog; Checkout không chấp nhận giá trị do client tự khai báo
  */
 public record SkuInfo(
         UUID skuId,
@@ -21,6 +22,12 @@ public record SkuInfo(
         String thumbnailUrl,
         BigDecimal price,
         Integer stockQuantity,
-        Boolean isActive
+        Boolean isActive,
+        UUID sellerId
 ) {
+    /** Giữ tương thích caller Cart cũ; Checkout yêu cầu sellerId thật và từ chối snapshot thiếu người bán. */
+    public SkuInfo(UUID skuId, String skuCode, String productName, String thumbnailUrl,
+                   BigDecimal price, Integer stockQuantity, Boolean isActive) {
+        this(skuId, skuCode, productName, thumbnailUrl, price, stockQuantity, isActive, null);
+    }
 }
