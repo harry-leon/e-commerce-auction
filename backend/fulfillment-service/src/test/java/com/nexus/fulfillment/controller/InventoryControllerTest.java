@@ -16,6 +16,8 @@ import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.exception.GlobalExceptionHandler;
 import com.nexus.fulfillment.config.SecurityConfig;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
+import com.nexus.fulfillment.dto.request.OrderFailureEventRequest;
+import com.nexus.fulfillment.dto.request.OrderPaidEventRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
 import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
@@ -220,6 +222,124 @@ class InventoryControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/orders/{orderId}/commit - Xác nhận trừ kho thành công theo mã đơn hàng")
+    void testCommitByOrder_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID reservationId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(1800);
+
+        ReservationItemResponse item = new ReservationItemResponse(
+                reservationId,
+                skuId,
+                warehouseId,
+                2,
+                ReservationStatus.CONFIRMED,
+                expiresAt
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.CONFIRMED,
+                List.of(item),
+                expiresAt
+        );
+
+        when(inventoryService.commitByOrder(orderId)).thenReturn(res);
+
+        mockMvc.perform(post("/api/v1/inventory/orders/" + orderId + "/commit")
+                        .with(jwt().jwt(j -> j.subject("service-caller"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.data.refId").value(orderId.toString()));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/orders/{orderId}/release - Giải phóng hàng giữ kho thành công theo mã đơn")
+    void testReleaseByOrder_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
+
+        mockMvc.perform(post("/api/v1/inventory/orders/" + orderId + "/release")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .param("reason", "ORDER_CANCELLED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/events/order-paid - Tiếp nhận sự kiện OrderPaid thành công")
+    void testHandleOrderPaidEvent_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID reservationId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(1800);
+
+        ReservationItemResponse item = new ReservationItemResponse(
+                reservationId,
+                skuId,
+                warehouseId,
+                1,
+                ReservationStatus.CONFIRMED,
+                expiresAt
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.CONFIRMED,
+                List.of(item),
+                expiresAt
+        );
+
+        when(inventoryService.commitByOrder(orderId)).thenReturn(res);
+
+        OrderPaidEventRequest req = new OrderPaidEventRequest(orderId, null, UUID.randomUUID());
+
+        mockMvc.perform(post("/api/v1/inventory/events/order-paid")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/events/order-payment-failed - Tiếp nhận sự kiện OrderPaymentFailed thành công")
+    void testHandleOrderPaymentFailedEvent_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
+
+        OrderFailureEventRequest req = new OrderFailureEventRequest(orderId, null, "INSUFFICIENT_FUNDS");
+
+        mockMvc.perform(post("/api/v1/inventory/events/order-payment-failed")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/events/order-cancelled - Tiếp nhận sự kiện OrderCancelled thành công")
+    void testHandleOrderCancelledEvent_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
+
+        OrderFailureEventRequest req = new OrderFailureEventRequest(orderId, null, "BUYER_REQUESTED");
+
+        mockMvc.perform(post("/api/v1/inventory/events/order-cancelled")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
     }
 
     @Test
