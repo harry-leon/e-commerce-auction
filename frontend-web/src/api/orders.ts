@@ -282,8 +282,21 @@ function writeLocalMockOrders(orders: Order[]): void {
 }
 
 /** Chỉ fallback khi Order API chưa triển khai hoặc không truy cập được; lỗi nghiệp vụ phải trả về UI. */
+/**
+ * Chức năng: Xác định xem thao tác gọi Order API có được phép fallback sang dữ liệu mock hay không.
+ * Đầu vào & kết quả: Nhận error: unknown, trả về boolean (true nếu được fallback sang mock).
+ * Luồng xử lý:
+ *   - Nếu lỗi 401 khi chưa có phiên đăng nhập thật (!readSession()), cho phép fallback tạo đơn mock để test luồng checkout và sandbox.
+ *   - Nếu backend chưa triển khai endpoint (404) hoặc gateway/service tạm thời lỗi (502, 503, 504), cho phép fallback.
+ *   - Nếu lỗi mạng hoặc lỗi client (TypeError, ReferenceError), cho phép fallback.
+ * Quy tắc & lý do: Giúp nhà phát triển và QA kiểm thử toàn bộ luồng Giỏ hàng → Checkout → Sandbox VNPAY → Kết quả thanh toán ngay trên môi trường dev mà không bị chặn bởi JWT.
+ * Lỗi & giới hạn: Nếu người dùng đã đăng nhập thật (có JWT) mà nhận lỗi 401 hoặc lỗi nghiệp vụ 400/422, vẫn ném lỗi để hiển thị đúng thông báo từ backend.
+ */
 function canFallbackToMock(error: unknown): boolean {
     if (error instanceof ApiClientError) {
+        if (error.status === 401 && !readSession()) {
+            return true
+        }
         return [404, 502, 503, 504].includes(error.status)
     }
     return error instanceof TypeError || error instanceof ReferenceError
@@ -531,11 +544,60 @@ export const ordersApi = {
         const buyerId = session?.user?.id || 'u1'
         const buyerName = session?.user?.fullName || data.recipientName || 'Minh Tran'
 
-        const calcSubtotal = 429.98
-        const calcDiscount = data.voucherCode ? 42.99 : 0
-        const calcShipping = 5.0
-        const calcTax = (calcSubtotal - calcDiscount) * 0.08
-        const calcTotal = calcSubtotal - calcDiscount + calcShipping + calcTax
+        let calcSubtotal = 429.98
+        let calcDiscount = data.voucherCode ? 42.99 : 0
+        let calcShipping = 5.0
+        let calcTax = (calcSubtotal - calcDiscount) * 0.08
+        let calcTotal = calcSubtotal - calcDiscount + calcShipping + calcTax
+        let orderItems = [
+            {
+                productId: 'p2',
+                productName: 'Mechanical Gaming Keyboard RGB',
+                image: 'https://images.unsplash.com/photo-1595225476474-87563907a212?w=100&h=100&fit=crop&auto=format',
+                quantity: 1,
+                unitPrice: 89.99,
+                subtotal: 89.99,
+            },
+            {
+                productId: 'p1',
+                productName: 'Sony WH-1000XM5 Wireless Headphones',
+                image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
+                quantity: 1,
+                unitPrice: 279.99,
+                subtotal: 279.99,
+            },
+        ]
+
+        // Đọc thông tin sản phẩm và giá thực tế từ guest cart nếu có
+        try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+                const guestRaw = window.localStorage.getItem('nexus_guest_cart')
+                if (guestRaw) {
+                    const guestParsed = JSON.parse(guestRaw)
+                    if (Array.isArray(guestParsed) && guestParsed.length > 0) {
+                        orderItems = guestParsed.map((item: any) => ({
+                            productId: item.skuId || item.id,
+                            productName: item.productName || 'Sản phẩm',
+                            image:
+                                item.thumbnailUrl ||
+                                'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
+                            quantity: Number(item.quantity) || 1,
+                            unitPrice: Number(item.unitPrice) || 0,
+                            subtotal:
+                                Number(item.subtotal) ||
+                                (Number(item.unitPrice) || 0) * (Number(item.quantity) || 1),
+                        }))
+                        calcSubtotal = orderItems.reduce((s, it) => s + it.subtotal, 0)
+                        calcDiscount = data.voucherCode === 'NEXUS10' ? calcSubtotal * 0.1 : 0
+                        calcShipping = calcSubtotal >= 100 ? 0 : 3.99
+                        calcTax = (calcSubtotal - calcDiscount) * 0.08
+                        calcTotal = calcSubtotal - calcDiscount + calcShipping + calcTax
+                    }
+                }
+            }
+        } catch {
+            // Dùng fallback mặc định
+        }
 
         // Sinh Sandbox paymentUrl cho VNPAY nếu thanh toán qua cổng trực tuyến
         const sandboxPaymentUrl =
@@ -549,24 +611,7 @@ export const ordersApi = {
             buyerName,
             sellerId: 'u2',
             sellerName: 'TechZone Store',
-            items: [
-                {
-                    productId: 'p2',
-                    productName: 'Mechanical Gaming Keyboard RGB',
-                    image: 'https://images.unsplash.com/photo-1595225476474-87563907a212?w=100&h=100&fit=crop&auto=format',
-                    quantity: 1,
-                    unitPrice: 89.99,
-                    subtotal: 89.99,
-                },
-                {
-                    productId: 'p1',
-                    productName: 'Sony WH-1000XM5 Wireless Headphones',
-                    image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
-                    quantity: 1,
-                    unitPrice: 279.99,
-                    subtotal: 279.99,
-                },
-            ],
+            items: orderItems,
             subtotal: calcSubtotal,
             tax: calcTax,
             discount: calcDiscount,
