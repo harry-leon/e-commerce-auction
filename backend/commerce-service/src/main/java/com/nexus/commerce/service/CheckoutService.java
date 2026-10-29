@@ -61,6 +61,7 @@ public class CheckoutService {
     private final CommerceProperties properties;
     private final ObjectMapper mapper;
     private final PaymentService payments;
+    private final NotificationOutbox notifications;
 
     /** Preview dùng giá hiện tại, cảnh báo đổi giá/thiếu kho; không thay đổi giỏ hoặc tạo reservation. */
     @Transactional(readOnly = true)
@@ -150,6 +151,8 @@ public class CheckoutService {
         cartItems.deleteAll(selected);
         cartItems.flush();
         if (cartItems.findByCartId(cart.getId()).isEmpty()) { cart.setStatus(CartStatus.CONVERTED); }
+        // Snapshot cùng transaction; worker chỉ gửi sau commit, rollback không tạo thông báo ma.
+        notifications.enqueue(order, "ORDER_CREATED");
         return response(order, ip);
     }
 

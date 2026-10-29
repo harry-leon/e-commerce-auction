@@ -52,7 +52,7 @@ class PaymentServiceTest {
         config.setHashSecret("unit-test-only-not-a-credential");
         config.setReturnUrl("https://example.test/payment-result");
         gateway = new VnpayGateway(config);
-        service = new PaymentService(payments, orders, gateway, config, locks, jdbc, tokens);
+        service = new PaymentService(payments, orders, gateway, config, locks, jdbc, tokens, org.mockito.Mockito.mock(NotificationOutbox.class));
         lenient().when(tokens.configured()).thenReturn(true);
         order = new Order();
         order.setId(UUID.randomUUID());

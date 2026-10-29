@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.commerce.client.CatalogClient;
 import com.nexus.commerce.client.InventoryClient;
 import com.nexus.commerce.client.InventoryServiceToken;
+import com.nexus.commerce.client.NotificationDelivery;
 import com.nexus.commerce.client.VnpayGateway;
 import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.config.CheckoutTransactionConfig;
@@ -51,7 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
+@Import({NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
         CheckoutLock.class, CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -61,6 +62,8 @@ class PaymentPostgresTest {
     @Autowired private PaymentInventoryWorker worker;
     @Autowired private VnpayGateway gateway;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private NotificationWorker notificationWorker;
+    @MockitoBean private NotificationDelivery notificationDelivery;
     @MockitoBean private CatalogClient catalog;
     @MockitoBean private InventoryClient inventory;
     @MockitoBean private InventoryServiceToken tokens;
@@ -165,6 +168,41 @@ class PaymentPostgresTest {
         assertEquals("04", payments.ipn(callback("00", "00", "1")).code());
         assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
+    }
+
+    /** Lỗi Notification xảy ra sau commit không đổi PAID/SUCCESS; retry giữ UUID/payload và không tạo thêm sự kiện. */
+    @Test
+    void notificationFailureCannotUndoPaymentAndRetriesSameSnapshot() {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
+        jdbc.update("UPDATE commerce_notification_outbox SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 hour' WHERE order_id<>?", orderId);
+        when(notificationDelivery.configured()).thenReturn(true);
+        doThrow(new IllegalStateException("network")).when(notificationDelivery).send(any());
+        notificationWorker.run();
+        assertEquals("PAID", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND NOT done AND attempts=1", Integer.class, orderId));
+        org.mockito.Mockito.doNothing().when(notificationDelivery).send(any());
+        jdbc.update("UPDATE commerce_notification_outbox SET next_attempt_at=CURRENT_TIMESTAMP WHERE order_id=?", orderId);
+        notificationWorker.run();
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND done AND attempts=2", Integer.class, orderId));
+        var events = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(notificationDelivery, org.mockito.Mockito.times(4)).send(events.capture());
+        assertEquals(new java.util.HashSet<>(events.getAllValues().subList(0, 2)),
+                new java.util.HashSet<>(events.getAllValues().subList(2, 4)));
+        assertEquals(buyer, events.getAllValues().get(0).get("userId"));
+    }
+
+    /** Thiếu OAuth giữ backlog pending; IPN thất bại tạo đúng thông báo thất bại thay vì thành công. */
+    @Test
+    void disabledDeliveryKeepsEventsAndFailureUsesCorrectType() {
+        assertEquals("00", payments.ipn(callback("24", "02", "5000000")).code());
+        when(notificationDelivery.configured()).thenReturn(false);
+        notificationWorker.run();
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND event_type='PAYMENT_FAILED' AND NOT done", Integer.class, orderId));
+        verify(notificationDelivery, org.mockito.Mockito.never()).send(any());
     }
 
     /** Constraint lỗi đúng lúc commit phải rollback cả trạng thái lẫn history/outbox; IPN retry sau đó vẫn xử lý được. */
@@ -178,6 +216,7 @@ class PaymentPostgresTest {
             assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
             assertEquals("PENDING_PAYMENT", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
         } finally {
             jdbc.execute("DROP TRIGGER payment_test_failure ON payments");
             jdbc.execute("DROP FUNCTION payment_test_reject()");
