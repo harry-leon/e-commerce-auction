@@ -32,6 +32,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * Kiểm thử WebMvc cho RoleController.
+ * Xác thực các endpoint quản lý vai trò trả về chuẩn Envelope ApiResponse ({success, data, error, meta}).
  *
  * @author Nguyễn Tiến Thương
  * @since 06/10/2026
@@ -58,7 +59,8 @@ class RoleControllerTest {
         mockMvc.perform(get("/api/v1/roles")
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE.LIST"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].code").value("BUYER"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].code").value("BUYER"));
     }
 
     @Test
@@ -70,7 +72,8 @@ class RoleControllerTest {
         mockMvc.perform(get("/api/v1/roles/" + roleId)
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE.VIEW"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("BUYER"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.code").value("BUYER"));
     }
 
     @Test
@@ -88,7 +91,8 @@ class RoleControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.code").value("MODERATOR"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.code").value("MODERATOR"));
     }
 
     @Test
@@ -105,7 +109,8 @@ class RoleControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name").value("Updated Mod"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.name").value("Updated Mod"));
     }
 
     @Test
@@ -115,6 +120,7 @@ class RoleControllerTest {
         mockMvc.perform(delete("/api/v1/roles/" + roleId)
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE.DELETE"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").exists());
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.message").exists());
     }
 }
