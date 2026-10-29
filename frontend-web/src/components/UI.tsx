@@ -258,16 +258,18 @@ export function Toggle({
     )
 }
 
-// ─── Badge / Chip ─────────────────────────────────────────────────────────────
+// Badge màu cho OrderStatus (UPPERCASE) đồng nhất với backend chuẩn V2
 const STATUS_BADGE: Record<string, string> = {
-    pending: 'badge-yellow',
-    paid: 'badge-blue',
-    processing: 'badge-indigo',
-    shipped: 'badge-blue',
-    delivered: 'badge-green',
-    completed: 'badge-green',
-    cancelled: 'badge-red',
-    refunded: 'badge-gray',
+    // OrderStatus UPPERCASE (chuẩn V2, đồng nhất với backend nexus_schema.sql)
+    PENDING_PAYMENT: 'badge-yellow',
+    PAID: 'badge-blue',
+    PROCESSING: 'badge-indigo',
+    SHIPPED: 'badge-blue',
+    DELIVERED: 'badge-green',
+    COMPLETED: 'badge-green',
+    CANCELLED: 'badge-red',
+    REFUNDED: 'badge-gray',
+    // AuctionStatus (lowercase, không đổi)
     pending_approval: 'badge-yellow',
     scheduled: 'badge-blue',
     active: 'badge-orange',
@@ -275,20 +277,25 @@ const STATUS_BADGE: Record<string, string> = {
     settled: 'badge-green',
     failed: 'badge-red',
     rejected: 'badge-red',
+    // ProductStatus (lowercase, không đổi)
     draft: 'badge-gray',
     inactive: 'badge-gray',
+    // TrustLevel (lowercase)
     bronze: 'badge-yellow',
     silver: 'badge-slate',
     gold: 'badge-yellow',
     platinum: 'badge-indigo',
+    // SystemService.status
     up: 'badge-green',
     down: 'badge-red',
+    // PaymentStatus (lowercase, không đổi)
     held: 'badge-slate',
     protection_period: 'badge-blue',
     released: 'badge-green',
     on_hold: 'badge-yellow',
     partial_refund: 'badge-yellow',
 }
+
 export function StatusBadge({ status, label }: { status: string; label: string }) {
     return <span className={`badge ${STATUS_BADGE[status] || 'badge-gray'}`}>{label}</span>
 }
@@ -761,22 +768,30 @@ export function ReputationBar({ score }: { score: number }) {
 }
 
 // ─── OrderTimeline ─────────────────────────────────────────────────────────────
-const ORDER_STEPS = ['pending', 'paid', 'processing', 'shipped', 'delivered', 'completed']
+// Bước tiến trình theo đúng OrderStatus UPPERCASE (chuẩn V2, đồng nhất với backend).
+const ORDER_STEPS = ['PENDING_PAYMENT', 'PAID', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'COMPLETED']
 export function OrderTimeline({ status }: { status: string }) {
     const cur = ORDER_STEPS.indexOf(status)
     const labels: Record<string, string> = {
-        pending: 'Order Placed',
-        paid: 'Payment Confirmed',
-        processing: 'Processing',
-        shipped: 'Shipped',
-        delivered: 'Delivered',
-        completed: 'Completed',
+        PENDING_PAYMENT: 'Order Placed',
+        PAID: 'Payment Confirmed',
+        PROCESSING: 'Processing',
+        SHIPPED: 'Shipped',
+        DELIVERED: 'Delivered',
+        COMPLETED: 'Completed',
     }
-    if (status === 'cancelled')
+    if (status === 'CANCELLED')
         return (
             <div className="flex items-center gap-3 p-4 bg-danger-light rounded-xl">
                 <CircleX size={18} className="text-gray-600" />
                 <span className="font-semibold text-danger">Order Cancelled</span>
+            </div>
+        )
+    if (status === 'REFUNDED')
+        return (
+            <div className="flex items-center gap-3 p-4 bg-gray-100 rounded-xl">
+                <CircleX size={18} className="text-gray-400" />
+                <span className="font-semibold text-gray-600">Order Refunded</span>
             </div>
         )
     return (

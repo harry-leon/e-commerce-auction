@@ -2,14 +2,14 @@ export type Lang = 'en' | 'vi'
 export type UserRole = 'buyer' | 'seller' | 'admin' | 'support'
 export type TrustLevel = 'bronze' | 'silver' | 'gold' | 'platinum'
 export type OrderStatus =
-    | 'pending'
-    | 'paid'
-    | 'processing'
-    | 'shipped'
-    | 'delivered'
-    | 'completed'
-    | 'cancelled'
-    | 'refunded'
+    | 'PENDING_PAYMENT'
+    | 'PAID'
+    | 'PROCESSING'
+    | 'SHIPPED'
+    | 'DELIVERED'
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'REFUNDED'
 export type AuctionStatus =
     | 'pending_approval'
     | 'scheduled'
@@ -335,3 +335,144 @@ export interface AuctionReview {
     reason?: string
     reviewedAt: string
 }
+
+// ─── API Order DTOs (theo chuẩn V2 và COMMERCE_SERVICE.md) ──────────────────
+// Các type dưới đây phản ánh đúng cấu trúc DTO mà backend /orders sẽ trả về
+// khi được triển khai (hiện tại PLANNED theo docs/dto-contracts/COMMERCE_SERVICE.md §4).
+// OrderStatus đã đồng nhất UPPERCASE với backend — không cần ApiOrderStatus riêng nữa.
+
+/**
+ * Một dòng sản phẩm trong đơn hàng — dữ liệu snapshot tại thời điểm đặt hàng.
+ * Theo API_SPEC_CART_ORDER.md §4.4: snapshot tên, mã SKU, giá đã được lưu lại.
+ */
+export interface ApiOrderItem {
+    skuId: string
+    skuCode: string
+    productName: string
+    thumbnailUrl: string | null
+    unitPrice: number
+    quantity: number
+    itemTotal: number
+}
+
+/**
+ * Tóm tắt đơn hàng dùng cho danh sách lịch sử (GET /api/v1/orders).
+ * Theo API_SPEC_CART_ORDER.md §4.3: PageResponse<OrderSummaryResponse>.
+ */
+export interface OrderSummaryResponse {
+    orderId: string
+    /** Snapshot mã đơn hiển thị (có thể dạng ORD-YYYYMMDD-XXX) */
+    orderCode: string
+    status: OrderStatus
+    /** Tổng số dòng SKU */
+    totalItems: number
+    /** Tổng tiền thanh toán thực tế */
+    totalAmount: number
+    paymentMethod: string
+    createdAt: string
+    updatedAt: string
+}
+
+/**
+ * Chi tiết đầy đủ một đơn hàng (GET /api/v1/orders/{orderId}).
+ * Bao gồm snapshot sản phẩm và lịch sử trạng thái theo API_SPEC_CART_ORDER.md §4.4.
+ */
+export interface OrderDetailResponse {
+    orderId: string
+    orderCode: string
+    status: OrderStatus
+    items: ApiOrderItem[]
+    subtotal: number
+    discountAmount: number
+    shippingFee: number
+    taxAmount: number
+    totalAmount: number
+    shippingAddress: string
+    recipientName: string
+    recipientPhone: string
+    paymentMethod: string
+    /** URL thanh toán online (VNPay, MoMo...) nếu còn hạn */
+    paymentUrl: string | null
+    /** Hạn chót thanh toán (15 phút sau khi tạo đơn) */
+    paymentDeadline: string | null
+    appliedVoucherCode: string | null
+    statusHistory: ApiOrderStatusHistoryEntry[]
+    createdAt: string
+    updatedAt: string
+}
+
+/**
+ * Một sự kiện trong lịch sử chuyển trạng thái của đơn hàng.
+ * Theo API_SPEC_CART_ORDER.md §6: ghi log vào order_status_history.
+ */
+export interface ApiOrderStatusHistoryEntry {
+    status: OrderStatus
+    note: string | null
+    actor: 'BUYER' | 'SELLER' | 'ADMIN' | 'SYSTEM'
+    changedAt: string
+}
+
+/**
+ * Request tạo đơn hàng (POST /api/v1/orders).
+ * Bắt buộc có header Idempotency-Key phía gọi.
+ * Theo API_SPEC_CART_ORDER.md §4.2.
+ */
+export interface PlaceOrderRequest {
+    shippingAddress: string
+    recipientName: string
+    recipientPhone: string
+    voucherCode?: string | null
+    paymentMethod: string
+    /** 'REGULAR' hoặc 'AUCTION' */
+    sourceType: 'REGULAR' | 'AUCTION'
+    auctionId?: string | null
+    /** UUID các dòng cart item được chọn thanh toán */
+    selectedItemIds: string[]
+}
+
+/**
+ * Request preview trước khi đặt hàng (POST /api/v1/orders/checkout/preview).
+ * Theo API_SPEC_CART_ORDER.md §4.1.
+ */
+export interface CheckoutPreviewRequest {
+    itemIds: string[]
+    shippingAddress: string
+    voucherCode?: string | null
+}
+
+/**
+ * Response preview đơn hàng: giá tạm tính, voucher, phí ship, cảnh báo tồn kho.
+ * Theo API_SPEC_CART_ORDER.md §4.1.
+ */
+export interface CheckoutPreviewResponse {
+    subtotal: number
+    discountAmount: number
+    shippingFee: number
+    taxAmount: number
+    totalAmount: number
+    appliedVoucher: {
+        code: string
+        discountValue: number
+        description: string
+    } | null
+    items: {
+        skuId: string
+        productName: string
+        unitPrice: number
+        quantity: number
+        itemTotal: number
+    }[]
+    /** Đơn có thể đặt được không (tồn kho hợp lệ, giá không thay đổi quá mức) */
+    isOrderable: boolean
+    /** Cảnh báo về giá thay đổi hoặc sắp hết hàng */
+    warnings: string[]
+}
+
+/**
+ * Request hủy đơn hàng (POST /api/v1/orders/{orderId}/cancel).
+ * Theo API_SPEC_CART_ORDER.md §4.5.
+ */
+export interface CancelOrderRequest {
+    reason: string
+}
+

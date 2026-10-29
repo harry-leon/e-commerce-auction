@@ -1,5 +1,15 @@
-import { api, ApiClientError } from './client'
-import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
+import { api, ApiClientError, post, type ApiResponse } from './client'
+import type {
+    Order,
+    OrderStatus,
+    PaymentStatus,
+    UserRole,
+    CheckoutPreviewRequest,
+    CheckoutPreviewResponse,
+    PlaceOrderRequest,
+    OrderDetailResponse,
+    OrderSummaryResponse,
+} from '../types'
 import { ORDERS } from '../mockData'
 
 /**
@@ -8,6 +18,10 @@ import { ORDERS } from '../mockData'
  */
 const STORAGE_KEY = 'nexus.mock-orders-store'
 const WITHDRAWAL_STORAGE_KEY = 'nexus.mock-withdrawals-store'
+// Tăng version khi thực hiện migration làm thay đổi schema/dữ liệu để tự động reset localStorage cũ.
+// V2: OrderStatus chuyển từ lowercase → UPPERCASE_SNAKE_CASE (đồng nhất với backend spec).
+const MOCK_DATA_VERSION = '2'
+const MOCK_VERSION_KEY = 'nexus.mock-orders-version'
 
 export interface WithdrawalRequest {
     id: string
@@ -32,20 +46,23 @@ const SEED_WITHDRAWALS: WithdrawalRequest[] = [
     },
 ]
 
+// Ma trận chuyển trạng thái hợp lệ theo đúng API_SPEC_CART_ORDER.md §6 Order State Machine.
+// Key/value dùng UPPERCASE_SNAKE_CASE đồng nhất với backend (PENDING_PAYMENT thay vì PENDING).
 const ALLOWED_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-    pending: ['paid', 'cancelled'],
-    paid: ['processing', 'cancelled'],
-    processing: ['shipped', 'cancelled'],
-    shipped: ['delivered'],
-    delivered: ['completed'],
-    completed: [],
-    cancelled: [],
-    refunded: [],
+    PENDING_PAYMENT: ['PAID', 'CANCELLED'],
+    PAID: ['PROCESSING', 'CANCELLED', 'REFUNDED'],
+    PROCESSING: ['SHIPPED', 'CANCELLED'],
+    SHIPPED: ['DELIVERED', 'CANCELLED'],
+    DELIVERED: ['COMPLETED', 'REFUNDED'],
+    COMPLETED: [],
+    CANCELLED: [],
+    REFUNDED: [],
 }
 
 /**
  * Danh sách đơn hàng mock mẫu mở rộng, bảo đảm bao phủ đủ các trạng thái nghiệp vụ theo SRS:
- * pending -> paid -> processing -> shipped -> delivered -> completed / cancelled / refunded.
+ * PENDING_PAYMENT → PAID → PROCESSING → SHIPPED → DELIVERED → COMPLETED / CANCELLED / REFUNDED.
+ * Status dùng UPPERCASE_SNAKE_CASE đồng nhất với backend và API_SPEC_CART_ORDER.md §6.
  */
 const SEED_ORDERS: Order[] = [
     ...ORDERS,
@@ -70,7 +87,7 @@ const SEED_ORDERS: Order[] = [
         discount: 10.0,
         shipping: 5.0,
         total: 92.19,
-        status: 'shipped',
+        status: 'SHIPPED',
         refundStatus: 'none',
         paymentStatus: 'held',
         shippingAddress: '123 Nguyen Hue, District 1, Ho Chi Minh City',
@@ -121,7 +138,7 @@ const SEED_ORDERS: Order[] = [
         discount: 0,
         shipping: 3.0,
         total: 67.26,
-        status: 'pending',
+        status: 'PENDING_PAYMENT',
         refundStatus: 'none',
         paymentStatus: 'held',
         shippingAddress: '123 Nguyen Hue, District 1, Ho Chi Minh City',
@@ -152,7 +169,7 @@ const SEED_ORDERS: Order[] = [
         discount: 0,
         shipping: 0,
         total: 302.39,
-        status: 'cancelled',
+        status: 'CANCELLED',
         refundStatus: 'none',
         paymentStatus: 'refunded',
         shippingAddress: '456 Le Duan, Ba Dinh, Hanoi',
@@ -165,11 +182,21 @@ const SEED_ORDERS: Order[] = [
 ]
 
 /**
- * Đọc kho mock orders từ localStorage; nếu chưa có thì khởi tạo từ SEED_ORDERS.
- * Luồng: đọc storage → parse JSON → nếu lỗi hoặc rỗng thì ghi seed orders và trả về.
+ * Đọc kho mock orders từ localStorage; nếu chưa có hoặc không khớp version thì reset từ SEED_ORDERS.
+ * Migration logic: nếu MOCK_VERSION_KEY không khớp MOCK_DATA_VERSION (ví dụ data cũ dùng lowercase status)
+ * thì xóa storage cũ và seed lại với dữ liệu mới (UPPERCASE_SNAKE_CASE).
  */
 function readLocalMockOrders(): Order[] {
     try {
+        // Kiểm tra version — nếu không khớp thì xóa data cũ và seed lại
+        const storedVersion = localStorage.getItem(MOCK_VERSION_KEY)
+        if (storedVersion !== MOCK_DATA_VERSION) {
+            localStorage.removeItem(STORAGE_KEY)
+            localStorage.removeItem(WITHDRAWAL_STORAGE_KEY)
+            localStorage.setItem(MOCK_VERSION_KEY, MOCK_DATA_VERSION)
+            writeLocalMockOrders(SEED_ORDERS)
+            return SEED_ORDERS
+        }
         const raw = localStorage.getItem(STORAGE_KEY)
         if (raw) {
             const parsed = JSON.parse(raw)
@@ -238,11 +265,16 @@ export function getAllowedOrderStatusTransitions(status: OrderStatus): OrderStat
  * 3. Nếu backend trả lỗi (404, 503, không kết nối được) hoặc DB chưa có dữ liệu:
  *    tự động fallback sang Mock JSON data, đồng thời duy trì trạng thái cập nhật qua localStorage.
  */
+
 export const ordersApi = {
     /**
      * Lấy danh sách đơn hàng theo vai trò người dùng (buyer / seller / admin), kèm bộ lọc trạng thái và tìm kiếm.
      * Đầu vào: params chứa role, status ('all' hoặc cụ thể), search từ khóa.
      * Kết quả: Mảng danh sách Order đã được lọc theo tiêu chí.
+     * Luồng: gọi GET /api/v1/orders → unwrap ApiResponse<Order[]>.data theo chuẩn V2 envelope;
+     *   nếu backend 404/502/503 thì fallback sang mock localStorage.
+     * Ghi chú: /orders backend chưa triển khai (PLANNED theo COMMERCE_SERVICE.md §4),
+     *   mock vẫn là nguồn dữ liệu chính trong giai đoạn hiện tại.
      */
     async getOrders(params?: {
         role?: 'buyer' | 'seller' | 'admin'
@@ -255,17 +287,18 @@ export const ordersApi = {
         if (params?.status && params.status !== 'all') query.set('status', params.status)
         if (params?.search) query.set('search', params.search)
 
-        // 1. Cố gắng lấy từ backend API nếu có
+        // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<Order[]> chuẩn V2
         try {
             const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
-            const response = await api<{ success?: boolean; data?: Order[] } | Order[]>(path)
-            const list = Array.isArray(response) ? response : response.data
+            const envelope = await api<ApiResponse<Order[]>>(path)
+            // Tuân thủ chuẩn V2: đọc envelope.data, bỏ qua nếu null/rỗng để fallback mock
+            const list = envelope?.data
             if (Array.isArray(list) && list.length > 0) {
                 return list
             }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
-            // Backend chưa có endpoint hoặc lỗi kết nối -> Fallback sang mock data
+            // Backend chưa có endpoint hoặc lỗi kết nối → fallback sang mock data
         }
 
         // 2. Fallback sang mock JSON data
@@ -300,18 +333,21 @@ export const ordersApi = {
      * Lấy thông tin chi tiết một đơn hàng theo ID.
      * Đầu vào: id (mã đơn hàng, e.g. 'ORD-20240215-001').
      * Kết quả: Đối tượng Order tương ứng hoặc null nếu không tìm thấy.
+     * Luồng: gọi GET /api/v1/orders/{id} → unwrap ApiResponse<Order>.data theo chuẩn V2;
+     *   fallback mock nếu backend chưa sẵn sàng.
      */
     async getOrderById(id: string): Promise<Order | null> {
-        // 1. Thử gọi backend API
+        // 1. Thử gọi backend API — unwrap theo ApiResponse<Order> chuẩn V2
         try {
-            const response = await api<{ success?: boolean; data?: Order } | Order>(`/orders/${id}`)
-            const order = 'data' in response && response.data ? response.data : (response as Order)
+            const envelope = await api<ApiResponse<Order>>(`/orders/${id}`)
+            // Chuẩn V2: data có giá trị khi thành công; null khi lỗi (đã bị GlobalExceptionHandler bắt)
+            const order = envelope?.data
             if (order && order.id) {
                 return order
             }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
-            // Fallback mock
+            // Fallback mock khi backend chưa triển khai hoặc lỗi mạng
         }
 
         // 2. Tìm trong mock data
@@ -339,13 +375,13 @@ export const ordersApi = {
         if (index !== -1) {
             orders[index] = {
                 ...orders[index],
-                status: 'cancelled',
+                status: 'CANCELLED',
                 refundStatus: 'initiated',
                 paymentStatus: 'refunded',
                 updatedAt: new Date().toISOString(),
                 statusHistory: [
                     ...(orders[index].statusHistory || []),
-                    { status: 'cancelled', reason: reason?.trim() || 'Buyer cancellation', actor: 'buyer', changedAt: new Date().toISOString() },
+                    { status: 'CANCELLED', reason: reason?.trim() || 'Buyer cancellation', actor: 'buyer', changedAt: new Date().toISOString() },
                 ],
             }
             writeLocalMockOrders(orders)
@@ -381,11 +417,12 @@ export const ordersApi = {
                 throw new Error('Invalid order status transition')
             }
             let nextPaymentStatus = orders[index].paymentStatus
-            if (status === 'delivered') {
+            // Cập nhật paymentStatus theo máy trạng thái Escrow (API_SPEC_CART_ORDER.md §6)
+            if (status === 'DELIVERED') {
                 nextPaymentStatus = 'protection_period'
-            } else if (status === 'completed') {
+            } else if (status === 'COMPLETED') {
                 nextPaymentStatus = 'released'
-            } else if (status === 'cancelled' || status === 'refunded') {
+            } else if (status === 'CANCELLED' || status === 'REFUNDED') {
                 nextPaymentStatus = 'refunded'
             }
 
@@ -421,7 +458,7 @@ export const ordersApi = {
         if (index !== -1) {
             orders[index] = {
                 ...orders[index],
-                status: 'completed',
+                status: 'COMPLETED',
                 paymentStatus: 'released',
                 updatedAt: new Date().toISOString(),
             }
@@ -489,7 +526,8 @@ export const ordersApi = {
                 ...orders[index],
                 paymentStatus: resolution,
                 disputeStatus: 'resolved',
-                status: resolution === 'refunded' ? 'refunded' : orders[index].status,
+                // Đổi sang REFUNDED nếu Admin quyết định hoàn tiền toàn bộ cho Buyer
+                status: resolution === 'refunded' ? 'REFUNDED' : orders[index].status,
                 updatedAt: new Date().toISOString(),
             }
             writeLocalMockOrders(orders)
@@ -519,5 +557,87 @@ export const ordersApi = {
         requests[index] = { ...requests[index], status: 'approved', approvedAt: new Date().toISOString() }
         writeLocalMockWithdrawals(requests)
         return requests[index]
+    },
+
+    // ─── Checkout & Order Placement (theo chuẩn V2 — PLANNED backend) ────────
+    // Các hàm dưới gọi thẳng backend API khi endpoint được triển khai;
+    // không fallback mock vì nghị vụ đặt hàng phải đảm bảo tính nhất quán dữ liệu thật.
+
+    /**
+     * Xem trước giá đơn hàng trước khi đặt (POST /api/v1/orders/checkout/preview).
+     * Đầu vào: danh sách itemId từ giỏ, địa chỉ, voucher.
+     * Kết quả: CheckoutPreviewResponse với giá tạm tính, phí ship, cảnh báo tồn kho.
+     * Luồng: POST /api/v1/orders/checkout/preview → unwrap ApiResponse<CheckoutPreviewResponse>.data.
+     * Lỗi: Ném ApiClientError nếu backend validation thất bại hoặc giỏ đã hết hạn.
+     */
+    async previewCheckout(request: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
+        const envelope = await post<ApiResponse<CheckoutPreviewResponse>>('/orders/checkout/preview', request)
+        if (!envelope?.data) {
+            throw new Error('Không thể tải thông tin xác nhận đơn hàng')
+        }
+        return envelope.data
+    },
+
+    /**
+     * Tạo đơn hàng mới (POST /api/v1/orders).
+     * Đầu vào: PlaceOrderRequest với địa chỉ, phương thức thanh toán, các item giỏ được chọn.
+     * Tham số: idempotencyKey — UUID do client sinh (chống duplicate khi retry mạng).
+     * Kết quả: OrderDetailResponse với orderId và paymentUrl (nếu thanh toán online).
+     * Luồng: POST /api/v1/orders kèm Idempotency-Key header → unwrap ApiResponse<OrderDetailResponse>.data;
+     *   server snapshot giá/SKU, giữ kho, lưu đơn DB, xóa cart items tương ứng.
+     * Lỗi: ApiClientError với code CART_MAX_ITEMS_EXCEEDED, SKU_OUT_OF_STOCK, IDEMPOTENCY_CONFLICT...
+     */
+    async placeOrder(
+        request: PlaceOrderRequest,
+        idempotencyKey: string,
+    ): Promise<OrderDetailResponse> {
+        const envelope = await api<ApiResponse<OrderDetailResponse>>('/orders', {
+            method: 'POST',
+            body: JSON.stringify(request),
+            headers: {
+                'Content-Type': 'application/json',
+                // Header bắt buộc theo API_SPEC_CART_ORDER.md §4.2: chống duplicate order khi mạng retry
+                'Idempotency-Key': idempotencyKey,
+            },
+        })
+        if (!envelope?.data) {
+            throw new Error('Không thể tạo đơn hàng')
+        }
+        return envelope.data
+    },
+
+    /**
+     * Lấy danh sách đơn hàng với phân trang chuẩn V2 (GET /api/v1/orders?page=&size=&status=).
+     * Đầu vào: page (zero-based, default 0), size (default 10), status tùy chọn.
+     * Kết quả: Mảng OrderSummaryResponse kèm PaginationInfo trong meta.
+     * Luồng: GET /api/v1/orders → ApiResponse<OrderSummaryResponse[]> có meta.pagination;
+     *   trả về nguyên envelope để caller tự đọc meta.pagination cho việc phân trang.
+     * Ghi chú: endpoint này chưa tồn tại; giữ để FE có thể switch ngay khi backend sẵn sàng.
+     */
+    async getOrdersV2(params?: {
+        page?: number
+        size?: number
+        status?: string
+    }): Promise<ApiResponse<OrderSummaryResponse[]>> {
+        const query = new URLSearchParams()
+        if (params?.page !== undefined) query.set('page', String(params.page))
+        if (params?.size !== undefined) query.set('size', String(params.size))
+        if (params?.status && params.status !== 'all') query.set('status', params.status)
+        const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
+        return api<ApiResponse<OrderSummaryResponse[]>>(path)
+    },
+
+    /**
+     * Lấy chi tiết đơn hàng theo đúng DTO backend (GET /api/v1/orders/{orderId}).
+     * Kết quả: OrderDetailResponse bao gồm snapshot sản phẩm và lịch sử trạng thái.
+     * Luồng: GET /api/v1/orders/{orderId} → ApiResponse<OrderDetailResponse>.data;
+     *   không fallback mock — nếu không tìm thấy backend trả 404 RESOURCE_NOT_FOUND.
+     */
+    async getOrderDetailV2(orderId: string): Promise<OrderDetailResponse> {
+        const envelope = await api<ApiResponse<OrderDetailResponse>>(`/orders/${orderId}`)
+        if (!envelope?.data) {
+            throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
+        }
+        return envelope.data
     },
 }
