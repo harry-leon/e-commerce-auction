@@ -12,7 +12,6 @@ import {
     Package,
     Gavel,
     Star,
-    X,
     Home,
     BarChart2,
     Users,
@@ -20,11 +19,9 @@ import {
     Settings2,
     Shield,
     Truck,
-    AlertTriangle,
     Activity,
     FileText,
     Server,
-    Plus,
     Warehouse,
     HeartHandshake,
     CreditCard,
@@ -175,7 +172,7 @@ export function PublicHeader() {
             .catch(() => setCategories([]))
         return () => controller.abort()
     }, [])
-    const { lang, navigate, user, setUser, cartCount, page } = useApp()
+    const { lang, navigate, user, setUser, cartCount } = useApp()
     const [searchQ, setSearchQ] = useState('')
     const [userOpen, setUserOpen] = useState(false)
     const [notifOpen, setNotifOpen] = useState(false)
@@ -989,7 +986,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
 
 // ─── Support Layout ────────────────────────────────────────────────────────────
 export function SupportLayout({ children, title }: { children: ReactNode; title: string }) {
-    const { lang, page, navigate, user, setUser } = useApp()
+    const { lang, page, navigate, setUser } = useApp()
     const SUPPORT_NAV = [
         {
             id: 'support-dashboard',

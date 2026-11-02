@@ -28,6 +28,7 @@ import {
 import type { Page } from '../../types'
 import { Gavel } from '../../components/UI'
 
+/** Khung auth hiển thị tiêu đề/nội dung và bộ đổi ngôn ngữ; trạng thái đăng nhập do form con xử lý. */
 function AuthCard({
     children,
     title,
@@ -37,7 +38,6 @@ function AuthCard({
     title: string
     subtitle?: string
 }) {
-    const { lang, navigate } = useApp()
     return (
         <div className="min-h-screen bg-page flex items-center justify-center p-4">
             <div className="absolute top-6 right-6">
@@ -61,7 +61,7 @@ function AuthCard({
 // ─── Login Page ────────────────────────────────────────────────────────────────
 /** Gửi tài khoản tới IAM, giữ token trong tab và chỉ ghi nhớ email nếu được chọn, sau đó điều hướng theo vai trò. */
 export function LoginPage() {
-    const { lang, navigate, setUser, showToast } = useApp()
+    const { lang, navigate, setUser } = useApp()
     const [email, setEmail] = useState(readRememberedEmail)
     const [password, setPassword] = useState('')
     const [remember, setRemember] = useState(() => !!readRememberedEmail())
@@ -172,6 +172,7 @@ export function LoginPage() {
 }
 
 // ─── Register Page ─────────────────────────────────────────────────────────────
+/** Tính thanh độ mạnh chỉ từ password đang nhập, không thay đổi session hoặc gọi API. */
 function PasswordStrength({ password }: { password: string }) {
     const strength = !password
         ? 0
@@ -187,7 +188,6 @@ function PasswordStrength({ password }: { password: string }) {
               : 1
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very Strong']
     const colors = ['', 'bg-danger', 'bg-warning', 'bg-success', 'bg-primary']
-    const { lang } = useApp()
     if (!password) return null
     return (
         <div className="mt-1.5">
@@ -336,7 +336,7 @@ export function RegisterPage() {
         >
             {/* Step indicator */}
             <div className="flex items-center mb-6">
-                {STEPS.map((s, i) => (
+                {STEPS.map((_step, i) => (
                     <span key={i} className="flex items-center flex-1">
                         <span
                             className={`checkout-step ${i < step ? 'done' : i === step - 1 ? 'current' : 'pending'}`}

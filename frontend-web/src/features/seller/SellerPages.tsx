@@ -16,23 +16,19 @@ import {
     StarRating,
     ReputationBar,
     DataTable,
-    Pagination,
     Toggle,
     Breadcrumb,
     Plus,
     Pencil,
     Trash2,
-    Download,
     TrendingUp,
     Package,
     Gavel,
-    Tag,
     AlertTriangle,
     CheckCircle,
     Star,
     Camera,
     Bell,
-    Search,
 } from '../../components/UI'
 import { PRODUCTS, AUCTIONS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
@@ -262,7 +258,7 @@ export function SellerDashboardPage() {
                         ]}
                         data={ORDERS.slice(0, 5)}
                         rowKey={(r) => r.id}
-                        onRowClick={(r) => navigate('seller-orders')}
+                        onRowClick={() => navigate('seller-orders')}
                     />
                 </div>
             </div>
@@ -1480,9 +1476,6 @@ export function SellerOrdersPage() {
         .reduce((sum, o) => sum + o.total, 0)
     const processingCount = orders.filter((o) => o.status === 'PROCESSING').length
     const shippedCount = orders.filter((o) => o.status === 'SHIPPED').length
-    const deliveredCount = orders.filter((o) =>
-        ['DELIVERED', 'COMPLETED'].includes(o.status),
-    ).length
 
     return (
         <SellerLayout title={tr(lang, 'orders')}>

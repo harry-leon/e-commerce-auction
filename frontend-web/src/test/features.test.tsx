@@ -2,18 +2,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState } from '../types'
-import { DEMO_ADMIN, DEMO_BUYER } from '../mockData'
+import { DEMO_ADMIN } from '../mockData'
 import { SearchPage } from '../features/catalog/SearchPage'
 import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
-import {
-    CartPage,
-    CheckoutPage,
-    PaymentResultPage,
-    SandboxPaymentPage,
-} from '../features/buyer/BuyerPages'
+import { CartPage, CheckoutPage, SandboxPaymentPage } from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession } from '../api/client'
 import { ordersApi } from '../api/orders'

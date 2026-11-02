@@ -6,7 +6,7 @@ import type { Product, Auction } from '../types'
 
 // ─── Product Card ──────────────────────────────────────────────────────────────
 export function ProductCard({ product }: { product: Product }) {
-    const { lang, navigate, setCartCount, cartCount, showToast } = useApp()
+    const { lang, navigate, setCartCount, showToast } = useApp()
     const discount = product.originalPrice
         ? Math.round((1 - product.price / product.originalPrice) * 100)
         : 0

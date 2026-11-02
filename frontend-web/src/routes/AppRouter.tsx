@@ -29,15 +29,9 @@ import {
     OrderDetailPage,
     OrderHistoryPage,
     PaymentResultPage,
-    ReputationPage,
     SandboxPaymentPage,
     SellerShopPage,
 } from '../features/buyer/BuyerPages'
-import {
-    AdminProfilePage,
-    SellerProfilePage,
-    SupportProfilePage,
-} from '../features/profile/ProfilePages'
 import {
     CreateAuctionPage,
     CreateProductPage,
@@ -59,7 +53,6 @@ import { SearchPage } from '../features/catalog/SearchPage'
 import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
-import { LoginPage as SignIn } from '../features/auth/AuthPages'
 import { useEffect } from 'react'
 import { useApp } from '../context'
 import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER, DEMO_SUPPORT } from '../mockData'
@@ -112,7 +105,8 @@ function demoUserForDashboard(page: string): User | null {
 /**
  * Chọn màn hình từ route state, yêu cầu đăng nhập cho trang riêng và kiểm tra vai trò cho các khu vực.
  * Đây là bảo vệ điều hướng UI; API backend vẫn xác minh JWT và quyền cho từng thao tác.
- * Các trang features dùng dữ liệu thật; một số màn của sprint sau vẫn giữ bản demo hiện có.
+ * Search/ProductDetail/Profile chỉ trỏ tới module gọi API riêng; không giữ bản màn trùng trong BuyerPages.
+ * Các màn của sprint sau vẫn có thể dùng demo hiện có.
  */
 export function AppRouter() {
     const { page, user, setUser, pageParams: routeParams } = useApp()
@@ -136,7 +130,7 @@ export function AppRouter() {
 
     // URL demo chỉ nâng quyền khi chưa có phiên thật; phiên đã đăng nhập vẫn giữ quyền backend cấp.
     if (!user && demoUser) return <DemoRouteBootstrap user={demoUser} setUser={setUser} />
-    if (!user && !publicPages.includes(page)) return <SignIn />
+    if (!user && !publicPages.includes(page)) return <LoginPage />
     if (page.startsWith('admin-') && user?.role !== 'admin')
         return <p role="alert">Access denied</p>
     if (page.startsWith('seller-') && user?.role !== 'seller' && user?.role !== 'admin')

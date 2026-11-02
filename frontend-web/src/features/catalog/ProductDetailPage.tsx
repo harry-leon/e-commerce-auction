@@ -17,20 +17,20 @@ import {
 import { ProductCard } from '../../components/Cards'
 import { LoadState } from '../../components/LoadState'
 import { useLoad } from '../../hooks/useLoad'
-import { tr, formatCurrency, formatDate } from '../../i18n'
+import { tr, formatCurrency } from '../../i18n'
 
 /**
  * Màn hình chi tiết sản phẩm (Product Detail Page) chuẩn giao diện Figma.
  * Chức năng:
  *  - Tải dữ liệu sản phẩm thực tế từ API Catalog (GET /products/{id}) qua UUID.
- *  - Tự động fallback sang mock data phong phú khi mở trực tiếp hoặc trong môi trường test/demo.
+ *  - Tab đánh giá hiện chưa có API dữ liệu; không khai báo đánh giá mẫu không được hiển thị.
  *  - Cung cấp trải nghiệm mua sắm đầy đủ: Gallery ảnh tương tác (zoom, lightbox, thumbnail carousel),
  *    chọn số lượng, nút Thêm giỏ hàng (Add to Cart) & Mua ngay (Buy Now), thẻ thông tin Shop người bán,
  *    ước tính vận chuyển GHN/GHTK, tabs chuyển đổi (Mô tả, Đánh giá, Thông số kỹ thuật) và gợi ý sản phẩm liên quan.
  *  - Tương thích 100% với các test kiểm thử tự động của Sprint 0 (nút 'Quay lại sản phẩm', aria-label 'Ảnh X', SKU).
  */
 export function ProductDetailPage() {
-    const { lang, navigate, pageParams, setCartCount, cartCount, showToast } = useApp()
+    const { lang, navigate, pageParams, setCartCount, showToast } = useApp()
     const rawId = String(pageParams?.id || '')
 
     // Gọi API Catalog thật qua hook useLoad
@@ -229,29 +229,6 @@ export function ProductDetailPage() {
         { id: 'description', label: tr(lang, 'description') },
         { id: 'reviews', label: `${tr(lang, 'reviews')} (0)` },
         { id: 'specifications', label: tr(lang, 'specifications') },
-    ]
-
-    const REVIEWS = [
-        {
-            name: 'Nguyen Thi Thu',
-            rating: 5,
-            date: '2024-01-20',
-            comment:
-                lang === 'en'
-                    ? 'Excellent product! Great sound quality and noise cancellation works perfectly.'
-                    : 'Sản phẩm xuất sắc! Chất lượng âm thanh tốt và chống ồn hoạt động hoàn hảo.',
-            helpful: 24,
-        },
-        {
-            name: 'Tran Van Minh',
-            rating: 4,
-            date: '2024-01-15',
-            comment:
-                lang === 'en'
-                    ? 'Very good headphones. Battery life is impressive. Highly recommended.'
-                    : 'Tai nghe rất tốt. Thời lượng pin ấn tượng. Rất đáng mua.',
-            helpful: 18,
-        },
     ]
 
     if (!loading && !apiProduct && rawId) {

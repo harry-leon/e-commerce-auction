@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import type { AppState, Auction, AuctionReview, Lang, Page, Toast, User } from './types'
+import type { AppState, Auction, AuctionReview, Lang, Page, Toast } from './types'
 import { useSessionStore } from './features/auth/sessionStore'
 import { readRoute, writeRoute } from './routes/routing'
 
