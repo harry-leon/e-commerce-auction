@@ -62,6 +62,18 @@ commerce-service:test:
     POSTGRES_HOST_AUTH_METHOD: trust
     NEXUS_TEST_DB_URL: jdbc:postgresql://checkout-postgres:5432/nexus_checkout_test
 
+# Notification cần PostgreSQL thật để kiểm tra advisory lock, Flyway và retry cùng event EMAIL.
+# DB chỉ tồn tại trong job CI; trust không được dùng cho database triển khai.
+notification-service:test:
+  services:
+    - name: postgres:16-alpine
+      alias: notification-postgres
+  variables:
+    POSTGRES_DB: nexus_notification_test
+    POSTGRES_USER: postgres
+    POSTGRES_HOST_AUTH_METHOD: trust
+    NEXUS_TEST_DB_URL: jdbc:postgresql://notification-postgres:5432/nexus_notification_test
+
 # Common chứa converter quyền: thay đổi thư viện phải chạy toàn bộ suite dùng converter.
 common:test:
   extends: .be-base
