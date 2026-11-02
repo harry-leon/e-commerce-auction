@@ -120,7 +120,10 @@ export function ProductDetailPage() {
             price: p.skus?.[0]?.price ?? 0,
             originalPrice: p.skus?.[0]?.originalPrice,
             sku: p.skus?.[0]?.skuCode ?? '',
-            images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+            images:
+                p.images && p.images.length > 0
+                    ? p.images.map((img) => img.url)
+                    : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
             description: p.description || '',
             descriptionVi: p.description || '',
             enableAuction: p.auctionEnabled || false,
@@ -256,7 +259,9 @@ export function ProductDetailPage() {
             <BuyerLayout>
                 <div className="text-center py-20">
                     <p className="text-lg font-semibold text-gray-700 mb-4">
-                        {lang === 'en' ? 'Product not found in database.' : 'Không tìm thấy sản phẩm trong cơ sở dữ liệu.'}
+                        {lang === 'en'
+                            ? 'Product not found in database.'
+                            : 'Không tìm thấy sản phẩm trong cơ sở dữ liệu.'}
                     </p>
                     <Button variant="primary" onClick={() => navigate('search')}>
                         {lang === 'en' ? 'Back to Products' : 'Khám phá sản phẩm'}

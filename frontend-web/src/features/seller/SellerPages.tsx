@@ -391,8 +391,8 @@ export function SellerBalancePage() {
                                                 ? 'Released'
                                                 : 'Đã giải ngân'
                                             : lang === 'en'
-                                                ? 'Completed'
-                                                : 'Hoàn tất'
+                                              ? 'Completed'
+                                              : 'Hoàn tất'
                                     }
                                 />
                             </div>
@@ -504,22 +504,22 @@ export function SellerProductListPage() {
     const liveProducts =
         prodEnvelope?.data && prodEnvelope.data.length > 0
             ? prodEnvelope.data.map((p) => ({
-                id: p.id,
-                name: p.name,
-                nameVi: p.name,
-                price: p.skus?.[0]?.price ?? 0,
-                sku: p.skus?.[0]?.skuCode ?? '',
-                images:
-                    p.images && p.images.length > 0
-                        ? p.images.map((img) => img.url)
-                        : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
-                status: p.status.toLowerCase() as ProductStatus,
-            }))
+                  id: p.id,
+                  name: p.name,
+                  nameVi: p.name,
+                  price: p.skus?.[0]?.price ?? 0,
+                  sku: p.skus?.[0]?.skuCode ?? '',
+                  images:
+                      p.images && p.images.length > 0
+                          ? p.images.map((img) => img.url)
+                          : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+                  status: p.status.toLowerCase() as ProductStatus,
+              }))
             : []
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
-        s
+            s
         ] || s
     const filtered = liveProducts.filter(
         (p) =>
@@ -687,7 +687,8 @@ export function SellerProductListPage() {
                         await api(`/products/${deleteId}`, { method: 'DELETE' })
                         showToast({
                             type: 'success',
-                            message: lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
+                            message:
+                                lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
                         })
                         setRefreshKey((k) => k + 1)
                     } catch (err) {
@@ -857,7 +858,7 @@ export function CreateProductPage() {
                         <Select
                             label=""
                             value="c1-3"
-                            onChange={() => { }}
+                            onChange={() => {}}
                             options={[
                                 { value: 'c1-3', label: 'Electronics > Audio' },
                                 { value: 'c1-1', label: 'Electronics > Smartphones' },
@@ -1022,16 +1023,16 @@ export function SellerAuctionListPage() {
                                     {['pending_approval', 'scheduled', 'active'].includes(
                                         r.status,
                                     ) && (
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setCancelOpen(true)
-                                                }}
-                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        )}
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                setCancelOpen(true)
+                                            }}
+                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    )}
                                     {auctionReviews[r.id] && (
                                         <Button
                                             variant="outline"
@@ -1109,8 +1110,8 @@ export function SellerAuctionListPage() {
                                             ? 'Approved'
                                             : 'Đã phê duyệt'
                                         : lang === 'en'
-                                            ? 'Rejected'
-                                            : 'Bị từ chối'}
+                                          ? 'Rejected'
+                                          : 'Bị từ chối'}
                                 </p>
                                 <p className="text-xs text-gray-400">
                                     {new Date(
@@ -1374,13 +1375,13 @@ export function CreateAuctionPage() {
 // ─── Seller Orders ───
 /**
  * Màn hình Quản lý đơn hàng của Seller
- * 
+ *
  * Chức năng:
  * - Thống kê số lượng đơn hàng theo các trạng thái (Tổng, Đang xử lý, Đang giao, Đã giao, Doanh thu tạm tính).
  * - Tra cứu, tìm kiếm theo mã đơn hoặc người mua; lọc theo trạng thái.
  * - Cập nhật trạng thái xử lý đơn hàng (Chuyển sang Đang đóng gói / Đang giao / Giao thành công / Hủy).
  * - Xem chi tiết đơn hàng (thông tin người mua, địa chỉ nhận hàng, danh sách sản phẩm cần đóng gói).
- * 
+ *
  * Luồng dữ liệu:
  * - Gọi `ordersApi.getOrders({ role: 'seller', status, search })`.
  * - Tự động ưu tiên REST API/DB và fallback kho mock data bền vững trong localStorage.
@@ -1445,7 +1446,12 @@ export function SellerOrdersPage() {
         if (!newStatus || newStatus === 'none') return
         setUpdatingId(orderId)
         try {
-            await ordersApi.updateOrderStatus(orderId, newStatus as OrderStatus, 'Seller status update', 'seller')
+            await ordersApi.updateOrderStatus(
+                orderId,
+                newStatus as OrderStatus,
+                'Seller status update',
+                'seller',
+            )
             showToast({
                 type: 'success',
                 message:
@@ -1457,7 +1463,11 @@ export function SellerOrdersPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err.message || (lang === 'en' ? 'Failed to update order status.' : 'Lỗi cập nhật trạng thái đơn.'),
+                message:
+                    err.message ||
+                    (lang === 'en'
+                        ? 'Failed to update order status.'
+                        : 'Lỗi cập nhật trạng thái đơn.'),
             })
         } finally {
             setUpdatingId(null)
@@ -1470,7 +1480,9 @@ export function SellerOrdersPage() {
         .reduce((sum, o) => sum + o.total, 0)
     const processingCount = orders.filter((o) => o.status === 'PROCESSING').length
     const shippedCount = orders.filter((o) => o.status === 'SHIPPED').length
-    const deliveredCount = orders.filter((o) => ['DELIVERED', 'COMPLETED'].includes(o.status)).length
+    const deliveredCount = orders.filter((o) =>
+        ['DELIVERED', 'COMPLETED'].includes(o.status),
+    ).length
 
     return (
         <SellerLayout title={tr(lang, 'orders')}>
@@ -1509,7 +1521,11 @@ export function SellerOrdersPage() {
                 <div className="p-4 sm:p-5 border-b border-border flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap items-center gap-3">
                         <Input
-                            placeholder={lang === 'en' ? 'Search order ID or buyer...' : 'Tìm mã đơn hoặc người mua...'}
+                            placeholder={
+                                lang === 'en'
+                                    ? 'Search order ID or buyer...'
+                                    : 'Tìm mã đơn hoặc người mua...'
+                            }
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             className="w-64"
@@ -1531,14 +1547,18 @@ export function SellerOrdersPage() {
                         </select>
                     </div>
                     <span className="text-xs text-gray-400">
-                        {lang === 'en' ? `${orders.length} orders found` : `Tìm thấy ${orders.length} đơn hàng`}
+                        {lang === 'en'
+                            ? `${orders.length} orders found`
+                            : `Tìm thấy ${orders.length} đơn hàng`}
                     </span>
                 </div>
 
                 {loading ? (
                     <div className="py-12 text-center text-gray-400">
                         <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
-                        <p>{lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}</p>
+                        <p>
+                            {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
+                        </p>
                     </div>
                 ) : (
                     <DataTable
@@ -1548,8 +1568,12 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Order' : 'Đơn hàng',
                                 render: (r: Order) => (
                                     <div className="flex flex-col">
-                                        <span className="font-mono text-xs font-bold text-gray-900">{r.id}</span>
-                                        <span className="text-[11px] text-gray-400">{formatDate(r.createdAt, lang)}</span>
+                                        <span className="font-mono text-xs font-bold text-gray-900">
+                                            {r.id}
+                                        </span>
+                                        <span className="text-[11px] text-gray-400">
+                                            {formatDate(r.createdAt, lang)}
+                                        </span>
                                     </div>
                                 ),
                             },
@@ -1558,8 +1582,13 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Buyer & Address' : 'Người mua & Địa chỉ',
                                 render: (r: Order) => (
                                     <div>
-                                        <p className="font-medium text-sm text-gray-800">{r.buyerName}</p>
-                                        <p className="text-xs text-gray-500 line-clamp-1 max-w-[200px]" title={r.shippingAddress}>
+                                        <p className="font-medium text-sm text-gray-800">
+                                            {r.buyerName}
+                                        </p>
+                                        <p
+                                            className="text-xs text-gray-500 line-clamp-1 max-w-[200px]"
+                                            title={r.shippingAddress}
+                                        >
                                             {r.shippingAddress}
                                         </p>
                                     </div>
@@ -1583,7 +1612,8 @@ export function SellerOrdersPage() {
                                             </span>
                                             {r.items.length > 1 && (
                                                 <span className="text-gray-400 text-[11px]">
-                                                    +{r.items.length - 1} {lang === 'en' ? 'more' : 'khác'}
+                                                    +{r.items.length - 1}{' '}
+                                                    {lang === 'en' ? 'more' : 'khác'}
                                                 </span>
                                             )}
                                         </div>
@@ -1611,14 +1641,19 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Payment' : 'Thanh toán',
                                 render: (r: Order) => {
                                     const status = getEffectivePaymentStatus(r)
-                                    return <StatusBadge status={status} label={paymentLabel(status)} />
+                                    return (
+                                        <StatusBadge status={status} label={paymentLabel(status)} />
+                                    )
                                 },
                             },
                             {
                                 key: 'actions',
                                 label: lang === 'en' ? 'Actions' : 'Thao tác',
                                 render: (r: Order) => (
-                                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                    <div
+                                        className="flex items-center gap-2"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
                                         <Button
                                             variant="ghost"
                                             size="sm"
@@ -1631,31 +1666,64 @@ export function SellerOrdersPage() {
                                         {/* Dropdown cập nhật trạng thái hợp lệ theo state machine.
                                             DELIVERED bị disable vì bước tiếp (COMPLETED) do Buyer xác nhận,
                                             CANCELLED/COMPLETED/REFUNDED là trạng thái cuối không thể chuyển tiếp. */}
-                                        {['DELIVERED', 'CANCELLED', 'COMPLETED', 'REFUNDED'].includes(r.status) ? (
+                                        {[
+                                            'DELIVERED',
+                                            'CANCELLED',
+                                            'COMPLETED',
+                                            'REFUNDED',
+                                        ].includes(r.status) ? (
                                             <span className="text-xs text-gray-400 italic px-2">
                                                 {r.status === 'DELIVERED'
-                                                    ? (lang === 'en' ? 'Awaiting buyer confirmation' : 'Chờ Buyer xác nhận')
-                                                    : (lang === 'en' ? 'Final status' : 'Trạng thái cuối')}
+                                                    ? lang === 'en'
+                                                        ? 'Awaiting buyer confirmation'
+                                                        : 'Chờ Buyer xác nhận'
+                                                    : lang === 'en'
+                                                      ? 'Final status'
+                                                      : 'Trạng thái cuối'}
                                             </span>
                                         ) : (
                                             <select
                                                 className="nexus-input text-xs py-1 px-2 w-32 font-medium"
                                                 value=""
                                                 disabled={updatingId === r.id}
-                                                onChange={(e) => handleStatusChange(r.id, e.target.value)}
+                                                onChange={(e) =>
+                                                    handleStatusChange(r.id, e.target.value)
+                                                }
                                             >
-                                                <option value="">{lang === 'en' ? 'Change status' : 'Đổi trạng thái'}</option>
+                                                <option value="">
+                                                    {lang === 'en'
+                                                        ? 'Change status'
+                                                        : 'Đổi trạng thái'}
+                                                </option>
                                                 {r.status === 'PAID' && (
-                                                    <option value="PROCESSING">{lang === 'en' ? 'To Processing' : 'Sang Đóng gói'}</option>
+                                                    <option value="PROCESSING">
+                                                        {lang === 'en'
+                                                            ? 'To Processing'
+                                                            : 'Sang Đóng gói'}
+                                                    </option>
                                                 )}
                                                 {['PAID', 'PROCESSING'].includes(r.status) && (
-                                                    <option value="SHIPPED">{lang === 'en' ? 'To Shipped' : 'Sang Đang giao'}</option>
+                                                    <option value="SHIPPED">
+                                                        {lang === 'en'
+                                                            ? 'To Shipped'
+                                                            : 'Sang Đang giao'}
+                                                    </option>
                                                 )}
                                                 {r.status === 'SHIPPED' && (
-                                                    <option value="DELIVERED">{lang === 'en' ? 'To Delivered' : 'Sang Đã giao'}</option>
+                                                    <option value="DELIVERED">
+                                                        {lang === 'en'
+                                                            ? 'To Delivered'
+                                                            : 'Sang Đã giao'}
+                                                    </option>
                                                 )}
-                                                {['PENDING_PAYMENT', 'PAID', 'PROCESSING'].includes(r.status) && (
-                                                    <option value="CANCELLED">{lang === 'en' ? 'Cancel Order' : 'Hủy đơn hàng'}</option>
+                                                {['PENDING_PAYMENT', 'PAID', 'PROCESSING'].includes(
+                                                    r.status,
+                                                ) && (
+                                                    <option value="CANCELLED">
+                                                        {lang === 'en'
+                                                            ? 'Cancel Order'
+                                                            : 'Hủy đơn hàng'}
+                                                    </option>
                                                 )}
                                             </select>
                                         )}
@@ -1674,27 +1742,41 @@ export function SellerOrdersPage() {
             <Modal
                 open={!!selectedOrder}
                 onClose={() => setSelectedOrder(null)}
-                title={lang === 'en' ? `Order Detail: ${selectedOrder?.id}` : `Chi tiết đơn hàng: ${selectedOrder?.id}`}
+                title={
+                    lang === 'en'
+                        ? `Order Detail: ${selectedOrder?.id}`
+                        : `Chi tiết đơn hàng: ${selectedOrder?.id}`
+                }
                 size="lg"
             >
                 {selectedOrder && (
                     <div className="space-y-5">
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-gray-50 rounded-xl">
                             <div>
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Buyer Name' : 'Người mua'}</p>
-                                <p className="font-semibold text-gray-900 mt-0.5">{selectedOrder.buyerName}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Buyer Name' : 'Người mua'}
+                                </p>
+                                <p className="font-semibold text-gray-900 mt-0.5">
+                                    {selectedOrder.buyerName}
+                                </p>
                             </div>
                             <div>
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}
+                                </p>
                                 <div className="mt-1">
                                     <StatusBadge
                                         status={getEffectivePaymentStatus(selectedOrder)}
-                                        label={paymentLabel(getEffectivePaymentStatus(selectedOrder))}
+                                        label={paymentLabel(
+                                            getEffectivePaymentStatus(selectedOrder),
+                                        )}
                                     />
                                 </div>
                             </div>
                             <div>
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Order Status' : 'Trạng thái đơn'}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Order Status' : 'Trạng thái đơn'}
+                                </p>
                                 <div className="mt-1">
                                     <StatusBadge
                                         status={selectedOrder.status}
@@ -1705,17 +1787,26 @@ export function SellerOrdersPage() {
                         </div>
 
                         <div>
-                            <p className="text-xs text-gray-500 mb-1">{tr(lang, 'shippingAddress')}</p>
+                            <p className="text-xs text-gray-500 mb-1">
+                                {tr(lang, 'shippingAddress')}
+                            </p>
                             <p className="text-sm font-medium text-gray-800 bg-white border border-border p-3 rounded-lg">
                                 {selectedOrder.shippingAddress}
                             </p>
                         </div>
 
                         <div>
-                            <p className="text-sm font-semibold mb-3">{lang === 'en' ? 'Packing Items' : 'Danh sách sản phẩm cần đóng gói'}</p>
+                            <p className="text-sm font-semibold mb-3">
+                                {lang === 'en'
+                                    ? 'Packing Items'
+                                    : 'Danh sách sản phẩm cần đóng gói'}
+                            </p>
                             <div className="border border-border rounded-xl divide-y divide-border/60 overflow-hidden">
                                 {selectedOrder.items.map((item) => (
-                                    <div key={item.productId} className="flex items-center justify-between p-3 gap-3">
+                                    <div
+                                        key={item.productId}
+                                        className="flex items-center justify-between p-3 gap-3"
+                                    >
                                         <div className="flex items-center gap-3">
                                             <img
                                                 src={item.image}
@@ -1723,9 +1814,12 @@ export function SellerOrdersPage() {
                                                 className="w-12 h-12 object-cover rounded-lg border border-border"
                                             />
                                             <div>
-                                                <p className="text-sm font-medium text-gray-900">{item.productName}</p>
+                                                <p className="text-sm font-medium text-gray-900">
+                                                    {item.productName}
+                                                </p>
                                                 <p className="text-xs text-gray-500">
-                                                    ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                                    ×{item.quantity} ·{' '}
+                                                    {formatCurrency(item.unitPrice, lang)}
                                                 </p>
                                             </div>
                                         </div>
@@ -1738,7 +1832,9 @@ export function SellerOrdersPage() {
                         </div>
 
                         <div className="flex justify-between items-center pt-3 border-t border-border">
-                            <span className="text-sm text-gray-600 font-medium">{tr(lang, 'total')}</span>
+                            <span className="text-sm text-gray-600 font-medium">
+                                {tr(lang, 'total')}
+                            </span>
                             <span className="text-xl font-bold text-primary">
                                 {formatCurrency(selectedOrder.total, lang)}
                             </span>
@@ -2057,7 +2153,7 @@ export function SellerNotificationPage() {
                                     <span className="text-sm font-medium text-gray-700">
                                         {label}
                                     </span>
-                                    <Toggle checked={index < 3} onChange={() => { }} />
+                                    <Toggle checked={index < 3} onChange={() => {}} />
                                 </div>
                             ))}
                         </div>

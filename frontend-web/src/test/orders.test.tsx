@@ -74,7 +74,11 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     })
 
     it('ordersApi: Seller cập nhật trạng thái đơn hàng processing -> shipped', async () => {
-        const updated = await ordersApi.updateOrderStatus('ORD-20240220-002', 'SHIPPED', 'Giao cho đơn vị vận chuyển')
+        const updated = await ordersApi.updateOrderStatus(
+            'ORD-20240220-002',
+            'SHIPPED',
+            'Giao cho đơn vị vận chuyển',
+        )
         expect(updated.status).toBe('SHIPPED')
 
         const recheck = await ordersApi.getOrderById('ORD-20240220-002')
@@ -99,7 +103,11 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
     })
 
     it('ordersApi: Admin xử lý giải quyết tranh chấp ký quỹ Escrow', async () => {
-        const resolved = await ordersApi.resolveOrderDispute('ORD-20240101-003', 'refunded', 'Chấp nhận khiếu nại của Buyer')
+        const resolved = await ordersApi.resolveOrderDispute(
+            'ORD-20240101-003',
+            'refunded',
+            'Chấp nhận khiếu nại của Buyer',
+        )
         expect(resolved.paymentStatus).toBe('refunded')
         expect(resolved.status).toBe('REFUNDED')
         expect(resolved.disputeStatus).toBe('resolved')
@@ -188,7 +196,8 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
         })
     })
 
-    it('ordersApi: createOrder tạo đơn hàng VNPAY và sinh URL thanh toán Sandbox', async () => {
+    // VNPAY phải lấy URL Backend đã ký; không sinh đơn/URL giả trong localStorage khi cổng chưa cấu hình.
+    it('ordersApi: createOrder nhận URL VNPAY từ Backend và truyền lỗi khi Backend không sẵn sàng', async () => {
         const payload = {
             shippingAddress: '123 Nguyen Hue, Ben Nghe, District 1, Ho Chi Minh City',
             recipientName: 'Minh Tran',
@@ -196,17 +205,33 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
             paymentMethod: 'VNPAY' as const,
             sourceType: 'REGULAR' as const,
         }
+        const fixture = {
+            id: 'real-order',
+            orderNo: 'ORD-1',
+            paymentMethod: 'VNPAY',
+            paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?signed=fixture',
+        }
+        vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+            new Response(JSON.stringify({ success: true, data: fixture }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        )
         const res = await ordersApi.createOrder(payload, 'test-idemp-key-123')
-        expect(res).toBeDefined()
-        expect(res.id).toMatch(/^ORD-/)
+        expect(res.id).toBe('real-order')
         expect(res.paymentMethod).toBe('VNPAY')
-        expect(res.paymentUrl).toContain('/sandbox-payment')
-        expect(res.paymentUrl).toContain('orderId=')
-
-        // Kiểm tra đơn đã được lưu vào mock store
-        const saved = await ordersApi.getOrderById(res.id)
-        expect(saved).not.toBeNull()
-        expect(saved?.paymentMethod).toBe('VNPAY QR')
+        expect(res.paymentUrl).toBe(fixture.paymentUrl)
+        vi.mocked(fetch).mockResolvedValueOnce(
+            new Response(
+                JSON.stringify({
+                    success: false,
+                    error: { code: 'PAYMENT_NOT_CONFIGURED', message: 'Chưa cấu hình merchant' },
+                }),
+                { status: 503, headers: { 'Content-Type': 'application/json' } },
+            ),
+        )
+        await expect(ordersApi.createOrder(payload)).rejects.toThrow('Chưa cấu hình merchant')
+        vi.restoreAllMocks()
     })
 
     it('ordersApi: createOrder tạo đơn hàng COD hoàn tất trực tiếp không cần URL Sandbox', async () => {
