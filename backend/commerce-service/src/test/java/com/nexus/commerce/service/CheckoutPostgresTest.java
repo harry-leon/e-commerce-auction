@@ -53,7 +53,7 @@ import org.springframework.transaction.annotation.Transactional;
         "spring.jpa.show-sql=false"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({CheckoutService.class, CheckoutLock.class, CheckoutTransactionConfig.class, CheckoutPostgresTest.Config.class})
+@Import({NotificationOutbox.class, CheckoutService.class, CheckoutLock.class, CheckoutTransactionConfig.class, CheckoutPostgresTest.Config.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CheckoutPostgresTest {
@@ -61,6 +61,8 @@ class CheckoutPostgresTest {
     @Autowired private JdbcTemplate jdbc;
     @MockitoBean private CatalogClient catalog;
     @MockitoBean private InventoryClient inventory;
+    // Các ca transaction COD cô lập cổng payment; suite PaymentPostgresTest kiểm tra payment thật trong DB.
+    @MockitoBean private PaymentService payments;
     private UUID buyer;
     private UUID item;
     private UUID cart;

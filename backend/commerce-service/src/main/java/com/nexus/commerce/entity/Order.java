@@ -7,6 +7,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.CollectionTable;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,6 +25,11 @@ import org.hibernate.type.SqlTypes;
 @Getter
 @Setter
 public class Order {
+    /** Các phiếu kho đã giữ cho đơn; payment outbox dùng ID này để confirm qua API có sẵn của Fulfillment. */
+    @ElementCollection
+    @CollectionTable(name = "order_reservations", joinColumns = @JoinColumn(name = "order_id"))
+    @Column(name = "reservation_id", nullable = false)
+    private List<UUID> reservationIds = new ArrayList<>();
     @Id private UUID id;
     @Column(name = "order_no", nullable = false, length = 50) private String orderNo;
     @Column(name = "buyer_id", nullable = false) private UUID buyerId;

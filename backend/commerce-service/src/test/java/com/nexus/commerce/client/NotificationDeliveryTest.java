@@ -1,0 +1,78 @@
+package com.nexus.commerce.client;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.web.client.RestClientResponseException;
+
+/** HTTP cục bộ bảo vệ bearer service account, refresh 401 và ACK 204; không dùng JWT buyer hoặc Keycloak thật. */
+class NotificationDeliveryTest {
+    private HttpServer server;
+    private NotificationDelivery delivery;
+    private final AtomicInteger tokenCalls = new AtomicInteger();
+    private int result = 204;
+    private String authorization;
+    private String payload;
+
+    @BeforeEach
+    void setup() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/token", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            tokenCalls.incrementAndGet();
+            byte[] bytes = "{\"access_token\":\"notification-service-token\",\"expires_in\":300}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.createContext("/internal/commerce-notifications", exchange -> {
+            authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            payload = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(result, -1);
+            exchange.close();
+        });
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        delivery = new NotificationDelivery(base, base + "/token", "notification-test", "test-only-secret");
+    }
+
+    @AfterEach
+    void cleanup() { server.stop(0); }
+
+    /** Gửi lặp dùng cache OAuth; payload giữ UUID snapshot và bearer chỉ là token service account. */
+    @Test
+    void sendsUsingServiceTokenAndCachesOAuth() {
+        assertTrue(delivery.configured());
+        delivery.send(Map.of("id", "event-test"));
+        delivery.send(Map.of("id", "event-test"));
+        assertEquals("Bearer notification-service-token", authorization);
+        assertTrue(payload.contains("event-test"));
+        assertEquals(1, tokenCalls.get());
+    }
+
+    /** 401 ép refresh lần sau; lỗi 503/ACK khác 204 không được worker coi là đã giao thành công. */
+    @Test
+    void invalidatesRejectedTokenAndRejectsWrongAck() {
+        result = 401;
+        assertThrows(RestClientResponseException.class, () -> delivery.send(Map.of()));
+        result = 204;
+        delivery.send(Map.of());
+        assertEquals(2, tokenCalls.get());
+        result = 503;
+        assertThrows(RestClientResponseException.class, () -> delivery.send(Map.of()));
+        result = 200;
+        assertThrows(IllegalStateException.class, () -> delivery.send(Map.of()));
+        assertFalse(new NotificationDelivery("http://localhost", "", "", "").configured());
+    }
+}

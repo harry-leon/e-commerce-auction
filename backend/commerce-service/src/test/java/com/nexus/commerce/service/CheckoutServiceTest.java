@@ -55,6 +55,7 @@ class CheckoutServiceTest {
     @Mock private CheckoutLock locks;
     @Mock private CatalogClient catalog;
     @Mock private InventoryClient inventory;
+    @Mock private PaymentService payments;
     private CheckoutService service;
     private final CommerceProperties properties = new CommerceProperties();
     private final UUID buyer = UUID.randomUUID();
@@ -65,7 +66,8 @@ class CheckoutServiceTest {
 
     @BeforeEach
     void setup() {
-        service = new CheckoutService(carts, items, orders, locks, catalog, inventory, properties, new ObjectMapper());
+        // Checkout nay cấp URL VNPAY qua PaymentService; các ca COD vẫn không gọi cổng thanh toán.
+        service = new CheckoutService(carts, items, orders, locks, catalog, inventory, properties, new ObjectMapper(), payments, org.mockito.Mockito.mock(NotificationOutbox.class));
         cart = Cart.builder().id(UUID.randomUUID()).userId(buyer).expiresAt(Instant.now().plusSeconds(3600)).build();
         item = CartItem.builder().id(UUID.randomUUID()).cart(cart).skuId(UUID.randomUUID()).quantity(2)
                 .unitPrice(new BigDecimal("90.00")).build();
@@ -174,7 +176,7 @@ class CheckoutServiceTest {
     void rejectsUnsupportedOptionsAndInvalidKey() {
         assertCode("CHECKOUT_INVALID_IDEMPOTENCY_KEY", () -> service.create(buyer, "1-1-1-1-1", request(), "jwt"));
         assertCode("CHECKOUT_INVALID_IDEMPOTENCY_KEY", () -> service.create(buyer, null, request(), "jwt"));
-        assertCode("PAYMENT_METHOD_UNSUPPORTED", () -> service.create(buyer, key, request(null, "A", "VNPAY", null, null), "jwt"));
+        assertCode("PAYMENT_METHOD_UNSUPPORTED", () -> service.create(buyer, key, request(null, "A", "CARD", null, null), "jwt"));
         assertCode("CHECKOUT_SOURCE_UNSUPPORTED", () -> service.create(buyer, key, request(null, "A", "COD", null, "AUCTION"), "jwt"));
         assertCode("CHECKOUT_VOUCHER_UNSUPPORTED", () -> service.create(buyer, key, request(null, "A", "COD", "SALE", null), "jwt"));
         verify(orders, never()).saveAndFlush(any());

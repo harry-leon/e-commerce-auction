@@ -10,6 +10,7 @@ import com.nexus.common.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -44,11 +45,12 @@ public class OrderController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAuthority('ORDER.CREATE')")
-    @Operation(summary = "Tạo đơn COD từ giỏ hàng, chống trùng bằng Idempotency-Key UUID")
+    @Operation(summary = "Tạo đơn COD/VNPAY từ giỏ hàng, chống trùng bằng Idempotency-Key UUID")
     public ApiResponse<CreateOrderResponse> create(@AuthenticationPrincipal Jwt jwt,
                                                    @RequestHeader("Idempotency-Key") String key,
-                                                   @Valid @RequestBody CreateOrderRequest request) {
-        return ApiResponse.created(checkout.create(buyer(jwt), key, request, jwt.getTokenValue()));
+                                                   @Valid @RequestBody CreateOrderRequest request, HttpServletRequest http) {
+        // IP peer được truyền riêng cho chữ ký URL; không đưa IP vào fingerprint idempotency.
+        return ApiResponse.created(checkout.create(buyer(jwt), key, request, jwt.getTokenValue(), http.getRemoteAddr()));
     }
 
     /** JWT hợp lệ vẫn cần subject UUID của Nexus; token sai định dạng trả 401 thay vì lỗi máy chủ. */
