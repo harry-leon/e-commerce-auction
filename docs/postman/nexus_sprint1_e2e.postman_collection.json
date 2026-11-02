@@ -6,12 +6,36 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
-    { "key": "buyerToken", "value": "", "type": "string" },
-    { "key": "skuId", "value": "00000000-0000-0000-0000-000000000001", "type": "string" },
-    { "key": "vnp_TmnCode", "value": "TESTONLY", "type": "string" },
-    { "key": "vnp_HashSecret", "value": "TESTONLYSECRET123456789012345678", "type": "string" },
-    { "key": "orderAmount", "value": "50000", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "buyerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "skuId",
+      "value": "00000000-0000-0000-0000-000000000001",
+      "type": "string"
+    },
+    {
+      "key": "vnp_TmnCode",
+      "value": "TESTONLY",
+      "type": "string"
+    },
+    {
+      "key": "vnp_HashSecret",
+      "value": "TESTONLYSECRET123456789012345678",
+      "type": "string"
+    },
+    {
+      "key": "orderAmount",
+      "value": "50000",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -43,8 +67,14 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -52,8 +82,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/cart/items",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "cart", "items"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart",
+                "items"
+              ]
             }
           }
         },
@@ -94,8 +131,14 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -103,8 +146,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders/checkout/preview",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders", "checkout", "preview"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "checkout",
+                "preview"
+              ]
             }
           }
         },
@@ -150,9 +201,18 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
-              { "key": "Idempotency-Key", "value": "{{currentIdempotencyKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{currentIdempotencyKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -160,8 +220,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             }
           }
         },
@@ -195,12 +261,22 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "{{paymentId}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
             }
           }
         },
@@ -253,12 +329,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "vnpay", "ipn"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "vnpay",
+                "ipn"
+              ]
             }
           }
         },
@@ -292,12 +379,22 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "{{paymentId}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
             }
           }
         },
@@ -331,12 +428,22 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders", "{{orderId}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
             }
           }
         }
@@ -363,8 +470,14 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -372,8 +485,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/cart/items",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "cart", "items"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart",
+                "items"
+              ]
             }
           }
         },
@@ -414,9 +534,18 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
-              { "key": "Idempotency-Key", "value": "{{failIdempotencyKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{failIdempotencyKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -424,8 +553,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             }
           }
         },
@@ -476,12 +611,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "vnpay", "ipn"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "vnpay",
+                "ipn"
+              ]
             }
           }
         },
@@ -515,12 +661,22 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders/{{failOrderId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders", "{{failOrderId}}"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{failOrderId}}"
+              ]
             }
           }
         }
@@ -547,9 +703,18 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
-              { "key": "Idempotency-Key", "value": "00000000-0000-4000-8000-000000000999" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "00000000-0000-4000-8000-000000000999"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -557,8 +722,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             }
           }
         }
@@ -585,8 +756,14 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -594,8 +771,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/cart/items",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "cart", "items"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart",
+                "items"
+              ]
             }
           }
         },
@@ -629,9 +813,18 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
-              { "key": "Idempotency-Key", "value": "11223344-5566-4778-8899-aabbccddeeff" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "11223344-5566-4778-8899-aabbccddeeff"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -639,8 +832,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             }
           }
         },
@@ -665,9 +864,18 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
-              { "key": "Idempotency-Key", "value": "11223344-5566-4778-8899-aabbccddeeff" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "11223344-5566-4778-8899-aabbccddeeff"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -675,8 +883,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "orders"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             }
           }
         }
@@ -731,12 +945,23 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{buyerToken}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "payments", "vnpay", "ipn"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "vnpay",
+                "ipn"
+              ]
             }
           }
         }
