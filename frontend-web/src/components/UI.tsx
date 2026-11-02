@@ -710,18 +710,8 @@ export function CountdownTimer({ endTime, large }: { endTime: string; large?: bo
     )
 }
 
-// ─── Progress Bar ─────────────────────────────────────────────────────────────
-export function ProgressBar({
-    value,
-    max,
-    color = 'primary',
-    label,
-}: {
-    value: number
-    max: number
-    color?: string
-    label?: string
-}) {
+/** Thanh tiến độ dùng màu CSS rep-bar-fill; value/max quyết định độ rộng, không có prop màu bị bỏ qua. */
+export function ProgressBar({ value, max, label }: { value: number; max: number; label?: string }) {
     const pct = Math.min(100, (value / max) * 100)
     return (
         <div>

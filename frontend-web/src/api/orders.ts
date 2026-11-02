@@ -1,6 +1,6 @@
-import { api, post, ApiClientError, readSession } from './client'
+import { api, ApiClientError, readSession } from './client'
 import type { ApiResponse } from './client'
-import type { Order, OrderStatus, PaymentStatus, UserRole } from '../types'
+import type { Order, OrderStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
 
 /**
@@ -73,9 +73,7 @@ export interface CreateOrderResponse {
     paymentUrl?: string
 }
 
-export type PlaceOrderRequest = CreateOrderRequest
 export type OrderDetailResponse = Order
-export type OrderSummaryResponse = Order
 
 export interface WithdrawalRequest {
     id: string
@@ -857,79 +855,8 @@ export const ordersApi = {
         return requests[index]
     },
 
-    // ─── Checkout & Order Placement (theo chuẩn V2 — PLANNED backend) ────────
-    // Các hàm dưới gọi thẳng backend API khi endpoint được triển khai;
-    // không fallback mock vì nghị vụ đặt hàng phải đảm bảo tính nhất quán dữ liệu thật.
-
     /**
-     * Xem trước giá đơn hàng trước khi đặt (POST /api/v1/orders/checkout/preview).
-     * Đầu vào: danh sách itemId từ giỏ, địa chỉ, voucher.
-     * Kết quả: CheckoutPreviewResponse với giá tạm tính, phí ship, cảnh báo tồn kho.
-     * Luồng: POST /api/v1/orders/checkout/preview → unwrap ApiResponse<CheckoutPreviewResponse>.data.
-     * Lỗi: Ném ApiClientError nếu backend validation thất bại hoặc giỏ đã hết hạn.
-     */
-    async previewCheckout(request: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
-        const envelope = await post<ApiResponse<CheckoutPreviewResponse>>(
-            '/orders/checkout/preview',
-            request,
-        )
-        if (!envelope?.data) {
-            throw new Error('Không thể tải thông tin xác nhận đơn hàng')
-        }
-        return envelope.data
-    },
-
-    /**
-     * Tạo đơn hàng mới (POST /api/v1/orders).
-     * Đầu vào: PlaceOrderRequest với địa chỉ, phương thức thanh toán, các item giỏ được chọn.
-     * Tham số: idempotencyKey — UUID do client sinh (chống duplicate khi retry mạng).
-     * Kết quả: OrderDetailResponse với orderId và paymentUrl (nếu thanh toán online).
-     * Luồng: POST /api/v1/orders kèm Idempotency-Key header → unwrap ApiResponse<OrderDetailResponse>.data;
-     *   server snapshot giá/SKU, giữ kho, lưu đơn DB, xóa cart items tương ứng.
-     * Lỗi: ApiClientError với code CART_MAX_ITEMS_EXCEEDED, SKU_OUT_OF_STOCK, IDEMPOTENCY_CONFLICT...
-     */
-    async placeOrder(
-        request: PlaceOrderRequest,
-        idempotencyKey: string,
-    ): Promise<OrderDetailResponse> {
-        const envelope = await api<ApiResponse<OrderDetailResponse>>('/orders', {
-            method: 'POST',
-            body: JSON.stringify(request),
-            headers: {
-                'Content-Type': 'application/json',
-                // Header bắt buộc theo API_SPEC_CART_ORDER.md §4.2: chống duplicate order khi mạng retry
-                'Idempotency-Key': idempotencyKey,
-            },
-        })
-        if (!envelope?.data) {
-            throw new Error('Không thể tạo đơn hàng')
-        }
-        return envelope.data
-    },
-
-    /**
-     * Lấy danh sách đơn hàng với phân trang chuẩn V2 (GET /api/v1/orders?page=&size=&status=).
-     * Đầu vào: page (zero-based, default 0), size (default 10), status tùy chọn.
-     * Kết quả: Mảng OrderSummaryResponse kèm PaginationInfo trong meta.
-     * Luồng: GET /api/v1/orders → ApiResponse<OrderSummaryResponse[]> có meta.pagination;
-     *   trả về nguyên envelope để caller tự đọc meta.pagination cho việc phân trang.
-     * Ghi chú: endpoint này chưa tồn tại; giữ để FE có thể switch ngay khi backend sẵn sàng.
-     */
-    async getOrdersV2(params?: {
-        page?: number
-        size?: number
-        status?: string
-    }): Promise<ApiResponse<OrderSummaryResponse[]>> {
-        const query = new URLSearchParams()
-        if (params?.page !== undefined) query.set('page', String(params.page))
-        if (params?.size !== undefined) query.set('size', String(params.size))
-        if (params?.status && params.status !== 'all') query.set('status', params.status)
-        const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
-        return api<ApiResponse<OrderSummaryResponse[]>>(path)
-    },
-
-    /**
-     * Lấy chi tiết đơn hàng theo đúng DTO backend (GET /api/v1/orders/{orderId}).
+     * Tra chi tiết đơn hàng qua backend (GET /api/v1/orders/{orderId}); tạo/list đơn dùng createOrder/getOrders.
      * Kết quả: OrderDetailResponse bao gồm snapshot sản phẩm và lịch sử trạng thái.
      * Luồng: GET /api/v1/orders/{orderId} → ApiResponse<OrderDetailResponse>.data;
      *   không fallback mock — nếu không tìm thấy backend trả 404 RESOURCE_NOT_FOUND.

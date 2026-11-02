@@ -1,16 +1,14 @@
 import { useState } from 'react'
 import { useApp } from '../../context'
-import { tr, formatCurrency, formatDate } from '../../i18n'
+import { tr, formatCurrency } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
 import { AuctionCard } from '../../components/Cards'
 import {
     Button,
     Input,
     Tabs,
-    Modal,
     AlertBanner,
     EmptyState,
-    StatusBadge,
     CountdownTimer,
     StarRating,
     Pagination,
@@ -18,13 +16,11 @@ import {
     Gavel,
     AlertTriangle,
     CheckCircle,
-    ChevronRight,
     ClipboardList,
     Trophy,
     Clock,
 } from '../../components/UI'
 import { AUCTIONS } from '../../mockData'
-import type { Auction } from '../../types'
 
 // ─── Auction List Page ─────────────────────────────────────────────────────────
 export function AuctionListPage() {
