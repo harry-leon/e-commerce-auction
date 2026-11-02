@@ -13,6 +13,8 @@ import com.nexus.commerce.dto.response.CreateOrderResponse;
 import com.nexus.commerce.entity.Cart;
 import com.nexus.commerce.entity.CartItem;
 import com.nexus.commerce.entity.Order;
+import com.nexus.commerce.enums.OrderStatus;
+import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.entity.OrderItem;
 import com.nexus.commerce.enums.CartStatus;
 import com.nexus.commerce.repository.CartItemRepository;
@@ -209,8 +211,9 @@ public class CheckoutService {
         order.setBuyerId(buyer);
         // Lấy seller từ cùng snapshot đã validate, không tải Catalog lần hai gây lệch dữ liệu.
         order.setSellerId(lines.getFirst().sellerId());
-        order.setSourceType("REGULAR");
-        order.setStatus("PENDING_PAYMENT");
+        order.setSourceType(OrderSourceType.REGULAR);
+        // Enum d?ng chung v?i qu?n l? ??n; DB v?n l?u t?n tr?ng th?i ?? t??ng th?ch Flyway.
+        order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(subtotal(lines));
         order.setShippingFee(shippingFee());
         order.setDiscount(ZERO);
@@ -231,7 +234,7 @@ public class CheckoutService {
             item.setSkuCode(line.skuCode());
             item.setUnitPrice(line.unitPrice());
             item.setQuantity(line.quantity());
-            order.getItems().add(item);
+            order.addItem(item);
         }
         return order;
     }
@@ -262,7 +265,7 @@ public class CheckoutService {
     private CreateOrderResponse response(Order order, String ip) {
         String paymentUrl = "VNPAY".equals(order.getPaymentMethod())
                 ? payments.checkoutUrl(order, ip) : null;
-        return new CreateOrderResponse(order.getId(), order.getOrderNo(), order.getStatus(), order.getSubtotal(),
+        return new CreateOrderResponse(order.getId(), order.getOrderNo(), order.getStatus().name(), order.getSubtotal(),
                 order.getShippingFee(), order.getDiscount(), order.getTotal(), order.getPaymentMethod(), paymentUrl);
     }
 

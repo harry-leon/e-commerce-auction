@@ -13,6 +13,7 @@ import com.nexus.commerce.client.VnpayGateway;
 import com.nexus.commerce.client.InventoryServiceToken;
 import com.nexus.commerce.config.VnpayProperties;
 import com.nexus.commerce.entity.Order;
+import com.nexus.commerce.enums.OrderStatus;
 import com.nexus.commerce.entity.Payment;
 import com.nexus.commerce.repository.CheckoutLock;
 import com.nexus.commerce.repository.OrderRepository;
@@ -58,7 +59,7 @@ class PaymentServiceTest {
         order.setId(UUID.randomUUID());
         order.setBuyerId(UUID.randomUUID());
         order.setPaymentMethod("VNPAY");
-        order.setStatus("PENDING_PAYMENT");
+        order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setTotal(new BigDecimal("50000.00"));
         order.setCreatedAt(Instant.now());
         order.setReservationIds(List.of(UUID.randomUUID()));
@@ -94,7 +95,7 @@ class PaymentServiceTest {
         when(payments.findByOrderIdAndProvider(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
         assertEquals(created.paymentUrl(), service.start(order.getBuyerId(), order.getId(), "192.0.2.2").paymentUrl());
         assertEquals(created.paymentUrl(), service.checkoutUrl(order, "192.0.2.2"));
-        assertEquals("PENDING_PAYMENT", order.getStatus());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
     }
 
     /** IPN thành công đổi PAID/SUCCESS một lần; callback lặp không tạo history/outbox lần hai. */
@@ -103,7 +104,7 @@ class PaymentServiceTest {
         var callback = signed("5000000", "00", "00");
         assertEquals("00", service.ipn(callback).code());
         assertEquals("SUCCESS", payment.getStatus());
-        assertEquals("PAID", order.getStatus());
+        assertEquals(OrderStatus.PAID, order.getStatus());
         assertEquals("123456", payment.getProviderRef());
         assertEquals("02", service.ipn(callback).code());
         verify(payments).flush();
@@ -114,7 +115,7 @@ class PaymentServiceTest {
     void failureCancelsOrderAndCannotBeProcessedAgain() {
         assertEquals("00", service.ipn(signed("5000000", "24", "02")).code());
         assertEquals("FAILED", payment.getStatus());
-        assertEquals("CANCELLED", order.getStatus());
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
         assertEquals("02", service.ipn(signed("5000000", "00", "00")).code());
     }
 
@@ -149,9 +150,9 @@ class PaymentServiceTest {
         order.setPaymentMethod("COD");
         assertCode("PAYMENT_METHOD_UNSUPPORTED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
         order.setPaymentMethod("VNPAY");
-        order.setStatus("PAID");
+        order.setStatus(OrderStatus.PAID);
         assertCode("ORDER_STATUS_INVALID", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
-        order.setStatus("PENDING_PAYMENT");
+        order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setReservationIds(List.of());
         assertCode("PAYMENT_RESERVATIONS_MISSING", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
         order.setCreatedAt(Instant.now().minusSeconds(1000));

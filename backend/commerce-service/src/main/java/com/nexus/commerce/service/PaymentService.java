@@ -6,6 +6,8 @@ import com.nexus.commerce.config.VnpayProperties;
 import com.nexus.commerce.dto.response.PaymentResponse;
 import com.nexus.commerce.dto.response.VnpayIpnResponse;
 import com.nexus.commerce.entity.Order;
+import com.nexus.commerce.enums.OrderStatus;
+import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.entity.Payment;
 import com.nexus.commerce.repository.CheckoutLock;
 import com.nexus.commerce.repository.OrderRepository;
@@ -63,7 +65,7 @@ public class PaymentService {
             throw new ApiException("PAYMENT_ACCESS_DENIED", HttpStatus.FORBIDDEN, "Không được thanh toán đơn của người khác", null);
         }
         if (!"VNPAY".equals(order.getPaymentMethod())) { throw new BusinessException(ErrorCode.PAYMENT_METHOD_UNSUPPORTED); }
-        if (!"PENDING_PAYMENT".equals(order.getStatus())) { throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID); }
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) { throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID); }
         var previous = payments.findByOrderIdAndProvider(orderId, "VNPAY");
         if (previous.isPresent()) {
             Payment payment = previous.get();
@@ -127,7 +129,7 @@ public class PaymentService {
             return reply("04", "Invalid amount");
         }
         if (!"PENDING".equals(payment.getStatus())) { return reply("02", "Order already confirmed"); }
-        if (!"PENDING_PAYMENT".equals(order.getStatus())) { return reply("02", "Order already confirmed"); }
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) { return reply("02", "Order already confirmed"); }
         String result = params.get("vnp_ResponseCode");
         String state = params.get("vnp_TransactionStatus");
         boolean success = "00".equals(result) && "00".equals(state);
@@ -150,13 +152,13 @@ public class PaymentService {
         payment.setResponseCode(result);
         payment.setTransactionStatus(state);
         payment.setCompletedAt(Instant.now());
-        order.setStatus(success ? "PAID" : "CANCELLED");
+        order.setStatus(success ? OrderStatus.PAID : OrderStatus.CANCELLED);
         // Outbox có unique key và chỉ tạo sau lần chuyển terminal đầu tiên, nên callback lặp không confirm/release hai lần.
         if (success) {
             for (UUID reservation : order.getReservationIds()) { enqueue(order.getId(), reservation, "CONFIRM"); }
         } else { enqueue(order.getId(), order.getId(), "RELEASE"); }
         jdbc.update("INSERT INTO order_status_history(id,order_id,from_status,to_status,reason) VALUES (?,?,'PENDING_PAYMENT',?,?)",
-                UUID.randomUUID(), order.getId(), order.getStatus(), "VNPAY_IPN_" + result);
+                UUID.randomUUID(), order.getId(), order.getStatus().name(), "VNPAY_IPN_" + result);
         // Chỉ lần chuyển trạng thái terminal đầu tiên tạo thông báo, cùng commit với kết quả thanh toán.
         notifications.enqueue(order, success ? "PAYMENT_SUCCESS" : "PAYMENT_FAILED");
         payments.flush();
