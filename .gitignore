@@ -18,6 +18,8 @@ test-results/
 *.iml
 .vscode/
 .DS_Store
+.postman/
+docs/postman/postman/
 
 # Local Runner
 .runner_system_id
