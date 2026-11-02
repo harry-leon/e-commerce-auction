@@ -60,20 +60,21 @@ class InventoryConcurrencyIntegrationTest {
     @Autowired
     private WarehouseRepository warehouseRepository;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private UUID skuId;
     private Warehouse warehouse;
 
     @BeforeEach
     void setUp() {
-        reservationRepository.deleteAll();
-        inventoryRepository.deleteAll();
-        warehouseRepository.deleteAll();
+// Mỗi test dùng warehouse/SKU riêng vì sổ cái không được xóa hay làm mất tham chiếu.
 
         skuId = UUID.randomUUID();
 
         warehouse = new Warehouse(
-                UUID.fromString("a0000000-0000-0000-0000-000000000001"),
-                "WH_001",
+                UUID.randomUUID(),
+                "WH_" + UUID.randomUUID().toString().substring(0, 8),
                 "Kho trung tâm Test",
                 "TP. HCM",
                 WarehouseType.STANDARD,
@@ -152,7 +153,8 @@ class InventoryConcurrencyIntegrationTest {
         assertEquals(0, stock.availableQty(), "Tồn khả dụng phải về 0, không được âm");
 
         // Kiểm tra số lượng phiếu giữ hàng trong DB
-        assertEquals(5, reservationRepository.count(), "Đúng 5 phiếu giữ hàng được tạo");
+        // Chỉ đếm SKU của test này; fixture khác vẫn giữ lịch sử kho bất biến.
+        assertEquals(5, jdbc.queryForObject("SELECT count(*) FROM inventory_reservations r JOIN inventories i ON i.id=r.inventory_id WHERE i.sku_id=?", Integer.class, skuId), "Đúng 5 phiếu giữ hàng được tạo");
     }
 
     @Test

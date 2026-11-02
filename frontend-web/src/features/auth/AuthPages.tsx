@@ -75,7 +75,10 @@ export function LoginPage() {
         setLoading(true)
         setError('')
         try {
-            const rawResponse = await post<AuthPayload | { data: AuthPayload }>('/auth/login', { email, password })
+            const rawResponse = await post<AuthPayload | { data: AuthPayload }>('/auth/login', {
+                email,
+                password,
+            })
             const payload: AuthPayload = (rawResponse as any)?.data || rawResponse
             const user = mapUser(payload.user)
             saveSession({ ...payload, user })
@@ -176,12 +179,12 @@ function PasswordStrength({ password }: { password: string }) {
             /[A-Z]/.test(password) &&
             /[0-9]/.test(password) &&
             /[^A-Za-z0-9]/.test(password)
-            ? 4
-            : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
-                ? 3
-                : password.length >= 8
-                    ? 2
-                    : 1
+          ? 4
+          : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
+            ? 3
+            : password.length >= 8
+              ? 2
+              : 1
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very Strong']
     const colors = ['', 'bg-danger', 'bg-warning', 'bg-success', 'bg-primary']
     const { lang } = useApp()

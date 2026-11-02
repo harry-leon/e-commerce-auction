@@ -73,9 +73,7 @@ export class ApiClientError<TDetails = unknown> extends Error {
     /** Lấy danh sách toàn bộ message chi tiết từ details */
     getAllDetailMessages(): string[] {
         if (!Array.isArray(this.details)) return []
-        return (this.details as ValidationErrorDetail[])
-            .map((d) => d.message)
-            .filter(Boolean)
+        return (this.details as ValidationErrorDetail[]).map((d) => d.message).filter(Boolean)
     }
 }
 
@@ -264,49 +262,52 @@ export interface ApiRole {
  * Vai trò trong UI chỉ phục vụ hiển thị; backend vẫn là nơi kiểm tra quyền truy cập thực sự.
  */
 export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
-    const raw: any = user && typeof user === "object" && "data" in user ? (user as any).data : user;
+    const raw: any = user && typeof user === 'object' && 'data' in user ? (user as any).data : user
     if (!raw) {
         return {
-            id: "",
-            fullName: "",
-            email: "",
-            phone: "",
-            idNumber: "",
-            gender: "other",
-            dateOfBirth: "",
-            address: "",
-            role: "buyer",
-            trustLevel: "bronze",
+            id: '',
+            fullName: '',
+            email: '',
+            phone: '',
+            idNumber: '',
+            gender: 'other',
+            dateOfBirth: '',
+            address: '',
+            role: 'buyer',
+            trustLevel: 'bronze',
             reputationScore: 100,
-            avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&auto=format",
-            status: "active",
+            avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&auto=format',
+            status: 'active',
             createdAt: new Date().toISOString(),
-        };
+        }
     }
-    const roles: string[] = ((raw.roles || []) as string[]).map((role: string) => role.replace(/^ROLE_/, "").toLowerCase());
-    const role: UserRole = roles.includes("admin")
-        ? "admin"
-        : roles.includes("support")
-            ? "support"
-            : roles.includes("seller")
-                ? "seller"
-                : "buyer";
+    const roles: string[] = ((raw.roles || []) as string[]).map((role: string) =>
+        role.replace(/^ROLE_/, '').toLowerCase(),
+    )
+    const role: UserRole = roles.includes('admin')
+        ? 'admin'
+        : roles.includes('support')
+          ? 'support'
+          : roles.includes('seller')
+            ? 'seller'
+            : 'buyer'
     return {
-        id: raw.id || "",
-        fullName: raw.fullName || "",
-        email: raw.email || "",
-        phone: raw.phone || "",
-        idNumber: raw.identifyNumber || "",
-        gender: (raw.gender?.toLowerCase() || "other") as User["gender"],
-        dateOfBirth: raw.dateOfBirth || "",
-        address: raw.address || "",
+        id: raw.id || '',
+        fullName: raw.fullName || '',
+        email: raw.email || '',
+        phone: raw.phone || '',
+        idNumber: raw.identifyNumber || '',
+        gender: (raw.gender?.toLowerCase() || 'other') as User['gender'],
+        dateOfBirth: raw.dateOfBirth || '',
+        address: raw.address || '',
         role,
-        status: (raw.status?.toUpperCase() === "ACTIVE" || raw.status === "active") ? "active" : "locked",
+        status:
+            raw.status?.toUpperCase() === 'ACTIVE' || raw.status === 'active' ? 'active' : 'locked',
         createdAt: raw.createdAt || new Date().toISOString(),
-        avatar: "/avatar.svg",
-        trustLevel: "bronze",
+        avatar: '/avatar.svg',
+        trustLevel: 'bronze',
         reputationScore: 0,
-    };
+    }
 }
 
 /** Catalog bọc kết quả trong data, kèm meta phân trang zero-based; khác với DTO trả trực tiếp của User Service. */

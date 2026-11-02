@@ -20,7 +20,6 @@ import {
     OrderTimeline,
     ReputationBar,
     ProgressBar,
-    Toggle,
     Checkbox,
     Breadcrumb,
     Pagination,
@@ -36,25 +35,20 @@ import {
     Package,
     ShoppingCart,
     CreditCard,
-    Settings2,
-    Gift,
-    Star,
     CircleX,
     Clock,
     Shield,
     Spinner,
     Trash2,
 } from '../../components/UI'
-import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES, NOTIFICATIONS } from '../../mockData'
+import { PRODUCTS, AUCTIONS, ORDERS, CATEGORIES } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
+import { VnpayPaymentResult } from './VnpayPaymentResult'
+import { VerifiedOrderResult } from './VerifiedOrderResult'
 import type { Order, OrderStatus, Product } from '../../types'
-import {
-    ordersApi,
-    type CreateOrderRequest,
-    type CreateOrderResponse,
-} from '../../api/orders'
+import { ordersApi, type CreateOrderRequest, type CreateOrderResponse } from '../../api/orders'
 import { useLoad } from '../../hooks/useLoad'
 import {
     readSession,
@@ -159,7 +153,9 @@ export function HomePage() {
     const liveProducts: Product[] = (prodData?.data || []).map((p) => {
         const sku = p.skus?.[0]
         const categoryObj = catData?.data?.find((c) => c.id === p.categoryId)
-        const categoryName = categoryObj ? (categoryObj.nameVi || categoryObj.name) : 'Thiết bị điện tử'
+        const categoryName = categoryObj
+            ? categoryObj.nameVi || categoryObj.name
+            : 'Thiết bị điện tử'
         return {
             id: p.id,
             name: p.name,
@@ -169,7 +165,10 @@ export function HomePage() {
             price: sku?.price || 0,
             originalPrice: sku?.originalPrice,
             sku: sku?.skuCode || '',
-            images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+            images:
+                p.images && p.images.length > 0
+                    ? p.images.map((img) => img.url)
+                    : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
             description: p.description || '',
             descriptionVi: p.description || '',
             enableAuction: p.auctionEnabled || false,
@@ -262,7 +261,9 @@ export function HomePage() {
                                     variant="ghost"
                                     size="lg"
                                     className="border-white/40 text-white hover:bg-white/10 border"
-                                    onClick={() => navigate('product-detail', { id: liveProducts[0].id })}
+                                    onClick={() =>
+                                        navigate('product-detail', { id: liveProducts[0].id })
+                                    }
                                 >
                                     <Package size={16} />
                                     {liveProducts[0].name}
@@ -394,7 +395,9 @@ export function HomePage() {
                         </div>
                     ) : (
                         <p className="text-gray-500 py-8 text-center">
-                            {lang === 'en' ? 'No products available.' : 'Chưa có sản phẩm nào trong cơ sở dữ liệu.'}
+                            {lang === 'en'
+                                ? 'No products available.'
+                                : 'Chưa có sản phẩm nào trong cơ sở dữ liệu.'}
                         </p>
                     )}
                 </section>
@@ -839,10 +842,11 @@ export function ProductDetailPage() {
                                                 key={i}
                                                 type="button"
                                                 onClick={() => setActiveImg(i)}
-                                                className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${i === activeImg
-                                                    ? 'border-white scale-110'
-                                                    : 'border-white/25 opacity-50 hover:opacity-80'
-                                                    }`}
+                                                className={`w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                                                    i === activeImg
+                                                        ? 'border-white scale-110'
+                                                        : 'border-white/25 opacity-50 hover:opacity-80'
+                                                }`}
                                             >
                                                 <img
                                                     src={img}
@@ -897,10 +901,11 @@ export function ProductDetailPage() {
                                     key={i}
                                     type="button"
                                     onClick={() => setActiveImg(i)}
-                                    className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${i === activeImg
-                                        ? 'border-primary ring-2 ring-primary/20 scale-105'
-                                        : 'border-transparent opacity-70 hover:opacity-100'
-                                        }`}
+                                    className={`gallery-thumb w-16 h-16 shrink-0 overflow-hidden bg-gray-100 rounded-lg border-2 transition-all cursor-pointer ${
+                                        i === activeImg
+                                            ? 'border-primary ring-2 ring-primary/20 scale-105'
+                                            : 'border-transparent opacity-70 hover:opacity-100'
+                                    }`}
                                 >
                                     <img src={img} alt="" className="w-full h-full object-cover" />
                                 </button>
@@ -1467,7 +1472,9 @@ export function CartPage() {
                 {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}
                 <div className="space-y-3">
                     {items.map((item) => {
-                        const displayImage = item.thumbnailUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'
+                        const displayImage =
+                            item.thumbnailUrl ||
+                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'
                         const isActing = actionLoadingId === item.id
 
                         return (
@@ -2419,8 +2426,8 @@ export function CheckoutPage() {
                                             ? 'You will be redirected to VNPAY portal to scan QR code and complete payment.'
                                             : 'Bạn sẽ được chuyển hướng sang cổng VNPAY để quét mã QR thanh toán sau khi bấm Đặt hàng.'
                                         : lang === 'en'
-                                            ? 'You will pay in cash directly to the courier when receiving the package.'
-                                            : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
+                                          ? 'You will pay in cash directly to the courier when receiving the package.'
+                                          : 'Bạn sẽ thanh toán tiền mặt trực tiếp cho nhân viên giao hàng khi nhận được kiện hàng.'}
                                 </div>
                             )}
 
@@ -2451,12 +2458,7 @@ export function CheckoutPage() {
                             </h2>
 
                             {/* Hiển thị lỗi rõ ràng khi đặt hàng hoặc chuyển hướng thất bại (Accept Criteria 2 & 5) */}
-                            {checkoutError && (
-                                <AlertBanner
-                                    type="error"
-                                    message={checkoutError}
-                                />
-                            )}
+                            {checkoutError && <AlertBanner type="error" message={checkoutError} />}
 
                             <div className="space-y-2 text-sm">
                                 {[
@@ -2474,7 +2476,23 @@ export function CheckoutPage() {
                                             ? `Visa ending ${paymentData.cardNumber.replace(/\s+/g, '').slice(-4) || '4242'}`
                                             : paymentData.method,
                                     ],
-                                    [tr(lang, 'total'), formatCurrency(cartItems.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0) + (shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)), lang)],
+                                    [
+                                        tr(lang, 'total'),
+                                        formatCurrency(
+                                            cartItems.reduce(
+                                                (acc, i) => acc + i.unitPrice * i.quantity,
+                                                0,
+                                            ) +
+                                                (shipping === 'GHN'
+                                                    ? lang === 'vi'
+                                                        ? 55000
+                                                        : 3.99
+                                                    : lang === 'vi'
+                                                      ? 35000
+                                                      : 2.49),
+                                            lang,
+                                        ),
+                                    ],
                                 ].map(([k, v]) => (
                                     <div
                                         key={k}
@@ -2518,7 +2536,10 @@ export function CheckoutPage() {
                             cartItems.map((item) => (
                                 <div key={item.id} className="flex gap-3">
                                     <img
-                                        src={item.thumbnailUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        src={
+                                            item.thumbnailUrl ||
+                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                        }
                                         alt={item.productName}
                                         className="w-12 h-12 object-cover rounded-lg"
                                     />
@@ -2526,9 +2547,7 @@ export function CheckoutPage() {
                                         <p className="text-xs font-semibold line-clamp-1">
                                             {item.productName}
                                         </p>
-                                        <p className="text-xs text-gray-500">
-                                            x{item.quantity}
-                                        </p>
+                                        <p className="text-xs text-gray-500">x{item.quantity}</p>
                                         <p className="text-sm font-bold text-primary mt-0.5">
                                             {formatCurrency(item.unitPrice, lang)}
                                         </p>
@@ -2537,14 +2556,26 @@ export function CheckoutPage() {
                             ))
                         ) : (
                             <p className="text-xs text-gray-400 italic py-2">
-                                {lang === 'en' ? 'Cart is empty' : 'Chưa có sản phẩm trong giỏ hàng'}
+                                {lang === 'en'
+                                    ? 'Cart is empty'
+                                    : 'Chưa có sản phẩm trong giỏ hàng'}
                             </p>
                         )}
                     </div>
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
                         {(() => {
-                            const subtotal = cartItems.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0)
-                            const shippingFee = shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+                            const subtotal = cartItems.reduce(
+                                (acc, i) => acc + i.unitPrice * i.quantity,
+                                0,
+                            )
+                            const shippingFee =
+                                shipping === 'GHN'
+                                    ? lang === 'vi'
+                                        ? 55000
+                                        : 3.99
+                                    : lang === 'vi'
+                                      ? 35000
+                                      : 2.49
                             const total = subtotal > 0 ? subtotal + shippingFee : 0
                             return [
                                 [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
@@ -2766,10 +2797,7 @@ export function SandboxPaymentPage() {
                                 navigate('payment-result', { status: 'cancelled', orderId })
                             }
                         >
-                            ←{' '}
-                            {lang === 'en'
-                                ? 'Cancel Payment'
-                                : 'Hủy thanh toán'}
+                            ← {lang === 'en' ? 'Cancel Payment' : 'Hủy thanh toán'}
                         </Button>
                     </div>
 
@@ -2787,564 +2815,23 @@ export function SandboxPaymentPage() {
 // ─── Payment Result Page ───────────────────────────────────────────────────────
 type ResolvedPaymentStatus = 'success' | 'failed' | 'cancelled' | 'pending' | 'unknown'
 
-/**
- * Hàm phân tích và chuẩn hóa tham số phản hồi từ Cổng thanh toán Sandbox hoặc Backend.
- * 
- * 1. Chức năng: Đọc và chuẩn hóa dữ liệu kết quả thanh toán từ query/pageParams, hỗ trợ cả tham số sandbox (như VNPay vnp_ResponseCode) và backend.
- * 2. Đầu vào và kết quả:
- *    - Đầu vào: params (pageParams hoặc query params).
- *    - Kết quả: Object chứa { status, orderId, amount, paymentMethod, transactionId, reason }.
- * 3. Luồng xử lý:
- *    - Trích xuất orderId từ orderId / orderNo / vnp_TxnRef (fallback 'ORD-20240301-004').
- *    - Trích xuất và chuẩn hóa số tiền (quy đổi từ VNPay x100 nếu có, chống số âm/NaN).
- *    - Trích xuất phương thức thanh toán và mã giao dịch.
- *    - Xác định trạng thái nghiệp vụ theo mã VNPay hoặc chuỗi status (hỗ trợ case-insensitive).
- * 4. Quy tắc và lý do:
- *    - Mã '00' từ VNPay là thành công, '24' là khách hủy, '01'/'02' là đang xử lý, còn lại là thất bại.
- *    - Chấp nhận các biến thể chữ hoa/thường: SUCCESS, PAID, CANCELLED, PENDING, FAILED để tương thích hoàn toàn với backend DTO và schema constraint.
- * 5. Lỗi và giới hạn: Trả về 'unknown' khi nhận chuỗi trạng thái không xác định để UI hiển thị thông báo lỗi rõ ràng.
- */
-function parsePaymentParams(params?: Record<string, unknown>) {
-    if (!params) {
-        return {
-            status: 'success' as ResolvedPaymentStatus,
-            orderId: 'ORD-20240301-004',
-            amount: 0,
-            paymentMethod: '',
-            transactionId: '',
-            reason: '',
-        }
-    }
-
-    // 1. Trích xuất mã đơn hàng
-    const orderId =
-        (params.orderId as string)?.trim() ||
-        (params.orderNo as string)?.trim() ||
-        (params.vnp_TxnRef as string)?.trim() ||
-        'ORD-20240301-004'
-
-    // 2. Trích xuất và chuẩn hóa số tiền (chống số âm hoặc NaN)
-    let amount = 0
-    if (typeof params.amount === 'number') {
-        amount = Math.max(0, params.amount)
-    } else if (typeof params.amount === 'string') {
-        amount = Math.max(0, parseFloat(params.amount) || 0)
-    } else if (params.vnp_Amount) {
-        const rawVal =
-            typeof params.vnp_Amount === 'number'
-                ? params.vnp_Amount
-                : parseFloat(String(params.vnp_Amount)) || 0
-        amount = Math.max(0, rawVal >= 1000 ? rawVal / 100 : rawVal)
-    }
-
-    // 3. Trích xuất phương thức thanh toán
-    let paymentMethod =
-        (params.paymentMethod as string)?.trim() ||
-        (params.provider as string)?.trim() ||
-        ''
-    if (params.vnp_BankCode) {
-        paymentMethod = paymentMethod
-            ? `${paymentMethod} (${params.vnp_BankCode})`
-            : `VNPAY (${params.vnp_BankCode})`
-    } else if (params.vnp_ResponseCode && !paymentMethod) {
-        paymentMethod = 'VNPAY QR'
-    }
-
-    // 4. Trích xuất mã giao dịch & lý do
-    const transactionId =
-        (params.transactionId as string)?.trim() ||
-        (params.vnp_TransactionNo as string)?.trim() ||
-        (params.paymentId as string)?.trim() ||
-        ''
-
-    const reason =
-        (params.reason as string)?.trim() ||
-        (params.message as string)?.trim() ||
-        ''
-
-    // 5. Xác định trạng thái thanh toán từ mã phản hồi VNPay hoặc status string
-    let status: ResolvedPaymentStatus = 'unknown'
-
-    const vnpCode = (params.vnp_ResponseCode as string)?.trim()
-    const vnpTxStatus = (params.vnp_TransactionStatus as string)?.trim()
-
-    if (vnpCode) {
-        if (vnpCode === '00' && (!vnpTxStatus || vnpTxStatus === '00')) {
-            status = 'success'
-        } else if (vnpCode === '24') {
-            status = 'cancelled' // Khách hàng hủy giao dịch tại cổng sandbox
-        } else if (vnpCode === '01' || vnpCode === '02' || vnpTxStatus === '01') {
-            status = 'pending' // Giao dịch đang chờ xử lý
-        } else {
-            status = 'failed'
-        }
-    } else {
-        const rawStatus = (params.status as string)?.trim()?.toLowerCase()
-        if (!rawStatus) {
-            status = 'success'
-        } else if (['success', 'paid', 'completed'].includes(rawStatus)) {
-            status = 'success'
-        } else if (['cancelled', 'canceled', 'cancel'].includes(rawStatus)) {
-            status = 'cancelled'
-        } else if (['pending', 'processing', 'in_progress', 'pending_payment'].includes(rawStatus)) {
-            status = 'pending'
-        } else if (['failed', 'failure', 'error', 'declined', 'rejected'].includes(rawStatus)) {
-            status = 'failed'
-        } else {
-            status = 'unknown'
-        }
-    }
-
-    return {
-        status,
-        orderId,
-        amount,
-        paymentMethod,
-        transactionId,
-        reason,
-    }
-}
-
-/**
- * Màn hình Kết quả Thanh toán (Payment Result Page).
- * 
- * 1. Chức năng: Hiển thị kết quả thanh toán cho người mua sau khi đặt hàng hoặc hoàn tất từ cổng sandbox/backend.
- * 2. Đầu vào và kết quả:
- *    - Đầu vào: pageParams qua hook useApp().
- *    - Kết quả: Render giao diện tương ứng với trạng thái (success, cancelled, pending, failed, unknown), kèm thông tin chi tiết đơn hàng.
- * 3. Luồng xử lý:
- *    - Gọi parsePaymentParams để chuẩn hóa các tham số đầu vào từ sandbox/backend.
- *    - Gọi ordersApi.getOrderById(orderId) để tải thông tin đơn hàng mới nhất (địa chỉ, tổng tiền, phương thức, mặt hàng).
- *    - Bắt lỗi API tải đơn hàng vào state orderError (không để crash màn hình).
- *    - Render UI tương ứng với từng trạng thái:
- *        + 'success': Huy hiệu hoàn tất xanh lá, xác nhận giữ tiền ký quỹ, chi tiết số tiền/phương thức/địa chỉ, nút tiếp tục mua sắm hoặc xem đơn.
- *        + 'cancelled': Huy hiệu hủy bỏ, ghi chú không bị trừ tiền, nút quay lại giỏ hàng hoặc về trang chủ.
- *        + 'pending': Huy hiệu chờ xử lý màu vàng, giải thích trạng thái, nút kiểm tra lại trong lịch sử đơn.
- *        + 'failed': Thông báo lỗi đỏ, bộ đếm thử lại tối đa 3 lần, nút hủy hoặc thử lại.
- *        + 'unknown': Thông báo lỗi dữ liệu không hợp lệ, nút về trang chủ hoặc xem đơn.
- * 4. Quy tắc và lý do:
- *    - Giữ orderId độc nhất trong tiêu đề phụ (không lặp lại trong card con) để đảm bảo các câu test getByText không bị lỗi multiple elements.
- *    - Người mua chủ động thực hiện retry hoặc chuyển trang, không tự động kích hoạt vòng lặp thanh toán.
- * 5. Lỗi và giới hạn:
- *    - Khi API getOrderById lỗi mạng, giao diện vẫn hiển thị kết quả từ pageParams và cảnh báo nhẹ nhàng, không gây màn hình trắng.
- */
+/** URL chỉ mang ID tra cứu; trạng thái hiển thị lấy từ API có xác thực. */
 export function PaymentResultPage() {
-    const { lang, navigate, pageParams } = useApp()
-    const parsed = parsePaymentParams(pageParams)
-    const { status, orderId, transactionId } = parsed
-    const hasExplicitOrderId = Boolean(pageParams?.orderId || pageParams?.orderNo || pageParams?.vnp_TxnRef)
-
-    const [order, setOrder] = useState<Order | null>(null)
-    const [, setLoadingOrder] = useState<boolean>(false)
-    const [orderError, setOrderError] = useState<string | null>(null)
-    const [retries, setRetries] = useState(0)
-
-    // Tải thông tin đơn hàng từ Backend / Mock Store để hiển thị bổ sung khi có mã đơn
-    useEffect(() => {
-        let isMounted = true
-        if (!orderId) return
-
-        setLoadingOrder(true)
-        setOrderError(null)
-
-        ordersApi
-            .getOrderById(orderId)
-            .then((data) => {
-                if (isMounted && data) {
-                    setOrder(data)
-                }
-            })
-            .catch((err) => {
-                if (isMounted) {
-                    const msg =
-                        err instanceof Error
-                            ? err.message
-                            : lang === 'en'
-                              ? 'Failed to load order info'
-                              : 'Không thể tải thông tin đơn hàng'
-                    setOrderError(msg)
-                }
-            })
-            .finally(() => {
-                if (isMounted) setLoadingOrder(false)
-            })
-
-        return () => {
-            isMounted = false
-        }
-    }, [orderId, lang])
-
-    // Lấy số tiền và phương thức ưu tiên từ order nếu pageParams chưa có
-    const displayAmount = parsed.amount > 0 ? parsed.amount : (order?.total || 0)
-    const displayMethod = parsed.paymentMethod || order?.paymentMethod || ''
-    const displayAddress = order?.shippingAddress || ''
-    const failureReason = parsed.reason || (orderError ? orderError : '')
-
+    const { pageParams } = useApp()
+    const paymentId = String(pageParams?.vnp_TxnRef || pageParams?.paymentId || '')
+    const orderId = String(pageParams?.orderId || '')
     return (
         <BuyerLayout>
-            <div className="max-w-lg mx-auto text-center py-12">
-                {/* ── Trạng thái Thành công ── */}
-                {status === 'success' && (
-                    <>
-                        {/* Icon thành công màu xanh lá */}
-                        <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <CheckCircle size={40} className="text-emerald-600" />
-                        </div>
-                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                            {tr(lang, 'orderPlaced')}
-                        </h1>
-                        {orderId && (
-                            <p className="text-gray-500 mb-2">
-                                {lang === 'en'
-                                    ? `Order #${orderId} confirmed.`
-                                    : `Đơn hàng #${orderId} đã được xác nhận.`}
-                            </p>
-                        )}
-                        <p className="text-sm text-gray-500 mb-2">
-                            {lang === 'en'
-                                ? 'Payment received and securely held by Nexus until the order is completed.'
-                                : 'Thanh toán thành công và đang được Nexus giữ an toàn cho đến khi đơn hàng hoàn tất.'}
-                        </p>
-                        <p className="text-sm text-gray-400 mb-6">
-                            {lang === 'en'
-                                ? "You'll receive a confirmation email shortly."
-                                : 'Bạn sẽ nhận được email xác nhận sớm.'}
-                        </p>
-
-                        {/* Hiển thị tóm tắt thông tin đơn hàng nếu có dữ liệu liên quan */}
-                        {(displayAmount > 0 || displayMethod || transactionId || displayAddress) && (
-                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2.5">
-                                {displayAmount > 0 && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Amount Paid:' : 'Số tiền thanh toán:'}
-                                        </span>
-                                        <span className="font-bold text-emerald-700">
-                                            {formatCurrency(displayAmount, lang)}
-                                        </span>
-                                    </div>
-                                )}
-                                {displayMethod && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Method:' : 'Phương thức:'}
-                                        </span>
-                                        <span className="font-medium text-gray-800">{displayMethod}</span>
-                                    </div>
-                                )}
-                                {transactionId && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Transaction ID:' : 'Mã giao dịch:'}
-                                        </span>
-                                        <span className="font-mono text-xs text-gray-700">{transactionId}</span>
-                                    </div>
-                                )}
-                                {displayAddress && (
-                                    <div className="flex justify-between pt-2 border-t border-border/60">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Delivery Address:' : 'Địa chỉ giao hàng:'}
-                                        </span>
-                                        <span className="text-xs text-gray-700 text-right max-w-[240px] truncate">
-                                            {displayAddress}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap gap-3 justify-center">
-                            <Button variant="outline" onClick={() => navigate('home')}>
-                                {lang === 'en' ? 'Continue Shopping' : 'Tiếp tục mua sắm'}
-                            </Button>
-                            <Button variant="primary" onClick={() => navigate('order-history')}>
-                                {tr(lang, 'orderHistory')}
-                            </Button>
-                            {orderId && (
-                                <Button
-                                    variant="outline"
-                                    onClick={() => navigate('order-detail', { id: orderId })}
-                                >
-                                    {tr(lang, 'orderDetail')}
-                                </Button>
-                            )}
-                        </div>
-                    </>
-                )}
-
-                {/* ── Trạng thái Thất bại ── */}
-                {status === 'failed' && (
-                    <>
-                        <div className="w-20 h-20 bg-danger-light rounded-full flex items-center justify-center mx-auto mb-5">
-                            <svg
-                                width="40"
-                                height="40"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="#DC2626"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                            >
-                                <circle cx="12" cy="12" r="10" />
-                                <line x1="15" y1="9" x2="9" y2="15" />
-                                <line x1="9" y1="9" x2="15" y2="15" />
-                            </svg>
-                        </div>
-                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                            {tr(lang, 'paymentFailed')}
-                        </h1>
-                        {hasExplicitOrderId && (
-                            <p className="text-gray-500 mb-2">
-                                {lang === 'en'
-                                    ? `Payment for order #${orderId} failed.`
-                                    : `Thanh toán cho đơn hàng #${orderId} không thành công.`}
-                            </p>
-                        )}
-                        {failureReason && (
-                            <p className="text-sm text-danger mb-4 font-medium">
-                                {failureReason}
-                            </p>
-                        )}
-
-                        {(displayAmount > 0 || displayMethod) && (
-                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2">
-                                {displayAmount > 0 && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Order Total:' : 'Tổng giá trị đơn:'}
-                                        </span>
-                                        <span className="font-bold text-gray-800">
-                                            {formatCurrency(displayAmount, lang)}
-                                        </span>
-                                    </div>
-                                )}
-                                {displayMethod && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Attempted Method:' : 'Phương thức thử:'}
-                                        </span>
-                                        <span className="font-medium text-gray-800">{displayMethod}</span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {retries < 3 ? (
-                            <>
-                                <p className="text-sm text-gray-400 mb-1">
-                                    {lang === 'en'
-                                        ? `Attempt ${retries + 1} of 3`
-                                        : `Lần thử ${retries + 1} / 3`}
-                                </p>
-                                <p className="text-sm text-gray-500 mb-8">
-                                    {tr(lang, 'retryLimit')}
-                                </p>
-                                <div className="flex gap-3 justify-center">
-                                    <Button variant="outline" onClick={() => navigate('cart')}>
-                                        {tr(lang, 'cancel')}
-                                    </Button>
-                                    <Button
-                                        variant="primary"
-                                        onClick={() => setRetries((r) => r + 1)}
-                                    >
-                                        {tr(lang, 'tryAgain')}
-                                    </Button>
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                <p className="text-gray-500 mb-8">
-                                    {lang === 'en'
-                                        ? 'Maximum retries reached. Please contact support.'
-                                        : 'Đã hết số lần thử. Vui lòng liên hệ hỗ trợ.'}
-                                </p>
-                                <div className="flex gap-3 justify-center">
-                                    <Button variant="outline" onClick={() => navigate('home')}>
-                                        {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
-                                    </Button>
-                                    <Button variant="primary" onClick={() => navigate('order-history')}>
-                                        {tr(lang, 'orderHistory')}
-                                    </Button>
-                                </div>
-                            </>
-                        )}
-                    </>
-                )}
-
-                {/* ── Trạng thái Đã hủy ── */}
-                {status === 'cancelled' && (
-                    <>
-                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <CircleX size={40} className="text-gray-500" />
-                        </div>
-                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                            {lang === 'en' ? 'Payment Cancelled' : 'Đã hủy thanh toán'}
-                        </h1>
-                        {orderId && (
-                            <p className="text-gray-500 mb-2">
-                                {lang === 'en'
-                                    ? `Order #${orderId} was not completed.`
-                                    : `Đơn hàng #${orderId} chưa được hoàn tất.`}
-                            </p>
-                        )}
-                        <p className="text-sm text-gray-500 mb-6">
-                            {lang === 'en'
-                                ? 'Your payment was cancelled. No charges have been made. You can review your cart or return to shopping.'
-                                : 'Thanh toán đã bị hủy. Không có khoản phí nào bị trừ. Bạn có thể xem lại giỏ hàng hoặc quay về mua sắm.'}
-                        </p>
-
-                        {(displayAmount > 0 || displayMethod || failureReason) && (
-                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2">
-                                {displayAmount > 0 && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Amount Uncharged:' : 'Số tiền chưa thu:'}
-                                        </span>
-                                        <span className="font-bold text-gray-700">
-                                            {formatCurrency(displayAmount, lang)}
-                                        </span>
-                                    </div>
-                                )}
-                                {displayMethod && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Method:' : 'Phương thức:'}
-                                        </span>
-                                        <span className="font-medium text-gray-800">{displayMethod}</span>
-                                    </div>
-                                )}
-                                {failureReason && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Note:' : 'Ghi chú:'}
-                                        </span>
-                                        <span className="text-xs text-gray-600">{failureReason}</span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap gap-3 justify-center">
-                            <Button variant="outline" onClick={() => navigate('home')}>
-                                {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
-                            </Button>
-                            <Button variant="primary" onClick={() => navigate('cart')}>
-                                {lang === 'en' ? 'Return to Cart' : 'Quay lại giỏ hàng'}
-                            </Button>
-                            <Button variant="outline" onClick={() => navigate('order-history')}>
-                                {tr(lang, 'orderHistory')}
-                            </Button>
-                        </div>
-                    </>
-                )}
-
-                {/* ── Trạng thái Đang xử lý ── */}
-                {status === 'pending' && (
-                    <>
-                        {/* Icon đang xử lý màu vàng/amber */}
-                        <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <Clock size={40} className="text-amber-500" />
-                        </div>
-                        <h1 className="text-2xl font-bold mb-2">
-                            {lang === 'en' ? 'Payment Pending' : 'Đang xử lý thanh toán'}
-                        </h1>
-                        {orderId && (
-                            <p className="text-gray-500 mb-2">
-                                {lang === 'en'
-                                    ? `Order #${orderId} is being processed.`
-                                    : `Đơn hàng #${orderId} đang được xử lý.`}
-                            </p>
-                        )}
-                        <p className="text-gray-500 mb-6">{tr(lang, 'paymentPending')}</p>
-
-                        {(displayAmount > 0 || displayMethod) && (
-                            <div className="nexus-card p-4 mb-6 text-sm text-left space-y-2">
-                                {displayAmount > 0 && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Expected Amount:' : 'Số tiền thanh toán:'}
-                                        </span>
-                                        <span className="font-bold text-amber-700">
-                                            {formatCurrency(displayAmount, lang)}
-                                        </span>
-                                    </div>
-                                )}
-                                {displayMethod && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">
-                                            {lang === 'en' ? 'Method:' : 'Phương thức:'}
-                                        </span>
-                                        <span className="font-medium text-gray-800">{displayMethod}</span>
-                                    </div>
-                                )}
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">
-                                        {lang === 'en' ? 'Status:' : 'Tình trạng:'}
-                                    </span>
-                                    <span className="text-amber-600 font-medium">
-                                        {lang === 'en'
-                                            ? 'Awaiting gateway confirmation'
-                                            : 'Chờ xác nhận từ cổng thanh toán'}
-                                    </span>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap gap-3 justify-center">
-                            <Button variant="outline" onClick={() => navigate('home')}>
-                                {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
-                            </Button>
-                            <Button variant="primary" onClick={() => navigate('order-history')}>
-                                {tr(lang, 'orderHistory')}
-                            </Button>
-                        </div>
-                    </>
-                )}
-
-                {/* ── Trạng thái không xác định ── */}
-                {status === 'unknown' && (
-                    <>
-                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
-                            <AlertTriangle size={40} className="text-gray-500" />
-                        </div>
-                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                            {lang === 'en' ? 'Unknown Payment Status' : 'Trạng thái thanh toán không xác định'}
-                        </h1>
-                        <p className="text-gray-500 mb-8">
-                            {lang === 'en'
-                                ? 'We could not determine your payment status. Please check your order history or contact support.'
-                                : 'Không thể xác định trạng thái thanh toán của bạn. Vui lòng kiểm tra lịch sử đơn hàng hoặc liên hệ hỗ trợ.'}
-                        </p>
-                        <div className="flex gap-3 justify-center">
-                            <Button variant="outline" onClick={() => navigate('home')}>
-                                {lang === 'en' ? 'Back to Home' : 'Về trang chủ'}
-                            </Button>
-                            <Button variant="primary" onClick={() => navigate('order-history')}>
-                                {tr(lang, 'orderHistory')}
-                            </Button>
-                        </div>
-                    </>
-                )}
-            </div>
+            {paymentId ? (
+                <VnpayPaymentResult key={paymentId} paymentId={paymentId} />
+            ) : (
+                <VerifiedOrderResult key={orderId} orderId={orderId} />
+            )}
         </BuyerLayout>
     )
 }
 
-// ─── Order History Page ───
-/**
- * Màn hình Lịch sử đơn hàng của Buyer
- * 
- * Chức năng: Hiển thị danh sách các đơn hàng đã mua của Buyer theo phân loại trạng thái,
- * cho phép tìm kiếm theo mã đơn hoặc sản phẩm, hủy nhanh đơn chưa xử lý, và điều hướng vào xem chi tiết.
- * 
- * Đầu vào: Bộ lọc tab trạng thái (all, pending, paid, processing, shipped, delivered, completed, cancelled, refunded)
- * và chuỗi từ khóa tìm kiếm.
- * 
- * Luồng xử lý:
- * 1. Gọi `ordersApi.getOrders({ role: 'buyer', status, search })`.
- * 2. Ưu tiên lấy từ REST API/DB; nếu không có kết nối thì fallback dữ liệu mock JSON trong localStorage.
- * 3. Hỗ trợ thao tác hủy đơn trực tiếp (`ordersApi.cancelOrder`) với popup xác nhận và reload danh sách.
- */
+/** Lịch sử đơn lấy từ backend; lỗi hiển thị để người mua có thể thử lại. */
 export function OrderHistoryPage() {
     const { lang, navigate, showToast, user } = useApp()
     const [orders, setOrders] = useState<Order[]>([])
@@ -3407,7 +2894,8 @@ export function OrderHistoryPage() {
             await ordersApi.cancelOrder(cancelOrderId, cancelReason)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+                message:
+                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
             })
             setCancelOrderId(null)
             setCancelReason('')
@@ -3415,7 +2903,9 @@ export function OrderHistoryPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err.message || (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
+                message:
+                    err.message ||
+                    (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
             })
         }
     }
@@ -3452,7 +2942,11 @@ export function OrderHistoryPage() {
                     {loading ? (
                         <div className="py-12 text-center text-gray-400">
                             <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
-                            <p>{lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}</p>
+                            <p>
+                                {lang === 'en'
+                                    ? 'Loading orders...'
+                                    : 'Đang tải danh sách đơn hàng...'}
+                            </p>
                         </div>
                     ) : orders.length === 0 ? (
                         <EmptyState
@@ -3500,9 +2994,12 @@ export function OrderHistoryPage() {
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
-                                                    onClick={() => navigate('order-detail', { id: order.id })}
+                                                    onClick={() =>
+                                                        navigate('order-detail', { id: order.id })
+                                                    }
                                                 >
-                                                    {tr(lang, 'orderDetail')} <ChevronRight size={14} />
+                                                    {tr(lang, 'orderDetail')}{' '}
+                                                    <ChevronRight size={14} />
                                                 </Button>
                                             </div>
                                         </div>
@@ -3525,7 +3022,11 @@ export function OrderHistoryPage() {
                                                                 {item.productName}
                                                             </p>
                                                             <p className="text-xs text-gray-500 mt-0.5">
-                                                                ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                                                ×{item.quantity} ·{' '}
+                                                                {formatCurrency(
+                                                                    item.unitPrice,
+                                                                    lang,
+                                                                )}
                                                             </p>
                                                         </div>
                                                     </div>
@@ -3551,7 +3052,9 @@ export function OrderHistoryPage() {
                                             </div>
                                             <div className="text-right">
                                                 <span className="text-xs text-gray-500 mr-2">
-                                                    {lang === 'en' ? 'Total payable:' : 'Tổng thanh toán:'}
+                                                    {lang === 'en'
+                                                        ? 'Total payable:'
+                                                        : 'Tổng thanh toán:'}
                                                 </span>
                                                 <span className="font-bold text-base text-primary">
                                                     {formatCurrency(order.total, lang)}
@@ -3595,7 +3098,11 @@ export function OrderHistoryPage() {
                         label={lang === 'en' ? 'Cancellation reason' : 'Lý do hủy đơn'}
                         value={cancelReason}
                         onChange={(event) => setCancelReason(event.target.value)}
-                        placeholder={lang === 'en' ? 'Tell us why you are cancelling...' : 'Nhập lý do hủy đơn...'}
+                        placeholder={
+                            lang === 'en'
+                                ? 'Tell us why you are cancelling...'
+                                : 'Nhập lý do hủy đơn...'
+                        }
                         rows={3}
                     />
                 </div>
@@ -3607,12 +3114,12 @@ export function OrderHistoryPage() {
 // ─── Order Detail Page ───
 /**
  * Màn hình Chi tiết đơn hàng của Buyer
- * 
+ *
  * Chức năng: Hiển thị đầy đủ thông tin một đơn hàng: tiến trình timeline, sản phẩm, địa chỉ,
  * thanh toán, trạng thái ký quỹ Escrow (Bảo vệ Buyer), vận chuyển tracking;
  * cho phép Buyer thực hiện các hành động: Hủy đơn, Xác nhận đã nhận hàng (giải ngân Escrow),
  * Mở khiếu nại (giữ tiền để Admin xử lý), và Đánh giá người bán.
- * 
+ *
  * Luồng dữ liệu:
  * - Gọi `ordersApi.getOrderById(pageParams.id)` để lấy thông tin đơn hàng mới nhất từ API / Mock store.
  * - Các tương tác hành động gọi API tương ứng trong `ordersApi` và cập nhật trực tiếp dữ liệu.
@@ -3653,7 +3160,11 @@ export function OrderDetailPage() {
             <BuyerLayout>
                 <div className="py-20 text-center text-gray-500">
                     <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-3" />
-                    <p>{lang === 'en' ? 'Loading order details...' : 'Đang tải chi tiết đơn hàng...'}</p>
+                    <p>
+                        {lang === 'en'
+                            ? 'Loading order details...'
+                            : 'Đang tải chi tiết đơn hàng...'}
+                    </p>
                 </div>
             </BuyerLayout>
         )
@@ -3676,9 +3187,9 @@ export function OrderDetailPage() {
     const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
     const protectionDays = order.protectionEndsAt
         ? Math.max(
-            0,
-            Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
-        )
+              0,
+              Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
+          )
         : 0
     const isProtectionActive = order.status === 'DELIVERED' && paymentStatus === 'protection_period'
 
@@ -3697,7 +3208,8 @@ export function OrderDetailPage() {
         } catch {
             showToast({
                 type: 'error',
-                message: lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
+                message:
+                    lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
             })
         }
     }
@@ -3732,7 +3244,8 @@ export function OrderDetailPage() {
             setCancelOpen(false)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+                message:
+                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
             })
         } catch {
             showToast({
@@ -3791,7 +3304,9 @@ export function OrderDetailPage() {
 
                     {/* Danh sách sản phẩm mua */}
                     <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-4">{lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}</h3>
+                        <h3 className="font-bold mb-4">
+                            {lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}
+                        </h3>
                         <div className="divide-y divide-border/60">
                             {order.items.map((item) => (
                                 <div
@@ -3804,9 +3319,12 @@ export function OrderDetailPage() {
                                         className="w-16 h-16 object-cover rounded-xl border border-border shrink-0"
                                     />
                                     <div className="flex-1 min-w-0">
-                                        <p className="font-semibold text-gray-900 line-clamp-1">{item.productName}</p>
+                                        <p className="font-semibold text-gray-900 line-clamp-1">
+                                            {item.productName}
+                                        </p>
                                         <p className="text-sm text-gray-500 mt-1">
-                                            ×{item.quantity} · {formatCurrency(item.unitPrice, lang)}
+                                            ×{item.quantity} ·{' '}
+                                            {formatCurrency(item.unitPrice, lang)}
                                         </p>
                                     </div>
                                     <p className="font-bold text-primary shrink-0">
@@ -3848,7 +3366,9 @@ export function OrderDetailPage() {
                     {/* Timeline tiến trình đơn hàng */}
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Order Status Timeline' : 'Tiến trình trạng thái đơn hàng'}
+                            {lang === 'en'
+                                ? 'Order Status Timeline'
+                                : 'Tiến trình trạng thái đơn hàng'}
                         </h3>
                         <OrderTimeline status={order.status} />
                     </div>
@@ -3873,14 +3393,23 @@ export function OrderDetailPage() {
                                     </p>
                                     {order.protectionEndsAt && (
                                         <p className="text-xs text-gray-500 mt-2">
-                                            {lang === 'en' ? 'Auto release at' : 'Tự động giải ngân lúc'}:{' '}
-                                            {new Date(order.protectionEndsAt).toLocaleString()}
+                                            {lang === 'en'
+                                                ? 'Auto release at'
+                                                : 'Tự động giải ngân lúc'}
+                                            : {new Date(order.protectionEndsAt).toLocaleString()}
                                         </p>
                                     )}
                                 </div>
                                 <div className="flex sm:flex-col gap-2 shrink-0 w-full sm:w-auto">
-                                    <Button variant="primary" size="sm" onClick={confirmDelivery} className="flex-1 sm:flex-initial">
-                                        {lang === 'en' ? 'Confirm Received' : 'Xác nhận đã nhận hàng'}
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        onClick={confirmDelivery}
+                                        className="flex-1 sm:flex-initial"
+                                    >
+                                        {lang === 'en'
+                                            ? 'Confirm Received'
+                                            : 'Xác nhận đã nhận hàng'}
                                     </Button>
                                     <Button
                                         variant="outline"
@@ -3987,7 +3516,9 @@ export function OrderDetailPage() {
                 <div className="space-y-5">
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'shippingAddress')}</h3>
-                        <p className="text-sm text-gray-700 leading-relaxed">{order.shippingAddress}</p>
+                        <p className="text-sm text-gray-700 leading-relaxed">
+                            {order.shippingAddress}
+                        </p>
                     </div>
 
                     <div className="nexus-card p-5">
@@ -4413,22 +3944,23 @@ export function SellerShopPage() {
                                                         ? `Đã theo dõi ${sellerName}`
                                                         : `Followed ${sellerName}`
                                                     : lang === 'vi'
-                                                        ? 'Đã bỏ theo dõi'
-                                                        : 'Unfollowed',
+                                                      ? 'Đã bỏ theo dõi'
+                                                      : 'Unfollowed',
                                             })
                                         }}
-                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${isFollowing
-                                            ? 'bg-white/20 text-white border border-white/40'
-                                            : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
-                                            }`}
+                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
+                                            isFollowing
+                                                ? 'bg-white/20 text-white border border-white/40'
+                                                : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
+                                        }`}
                                     >
                                         {isFollowing
                                             ? lang === 'vi'
                                                 ? '✓ Đang Theo Dõi'
                                                 : '✓ Following'
                                             : lang === 'vi'
-                                                ? '+ Theo Dõi'
-                                                : '+ Follow'}
+                                              ? '+ Theo Dõi'
+                                              : '+ Follow'}
                                     </button>
                                     <button
                                         onClick={() =>
@@ -4523,10 +4055,11 @@ export function SellerShopPage() {
                             <button
                                 key={tab.id}
                                 onClick={() => setShopTab(tab.id)}
-                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${shopTab === tab.id
-                                    ? 'bg-primary text-white shadow-sm'
-                                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                                    }`}
+                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                                    shopTab === tab.id
+                                        ? 'bg-primary text-white shadow-sm'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                                }`}
                             >
                                 {tab.label} ({tab.count})
                             </button>
@@ -4572,185 +4105,5 @@ export function SellerShopPage() {
     )
 }
 
-// ─── Notification Center ───────────────────────────────────────────────────────
-export function NotificationPage() {
-    const { lang } = useApp()
-    const [activeTab, setActiveTab] = useState('history')
-    const [notifications, setNotifications] = useState(NOTIFICATIONS)
-
-    const notificationIcon = (type: string) => {
-        const Icon =
-            type === 'order'
-                ? Package
-                : type === 'auction'
-                    ? Gavel
-                    : type === 'payment'
-                        ? CreditCard
-                        : type === 'promotion'
-                            ? Gift
-                            : type === 'reputation'
-                                ? Star
-                                : Settings2
-        return <Icon size={18} />
-    }
-
-    return (
-        <BuyerLayout>
-            <div className="max-w-3xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                    <h1 className="text-2xl font-bold">{tr(lang, 'notificationCenter')}</h1>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                            setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-                        }
-                    >
-                        {tr(lang, 'markAllRead')}
-                    </Button>
-                </div>
-                <div className="nexus-card">
-                    <Tabs
-                        tabs={[
-                            {
-                                id: 'history',
-                                label: lang === 'en' ? 'Notifications' : 'Thông báo',
-                                count: notifications.filter((n) => !n.read).length,
-                            },
-                            { id: 'preferences', label: tr(lang, 'notifPreferences') },
-                        ]}
-                        active={activeTab}
-                        onChange={setActiveTab}
-                    />
-                    <div className="p-0">
-                        {activeTab === 'history' && (
-                            <div>
-                                {notifications.map((n) => (
-                                    <div
-                                        key={n.id}
-                                        onClick={() =>
-                                            setNotifications((prev) =>
-                                                prev.map((x) =>
-                                                    x.id === n.id ? { ...x, read: true } : x,
-                                                ),
-                                            )
-                                        }
-                                        className={`flex gap-4 p-4 border-b border-border last:border-0 cursor-pointer transition-colors ${!n.read ? 'bg-primary-light/40' : 'hover:bg-gray-50'}`}
-                                    >
-                                        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-gray-100 text-gray-500">
-                                            {notificationIcon(n.type)}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <p
-                                                    className={`text-sm font-semibold ${!n.read ? 'text-gray-900' : 'text-gray-700'}`}
-                                                >
-                                                    {lang === 'vi' ? n.titleVi : n.title}
-                                                </p>
-                                                {!n.read && (
-                                                    <span className="w-2 h-2 rounded-full bg-primary" />
-                                                )}
-                                            </div>
-                                            <p className="text-xs text-gray-500 mt-0.5">
-                                                {lang === 'vi' ? n.bodyVi : n.body}
-                                            </p>
-                                            <p className="text-xs text-gray-400 mt-1">
-                                                {new Date(n.timestamp).toLocaleString()}
-                                            </p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                        {activeTab === 'preferences' && (
-                            <div className="p-5">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full">
-                                        <thead>
-                                            <tr className="border-b border-border">
-                                                <th className="text-left py-3 text-sm text-gray-500">
-                                                    Type
-                                                </th>
-                                                <th className="text-center py-3 text-sm text-gray-500">
-                                                    {tr(lang, 'emailChannel')}
-                                                </th>
-                                                <th className="text-center py-3 text-sm text-gray-500">
-                                                    {tr(lang, 'pushChannel')}
-                                                </th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {[
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'Order Updates'
-                                                            : 'Cập nhật đơn hàng',
-                                                    locked: true,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'Payment Notifications'
-                                                            : 'Thông báo thanh toán',
-                                                    locked: true,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'Auction Alerts'
-                                                            : 'Thông báo đấu giá',
-                                                    locked: false,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en' ? 'Promotions' : 'Khuyến mãi',
-                                                    locked: false,
-                                                },
-                                                {
-                                                    type:
-                                                        lang === 'en'
-                                                            ? 'System News'
-                                                            : 'Tin tức hệ thống',
-                                                    locked: false,
-                                                },
-                                            ].map((item) => (
-                                                <tr
-                                                    key={item.type}
-                                                    className="border-b border-border last:border-0"
-                                                >
-                                                    <td className="py-3 text-sm font-medium flex items-center gap-2">
-                                                        {item.type}
-                                                        {item.locked && (
-                                                            <span className="badge badge-gray text-[10px]">
-                                                                {tr(lang, 'alwaysOn')}
-                                                            </span>
-                                                        )}
-                                                    </td>
-                                                    <td className="text-center py-3">
-                                                        <Toggle
-                                                            checked={true}
-                                                            onChange={() => { }}
-                                                            disabled={item.locked}
-                                                        />
-                                                    </td>
-                                                    <td className="text-center py-3">
-                                                        <Toggle
-                                                            checked={!item.locked}
-                                                            onChange={() => { }}
-                                                            disabled={item.locked}
-                                                        />
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </BuyerLayout>
-    )
-}
+/** Hộp thư đơn/thanh toán dùng API thật, thay cho thông báo và tùy chọn email/push mock. */
+export { NotificationInbox as NotificationPage } from './NotificationInbox'

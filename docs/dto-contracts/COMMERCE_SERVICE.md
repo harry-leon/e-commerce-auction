@@ -201,12 +201,32 @@ Header `Idempotency-Key` bắt buộc là UUID chuẩn; cùng key + buyer + nộ
 
 Backend tải giá/tên/mã/seller mới nhất từ Catalog, tính `BigDecimal` scale 2 `HALF_UP`, lưu snapshot vào `orders`/`order_items`. Preview trả `subtotal`, `discountAmount`, `shippingFee`, `taxAmount`, `totalAmount`, `appliedVoucher: null`, `items`, `isOrderable`, `warnings`. Mỗi item có `skuId`, `sellerId`, `productName`, `skuCode`, `unitPrice`, `cartUnitPrice`, `quantity`, `itemTotal`. Giá khác giỏ tạo cảnh báo; giá lúc tạo đơn luôn lấy lại từ Catalog. Preview thiếu kho trả `isOrderable: false`; bước tạo đơn dùng reserve nguyên tử làm kiểm tra cuối.
 
-Kết quả tạo đơn có `id`, `orderNo`, `status: PENDING_PAYMENT`, `subtotal`, `shippingFee`, `discount`, `total`, `paymentMethod: COD`. Không trả payment URL giả. Sau reserve thành công chỉ xóa items đã mua; giỏ hết item chuyển `CONVERTED`. Đơn/items/giỏ commit cùng transaction.
+Kết quả tạo đơn có `id`, `orderNo`, `status: PENDING_PAYMENT`, `subtotal`, `shippingFee`, `discount`, `total`, `paymentMethod: COD|VNPAY`, `paymentUrl` (COD null, VNPAY là URL sandbox đã ký). Sau reserve chỉ xóa items đã mua; giỏ hết item chuyển `CONVERTED`. Đơn/items/giỏ và Payment VNPAY commit cùng transaction.
 
-Phí ship tạm dùng `app.commerce.order.shipping-fee` (mặc định 0), VAT đã gồm trong giá nên `taxAmount = 0`. Voucher khác rỗng trả `422 CHECKOUT_VOUCHER_UNSUPPORTED`. Ticket này chỉ tạo đơn REGULAR/COD; online payment trả `422 PAYMENT_METHOD_UNSUPPORTED`, source auction trả `422 CHECKOUT_SOURCE_UNSUPPORTED`. Chưa tính ship theo cân nặng/khoảng cách hoặc triển khai payment lifecycle.
+Phí ship tạm dùng `app.commerce.order.shipping-fee` (mặc định 0), VAT đã gồm trong giá nên `taxAmount = 0`. Voucher khác rỗng trả `422 CHECKOUT_VOUCHER_UNSUPPORTED`; CARD trả `422 PAYMENT_METHOD_UNSUPPORTED`, source auction trả `422 CHECKOUT_SOURCE_UNSUPPORTED`. TT-S1-3 bổ sung VNPAY sandbox, yêu cầu VND nguyên dương và cấu hình merchant/service account; thiếu cấu hình trả 503. Chưa tính ship theo cân nặng/khoảng cách.
 
 Commerce gọi Fulfillment qua `FULFILLMENT_SERVICE_URL` và chuyển tiếp JWT cho reserve/release. Reservation hết hạn sau 15 phút. Khi reserve timeout hoặc transaction rollback sau reserve, callback gọi `/inventory/release` theo orderId; nếu release lỗi mạng/process chết, scheduler Fulfillment hoàn kho khi TTL hết. Chưa có outbox retry bền vững. Nếu kết quả commit không xác định, chỉ ghi log đối soát, không release ngay vì đơn có thể đã commit.
 
 Các lỗi đáng chú ý: `409 INVENTORY_INSUFFICIENT`, `409 CART_SKU_NOT_AVAILABLE`, `404 CART_ITEM_NOT_FOUND`, `422 CHECKOUT_EXPIRED`, `422 CHECKOUT_MULTIPLE_SELLERS`, `422 ORDER_DAILY_LIMIT_EXCEEDED`, `422 CHECKOUT_INVALID_IDEMPOTENCY_KEY`, `502 CATALOG_INVALID_RESPONSE`/`INVENTORY_UNAVAILABLE`. Thiếu header trả 400; DTO không hợp lệ trả 422.
 
-Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; cột mới nullable cho dữ liệu cũ. Cần triển khai Catalog có `sellerId` trước Commerce mới; không sửa migration V1–V3. Các route đọc/hủy đơn và `/payments/**` vẫn `PLANNED`. FE hiện còn mock fallback; thành công trên UI chưa chứng minh giao dịch backend đã hoàn tất.
+Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; V5 thêm payment snapshot, reservation IDs và outbox kho sau IPN. Cần triển khai Catalog có `sellerId` trước Commerce mới. Route đọc/hủy đơn vẫn `PLANNED`; mock COD/demo còn tồn tại, VNPAY không fallback mock.
+
+## 5. VNPAY sandbox — TT-S1-3
+
+| Method | Path | Xác thực | Kết quả |
+|---|---|---|---|
+| POST | `/api/v1/payments` | JWT + ORDER.CREATE, đúng buyer | Envelope PaymentResponse; body chỉ nhận orderId |
+| GET | `/api/v1/payments/{paymentId}` | JWT, đúng buyer | Envelope PaymentResponse, trạng thái DB |
+| GET | `/api/v1/payments/vnpay/ipn` | HMAC-SHA512, không JWT | JSON RspCode/Message theo protocol VNPAY |
+
+`PaymentResponse`: `paymentId`, `orderId`, `status` (PENDING/SUCCESS/FAILED/CANCELLED), `amount`, `currency: VND`, `paymentUrl`, `expiresAt`. URL dùng paymentId làm TxnRef, amount DB × 100, hạn theo cửa sổ giữ kho của Order.
+
+IPN xác minh chữ ký/merchant rồi đối chiếu Payment→Order và amount cả hai bảng; khóa DB chặn callback trùng. Thành công cập nhật SUCCESS/PAID, thất bại xác định cập nhật FAILED/CANCELLED; terminal lặp trả 02, không tạo history/outbox lần hai. Kết quả bất thường cần đối soát.
+
+Outbox sau IPN commit cùng Payment và worker retry confirm/release bằng service account; khác với cleanup **checkout rollback** vẫn dùng callback/TTL ở mục 4. Nếu kho hết hạn trước confirm cần đối soát/refund, chưa có hoàn tiền tự động.
+
+Cấu hình, RspCode, giới hạn, cách test và hướng review: [PAYMENT_SANDBOX_INTEGRATION.md](../PAYMENT_SANDBOX_INTEGRATION.md).
+
+## Thông báo TT-S1-4
+
+Checkout mới enqueue ORDER_CREATED; IPN terminal đầu tiên enqueue PAYMENT_SUCCESS/PAYMENT_FAILED. Snapshot buyer/orderNo/total lấy từ Order, commit cùng transaction; worker gửi HTTP sau commit với retry và event UUID cố định. Không đổi request/response checkout/payment. Xem [Notification contract](NOTIFICATION_SERVICE.md) và [demo/vận hành](../ORDER_PAYMENT_NOTIFICATIONS_DEMO.md).

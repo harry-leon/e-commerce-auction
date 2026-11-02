@@ -42,7 +42,8 @@ const en = {
     back: 'Back',
     submit: 'Submit',
     demoPreview: 'Frontend demo',
-    demoPreviewDescription: 'Open an interface with mock data; no account or backend connection is required.',
+    demoPreviewDescription:
+        'Open an interface with mock data; no account or backend connection is required.',
     openBuyerDemo: 'Open Buyer',
     openSellerDemo: 'Open Seller',
     openAdminDemo: 'Open Admin',

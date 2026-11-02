@@ -12,7 +12,8 @@
 > **Triển khai TT-S1-2:** preview và tạo đơn REGULAR/COD đã có backend. Contract callable và giới hạn hiện tại xem
 > [COMMERCE_SERVICE.md mục 4](dto-contracts/COMMERCE_SERVICE.md#4-checkout--tạo-đơn--tt-s1-2).
 > Ví dụ trong bản draft bên dưới mô tả cả đích đến tương lai; source hiện dùng envelope v2 `success/data/error/meta`,
-> xác minh JWT tại service, chưa hỗ trợ voucher/payment online/đọc-hủy đơn. Không dùng mẫu draft như API đã hoàn thành.
+> xác minh JWT tại service, chưa hỗ trợ voucher. Các endpoint đọc/chuyển trạng thái/hủy đơn được tích hợp cùng checkout. TT-S1-3 bổ sung [VNPAY sandbox/IPN](PAYMENT_SANDBOX_INTEGRATION.md).
+> Không dùng mẫu draft như API đã hoàn thành.
 
 ---
 
@@ -208,7 +209,7 @@ Tài liệu này xác lập thỏa thuận kỹ thuật (Technical Alignment Agr
   "reason": "Thay đổi nhu cầu mua hàng"
 }
 ```
-- **Hành vi hệ thống**: Chuyển đơn sang `CANCELLED`, gọi Inventory giải phóng giữ hàng (`RELEASED`), ghi log vào `order_status_history`.
+- **Hành vi hiện tại**: Chỉ hủy đơn `PENDING_PAYMENT` không có VNPAY đang chờ; chuyển `CANCELLED`, ghi history và outbox RELEASE cùng transaction. Worker hoàn kho sau commit. Đơn `PAID` hoặc VNPAY đang chờ trả `ORDER_CANNOT_CANCEL`; chưa tích hợp provider refund/cancel, không ghi `REFUNDED` giả.
 
 ---
 
@@ -260,7 +261,7 @@ stateDiagram-v2
     SHIPPED --> DELIVERED : Giao hàng thành công đến tay người mua
     SHIPPED --> CANCELLED : Giao hàng thất bại / Khách từ chối nhận
     
-    DELIVERED --> COMPLETED : Người mua bấm xác nhận / Tự động sau 7 ngày
+    DELIVERED --> COMPLETED : Đơn vị vận chuyển (Shipper/Carrier) xác nhận / Tự động sau 7 ngày
     DELIVERED --> REFUNDED : Khiếu nại/Trả hàng thành công
     
     CANCELLED --> [*] : Giải phóng tồn kho (RELEASED)
@@ -271,12 +272,12 @@ stateDiagram-v2
 | Từ trạng thái | Sang trạng thái | Tác nhân kích hoạt | Tác động tồn kho / Ghi chú |
 | :--- | :--- | :--- | :--- |
 | `PENDING_PAYMENT` | `PAID` | Hệ thống (Payment Callback) / COD | Chuyển `Reservation` sang `CONFIRMED`, trừ tồn kho thực |
-| `PENDING_PAYMENT` | `CANCELLED` | Buyer / Hệ thống (Timeout 15p) | Giải phóng `Reservation` (`RELEASED`) |
+| `PENDING_PAYMENT` | `CANCELLED` | Buyer / Admin / Hệ thống (Timeout 15p) | Giải phóng `Reservation` (`RELEASED`) |
 | `PAID` | `PROCESSING` | Seller / Admin | Chuẩn bị hàng |
-| `PAID` | `REFUNDED` | Seller / Admin / Buyer thỏa thuận | Kích hoạt hoàn tiền qua Gateway, hoàn kho |
+| `PAID` | `REFUNDED` | Buyer / Seller / Admin / Hệ thống | Kích hoạt hoàn tiền qua Gateway, hoàn kho |
 | `PROCESSING` | `SHIPPED` | Seller / Fulfillment Service | Cập nhật `tracking_no` |
 | `SHIPPED` | `DELIVERED` | Carrier Webhook / Admin | Đã giao |
-| `DELIVERED` | `COMPLETED` | Buyer / Hệ thống (sau 7 ngày) | Hoàn tất giao dịch |
+| `DELIVERED` | `COMPLETED` | Shipper (Carrier) / Logistics / Admin / Hệ thống (sau 7 ngày) | Hoàn tất giao dịch (chặn Buyer tự bấm hoàn tất) |
 
 ---
 

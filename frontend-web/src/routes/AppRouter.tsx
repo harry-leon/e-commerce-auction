@@ -70,7 +70,13 @@ import type { User } from '../types'
  * Chỉ thay state trong bộ nhớ của trình duyệt để route guard render đúng giao diện; không ghi token,
  * không gọi backend và khi tải lại URL demo sẽ khởi tạo lại từ route/query.
  */
-function DemoRouteBootstrap({ user, setUser }: { user: User; setUser: (user: User | null) => void }) {
+function DemoRouteBootstrap({
+    user,
+    setUser,
+}: {
+    user: User
+    setUser: (user: User | null) => void
+}) {
     useEffect(() => {
         setUser(user)
     }, [setUser, user])
@@ -95,7 +101,8 @@ function demoUserFor(role: unknown): User | null {
  */
 function demoUserForDashboard(page: string): User | null {
     if (!import.meta.env.DEV) return null
-    if (page === 'home' || page === 'cart' || page === 'checkout' || page === 'payment-result') return DEMO_BUYER
+    if (page === 'home' || page === 'cart' || page === 'checkout' || page === 'payment-result')
+        return DEMO_BUYER
     if (page.startsWith('admin-')) return DEMO_ADMIN
     if (page.startsWith('seller-')) return DEMO_SELLER
     if (page.startsWith('support-')) return DEMO_SUPPORT

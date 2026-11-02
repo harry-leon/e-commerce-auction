@@ -84,6 +84,11 @@
       <version>${springdoc.version}</version>
     </dependency>
 
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-mail</artifactId>
+    </dependency>
+
     <!-- Thêm khi service cần:
          spring-kafka, spring-boot-starter-data-redis, spring-boot-starter-websocket -->
 
@@ -146,6 +151,10 @@
               <excludes>
                 <exclude>com/nexus/notification/NotificationServiceApplication*</exclude>
                 <exclude>com/nexus/notification/config/**</exclude>
+                <exclude>com/nexus/notification/dto/**</exclude>
+                <exclude>com/nexus/notification/entity/**</exclude>
+                <exclude>com/nexus/notification/enums/**</exclude>
+                <exclude>com/nexus/notification/exception/**</exclude>
               </excludes>
               <rules>
                 <rule>

@@ -103,4 +103,18 @@ class HttpInventoryClientTest {
                 + "\",\"skuId\":\"" + sku + "\",\"quantity\":1,\"status\":\"PENDING\"}]}}";
         assertThrows(ApiException.class, () -> client.reserve(id, items, "jwt"));
     }
+
+    /** Worker retry sau timeout không trừ kho hai lần: chỉ chấp nhận đúng mã ALREADY_COMMITTED làm replay thành công. */
+    @Test
+    void confirmTreatsAlreadyCommittedAsIdempotentButPreservesOtherErrors() {
+        UUID id = UUID.randomUUID();
+        body = "{\"success\":true,\"data\":{}}";
+        client.confirm(id, "service-token");
+        assertEquals("/api/v1/inventory/reservations/" + id + "/confirm", path);
+        status = 409;
+        body = "{\"success\":false,\"error\":{\"code\":\"INVENTORY_RESERVATION_ALREADY_COMMITTED\",\"message\":\"Đã xuất kho\"}}";
+        client.confirm(id, "service-token");
+        body = "{\"success\":false,\"error\":{\"code\":\"INVENTORY_RESERVATION_EXPIRED\",\"message\":\"Hết hạn\"}}";
+        assertThrows(ApiException.class, () -> client.confirm(id, "service-token"));
+    }
 }

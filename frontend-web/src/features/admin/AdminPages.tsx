@@ -36,18 +36,23 @@ import {
     ClipboardList,
     Info,
 } from '../../components/UI'
-import {
-    USERS,
-    AUCTIONS,
-    ORDERS,
-    ROLES,
-    EVENT_LOGS,
-    SYSTEM_SERVICES,
-} from '../../mockData'
+import { USERS, AUCTIONS, ORDERS, ROLES, EVENT_LOGS, SYSTEM_SERVICES } from '../../mockData'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Order, OrderStatus } from '../../types'
-import { getAllowedOrderStatusTransitions, ordersApi, type WithdrawalRequest } from '../../api/orders'
-import { api, mapUser, errorMessage, type ApiUser, type ApiRole, type ApiProduct, type Envelope } from '../../api/client'
+import {
+    getAllowedOrderStatusTransitions,
+    ordersApi,
+    type WithdrawalRequest,
+} from '../../api/orders'
+import {
+    api,
+    mapUser,
+    errorMessage,
+    type ApiUser,
+    type ApiRole,
+    type ApiProduct,
+    type Envelope,
+} from '../../api/client'
 import { useLoad } from '../../hooks/useLoad'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
@@ -343,8 +348,8 @@ export function AdminUsersPage() {
                                                     ? 'Active'
                                                     : 'Hoạt động'
                                                 : lang === 'en'
-                                                    ? 'Locked'
-                                                    : 'Bị khóa'
+                                                  ? 'Locked'
+                                                  : 'Bị khóa'
                                         }
                                     />
                                 ),
@@ -419,7 +424,7 @@ export function AdminUsersPage() {
                     <Select
                         label={lang === 'en' ? 'Role' : 'Vai trò'}
                         value="buyer"
-                        onChange={() => { }}
+                        onChange={() => {}}
                         options={['buyer', 'seller', 'admin', 'support'].map((r) => ({
                             value: r,
                             label: r.charAt(0).toUpperCase() + r.slice(1),
@@ -428,7 +433,7 @@ export function AdminUsersPage() {
                     <Select
                         label={tr(lang, 'gender')}
                         value="male"
-                        onChange={() => { }}
+                        onChange={() => {}}
                         options={[
                             { value: 'male', label: tr(lang, 'male') },
                             { value: 'female', label: tr(lang, 'female') },
@@ -450,7 +455,8 @@ export function AdminUsersPage() {
                         await api(`/users/${deleteId}`, { method: 'DELETE' })
                         showToast({
                             type: 'success',
-                            message: lang === 'en' ? 'User deleted.' : 'Đã xóa người dùng thành công.',
+                            message:
+                                lang === 'en' ? 'User deleted.' : 'Đã xóa người dùng thành công.',
                         })
                         setRefreshKey((k) => k + 1)
                     } catch (err) {
@@ -545,7 +551,7 @@ export function AdminUserDetailPage() {
                                     [
                                         'Trust Level',
                                         user.trustLevel.charAt(0).toUpperCase() +
-                                        user.trustLevel.slice(1),
+                                            user.trustLevel.slice(1),
                                     ],
                                     ['Transactions', '24 successful'],
                                 ].map(([k, v]) => (
@@ -632,8 +638,14 @@ export function AdminRolesPage() {
                         privileges: r.privileges || [],
                         permissions: MODULES.map((mod) => ({
                             module: mod,
-                            read: r.privileges?.includes(`${mod}.VIEW`) || r.privileges?.includes(`${mod}.LIST`) || false,
-                            write: r.privileges?.includes(`${mod}.UPDATE`) || r.privileges?.includes(`${mod}.CREATE`) || false,
+                            read:
+                                r.privileges?.includes(`${mod}.VIEW`) ||
+                                r.privileges?.includes(`${mod}.LIST`) ||
+                                false,
+                            write:
+                                r.privileges?.includes(`${mod}.UPDATE`) ||
+                                r.privileges?.includes(`${mod}.CREATE`) ||
+                                false,
                             delete: r.privileges?.includes(`${mod}.DELETE`) || false,
                             admin: r.code === 'ADMIN',
                         })),
@@ -642,7 +654,7 @@ export function AdminRolesPage() {
                     setSelectedRole(mapped[0])
                 }
             })
-            .catch(() => { })
+            .catch(() => {})
     }, [])
 
     return (
@@ -719,13 +731,15 @@ export function AdminRolesPage() {
                                     <tbody>
                                         {MODULES.map((mod) => {
                                             const perm = (
-                                                selectedRole.permissions as Array<{
-                                                    module: string
-                                                    read?: boolean
-                                                    write?: boolean
-                                                    delete?: boolean
-                                                    admin?: boolean
-                                                }> | undefined
+                                                selectedRole.permissions as
+                                                    | Array<{
+                                                          module: string
+                                                          read?: boolean
+                                                          write?: boolean
+                                                          delete?: boolean
+                                                          admin?: boolean
+                                                      }>
+                                                    | undefined
                                             )?.find((p) => p.module === mod)
                                             return (
                                                 <tr key={mod} className="border-b border-border">
@@ -1399,7 +1413,7 @@ export function AdminCategoriesPage() {
                                                                                             <span className="w-[14px]" />
                                                                                             <span className="font-medium text-xs text-gray-700 w-36 truncate">
                                                                                                 {lang ===
-                                                                                                    'vi'
+                                                                                                'vi'
                                                                                                     ? leaf.nameVi
                                                                                                     : leaf.name}
                                                                                             </span>
@@ -1408,7 +1422,7 @@ export function AdminCategoriesPage() {
                                                                                                     leafProducts
                                                                                                 }{' '}
                                                                                                 {lang ===
-                                                                                                    'en'
+                                                                                                'en'
                                                                                                     ? 'products'
                                                                                                     : 'sản phẩm'}
                                                                                             </span>
@@ -1418,7 +1432,7 @@ export function AdminCategoriesPage() {
                                                                                             <button
                                                                                                 title={
                                                                                                     lang ===
-                                                                                                        'en'
+                                                                                                    'en'
                                                                                                         ? 'View details'
                                                                                                         : 'Xem chi tiết'
                                                                                                 }
@@ -1438,7 +1452,7 @@ export function AdminCategoriesPage() {
                                                                                             <button
                                                                                                 title={
                                                                                                     lang ===
-                                                                                                        'en'
+                                                                                                    'en'
                                                                                                         ? 'Edit category'
                                                                                                         : 'Sửa'
                                                                                                 }
@@ -1458,7 +1472,7 @@ export function AdminCategoriesPage() {
                                                                                             <button
                                                                                                 title={
                                                                                                     lang ===
-                                                                                                        'en'
+                                                                                                    'en'
                                                                                                         ? 'Delete category'
                                                                                                         : 'Xóa'
                                                                                                 }
@@ -1723,14 +1737,14 @@ export function AdminCategoriesPage() {
 // ─── Admin Orders ───
 /**
  * Màn hình Quản lý đơn hàng & Trạng thái ký quỹ của Quản trị viên (Admin)
- * 
+ *
  * Chức năng:
  * - Giám sát tổng tiền giữ hộ (Escrow funds), các đơn có khiếu nại đang xử lý và đơn trong thời hạn bảo vệ.
  * - Tìm kiếm, lọc toàn bộ đơn hàng trong hệ thống theo mã đơn, người mua, người bán hoặc trạng thái.
  * - Can thiệp quản lý trạng thái đơn hàng (Admin Status Override): Cưỡng chế chuyển trạng thái đơn
  *   (PENDING, PAID, PROCESSING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, REFUNDED) khi có phát sinh sự cố.
  * - Xử lý tranh chấp ký quỹ Escrow: Phê duyệt hoàn tiền cho Buyer, giải ngân cho Seller hoặc hoàn một phần.
- * 
+ *
  * Luồng dữ liệu:
  * - Nạp dữ liệu qua `ordersApi.getOrders({ role: 'admin', status, search })`.
  * - Khi Admin thực hiện can thiệp hoặc xử lý khiếu nại, gọi `ordersApi.updateOrderStatus` hoặc `ordersApi.resolveOrderDispute`,
@@ -1746,7 +1760,9 @@ export function AdminOrdersPage() {
     const [overrideStatus, setOverrideStatus] = useState<string>('')
     const [overrideReason, setOverrideReason] = useState<string>('')
     const [adminNotes, setAdminNotes] = useState<string>('')
-    const [withdrawalRequests, setWithdrawalRequests] = useState<WithdrawalRequest[]>(() => ordersApi.getWithdrawalRequests())
+    const [withdrawalRequests, setWithdrawalRequests] = useState<WithdrawalRequest[]>(() =>
+        ordersApi.getWithdrawalRequests(),
+    )
     const [submitting, setSubmitting] = useState(false)
 
     const statusLabel = (s: string) =>
@@ -1805,10 +1821,15 @@ export function AdminOrdersPage() {
 
     // Tính toán các chỉ số thống kê
     const heldTotal = orders
-        .filter((o) => ['held', 'protection_period', 'on_hold'].includes(getEffectivePaymentStatus(o)))
+        .filter((o) =>
+            ['held', 'protection_period', 'on_hold'].includes(getEffectivePaymentStatus(o)),
+        )
         .reduce((sum, order) => sum + order.total, 0)
     const openDisputesCount = orders.filter(
-        (o) => getEffectivePaymentStatus(o) === 'on_hold' || o.disputeStatus === 'open' || o.disputeStatus === 'reviewing',
+        (o) =>
+            getEffectivePaymentStatus(o) === 'on_hold' ||
+            o.disputeStatus === 'open' ||
+            o.disputeStatus === 'reviewing',
     ).length
     const protectionCount = orders.filter(
         (o) => getEffectivePaymentStatus(o) === 'protection_period',
@@ -1823,7 +1844,11 @@ export function AdminOrdersPage() {
         if (!selectedOrder) return
         setSubmitting(true)
         try {
-            const updated = await ordersApi.resolveOrderDispute(selectedOrder.id, resolution, adminNotes)
+            const updated = await ordersApi.resolveOrderDispute(
+                selectedOrder.id,
+                resolution,
+                adminNotes,
+            )
             setSelectedOrder(updated)
             showToast({
                 type: 'success',
@@ -1836,7 +1861,9 @@ export function AdminOrdersPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err.message || (lang === 'en' ? 'Failed to resolve dispute.' : 'Lỗi xử lý tranh chấp.'),
+                message:
+                    err.message ||
+                    (lang === 'en' ? 'Failed to resolve dispute.' : 'Lỗi xử lý tranh chấp.'),
             })
         } finally {
             setSubmitting(false)
@@ -1847,7 +1874,13 @@ export function AdminOrdersPage() {
     const handleAdminOverrideStatus = async () => {
         if (!selectedOrder || !overrideStatus || overrideStatus === selectedOrder.status) return
         if (!overrideReason.trim()) {
-            showToast({ type: 'error', message: lang === 'en' ? 'An audit reason is required.' : 'Vui lòng nhập lý do can thiệp.' })
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'An audit reason is required.'
+                        : 'Vui lòng nhập lý do can thiệp.',
+            })
             return
         }
         setSubmitting(true)
@@ -1870,7 +1903,9 @@ export function AdminOrdersPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err.message || (lang === 'en' ? 'Failed to override status.' : 'Lỗi cập nhật trạng thái.'),
+                message:
+                    err.message ||
+                    (lang === 'en' ? 'Failed to override status.' : 'Lỗi cập nhật trạng thái.'),
             })
         } finally {
             setSubmitting(false)
@@ -1884,12 +1919,16 @@ export function AdminOrdersPage() {
             setWithdrawalRequests(ordersApi.getWithdrawalRequests())
             showToast({
                 type: 'success',
-                message: lang === 'en'
-                    ? 'Withdrawal approved and marked for bank transfer.'
-                    : 'Đã duyệt yêu cầu và chuyển sang bước chuyển khoản.',
+                message:
+                    lang === 'en'
+                        ? 'Withdrawal approved and marked for bank transfer.'
+                        : 'Đã duyệt yêu cầu và chuyển sang bước chuyển khoản.',
             })
         } catch (error) {
-            showToast({ type: 'error', message: error instanceof Error ? error.message : 'Unable to approve withdrawal.' })
+            showToast({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'Unable to approve withdrawal.',
+            })
         }
     }
 
@@ -1901,7 +1940,9 @@ export function AdminOrdersPage() {
                     <p className="text-xs text-gray-500 font-medium">
                         {lang === 'en' ? 'Funds held by Nexus' : 'Tiền Nexus đang giữ hộ'}
                     </p>
-                    <p className="text-2xl font-black mt-1 text-primary">{formatCurrency(heldTotal, lang)}</p>
+                    <p className="text-2xl font-black mt-1 text-primary">
+                        {formatCurrency(heldTotal, lang)}
+                    </p>
                 </div>
                 <div className="nexus-card p-5 border-l-4 border-amber-500">
                     <p className="text-xs text-gray-500 font-medium">
@@ -1928,7 +1969,9 @@ export function AdminOrdersPage() {
                 <Input
                     icon={<Search size={14} />}
                     placeholder={
-                        lang === 'en' ? 'Order ID, buyer, seller...' : 'Mã đơn, người mua, người bán...'
+                        lang === 'en'
+                            ? 'Order ID, buyer, seller...'
+                            : 'Mã đơn, người mua, người bán...'
                     }
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -1950,7 +1993,9 @@ export function AdminOrdersPage() {
                     <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                 </select>
                 <span className="text-xs text-gray-400 ml-auto">
-                    {lang === 'en' ? `Showing ${orders.length} orders` : `Hiển thị ${orders.length} đơn hàng`}
+                    {lang === 'en'
+                        ? `Showing ${orders.length} orders`
+                        : `Hiển thị ${orders.length} đơn hàng`}
                 </span>
             </div>
 
@@ -1959,7 +2004,9 @@ export function AdminOrdersPage() {
                 {loading ? (
                     <div className="py-12 text-center text-gray-400">
                         <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
-                        <p>{lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}</p>
+                        <p>
+                            {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
+                        </p>
                     </div>
                 ) : (
                     <DataTable
@@ -1968,7 +2015,9 @@ export function AdminOrdersPage() {
                                 key: 'id',
                                 label: lang === 'en' ? 'Order' : 'Đơn hàng',
                                 render: (r: Order) => (
-                                    <span className="font-mono text-xs font-bold text-gray-900">{r.id}</span>
+                                    <span className="font-mono text-xs font-bold text-gray-900">
+                                        {r.id}
+                                    </span>
                                 ),
                             },
                             { key: 'buyerName', label: lang === 'en' ? 'Buyer' : 'Người mua' },
@@ -1994,14 +2043,18 @@ export function AdminOrdersPage() {
                                 label: lang === 'en' ? 'Payment' : 'Thanh toán',
                                 render: (r: Order) => {
                                     const status = getEffectivePaymentStatus(r)
-                                    return <StatusBadge status={status} label={paymentLabel(status)} />
+                                    return (
+                                        <StatusBadge status={status} label={paymentLabel(status)} />
+                                    )
                                 },
                             },
                             {
                                 key: 'date',
                                 label: tr(lang, 'date'),
                                 render: (r: Order) => (
-                                    <span className="text-xs text-gray-500">{formatDate(r.createdAt, lang)}</span>
+                                    <span className="text-xs text-gray-500">
+                                        {formatDate(r.createdAt, lang)}
+                                    </span>
                                 ),
                             },
                             {
@@ -2036,28 +2089,39 @@ export function AdminOrdersPage() {
                 <div className="p-5 flex flex-wrap items-center justify-between gap-4">
                     <div>
                         <div className="flex items-center gap-3">
-                            <span className="font-semibold text-gray-900">{withdrawalRequest?.sellerName || '-'}</span>
+                            <span className="font-semibold text-gray-900">
+                                {withdrawalRequest?.sellerName || '-'}
+                            </span>
                             <StatusBadge
-                                status={withdrawalRequest?.status === 'approved' ? 'released' : 'pending'}
+                                status={
+                                    withdrawalRequest?.status === 'approved'
+                                        ? 'released'
+                                        : 'pending'
+                                }
                                 label={
                                     withdrawalRequest?.status === 'approved'
                                         ? lang === 'en'
                                             ? 'Approved'
                                             : 'Đã duyệt'
                                         : lang === 'en'
-                                            ? 'Pending review'
-                                            : 'Chờ duyệt'
+                                          ? 'Pending review'
+                                          : 'Chờ duyệt'
                                 }
                             />
                         </div>
-                        <p className="text-sm text-gray-500 mt-1">{withdrawalRequest?.bankName || '-'}</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                            {withdrawalRequest?.bankName || '-'}
+                        </p>
                         <p className="text-xs text-gray-400 mt-0.5">
-                            {lang === 'en' ? 'Account number' : 'Số tài khoản'}: {withdrawalRequest?.accountNumber || '-'}
+                            {lang === 'en' ? 'Account number' : 'Số tài khoản'}:{' '}
+                            {withdrawalRequest?.accountNumber || '-'}
                         </p>
                     </div>
                     <div className="flex items-center gap-4">
                         <span className="text-xl font-black text-gray-900">
-                            {withdrawalRequest ? formatCurrency(withdrawalRequest.amount, lang) : '-'}
+                            {withdrawalRequest
+                                ? formatCurrency(withdrawalRequest.amount, lang)
+                                : '-'}
                         </span>
                         {withdrawalRequest?.status === 'pending' && (
                             <Button
@@ -2088,25 +2152,39 @@ export function AdminOrdersPage() {
                         {/* Thẻ tóm tắt thông tin đơn hàng */}
                         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Order' : 'Mã đơn'}</p>
-                                <p className="font-mono font-bold text-gray-900 mt-0.5">{selectedOrder.id}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Order' : 'Mã đơn'}
+                                </p>
+                                <p className="font-mono font-bold text-gray-900 mt-0.5">
+                                    {selectedOrder.id}
+                                </p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Buyer / Seller' : 'Người mua / Bán'}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Buyer / Seller' : 'Người mua / Bán'}
+                                </p>
                                 <p className="text-xs font-semibold text-gray-800 mt-0.5">
                                     {selectedOrder.buyerName} → {selectedOrder.sellerName}
                                 </p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Total Amount' : 'Số tiền đơn'}</p>
-                                <p className="font-bold text-primary mt-0.5">{formatCurrency(selectedOrder.total, lang)}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Total Amount' : 'Số tiền đơn'}
+                                </p>
+                                <p className="font-bold text-primary mt-0.5">
+                                    {formatCurrency(selectedOrder.total, lang)}
+                                </p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <p className="text-xs text-gray-500">{lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}</p>
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}
+                                </p>
                                 <div className="mt-0.5">
                                     <StatusBadge
                                         status={getEffectivePaymentStatus(selectedOrder)}
-                                        label={paymentLabel(getEffectivePaymentStatus(selectedOrder))}
+                                        label={paymentLabel(
+                                            getEffectivePaymentStatus(selectedOrder),
+                                        )}
                                     />
                                 </div>
                             </div>
@@ -2117,7 +2195,9 @@ export function AdminOrdersPage() {
                             <div className="flex items-center gap-2 mb-3">
                                 <Shield size={16} className="text-primary" />
                                 <h4 className="font-bold text-sm text-gray-900">
-                                    {lang === 'en' ? 'Admin Status Override' : 'Can thiệp quản lý trạng thái đơn hàng'}
+                                    {lang === 'en'
+                                        ? 'Admin Status Override'
+                                        : 'Can thiệp quản lý trạng thái đơn hàng'}
                                 </h4>
                             </div>
                             <p className="text-xs text-gray-500 mb-3">
@@ -2135,18 +2215,28 @@ export function AdminOrdersPage() {
                                         value={overrideStatus}
                                         onChange={(e) => setOverrideStatus(e.target.value)}
                                     >
-                                        <option value={selectedOrder.status}>{statusLabel(selectedOrder.status)}</option>
+                                        <option value={selectedOrder.status}>
+                                            {statusLabel(selectedOrder.status)}
+                                        </option>
                                         {allowedOverrideStatuses.map((status) => (
-                                            <option key={status} value={status}>{statusLabel(status)}</option>
+                                            <option key={status} value={status}>
+                                                {statusLabel(status)}
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
                                 <div>
                                     <label className="text-xs font-medium text-gray-700 mb-1 block">
-                                        {lang === 'en' ? 'Audit Reason' : 'Lý do can thiệp (Audit log)'}
+                                        {lang === 'en'
+                                            ? 'Audit Reason'
+                                            : 'Lý do can thiệp (Audit log)'}
                                     </label>
                                     <Input
-                                        placeholder={lang === 'en' ? 'Reason for override...' : 'Nhập lý do chuyển trạng thái...'}
+                                        placeholder={
+                                            lang === 'en'
+                                                ? 'Reason for override...'
+                                                : 'Nhập lý do chuyển trạng thái...'
+                                        }
                                         value={overrideReason}
                                         onChange={(e) => setOverrideReason(e.target.value)}
                                         className="w-full text-sm"
@@ -2157,7 +2247,10 @@ export function AdminOrdersPage() {
                                 variant="primary"
                                 size="sm"
                                 loading={submitting}
-                                disabled={overrideStatus === selectedOrder.status || !overrideReason.trim()}
+                                disabled={
+                                    overrideStatus === selectedOrder.status ||
+                                    !overrideReason.trim()
+                                }
                                 onClick={handleAdminOverrideStatus}
                             >
                                 {lang === 'en' ? 'Apply Status Change' : 'Áp dụng đổi trạng thái'}
@@ -2177,15 +2270,23 @@ export function AdminOrdersPage() {
                                 />
                                 <div>
                                     <p className="text-sm font-semibold mb-1 text-gray-900">
-                                        {lang === 'en' ? 'Buyer dispute complaint:' : 'Nội dung khiếu nại từ Buyer:'}
+                                        {lang === 'en'
+                                            ? 'Buyer dispute complaint:'
+                                            : 'Nội dung khiếu nại từ Buyer:'}
                                     </p>
                                     <p className="text-sm text-gray-700 p-3 bg-amber-50/60 border border-amber-200 rounded-lg">
                                         {selectedOrder.disputeReason ||
-                                            (lang === 'en' ? 'Product damaged or not as described.' : 'Sản phẩm lỗi hoặc không đúng mô tả.')}
+                                            (lang === 'en'
+                                                ? 'Product damaged or not as described.'
+                                                : 'Sản phẩm lỗi hoặc không đúng mô tả.')}
                                     </p>
                                 </div>
                                 <Textarea
-                                    label={lang === 'en' ? 'Admin Decision Notes' : 'Ghi chú quyết định của Admin'}
+                                    label={
+                                        lang === 'en'
+                                            ? 'Admin Decision Notes'
+                                            : 'Ghi chú quyết định của Admin'
+                                    }
                                     rows={3}
                                     value={adminNotes}
                                     onChange={(e) => setAdminNotes(e.target.value)}
@@ -2202,14 +2303,18 @@ export function AdminOrdersPage() {
                                         className="text-danger hover:bg-danger/10 border-danger/40"
                                         onClick={() => resolvePayment('refunded')}
                                     >
-                                        {lang === 'en' ? 'Refund Buyer (100%)' : 'Hoàn tiền cho Buyer (100%)'}
+                                        {lang === 'en'
+                                            ? 'Refund Buyer (100%)'
+                                            : 'Hoàn tiền cho Buyer (100%)'}
                                     </Button>
                                     <Button
                                         variant="primary"
                                         loading={submitting}
                                         onClick={() => resolvePayment('released')}
                                     >
-                                        {lang === 'en' ? 'Release to Seller' : 'Giải ngân cho Seller'}
+                                        {lang === 'en'
+                                            ? 'Release to Seller'
+                                            : 'Giải ngân cho Seller'}
                                     </Button>
                                     <Button
                                         variant="outline"
@@ -2265,8 +2370,8 @@ export function AdminAuctionsPage() {
                         ? 'Auction approved and scheduled.'
                         : 'Đã phê duyệt và lên lịch phiên đấu giá.'
                     : lang === 'en'
-                        ? 'Auction rejected.'
-                        : 'Đã từ chối phiên đấu giá.',
+                      ? 'Auction rejected.'
+                      : 'Đã từ chối phiên đấu giá.',
         })
         if (status === 'rejected') {
             setRejectAuctionId(null)
@@ -2913,7 +3018,7 @@ export function AdminSystemConfigPage() {
                                     {item.type === 'toggle' ? (
                                         <Toggle
                                             checked={item.value === 'true'}
-                                            onChange={() => { }}
+                                            onChange={() => {}}
                                         />
                                     ) : (
                                         <input
@@ -3063,7 +3168,10 @@ export function AdminProductsPage() {
             await api(`/products/${id}/status?target=INACTIVE`, { method: 'POST' })
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Product set to inactive.' : 'Đã chuyển sản phẩm sang ngừng bán.',
+                message:
+                    lang === 'en'
+                        ? 'Product set to inactive.'
+                        : 'Đã chuyển sản phẩm sang ngừng bán.',
             })
             setRefreshKey((k) => k + 1)
         } catch (err) {
@@ -3073,7 +3181,7 @@ export function AdminProductsPage() {
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
-        s
+            s
         ] || s
     return (
         <AdminLayout title={tr(lang, 'productModeration')}>
@@ -3332,8 +3440,8 @@ export function AdminShipmentsPage() {
                                         r.status === 'delivered'
                                             ? 'delivered'
                                             : r.status === 'in_transit'
-                                                ? 'shipped'
-                                                : 'pending'
+                                              ? 'shipped'
+                                              : 'pending'
                                     }
                                     label={statusLabel(r.status)}
                                 />
@@ -3389,7 +3497,7 @@ export function AdminShipmentsPage() {
                 <Select
                     label={lang === 'en' ? 'New Status' : 'Trạng thái mới'}
                     value="in_transit"
-                    onChange={() => { }}
+                    onChange={() => {}}
                     options={[
                         { value: 'in_transit', label: 'In Transit' },
                         { value: 'delivered', label: 'Delivered' },

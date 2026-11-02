@@ -202,7 +202,9 @@ export function PublicHeader() {
                     <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
                         <Gavel size={16} className="text-white" />
                     </div>
-                    <span className="text-xl font-black text-gray-900 tracking-tight">Nexus<span className="text-primary font-bold">.</span></span>
+                    <span className="text-xl font-black text-gray-900 tracking-tight">
+                        Nexus<span className="text-primary font-bold">.</span>
+                    </span>
                 </button>
 
                 {/* Search */}
