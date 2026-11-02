@@ -1,3 +1,15 @@
 spring:
   application:
     name: notification-service
+  flyway:
+    enabled: false
+  mail:
+    host: localhost
+    port: 1025
+
+notification:
+  email-enabled: true
+  retry-limit: 3
+  transactional-mandatory: true
+  sender-from: no-reply@nexus.com
+
