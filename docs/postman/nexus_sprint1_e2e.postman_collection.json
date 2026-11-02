@@ -45,6 +45,15 @@
           "name": "1.1 Thêm SKU vào Giỏ hàng",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.globals.clear();"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "exec": [
