@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Tạo một attempt cho đơn VNPAY và xử lý IPN đã ký. IPN khóa theo TxnRef rồi Order để tuần tự hóa callback cùng payment.
- * Payment, Order, history và outbox kho commit cùng transaction; browser return không đi qua hàm cập nhật này.
+ * Payment, Order, history và outbox kho/thông báo commit cùng transaction; browser return không cập nhật tài chính.
  */
 @Service
 @RequiredArgsConstructor
@@ -36,6 +36,7 @@ public class PaymentService {
     private final CheckoutLock locks;
     private final JdbcTemplate jdbc;
     private final InventoryServiceToken inventoryTokens;
+    private final NotificationOutbox notifications;
 
     /** Kiểm tra cấu hình trước reserve checkout để thiếu merchant không tạo reservation thừa. */
     public void requireConfigured() {
@@ -156,6 +157,8 @@ public class PaymentService {
         } else { enqueue(order.getId(), order.getId(), "RELEASE"); }
         jdbc.update("INSERT INTO order_status_history(id,order_id,from_status,to_status,reason) VALUES (?,?,'PENDING_PAYMENT',?,?)",
                 UUID.randomUUID(), order.getId(), order.getStatus(), "VNPAY_IPN_" + result);
+        // Chỉ lần chuyển trạng thái terminal đầu tiên tạo thông báo, cùng commit với kết quả thanh toán.
+        notifications.enqueue(order, success ? "PAYMENT_SUCCESS" : "PAYMENT_FAILED");
         payments.flush();
         return reply("00", "Confirm Success");
     }

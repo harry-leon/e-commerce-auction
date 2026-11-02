@@ -67,7 +67,7 @@ class CheckoutServiceTest {
     @BeforeEach
     void setup() {
         // Checkout nay cấp URL VNPAY qua PaymentService; các ca COD vẫn không gọi cổng thanh toán.
-        service = new CheckoutService(carts, items, orders, locks, catalog, inventory, properties, new ObjectMapper(), payments);
+        service = new CheckoutService(carts, items, orders, locks, catalog, inventory, properties, new ObjectMapper(), payments, org.mockito.Mockito.mock(NotificationOutbox.class));
         cart = Cart.builder().id(UUID.randomUUID()).userId(buyer).expiresAt(Instant.now().plusSeconds(3600)).build();
         item = CartItem.builder().id(UUID.randomUUID()).cart(cart).skuId(UUID.randomUUID()).quantity(2)
                 .unitPrice(new BigDecimal("90.00")).build();

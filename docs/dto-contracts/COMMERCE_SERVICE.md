@@ -226,3 +226,7 @@ IPN xác minh chữ ký/merchant rồi đối chiếu Payment→Order và amount
 Outbox sau IPN commit cùng Payment và worker retry confirm/release bằng service account; khác với cleanup **checkout rollback** vẫn dùng callback/TTL ở mục 4. Nếu kho hết hạn trước confirm cần đối soát/refund, chưa có hoàn tiền tự động.
 
 Cấu hình, RspCode, giới hạn, cách test và hướng review: [PAYMENT_SANDBOX_INTEGRATION.md](../PAYMENT_SANDBOX_INTEGRATION.md).
+
+## Thông báo TT-S1-4
+
+Checkout mới enqueue ORDER_CREATED; IPN terminal đầu tiên enqueue PAYMENT_SUCCESS/PAYMENT_FAILED. Snapshot buyer/orderNo/total lấy từ Order, commit cùng transaction; worker gửi HTTP sau commit với retry và event UUID cố định. Không đổi request/response checkout/payment. Xem [Notification contract](NOTIFICATION_SERVICE.md) và [demo/vận hành](../ORDER_PAYMENT_NOTIFICATIONS_DEMO.md).
