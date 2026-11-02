@@ -8,7 +8,6 @@ import com.nexus.commerce.dto.response.OrderSummaryResponse;
 import com.nexus.commerce.entity.Order;
 import com.nexus.commerce.entity.OrderStatusHistory;
 import com.nexus.commerce.enums.OrderStatus;
-import com.nexus.commerce.repository.OrderItemRepository;
 import com.nexus.commerce.repository.OrderRepository;
 import com.nexus.commerce.repository.OrderStatusHistoryRepository;
 import com.nexus.commerce.service.OrderService;
@@ -57,8 +56,8 @@ public class OrderServiceImpl implements OrderService {
 
     private static final int MAX_REASON_LENGTH = 500;
 
+    // Order.items đã quản lý snapshot bằng JPA cascade; service chỉ cần repository của đơn và lịch sử.
     private final OrderRepository orderRepository;
-    private final OrderItemRepository orderItemRepository;
     private final OrderStatusHistoryRepository orderStatusHistoryRepository;
     private final OrderStatusStateMachine orderStatusStateMachine;
     private final OrderMapper orderMapper;
