@@ -14,6 +14,30 @@ import reactor.core.publisher.Mono;
 
 /** Hồi quy forward hai lần với Mono<Void> và giả mạo header định danh trên route public/authenticated. */
 class JwtHeaderForwardingFilterTest {
+    /** Header trộn hoa/thường vẫn bị xóa; JWT thiếu email không được giữ email giả. */
+    @Test
+    void mixedCaseHeadersAreRemovedWhenJwtHasNoEmail() {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest
+                .get("/api/v1/users/me")
+                .header("x-uSeR-Id", "forged")
+                .header("x-uSeR-Email", "forged@example.test")
+                .header("x-pRoFiLe-sUbJeCt", "forged").build());
+        var jwt = Jwt.withTokenValue("fixture-token").header("alg", "RS256")
+                .subject("verified-subject").build();
+        var count = new AtomicInteger();
+        new JwtHeaderForwardingFilter().filter(exchange, next -> {
+            count.incrementAndGet();
+            assertEquals("verified-subject", next.getRequest()
+                    .getHeaders().getFirst("X-User-Id"));
+            assertNull(next.getRequest().getHeaders().getFirst("X-User-Email"));
+            assertNull(next.getRequest().getHeaders()
+                    .getFirst("X-Profile-Subject"));
+            return Mono.empty();
+        }).contextWrite(ReactiveSecurityContextHolder.withAuthentication(
+                new JwtAuthenticationToken(jwt))).block();
+        assertEquals(1, count.get());
+    }
+
     @Test
     void anonymousRequestIsSanitizedAndForwardedOnce() {
         var exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/api/v1/products")
