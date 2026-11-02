@@ -1,0 +1,650 @@
+{
+  "info": {
+    "_postman_id": "nexus-sprint1-e2e-collection-ld-s1-4",
+    "name": "Nexus Sprint 1 - E2E Testing Suite (E-Commerce Flow)",
+    "description": "Bộ kịch bản kiểm thử tích hợp toàn trình (E2E Test Suite) cho Sprint 1 theo Issue [LD-S1-4].\nBao gồm 5 ca kiểm thử trọng yếu:\n1. Thanh toán thành công (Happy Path: Cart -> Checkout -> VNPAY IPN 00 -> Order PAID -> Confirm kho)\n2. Thanh toán thất bại / Hủy đơn (VNPAY IPN 24/02 -> Order CANCELLED -> Release kho)\n3. Thiếu tồn kho (Insufficient Stock rejection)\n4. Gửi checkout trùng lặp (Idempotency Key validation)\n5. Webhook callback trùng lặp (VNPAY IPN Idempotency 60p - Trả RspCode 02)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "buyerToken", "value": "", "type": "string" },
+    { "key": "skuId", "value": "00000000-0000-0000-0000-000000000001", "type": "string" },
+    { "key": "vnp_TmnCode", "value": "TESTONLY", "type": "string" },
+    { "key": "vnp_HashSecret", "value": "TESTONLYSECRET123456789012345678", "type": "string" },
+    { "key": "cartItemId", "value": "", "type": "string" },
+    { "key": "orderId", "value": "", "type": "string" },
+    { "key": "orderNo", "value": "", "type": "string" },
+    { "key": "paymentId", "value": "", "type": "string" },
+    { "key": "orderAmount", "value": "50000", "type": "string" },
+    { "key": "ipnQueryString", "value": "", "type": "string" },
+    { "key": "duplicateIdempotencyKey", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "01. Giỏ hàng & Preview Đơn Hàng",
+      "item": [
+        {
+          "name": "1.1 Thêm SKU vào Giỏ hàng",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const res = pm.response.json();",
+                  "pm.test(\"Thêm giỏ hàng thành công, có items\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.items).to.be.an('array').that.is.not.empty;",
+                  "    pm.collectionVariables.set(\"cartItemId\", res.data.items[0].id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"skuId\": \"{{skuId}}\",\n  \"quantity\": 2\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cart/items",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "cart", "items"]
+            }
+          }
+        },
+        {
+          "name": "1.2 Xem trước giỏ hàng (Checkout Preview)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Preview trả về 200 và tính toán đúng số tiền\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.totalAmount).to.be.above(0);",
+                  "    pm.collectionVariables.set(\"orderAmount\", res.data.totalAmount);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"itemIds\": [\"{{cartItemId}}\"],\n  \"shippingAddress\": \"123 Đường Demo, Phường Bến Nghé, Quận 1, TP. HCM\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/checkout/preview",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "checkout", "preview"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02. Kịch bản 1: Thanh toán thành công (Happy Path)",
+      "item": [
+        {
+          "name": "2.1 Tạo đơn hàng VNPAY (Place Order)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+                  "    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);",
+                  "    return v.toString(16);",
+                  "});",
+                  "pm.variables.set(\"currentIdempotencyKey\", uuid);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Tạo đơn thành công (201 Created)\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "const res = pm.response.json();",
+                  "pm.test(\"Trả về orderId và paymentUrl có vnp_TxnRef\", function () {",
+                  "    pm.expect(res.success).to.eql(true);",
+                  "    pm.expect(res.data.id).to.be.a('string');",
+                  "    pm.expect(res.data.paymentUrl).to.include('vnp_TxnRef=');",
+                  "    pm.collectionVariables.set(\"orderId\", res.data.id);",
+                  "    pm.collectionVariables.set(\"orderNo\", res.data.orderNo);",
+                  "    const urlObj = new URL(res.data.paymentUrl);",
+                  "    const txnRef = urlObj.searchParams.get('vnp_TxnRef');",
+                  "    pm.collectionVariables.set(\"paymentId\", txnRef);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
+              { "key": "Idempotency-Key", "value": "{{currentIdempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shippingAddress\": \"123 Đường Demo, Quận 1, TP. HCM\",\n  \"recipientName\": \"Nguyễn Văn Demo\",\n  \"recipientPhone\": \"0901234567\",\n  \"paymentMethod\": \"VNPAY\",\n  \"selectedItemIds\": [\"{{cartItemId}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        },
+        {
+          "name": "2.2 Kiểm tra trạng thái Payment trước thanh toán (PENDING)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Payment trạng thái PENDING\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.data.status).to.eql(\"PENDING\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "{{paymentId}}"]
+            }
+          }
+        },
+        {
+          "name": "2.3 Giả lập VNPAY IPN Thành công (ResponseCode 00)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const hashSecret = pm.collectionVariables.get(\"vnp_HashSecret\") || 'TESTONLYSECRET123456789012345678';",
+                  "const txnRef = pm.collectionVariables.get(\"paymentId\");",
+                  "const amount = pm.collectionVariables.get(\"orderAmount\");",
+                  "const amountParam = String(Math.round(Number(amount) * 100));",
+                  "const tmnCode = pm.collectionVariables.get(\"vnp_TmnCode\") || 'TESTONLY';",
+                  "const params = {",
+                  "    vnp_Amount: amountParam,",
+                  "    vnp_ResponseCode: '00',",
+                  "    vnp_TmnCode: tmnCode,",
+                  "    vnp_TransactionNo: '99887766',",
+                  "    vnp_TransactionStatus: '00',",
+                  "    vnp_TxnRef: txnRef",
+                  "};",
+                  "const unsigned = Object.keys(params).sort().map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');",
+                  "const hash = CryptoJS.HmacSHA512(unsigned, hashSecret).toString();",
+                  "pm.variables.set(\"signedIpnPath\", unsigned + '&vnp_SecureHash=' + hash);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"IPN phản hồi chuẩn VNPAY: RspCode 00\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.RspCode).to.eql(\"00\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn?{{signedIpnPath}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "vnpay", "ipn"],
+              "query": [
+                {
+                  "key": "{{signedIpnPath}}",
+                  "value": null
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "2.4 Kiểm tra Payment cập nhật SUCCESS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Payment chuyển sang SUCCESS\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.data.status).to.eql(\"SUCCESS\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "{{paymentId}}"]
+            }
+          }
+        },
+        {
+          "name": "2.5 Kiểm tra Order chuyển PAID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Order chuyển sang PAID\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.data.status).to.eql(\"PAID\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{orderId}}"]
+            }
+          }
+        },
+        {
+          "name": "2.6 Kiểm tra Hộp thư nhận PAYMENT_SUCCESS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Nhận được thông báo PAYMENT_SUCCESS\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    const targetOrderId = pm.collectionVariables.get(\"orderId\");",
+                  "    const found = res.data.content.some(item => item.orderId === targetOrderId && item.type === 'PAYMENT_SUCCESS');",
+                  "    pm.expect(found).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications?page=0&size=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "notifications"],
+              "query": [
+                { "key": "page", "value": "0" },
+                { "key": "size", "value": "10" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03. Kịch bản 2: Thanh toán Thất bại / Hủy đơn (Failure)",
+      "item": [
+        {
+          "name": "3.1 Tạo đơn hàng thứ 2",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+                  "    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);",
+                  "    return v.toString(16);",
+                  "});",
+                  "pm.variables.set(\"failIdempotencyKey\", uuid);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Tạo đơn thành công 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "const res = pm.response.json();",
+                  "pm.collectionVariables.set(\"failOrderId\", res.data.id);",
+                  "const urlObj = new URL(res.data.paymentUrl);",
+                  "const txnRef = urlObj.searchParams.get('vnp_TxnRef');",
+                  "pm.collectionVariables.set(\"failPaymentId\", txnRef);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
+              { "key": "Idempotency-Key", "value": "{{failIdempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shippingAddress\": \"456 Đường Hủy, Quận 3, TP. HCM\",\n  \"recipientName\": \"Khách Thử Hủy\",\n  \"recipientPhone\": \"0909999888\",\n  \"paymentMethod\": \"VNPAY\",\n  \"selectedItemIds\": [\"{{cartItemId}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        },
+        {
+          "name": "3.2 Giả lập VNPAY IPN Thất bại (ResponseCode 24)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const hashSecret = pm.collectionVariables.get(\"vnp_HashSecret\") || 'TESTONLYSECRET123456789012345678';",
+                  "const txnRef = pm.collectionVariables.get(\"failPaymentId\");",
+                  "const amount = pm.collectionVariables.get(\"orderAmount\");",
+                  "const amountParam = String(Math.round(Number(amount) * 100));",
+                  "const tmnCode = pm.collectionVariables.get(\"vnp_TmnCode\") || 'TESTONLY';",
+                  "const params = {",
+                  "    vnp_Amount: amountParam,",
+                  "    vnp_ResponseCode: '24',",
+                  "    vnp_TmnCode: tmnCode,",
+                  "    vnp_TransactionNo: '0',",
+                  "    vnp_TransactionStatus: '02',",
+                  "    vnp_TxnRef: txnRef",
+                  "};",
+                  "const unsigned = Object.keys(params).sort().map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');",
+                  "const hash = CryptoJS.HmacSHA512(unsigned, hashSecret).toString();",
+                  "pm.variables.set(\"failSignedIpnPath\", unsigned + '&vnp_SecureHash=' + hash);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"IPN nhận kết quả thất bại hợp lệ: RspCode 00\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.RspCode).to.eql(\"00\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn?{{failSignedIpnPath}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "vnpay", "ipn"],
+              "query": [
+                {
+                  "key": "{{failSignedIpnPath}}",
+                  "value": null
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "3.3 Kiểm tra Order chuyển CANCELLED và Payment FAILED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Order bị CANCELLED\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.data.status).to.eql(\"CANCELLED\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{failOrderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{failOrderId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04. Kịch bản 3: Thiếu tồn kho (Out of Stock)",
+      "item": [
+        {
+          "name": "4.1 Thêm số lượng vượt tồn kho hiện có",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Từ chối tạo đơn do thiếu kho (HTTP 400 hoặc 422)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.success).to.eql(false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
+              { "key": "Idempotency-Key", "value": "11111111-2222-3333-4444-555555555555" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shippingAddress\": \"Kho ảo\",\n  \"recipientName\": \"Vượt kho\",\n  \"recipientPhone\": \"0900000000\",\n  \"paymentMethod\": \"VNPAY\",\n  \"selectedItemIds\": [\"non-existent-or-out-of-stock-id\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05. Kịch bản 4: Gửi Checkout trùng lặp (Idempotency Key)",
+      "item": [
+        {
+          "name": "5.1 Gửi Checkout lần 1 với Key cố định",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const fixedKey = 'aabbccdd-1234-4567-89ab-cdef01234567';",
+                  "pm.collectionVariables.set(\"duplicateIdempotencyKey\", fixedKey);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Tạo đơn lần đầu thành công 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const res = pm.response.json();",
+                  "    pm.collectionVariables.set(\"firstOrderId\", res.data.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
+              { "key": "Idempotency-Key", "value": "{{duplicateIdempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shippingAddress\": \"789 Trùng lặp, Quận 1\",\n  \"recipientName\": \"Idempotency User\",\n  \"recipientPhone\": \"0912345678\",\n  \"paymentMethod\": \"VNPAY\",\n  \"selectedItemIds\": [\"{{cartItemId}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        },
+        {
+          "name": "5.2 Gửi Checkout lần 2 cùng Key và Payload (Replay Test)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Replay cùng Idempotency Key trả về cùng orderId cũ\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "    const res = pm.response.json();",
+                  "    const firstId = pm.collectionVariables.get(\"firstOrderId\");",
+                  "    pm.expect(res.data.id).to.eql(firstId);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{buyerToken}}" },
+              { "key": "Idempotency-Key", "value": "{{duplicateIdempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shippingAddress\": \"789 Trùng lặp, Quận 1\",\n  \"recipientName\": \"Idempotency User\",\n  \"recipientPhone\": \"0912345678\",\n  \"paymentMethod\": \"VNPAY\",\n  \"selectedItemIds\": [\"{{cartItemId}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06. Kịch bản 5: Webhook Callback trùng lặp (IPN Idempotency 60p)",
+      "item": [
+        {
+          "name": "6.1 Gửi lại IPN cho đơn hàng đã PAID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"IPN lặp trả về RspCode 02 (Order already confirmed)\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.RspCode).to.eql(\"02\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn?{{signedIpnPath}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "vnpay", "ipn"],
+              "query": [
+                {
+                  "key": "{{signedIpnPath}}",
+                  "value": null
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
