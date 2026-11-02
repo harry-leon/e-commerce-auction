@@ -4,7 +4,7 @@
 > **Người thực hiện:** **Trần Ngọc Linh Đang** (`@fsa_DangTNL`)  
 > **Người kiểm duyệt (Reviewer):** **Nguyễn Tiến Thương** (`@fsa_ThuongNT_02`)  
 > **Mục tiêu:** Xác lập tài liệu Phân tích Nghiệp vụ (Business Analysis), Đặc tả User Stories theo định dạng BDD (Given-When-Then) và Bộ tiêu chí sẵn sàng (Definition of Ready - DoR) cho Module **Online Auction Engine** trong Sprint 2.  
-> **Căn cứ nghiệp vụ:** SRS §3.5 (Online Auction Engine), BR-CFG-24, Database Schema `auction_svc` (`nexus_schema.sql`), Thỏa thuận kiến trúc `STANDARDIZED_API_RESPONSE_V2_CHANGELOG.md`.
+> **Căn cứ nghiệp vụ:** SRS §3.5 (Online Auction Engine), BR-CFG-24, Database Schema `auction_svc` (`nexus_schema.sql`), Thỏa thuận kiến trúc trong [báo cáo Response v2 lịch sử](https://git.fsoft-academy.edu.vn/hcm26_cpl_java_11/hcm26_cpl_java_11_group_7/-/blob/e76015b291c42e7824d4fefdc68607de81a4bd6f/docs/STANDARDIZED_API_RESPONSE_V2_CHANGELOG.md).
 
 ---
 
@@ -257,7 +257,7 @@ Tất cả User Stories thuộc Module Auction Engine muốn được đưa vào
 |:---:|---|---|:---:|
 | **1** | **User Stories rõ ràng & chuẩn BDD** | Toàn bộ 7 User Stories đã được viết chi tiết theo cấu trúc BDD `Given - When - Then`, bao gồm cả kịch bản thành công (happy path) và các ca biên (edge cases: race condition, max limit, invalid bid, sniping). | **ĐẠT** |
 | **2** | **Cơ sở dữ liệu (Database Schema)** | Đã định nghĩa và kiểm chứng chuẩn hóa trong `docs/database/nexus_schema.sql` (Schema `auction_svc`: bảng `auctions`, `bids`, `auction_settlements` kèm đầy đủ CHECK constraints và foreign keys). | **ĐẠT** |
-| **3** | **Cấu hình động (Config Server)** | Đã khai báo các tham số cấu hình tại `STANDARDIZED_API_RESPONSE_V2_CHANGELOG.md`: `min-increment = 1000`, `anti-sniping-seconds = 120`, `max-active-auctions-per-seller = 20`. | **ĐẠT** |
+| **3** | **Cấu hình động (Config Server)** | Các giá trị dự phòng cục bộ nằm tại [application.yml](../backend/auction-service/src/main/resources/application.yml): `min-increment = 1000`, `anti-sniping-seconds = 120`, `max-active-auctions-per-seller = 20`. Source này chưa chứng minh lấy/refresh cấu hình động từ Config Server; cần đối chiếu SRS theo [kế hoạch chi tiết](SPRINT2_DETAILED_PLAN.md). | **CẦN KIỂM CHỨNG** |
 | **4** | **Phân tuyến API Gateway & WebSocket** | Đã cấu hình định tuyến sẵn tại API Gateway: `/api/v1/auctions/**`, `/api/v1/bids/**`, và `/ws/auctions/**` kết nối tới `auction-service`. | **ĐẠT** |
 | **5** | **Tích hợp liên dịch vụ (Cross-Service Integration)** | Luồng chuyển đổi từ Winner sang Order đã được chuẩn hóa DTO theo `API_SPEC_CART_ORDER.md` (`POST /api/v1/orders` với `sourceType: 'AUCTION'`). | **ĐẠT** |
 | **6** | **Mô hình DTO & Phản hồi Envelope** | Quy chuẩn đóng gói `ApiResponse<T>` v2 đã được thống nhất xuyên suốt Gateway, Auth và Commerce. | **ĐẠT** |
