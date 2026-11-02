@@ -18,7 +18,7 @@
     },
     {
       "key": "skuId",
-      "value": "00000000-0000-0000-0000-000000000001",
+      "value": "d167c9c6-3c46-42db-afcc-44cf17345960",
       "type": "string"
     },
     {
@@ -33,7 +33,7 @@
     },
     {
       "key": "orderAmount",
-      "value": "50000",
+      "value": "800000",
       "type": "string"
     }
   ],
@@ -192,6 +192,9 @@
                   "    const urlObj = new URL(res.data.paymentUrl);",
                   "    const txnRef = urlObj.searchParams.get('vnp_TxnRef');",
                   "    pm.globals.set(\"paymentId\", txnRef);",
+                  "    if (res.data.total) {",
+                  "        pm.globals.set(\"orderAmount\", res.data.total);",
+                  "    }",
                   "});"
                 ],
                 "type": "text/javascript"
