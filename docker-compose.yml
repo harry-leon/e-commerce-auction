@@ -230,6 +230,14 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: notification-service
+      # Email giao dịch gửi tới SMTP/Mailpit trong mạng Compose; credential chỉ lấy từ môi trường.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_AUTH: ${SMTP_AUTH:-false}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@nexus.com}
       # Dùng Supabase khi cấu hình NOTIFICATION_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${NOTIFICATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_notification}
       DB_USERNAME: ${NOTIFICATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}

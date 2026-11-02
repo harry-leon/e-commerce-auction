@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nexus.notification.dto.OrderEmailRequest;
 import com.nexus.notification.dto.OrderItemEmailDto;
-import com.nexus.notification.enums.OrderEmailType;
 import com.nexus.notification.service.impl.TransactionalEmailTemplateBuilder;
 import java.math.BigDecimal;
 import java.util.List;

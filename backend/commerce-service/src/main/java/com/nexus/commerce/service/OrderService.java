@@ -212,7 +212,7 @@ public interface OrderService {
      * <p>Quy tắc nghiệp vụ:
      * <ul>
      *   <li>Chỉ Người mua sở hữu đơn hoặc Quản trị viên (ADMIN) mới có quyền gửi yêu cầu hủy.</li>
-     *   <li>Chỉ được phép hủy khi đơn ở trạng thái PENDING_PAYMENT hoặc PAID theo máy trạng thái.</li>
+     *   <li>Chỉ hủy đơn PENDING_PAYMENT không có giao dịch VNPAY đang chờ; PAID cần refund provider chưa triển khai.</li>
      *   <li>Xử lý idempotent an toàn nếu đơn hàng đã ở trạng thái CANCELLED.</li>
      *   <li>Ghi vết lý do hủy và chuyển trạng thái đơn sang CANCELLED trong cùng một transaction.</li>
      * </ul>

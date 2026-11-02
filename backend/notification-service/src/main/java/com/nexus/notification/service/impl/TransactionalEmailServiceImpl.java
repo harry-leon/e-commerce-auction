@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 3. Ghi nhận bản ghi thông báo trong bảng notifications (status = PENDING).
  * 4. Gửi email qua EmailSender với cơ chế thử lại tối đa 3 lần (NOTIFICATION_RETRY_LIMIT = 3) khi gặp lỗi mạng.
  * 5. Lưu vết từng lần thử vào bảng notification_attempts với trạng thái (SUCCESS, RETRY, FAILURE).
- * 6. Cô lập lỗi (§5.2 SRS): Không bao giờ ném ngoại lệ ra ngoài để tránh làm hỏng hoặc rollback tiến trình thanh toán / trừ kho.
+ * 6. SMTP lỗi trả FAILED; lỗi DB rollback notification và báo lỗi để Commerce outbox retry. Thanh toán đã commit độc lập.
  */
 @Service
 public class TransactionalEmailServiceImpl implements TransactionalEmailService {
@@ -45,28 +45,31 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
     private final EmailSender emailSender;
     private final TransactionalEmailTemplateBuilder templateBuilder;
     private final NotificationProperties properties;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public TransactionalEmailServiceImpl(NotificationRepository notificationRepository,
                                          NotificationAttemptRepository attemptRepository,
                                          EmailSender emailSender,
                                          TransactionalEmailTemplateBuilder templateBuilder,
-                                         NotificationProperties properties) {
+                                         NotificationProperties properties, org.springframework.jdbc.core.JdbcTemplate jdbc) {
         this.notificationRepository = notificationRepository;
         this.attemptRepository = attemptRepository;
         this.emailSender = emailSender;
         this.templateBuilder = templateBuilder;
         this.properties = properties;
+        this.jdbc = jdbc;
     }
 
     /**
      * Gửi email giao dịch bất đồng bộ (Asynchronous) qua thread pool của Spring (@Async).
      *
      * Luồng xử lý:
-     * - Chạy trên thread riêng biệt để không block luồng gọi từ Commerce / Fulfillment.
+     * - Chạy trên thread riêng và mở transaction cho cả khóa event/lưu DB; worker bền vững dùng endpoint đồng bộ.
      * - Bắt mọi lỗi để tuân thủ nguyên tắc cô lập lỗi (§5.2 SRS).
      */
     @Override
     @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public CompletableFuture<NotificationResponse> sendOrderTransactionalEmail(OrderEmailRequest request) {
         log.info("Bắt đầu xử lý gửi email giao dịch bất đồng bộ cho đơn hàng #{} ({})",
                 request.orderNo(), request.eventType());
@@ -100,16 +103,27 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
      *    - Thành công: Ghi attempt SUCCESS, cập nhật notification SENT, thoát vòng lặp.
      *    - Lỗi mạng tạm thời (EmailDeliveryException): Ghi attempt RETRY/FAILURE, tiếp tục thử lại nếu chưa hết số lần.
      * 5. Nếu kiệt số lần thử mà vẫn lỗi: Cập nhật notification FAILED.
-     * 6. Cô lập lỗi: Tuyệt đối không ném ngoại lệ lên tầng trên.
+     * 6. SMTP lỗi trả FAILED; lỗi DB truyền lên để rollback và giữ outbox nguồn.
      */
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public NotificationResponse processOrderTransactionalEmail(OrderEmailRequest request) {
+        // Khóa event bằng PostgreSQL để nhiều worker không cùng gửi email.
+        // Process chết sau SMTP trước commit vẫn có thể gửi lại; SMTP không có exactly-once.
+        Notification previous = null;
         // 1. Kiểm tra tính Idempotent khi có eventId
         if (request.eventId() != null && !request.eventId().isBlank()) {
+            jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {
+                try (var statement = connection.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?,0))")) {
+                    statement.setString(1, "email:" + request.eventId());
+                    statement.execute();
+                }
+                return null;
+            });
             Optional<Notification> existingOpt = notificationRepository.findByEventId(request.eventId());
             if (existingOpt.isPresent()) {
                 Notification existing = existingOpt.get();
+                previous = existing;
                 if (existing.getStatus() == NotificationStatus.SENT) {
                     log.info("Sự kiện {} đã được gửi email thành công trước đó (Idempotent), bỏ qua gửi lặp",
                             request.eventId());
@@ -132,8 +146,8 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
         String bodyText = templateBuilder.buildPlainTextContent(request);
 
         // 3. Khởi tạo và lưu Notification entity ở trạng thái PENDING
-        UUID notificationId = UUID.randomUUID();
-        Notification notification = new Notification(
+        UUID notificationId = previous == null ? UUID.randomUUID() : previous.getId();
+        Notification notification = previous != null ? previous : new Notification(
                 notificationId,
                 request.userId(),
                 request.eventId(),
@@ -144,19 +158,19 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
                 null,
                 Instant.now()
         );
+        // Retry FAILED/PENDING tái dùng bản ghi/eventId, không tạo thêm notification.
         notification = notificationRepository.save(notification);
 
         // 4. Kiểm tra cấu hình bật/tắt gửi email (SRS §2.6 EMAIL_NOTIFICATION_ENABLED)
         if (!properties.isEmailEnabled()) {
-            log.info("Tính năng gửi email đang bị tắt (EMAIL_NOTIFICATION_ENABLED = false); cập nhật SENT giả lập");
-            notification.setStatus(NotificationStatus.SENT);
-            notification.setSentAt(Instant.now());
+            // Tắt SMTP giữ PENDING để outbox retry sau khi bật lại, không ghi SENT giả.
+            notification.setStatus(NotificationStatus.PENDING);
             notificationRepository.save(notification);
             return new NotificationResponse(
                     notification.getId(),
                     notification.getUserId(),
                     notification.getChannel(),
-                    NotificationStatus.SENT,
+                    NotificationStatus.PENDING,
                     0,
                     "Email notification đã được tắt theo cấu hình hệ thống",
                     notification.getSentAt()
@@ -165,6 +179,8 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
 
         // 5. Vòng lặp gửi email và tự động thử lại tối đa NOTIFICATION_RETRY_LIMIT lần
         int maxRetries = Math.max(1, properties.getRetryLimit());
+        int offset = attemptRepository.findByNotificationIdOrderByAttemptNoAsc(notification.getId()).stream()
+                .mapToInt(NotificationAttempt::getAttemptNo).max().orElse(0);
         boolean isSentSuccess = false;
         String lastErrorMessage = null;
         int totalAttemptsMade = 0;
@@ -187,7 +203,7 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
                 NotificationAttempt attemptRecord = new NotificationAttempt(
                         UUID.randomUUID(),
                         notification,
-                        attempt,
+                        offset + attempt,
                         AttemptResult.SUCCESS,
                         null,
                         Instant.now()
@@ -207,7 +223,7 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
                 NotificationAttempt attemptRecord = new NotificationAttempt(
                         UUID.randomUUID(),
                         notification,
-                        attempt,
+                        offset + attempt,
                         attemptResult,
                         ex.getMessage(),
                         Instant.now()
@@ -233,7 +249,7 @@ public class TransactionalEmailServiceImpl implements TransactionalEmailService 
                 NotificationAttempt attemptRecord = new NotificationAttempt(
                         UUID.randomUUID(),
                         notification,
-                        attempt,
+                        offset + attempt,
                         AttemptResult.FAILURE,
                         ex.getMessage(),
                         Instant.now()

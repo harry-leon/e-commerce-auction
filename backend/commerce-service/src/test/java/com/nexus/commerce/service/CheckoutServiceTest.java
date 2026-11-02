@@ -21,7 +21,6 @@ import com.nexus.commerce.dto.request.CreateOrderRequest;
 import com.nexus.commerce.entity.Cart;
 import com.nexus.commerce.entity.CartItem;
 import com.nexus.commerce.entity.Order;
-import com.nexus.commerce.enums.OrderStatus;
 import com.nexus.commerce.enums.CartStatus;
 import com.nexus.commerce.repository.CartItemRepository;
 import com.nexus.commerce.repository.CartRepository;

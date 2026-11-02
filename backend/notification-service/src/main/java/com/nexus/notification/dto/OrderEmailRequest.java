@@ -46,6 +46,9 @@ public record OrderEmailRequest(
 
         List<OrderItemEmailDto> items,
 
+        // Key bắt buộc giúp worker retry sau timeout mà không tạo thêm email cho cùng sự kiện.
+        @NotBlank(message = "Mã sự kiện không được để trống")
+        @jakarta.validation.constraints.Size(max = 50)
         String eventId
 ) {
     public static OrderEmailRequest ofOrderCreated(UUID orderId, String orderNo, UUID userId,

@@ -2,6 +2,8 @@ package com.nexus.notification.entity;
 
 import com.nexus.notification.enums.AttemptResult;
 import jakarta.persistence.Column;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -44,6 +46,7 @@ public class NotificationAttempt {
     private String error;
 
     @Column(name = "attempted_at", nullable = false, updatable = false)
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     private Instant attemptedAt;
 
     public NotificationAttempt() {

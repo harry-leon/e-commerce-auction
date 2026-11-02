@@ -1,14 +1,11 @@
 package com.nexus.notification.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,7 +21,6 @@ import com.nexus.notification.entity.NotificationAttempt;
 import com.nexus.notification.enums.AttemptResult;
 import com.nexus.notification.enums.NotificationChannel;
 import com.nexus.notification.enums.NotificationStatus;
-import com.nexus.notification.enums.OrderEmailType;
 import com.nexus.notification.exception.EmailDeliveryException;
 import com.nexus.notification.repository.NotificationAttemptRepository;
 import com.nexus.notification.repository.NotificationRepository;
@@ -95,14 +91,14 @@ class TransactionalEmailServiceTest {
                 attemptRepository,
                 emailSender,
                 templateBuilder,
-                properties
+                properties, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)
         );
 
         userId = UUID.randomUUID();
         orderId = UUID.randomUUID();
         orderNo = "ORD-20261029-001";
 
-        when(notificationRepository.save(any(Notification.class)))
+        org.mockito.Mockito.lenient().when(notificationRepository.save(any(Notification.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -268,7 +264,7 @@ class TransactionalEmailServiceTest {
     }
 
     @Test
-    @DisplayName("Cấu hình tắt gửi email (EMAIL_NOTIFICATION_ENABLED = false): Đánh dấu SENT không qua SMTP")
+    @DisplayName("Cấu hình tắt gửi email (EMAIL_NOTIFICATION_ENABLED = false): Giữ PENDING để retry sau khi bật SMTP")
     void testEmailDisabledConfiguration() {
         properties.setEmailEnabled(false);
 
@@ -280,7 +276,8 @@ class TransactionalEmailServiceTest {
         NotificationResponse response = emailService.processOrderTransactionalEmail(request);
 
         assertNotNull(response);
-        assertEquals(NotificationStatus.SENT, response.status());
+        // Không gửi SMTP thì không được ghi nhận SENT.
+        assertEquals(NotificationStatus.PENDING, response.status());
         assertEquals(0, response.attempts());
         verify(emailSender, never()).sendEmail(anyString(), anyString(), anyString(), anyString(), anyString());
     }

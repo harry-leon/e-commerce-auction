@@ -19,7 +19,6 @@ import com.nexus.notification.entity.NotificationAttempt;
 import com.nexus.notification.enums.AttemptResult;
 import com.nexus.notification.enums.NotificationChannel;
 import com.nexus.notification.enums.NotificationStatus;
-import com.nexus.notification.enums.OrderEmailType;
 import com.nexus.notification.repository.NotificationAttemptRepository;
 import com.nexus.notification.repository.NotificationRepository;
 import com.nexus.notification.service.TransactionalEmailService;
@@ -54,6 +53,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(TransactionalEmailController.class)
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 @ActiveProfiles("test")
+@org.springframework.security.test.context.support.WithMockUser(roles = "NOTIFICATION_WRITER")
 class TransactionalEmailControllerTest {
 
     @Autowired
@@ -94,7 +94,7 @@ class TransactionalEmailControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.notificationId").value(notificationId.toString()))
                 .andExpect(jsonPath("$.data.status").value("SENT"))
                 .andExpect(jsonPath("$.data.attempts").value(1));
@@ -115,7 +115,7 @@ class TransactionalEmailControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").value("ACCEPTED"));
 
         verify(emailService).sendOrderTransactionalEmail(any(OrderEmailRequest.class));
@@ -191,9 +191,10 @@ class TransactionalEmailControllerTest {
         when(notificationRepository.findById(notifId)).thenReturn(Optional.of(notif));
         when(attemptRepository.findByNotificationIdOrderByAttemptNoAsc(notifId)).thenReturn(List.of(attempt));
 
-        mockMvc.perform(get("/api/v1/notifications/" + notifId))
+        mockMvc.perform(get("/api/v1/notifications/" + notifId)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(userId.toString()))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.notification.id").value(notifId.toString()))
                 .andExpect(jsonPath("$.data.attempts[0].result").value("SUCCESS"));
     }
@@ -206,7 +207,7 @@ class TransactionalEmailControllerTest {
 
         mockMvc.perform(get("/api/v1/notifications/" + notifId))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
     }
 
     @Test
@@ -226,6 +227,37 @@ class TransactionalEmailControllerTest {
         mockMvc.perform(post("/api/v1/notifications/transactional-email")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidJson))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    /** Anonymous không được gửi email; buyer thông thường không được dùng endpoint service account. */
+    @Test
+    @org.springframework.security.test.context.support.WithAnonymousUser
+    void anonymousCannotReadEmail() throws Exception {
+        mockMvc.perform(get("/api/v1/notifications/" + UUID.randomUUID())).andExpect(status().isUnauthorized());
+    }
+
+    /** Payload hợp lệ vẫn bị từ chối nếu JWT chỉ có BUYER, tránh lạm dụng SMTP gửi thư tùy ý. */
+    @Test
+    @org.springframework.security.test.context.support.WithMockUser(roles = "BUYER")
+    void buyerCannotSendTransactionalEmail() throws Exception {
+        var request = OrderEmailRequest.ofOrderCreated(UUID.randomUUID(), "ORD-1", UUID.randomUUID(),
+                "buyer@example.test", "Người mua", BigDecimal.TEN, null, "email-security-test");
+        mockMvc.perform(post("/api/v1/notifications/transactional-email").contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))).andExpect(status().isForbidden());
+        org.mockito.Mockito.verifyNoInteractions(emailService);
+    }
+
+    /** Biết UUID không cấp quyền đọc nội dung/attempts của người nhận khác. */
+    @Test
+    void anotherBuyerCannotReadEmail() throws Exception {
+        UUID id = UUID.randomUUID();
+        var notification = new Notification(id, UUID.randomUUID(), "email-owner", NotificationChannel.EMAIL,
+                "Hóa đơn", "Nội dung riêng tư", NotificationStatus.SENT, Instant.now(), Instant.now());
+        when(notificationRepository.findById(id)).thenReturn(Optional.of(notification));
+        mockMvc.perform(get("/api/v1/notifications/" + id)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                        .jwt(j -> j.subject(UUID.randomUUID().toString())))).andExpect(status().isNotFound());
+        org.mockito.Mockito.verifyNoInteractions(attemptRepository);
     }
 }

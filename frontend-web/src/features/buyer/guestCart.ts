@@ -169,4 +169,3 @@ export function clearGuestCart(): CartResponse {
     }
     return buildCartResponse([])
 }
-

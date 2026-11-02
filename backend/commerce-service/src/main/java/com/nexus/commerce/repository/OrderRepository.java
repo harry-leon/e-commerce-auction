@@ -33,12 +33,12 @@ import jakarta.persistence.LockModeType;
  */
 @Repository
 public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecificationExecutor<Order> {
-    /** Kh?a chung cho IPN, h?y v? chuy?n tr?ng th?i; ??c l?i sau khi ch? ?? kh?ng ghi ?? tr?ng th?i c?a transaction kh?c. */
+    /** Khóa chung IPN/hủy/chuyển trạng thái để request chờ đọc dữ liệu mới nhất sau commit. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Order o where o.id = :id")
     Optional<Order> findForPayment(UUID id);
 
-    /** ??m ??n theo ng?y Vi?t Nam do CheckoutService t?nh bi?n; buyer lock b?o v? gi?i h?n khi checkout ??ng th?i. */
+    /** Đếm đơn theo ngày Việt Nam; buyer lock bảo vệ hạn mức khi checkout đồng thời. */
     long countByBuyerIdAndCreatedAtGreaterThanEqual(UUID buyer, Instant start);
 
 

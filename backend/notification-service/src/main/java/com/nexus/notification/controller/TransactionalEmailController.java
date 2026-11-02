@@ -3,7 +3,6 @@ package com.nexus.notification.controller;
 import com.nexus.common.response.ApiResponse;
 import com.nexus.notification.dto.NotificationResponse;
 import com.nexus.notification.dto.OrderEmailRequest;
-import com.nexus.notification.entity.Notification;
 import com.nexus.notification.entity.NotificationAttempt;
 import com.nexus.notification.repository.NotificationAttemptRepository;
 import com.nexus.notification.repository.NotificationRepository;
@@ -16,6 +15,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import com.nexus.common.exception.ApiException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -38,7 +41,9 @@ import org.springframework.web.bind.annotation.RestController;
  * - Chuẩn hóa envelope ApiResponse<T> theo quy chuẩn Project Nexus.
  * - Cô lập lỗi: Trả về kết quả xử lý an toàn không làm gián đoạn luồng đặt hàng.
  */
+/** POST dành cho service account; GET giới hạn chủ thông báo/admin, không công khai nội dung email. */
 @RestController
+@PreAuthorize("hasRole('NOTIFICATION_WRITER')")
 @RequestMapping("/api/v1/notifications")
 @Tag(name = "Transactional Email", description = "Dịch vụ gửi email giao dịch thương mại điện tử (SRS §3.2.3)")
 public class TransactionalEmailController {
@@ -60,7 +65,7 @@ public class TransactionalEmailController {
     public ResponseEntity<ApiResponse<NotificationResponse>> sendTransactionalEmail(
             @Valid @RequestBody OrderEmailRequest request) {
         NotificationResponse response = emailService.processOrderTransactionalEmail(request);
-        return ResponseEntity.ok(ApiResponse.success(response, "Yêu cầu gửi email giao dịch đã được xử lý"));
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
     @Operation(summary = "Gửi email giao dịch bất đồng bộ", description = "Tiếp nhận sự kiện và xử lý bất đồng bộ, trả về ngay HTTP 202 Accepted")
@@ -69,7 +74,7 @@ public class TransactionalEmailController {
             @Valid @RequestBody OrderEmailRequest request) {
         emailService.sendOrderTransactionalEmail(request);
         return ResponseEntity.status(HttpStatus.ACCEPTED)
-                .body(ApiResponse.success("ACCEPTED", "Tiến trình gửi email bất đồng bộ đã được khởi chạy"));
+                .body(ApiResponse.ok("ACCEPTED"));
     }
 
     @Operation(summary = "Sự kiện Đặt hàng thành công", description = "Gửi email xác nhận đặt hàng thành công cho người mua")
@@ -77,7 +82,7 @@ public class TransactionalEmailController {
     public ResponseEntity<ApiResponse<NotificationResponse>> handleOrderCreatedEvent(
             @Valid @RequestBody OrderEmailRequest request) {
         NotificationResponse response = emailService.processOrderTransactionalEmail(request);
-        return ResponseEntity.ok(ApiResponse.success(response, "Email xác nhận đơn hàng mới đã được xử lý"));
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
     @Operation(summary = "Sự kiện Thanh toán thành công (OrderPaid)", description = "Gửi hóa đơn điện tử và xác nhận xuất kho")
@@ -85,7 +90,7 @@ public class TransactionalEmailController {
     public ResponseEntity<ApiResponse<NotificationResponse>> handleOrderPaidEvent(
             @Valid @RequestBody OrderEmailRequest request) {
         NotificationResponse response = emailService.processOrderTransactionalEmail(request);
-        return ResponseEntity.ok(ApiResponse.success(response, "Hóa đơn điện tử và xác nhận thanh toán đã được xử lý"));
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
     @Operation(summary = "Sự kiện Thanh toán thất bại", description = "Gửi cảnh báo thanh toán thất bại kèm hướng dẫn thanh toán lại")
@@ -93,19 +98,26 @@ public class TransactionalEmailController {
     public ResponseEntity<ApiResponse<NotificationResponse>> handleOrderPaymentFailedEvent(
             @Valid @RequestBody OrderEmailRequest request) {
         NotificationResponse response = emailService.processOrderTransactionalEmail(request);
-        return ResponseEntity.ok(ApiResponse.success(response, "Email cảnh báo thanh toán thất bại đã được xử lý"));
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
     @Operation(summary = "Tra cứu thông báo theo ID", description = "Lấy chi tiết thông báo cùng lịch sử các lần thử gửi (attempts)")
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getNotificationById(@PathVariable UUID id) {
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getNotificationById(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
         return notificationRepository.findById(id)
                 .map(n -> {
+                    // Kiểm tra subject trước khi tải attempts để không lộ nội dung/lỗi SMTP của người khác.
+                    var authorities = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication().getAuthorities();
+                    boolean admin = authorities.stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+                    if (!admin && !n.getUserId().toString().equals(jwt.getSubject())) {
+                        throw new ApiException("NOTIFICATION_NOT_FOUND", HttpStatus.NOT_FOUND, "Không tìm thấy thông báo", null);
+                    }
                     List<NotificationAttempt> attempts = attemptRepository.findByNotificationIdOrderByAttemptNoAsc(n.getId());
                     Map<String, Object> data = new LinkedHashMap<>();
                     data.put("notification", n);
                     data.put("attempts", attempts);
-                    return ResponseEntity.ok(ApiResponse.success(data, "Lấy thông tin thông báo thành công"));
+                    return ResponseEntity.ok(ApiResponse.ok(data));
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(ApiResponse.error("NOT_FOUND", "Không tìm thấy thông báo với mã " + id)));

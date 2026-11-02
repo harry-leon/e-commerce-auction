@@ -53,11 +53,13 @@ import org.springframework.transaction.annotation.Transactional;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
-        CheckoutLock.class, CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class})
+        CheckoutLock.class, CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class, com.nexus.commerce.service.impl.OrderServiceImpl.class,
+        com.nexus.commerce.dto.mapper.OrderMapper.class, com.nexus.commerce.statemachine.OrderStatusStateMachine.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
     @Autowired private CheckoutService checkout;
+    @Autowired private OrderService management;
     @Autowired private PaymentService payments;
     @Autowired private PaymentInventoryWorker worker;
     @Autowired private VnpayGateway gateway;
@@ -101,7 +103,7 @@ class PaymentPostgresTest {
         when(inventory.reserve(any(), any(), any())).thenReturn(List.of(reservation));
         var request = new CreateOrderRequest("123 Lê Lợi", "Người nhận", "0901234567", null, "VNPAY", null, null, List.of(item));
         String key = UUID.randomUUID().toString();
-        var created = checkout.create(buyer, key, request, "buyer-jwt");
+        var created = checkout.create(buyer, key, request, "buyer-jwt", "127.0.0.1", "buyer@example.test");
         orderId = created.id();
         paymentId = jdbc.queryForObject("SELECT id FROM payments WHERE order_id=?", UUID.class, orderId);
         assertEquals(created, checkout.create(buyer, key, request, "buyer-jwt"));
@@ -223,5 +225,87 @@ class PaymentPostgresTest {
         }
         VnpayIpnResponse result = payments.ipn(callback("00", "00", "5000000"));
         assertEquals("00", result.code());
+    }
+
+    /** Checkout/IPN, quyền sở hữu, state machine và history chạy service/DB thật, không mock OrderService. */
+    @Test
+    void paidOrderCompletesRealLifecycleAndKeepsEmailSnapshot() {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        UUID seller = jdbc.queryForObject("SELECT seller_id FROM orders WHERE id=?", UUID.class, orderId);
+        assertThrows(com.nexus.common.exception.BusinessException.class, () ->
+                management.getOrderDetail(orderId, UUID.randomUUID(), List.of("ROLE_BUYER")));
+        for (var status : List.of(com.nexus.commerce.enums.OrderStatus.PROCESSING,
+                com.nexus.commerce.enums.OrderStatus.SHIPPED, com.nexus.commerce.enums.OrderStatus.DELIVERED)) {
+            assertEquals(status, management.updateOrderStatus(orderId,
+                    new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(status, "Cập nhật giao hàng"),
+                    seller, List.of("ROLE_SELLER")).status());
+        }
+        management.updateOrderStatus(orderId, new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(
+                com.nexus.commerce.enums.OrderStatus.COMPLETED, "Hoàn tất giao hàng"), UUID.randomUUID(), List.of("ROLE_ADMIN"));
+        assertEquals("COMPLETED", management.getOrderDetail(orderId, buyer, List.of("ROLE_BUYER")).status().name());
+        assertEquals(5, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=?", Integer.class, orderId));
+        assertEquals("buyer@example.test", jdbc.queryForObject(
+                "SELECT email_payload->>'recipientEmail' FROM commerce_notification_outbox WHERE order_id=? AND event_type='PAYMENT_SUCCESS'",
+                String.class, orderId));
+        assertEquals("Sản phẩm", jdbc.queryForObject(
+                "SELECT email_payload->'items'->0->>'productName' FROM commerce_notification_outbox WHERE order_id=? AND event_type='PAYMENT_SUCCESS'",
+                String.class, orderId));
+    }
+
+    /** Hai request cùng chuyển PAID→PROCESSING phải đọc lại sau row lock, chỉ ghi history một lần. */
+    @Test
+    void concurrentStatusUpdatesAreSerialized() throws Exception {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        UUID seller = jdbc.queryForObject("SELECT seller_id FROM orders WHERE id=?", UUID.class, orderId);
+        var request = new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(
+                com.nexus.commerce.enums.OrderStatus.PROCESSING, "Bắt đầu đóng gói");
+        var gate = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> { gate.await(); return management.updateOrderStatus(orderId, request, seller, List.of("ROLE_SELLER")); });
+            var second = executor.submit(() -> { gate.await(); return management.updateOrderStatus(orderId, request, seller, List.of("ROLE_SELLER")); });
+            gate.countDown();
+            assertEquals("PROCESSING", first.get(20, TimeUnit.SECONDS).status().name());
+            assertEquals("PROCESSING", second.get(20, TimeUnit.SECONDS).status().name());
+        }
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM order_status_history WHERE order_id=? AND from_status='PAID' AND to_status='PROCESSING'", Integer.class, orderId));
+    }
+
+    /** Chưa có refund/cancel provider: từ chối hủy VNPAY đang chờ hoặc PAID, không làm sai dữ liệu tài chính. */
+    @Test
+    void cancellationCannotFakeRefundOrRaceAnActiveVnpayPayment() {
+        var request = new com.nexus.commerce.dto.request.CancelOrderRequest("Người mua yêu cầu hủy");
+        assertThrows(com.nexus.common.exception.BusinessException.class,
+                () -> management.cancelOrder(orderId, request, buyer, List.of("ROLE_BUYER")));
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        assertThrows(com.nexus.common.exception.BusinessException.class,
+                () -> management.cancelOrder(orderId, request, buyer, List.of("ROLE_BUYER")));
+        assertThrows(com.nexus.common.exception.BusinessException.class, () -> management.updateOrderStatus(orderId,
+                new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(com.nexus.commerce.enums.OrderStatus.REFUNDED, "Hoàn tiền"),
+                UUID.randomUUID(), List.of("ROLE_ADMIN")));
+        assertEquals("PAID", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+    }
+
+    /** Hủy COD thật phải ghi tác vụ release trong cùng transaction; gọi lặp không tạo history/tác vụ trùng. */
+    @Test
+    void cancellingCodPersistsAnIdempotentInventoryRelease() {
+        UUID codBuyer = UUID.randomUUID();
+        UUID cart = UUID.randomUUID();
+        UUID item = UUID.randomUUID();
+        UUID sku = jdbc.queryForObject("SELECT sku_id FROM order_items WHERE order_id=?", UUID.class, orderId);
+        jdbc.update("INSERT INTO carts(id,user_id,status,expires_at) VALUES (?,?,'ACTIVE',CURRENT_TIMESTAMP + interval '1 hour')", cart, codBuyer);
+        jdbc.update("INSERT INTO cart_items(id,cart_id,sku_id,quantity,unit_price) VALUES (?,?,?,1,25000)", item, cart, sku);
+        var request = new CreateOrderRequest("123 Lê Lợi", "Người nhận", "0901234567", null, "COD", null, null, List.of(item));
+        UUID codOrder = checkout.create(codBuyer, UUID.randomUUID().toString(), request, "buyer-jwt").id();
+        var cancel = new com.nexus.commerce.dto.request.CancelOrderRequest("Không còn nhu cầu mua");
+        management.cancelOrder(codOrder, cancel, codBuyer, List.of("ROLE_BUYER"));
+        management.cancelOrder(codOrder, cancel, codBuyer, List.of("ROLE_BUYER"));
+        assertEquals("CANCELLED", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, codOrder));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=?", Integer.class, codOrder));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='RELEASE'", Integer.class, codOrder));
+        when(tokens.get()).thenReturn("service-jwt");
+        worker.run();
+        verify(inventory).release(codOrder, "service-jwt");
     }
 }

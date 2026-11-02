@@ -49,8 +49,9 @@ public class CheckoutController {
     public ApiResponse<CreateOrderResponse> create(@AuthenticationPrincipal Jwt jwt,
                                                    @RequestHeader("Idempotency-Key") String key,
                                                    @Valid @RequestBody CreateOrderRequest request, HttpServletRequest http) {
+        // Email chỉ lấy từ JWT đã xác thực, không nhận người nhận từ request body.
         // IP peer được truyền riêng cho chữ ký URL; không đưa IP vào fingerprint idempotency.
-        return ApiResponse.created(checkout.create(buyer(jwt), key, request, jwt.getTokenValue(), http.getRemoteAddr()));
+        return ApiResponse.created(checkout.create(buyer(jwt), key, request, jwt.getTokenValue(), http.getRemoteAddr(), jwt.getClaimAsString("email")));
     }
 
     /** JWT hợp lệ vẫn cần subject UUID của Nexus; token sai định dạng trả 401 thay vì lỗi máy chủ. */

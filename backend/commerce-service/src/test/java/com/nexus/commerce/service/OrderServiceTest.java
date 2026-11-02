@@ -112,7 +112,7 @@ class OrderServiceTest {
                 orderItemRepository,
                 orderStatusHistoryRepository,
                 orderStatusStateMachine,
-                orderMapper
+                orderMapper, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)
         );
     }
 
@@ -705,7 +705,7 @@ class OrderServiceTest {
             );
             List<String> roles = List.of("ROLE_SELLER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doNothing().when(orderStatusStateMachine).validateTransition(
                     OrderStatus.PAID, OrderStatus.PROCESSING, roles
             );
@@ -737,7 +737,7 @@ class OrderServiceTest {
             );
             List<String> roles = List.of("ROLE_ADMIN");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doNothing().when(orderStatusStateMachine).validateTransition(
                     OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, roles
             );
@@ -762,7 +762,7 @@ class OrderServiceTest {
             );
             List<String> roles = List.of("ROLE_SELLER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(buildMockDetailResponse(order));
 
             OrderDetailResponse result = orderService.updateOrderStatus(
@@ -786,7 +786,7 @@ class OrderServiceTest {
             );
             List<String> roles = List.of("ROLE_SELLER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doThrow(new BusinessException(
                     ErrorCode.ORDER_STATUS_INVALID,
                     "Khong the chuyen trang thai tu PENDING_PAYMENT sang SHIPPED"
@@ -814,7 +814,7 @@ class OrderServiceTest {
             );
             List<String> roles = List.of("ROLE_SELLER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -832,7 +832,7 @@ class OrderServiceTest {
             UpdateOrderStatusRequest request = new UpdateOrderStatusRequest(
                     OrderStatus.PROCESSING, "Don hang khong ton tai"
             );
-            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -857,7 +857,7 @@ class OrderServiceTest {
             CancelOrderRequest request = new CancelOrderRequest("Toi muon thay doi dia chi nhan hang");
             List<String> roles = List.of("ROLE_BUYER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doNothing().when(orderStatusStateMachine).validateTransition(
                     OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, roles
             );
@@ -880,30 +880,17 @@ class OrderServiceTest {
             assertTrue(history.getReason().contains("thay doi dia chi"));
         }
 
+        /** Không có provider refund thì hủy PAID phải giữ nguyên tiền/trạng thái và không ghi history giả. */
         @Test
-        @DisplayName("Quản trị viên (Admin) hủy đơn hàng đã thanh toán (PAID) chuyển sang REFUNDED kèm tiền tố [ADMIN]")
-        void test_cancelOrder_admin_success() {
+        void test_cancelOrder_admin_paidRequiresRefundProvider() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
-            CancelOrderRequest request = new CancelOrderRequest("Phat hien gian lan giao dich the tin dung");
-            List<String> roles = List.of("ROLE_ADMIN");
-
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
-            doNothing().when(orderStatusStateMachine).validateTransition(
-                    OrderStatus.PAID, OrderStatus.REFUNDED, roles
-            );
-            when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
-            when(orderMapper.toDetailResponse(any(Order.class))).thenAnswer(inv -> buildMockDetailResponse(inv.getArgument(0)));
-
-            OrderDetailResponse result = orderService.cancelOrder(orderId, request, adminId, roles);
-
-            assertNotNull(result);
-            assertEquals(OrderStatus.REFUNDED, result.status());
-
-            verify(orderStatusHistoryRepository, times(1)).save(historyCaptor.capture());
-            OrderStatusHistory history = historyCaptor.getValue();
-            assertEquals(OrderStatus.PAID, history.getFromStatus());
-            assertEquals(OrderStatus.REFUNDED, history.getToStatus());
-            assertTrue(history.getReason().startsWith("[ADMIN]"));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+            var error = assertThrows(BusinessException.class, () -> orderService.cancelOrder(orderId,
+                    new CancelOrderRequest("Yêu cầu hủy"), adminId, List.of("ROLE_ADMIN")));
+            assertEquals(ErrorCode.ORDER_CANNOT_CANCEL.name(), error.getCode());
+            assertEquals(OrderStatus.PAID, order.getStatus());
+            verify(orderRepository, never()).save(any());
+            verify(orderStatusHistoryRepository, never()).save(any());
         }
 
         @Test
@@ -913,7 +900,7 @@ class OrderServiceTest {
             CancelOrderRequest request = new CancelOrderRequest("Muon huy vi giao hang cham");
             List<String> roles = List.of("ROLE_BUYER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -934,7 +921,7 @@ class OrderServiceTest {
             CancelOrderRequest request = new CancelOrderRequest("Co tinh huy don hang cua nguoi khac");
             List<String> roles = List.of("ROLE_BUYER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -953,7 +940,7 @@ class OrderServiceTest {
             CancelOrderRequest request = new CancelOrderRequest("Yeu cau huy lap lai do mang lag");
             List<String> roles = List.of("ROLE_BUYER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(buildMockDetailResponse(order));
 
             OrderDetailResponse result = orderService.cancelOrder(orderId, request, buyerId, roles);
@@ -973,7 +960,7 @@ class OrderServiceTest {
             CancelOrderRequest request = new CancelOrderRequest("Yeu cau huy lap lai do mang lag");
             List<String> roles = List.of("ROLE_BUYER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(buildMockDetailResponse(order));
 
             OrderDetailResponse result = orderService.cancelOrder(orderId, request, buyerId, roles);
@@ -990,7 +977,7 @@ class OrderServiceTest {
         @DisplayName("Hủy đơn hàng không tồn tại ném ngoại lệ 404 NOT_FOUND")
         void test_cancelOrder_orderNotFound_throwsNotFound() {
             CancelOrderRequest request = new CancelOrderRequest("Don khong ton tai");
-            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,

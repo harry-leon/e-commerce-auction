@@ -2,17 +2,17 @@
 
 ## Phạm vi và luồng
 
-Kênh triển khai Sprint 1: **IN_APP**. Buyer nhận ORDER_CREATED sau checkout, PAYMENT_SUCCESS khi IPN chuyển đơn PAID, PAYMENT_FAILED khi IPN thất bại xác định chuyển CANCELLED. Cần team xác nhận ba case/kênh này khi review; chưa có email/push/SMS.
+Kênh triển khai Sprint 1: **IN_APP và EMAIL giao dịch**. Buyer nhận ORDER_CREATED sau checkout, PAYMENT_SUCCESS khi IPN chuyển đơn PAID, PAYMENT_FAILED khi IPN thất bại xác định chuyển CANCELLED. Email dùng snapshot người nhận từ JWT checkout và tổng tiền/items từ DB; chưa có push/SMS.
 
-Commerce ghi snapshot buyer/orderNo/total vào commerce_notification_outbox cùng transaction đơn/IPN, không gọi HTTP trong checkout/IPN. Rollback không có sự kiện ma, replay không thêm sự kiện. Worker dùng service account riêng, tối đa 10 sự kiện/tick (mặc định 5 giây), SELECT FOR UPDATE SKIP LOCKED. Lỗi log eventId/orderId/errorType, tăng attempts, retry từ 10 giây tăng dần tối đa 10 phút, không tự bỏ sự kiện. Thiếu OAuth cảnh báo một lần/instance và giữ pending. Snapshot không chứa JWT/thông tin giao hàng.
+Commerce ghi snapshot buyer/orderNo/total vào commerce_notification_outbox cùng transaction đơn/IPN, không gọi HTTP trong checkout/IPN. Rollback không có sự kiện ma, replay không thêm sự kiện. Worker dùng service account riêng, tối đa 10 sự kiện/tick (mặc định 5 giây), SELECT FOR UPDATE SKIP LOCKED. Lỗi log eventId/orderId/errorType, tăng attempts, retry từ 10 giây tăng dần tối đa 10 phút, không tự bỏ sự kiện. Thiếu OAuth cảnh báo một lần/instance và giữ pending. Snapshot không chứa JWT; V7 lưu email/tên người nhận và các dòng hóa đơn để worker gửi đúng dữ liệu của đơn.
 
-Notification ghi theo event UUID duy nhất. Mất ACK sau commit được retry nhưng không tạo tin/reset READ. notification_attempts lưu một SUCCESS khi đưa tin vào inbox; lần HTTP lỗi theo dõi tại outbox Commerce vì Notification có thể chưa nhận request. Mọi truy vấn/READ ràng buộc user_id theo JWT. FE phân trang/tải lại thủ công, không fallback mock và không hiển thị nút email/push chưa hoạt động.
+Notification ghi theo event UUID duy nhất. Mất ACK sau commit được retry nhưng không tạo tin/reset READ. notification_attempts lưu một SUCCESS khi đưa tin vào inbox; lần HTTP lỗi theo dõi tại outbox Commerce vì Notification có thể chưa nhận request. Mọi truy vấn/READ ràng buộc user_id theo JWT. FE phân trang/tải lại thủ công, không fallback mock và không có tùy chọn email/push giả.
 
 ## Cấu hình và phụ thuộc
 
 Phụ thuộc Catalog seller snapshot, checkout TT-S1-2 và Commerce/Gateway/Web TT-S1-3. Nhánh TT-S1-4 tích hợp các nhánh này để kiểm thử. Khi publish tách MR Notification → Commerce → Web và ghi rõ dependency; không push trực tiếp dev. Payment cần hai approvals theo CONTRIBUTING.
 
-1. Notification chạy migration V3, Commerce V6. Không sửa migration cũ, không backfill lịch sử.
+1. Notification chạy migration V4, Commerce V7. Không sửa migration cũ, không backfill lịch sử.
 2. Keycloak tạo role **ROLE_NOTIFICATION_WRITER**, client confidential riêng (ví dụ nexus-commerce-notification), bật service accounts/client authentication, tắt browser/direct access grants. Chỉ gán ROLE_NOTIFICATION_WRITER cho service account và bật scope roles để role xuất hiện trong realm_access.roles. Không cấp ADMIN/PROFILE_WRITER/manage-users, không cấp role writer cho BUYER.
 3. Tạo secret tại Keycloak, cấp ngoài repo. `deploy/keycloak/nexus-realm.json` chỉ thêm định nghĩa role cho realm mới, không tạo client với secret mặc định. Import không cập nhật realm cũ: thêm role/client ở môi trường đã có dữ liệu, không reset volume nhóm.
 4. Commerce nhận env:
@@ -25,7 +25,7 @@ Phụ thuộc Catalog seller snapshot, checkout TT-S1-2 và Commerce/Gateway/Web
 | NOTIFICATION_CLIENT_SECRET | Secret cấp ngoài repo |
 | APP_NOTIFICATION_POLL_MS | Tùy chọn, mặc định 5000 |
 
-Compose chuyển tiếp TOKEN_URL/CLIENT_ID/CLIENT_SECRET. VNPAY và service account inventory theo [PAYMENT_SANDBOX_INTEGRATION.md](PAYMENT_SANDBOX_INTEGRATION.md). Thiếu OAuth thông báo không chặn COD/VNPAY, giữ backlog; thiếu merchant/inventory vẫn chặn VNPAY mới theo TT-S1-3.
+Compose chuyển tiếp TOKEN_URL/CLIENT_ID/CLIENT_SECRET và cấu hình SMTP (mặc định Mailpit:1025). Email gửi qua endpoint chỉ dành ROLE_NOTIFICATION_WRITER; FAILED/PENDING giữ outbox nguồn để retry. SMTP tắt hoặc thiếu cấu hình không được ghi SENT. VNPAY và service account inventory theo [PAYMENT_SANDBOX_INTEGRATION.md](PAYMENT_SANDBOX_INTEGRATION.md). Thiếu OAuth thông báo không chặn COD/VNPAY, giữ backlog; thiếu merchant/inventory vẫn chặn VNPAY mới theo TT-S1-3.
 
 ## Demo tự động với dữ liệu riêng
 

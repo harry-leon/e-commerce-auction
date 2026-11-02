@@ -22,7 +22,7 @@ export function ProductCard({ product }: { product: Product }) {
         const guestCart = addGuestCartItem({
             skuId: product.id,
             skuCode: product.sku || `SKU-${product.id}`,
-            productName: lang === 'en' ? product.name : (product.nameVi || product.name),
+            productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: product.images?.[0],
             unitPrice: product.price,
             quantity: 1,

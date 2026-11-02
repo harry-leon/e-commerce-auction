@@ -12,7 +12,7 @@
 > **Triển khai TT-S1-2:** preview và tạo đơn REGULAR/COD đã có backend. Contract callable và giới hạn hiện tại xem
 > [COMMERCE_SERVICE.md mục 4](dto-contracts/COMMERCE_SERVICE.md#4-checkout--tạo-đơn--tt-s1-2).
 > Ví dụ trong bản draft bên dưới mô tả cả đích đến tương lai; source hiện dùng envelope v2 `success/data/error/meta`,
-> xác minh JWT tại service, chưa hỗ trợ voucher/đọc-hủy đơn. TT-S1-3 bổ sung [VNPAY sandbox/IPN](PAYMENT_SANDBOX_INTEGRATION.md).
+> xác minh JWT tại service, chưa hỗ trợ voucher. Các endpoint đọc/chuyển trạng thái/hủy đơn được tích hợp cùng checkout. TT-S1-3 bổ sung [VNPAY sandbox/IPN](PAYMENT_SANDBOX_INTEGRATION.md).
 > Không dùng mẫu draft như API đã hoàn thành.
 
 ---
@@ -209,7 +209,7 @@ Tài liệu này xác lập thỏa thuận kỹ thuật (Technical Alignment Agr
   "reason": "Thay đổi nhu cầu mua hàng"
 }
 ```
-- **Hành vi hệ thống**: Chuyển đơn sang `CANCELLED`, gọi Inventory giải phóng giữ hàng (`RELEASED`), ghi log vào `order_status_history`.
+- **Hành vi hiện tại**: Chỉ hủy đơn `PENDING_PAYMENT` không có VNPAY đang chờ; chuyển `CANCELLED`, ghi history và outbox RELEASE cùng transaction. Worker hoàn kho sau commit. Đơn `PAID` hoặc VNPAY đang chờ trả `ORDER_CANNOT_CANCEL`; chưa tích hợp provider refund/cancel, không ghi `REFUNDED` giả.
 
 ---
 

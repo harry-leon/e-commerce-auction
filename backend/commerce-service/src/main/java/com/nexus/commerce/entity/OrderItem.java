@@ -15,7 +15,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.UuidGenerator;
 
 /**
  * Entity ánh xạ bảng order_items trong cơ sở dữ liệu commerce_svc (V2__init_schema.sql).
@@ -43,9 +42,10 @@ public class OrderItem {
 
     /** Khóa chính dòng sản phẩm (UUID tự sinh). */
     @Id
-    @UuidGenerator
     @Column(nullable = false, updatable = false)
-    private UUID id;
+    // UUID cấp tại ứng dụng trước reserve; không dùng generated-ID để Hibernate nhận đúng entity mới.
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     /** Đơn hàng cha chứa dòng sản phẩm này. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)

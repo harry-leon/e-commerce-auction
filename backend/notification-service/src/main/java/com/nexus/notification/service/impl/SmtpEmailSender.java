@@ -40,8 +40,8 @@ public class SmtpEmailSender implements EmailSender {
     public void sendEmail(String from, String to, String subject, String bodyHtml, String bodyText)
             throws EmailDeliveryException {
         if (mailSender == null) {
-            log.warn("JavaMailSender không được kích hoạt trên hệ thống; bỏ qua tiến trình SMTP thực tế");
-            return;
+            // Thiếu SMTP phải trả lỗi để giữ outbox, không được báo SENT.
+            throw new EmailDeliveryException("Chưa cấu hình JavaMailSender", null);
         }
 
         try {

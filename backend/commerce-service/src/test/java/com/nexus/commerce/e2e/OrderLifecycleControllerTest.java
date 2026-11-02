@@ -36,9 +36,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Kiểm thử End-to-End (E2E) toàn diện vòng đời đơn hàng (Issue HG-S1-4 / Milestone 4).
+ * Kiểm thử contract HTTP và phân quyền vòng đời đơn hàng (Issue HG-S1-4 / Milestone 4).
  *
- * <p>Chức năng: Mô phỏng đầy đủ 4 kịch bản vòng đời đơn hàng theo yêu cầu R4:
+ * <p>Đây là WebMvcTest mock service; PaymentPostgresTest kiểm tra vòng đời nghiệp vụ/DB thật.
+ * <p>Chức năng: Mô phỏng response service cho 4 kịch bản vòng đời đơn hàng theo yêu cầu R4:
  * <ul>
  *   <li>Kịch bản A (Happy Path): PENDING_PAYMENT -> PAID -> PROCESSING -> SHIPPED -> DELIVERED -> COMPLETED.</li>
  *   <li>Kịch bản B (Hủy đơn): Cho phép người mua hủy khi PENDING_PAYMENT, từ chối hủy khi đơn đã SHIPPED.</li>
@@ -60,8 +61,8 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 @ActiveProfiles("test")
-@DisplayName("E2E Order Lifecycle Test Suite")
-class OrderLifecycleE2ETest {
+@DisplayName("Order Lifecycle HTTP Contract Test Suite")
+class OrderLifecycleControllerTest {
 
     @Autowired
     private MockMvc mockMvc;

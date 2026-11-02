@@ -102,6 +102,12 @@ public class CheckoutService {
     /** Biến thể HTTP nhận IP peer để ký URL VNPAY; cùng transaction đơn, phiếu giữ kho và Payment. */
     @Transactional
     public CreateOrderResponse create(UUID buyer, String key, CreateOrderRequest request, String token, String ip) {
+        return create(buyer, key, request, token, ip, null);
+    }
+
+    /** Snapshot email từ JWT; replay giữ người nhận đã lưu và không tạo notification lặp. */
+    @Transactional
+    public CreateOrderResponse create(UUID buyer, String key, CreateOrderRequest request, String token, String ip, String email) {
         String normalizedKey = normalizeKey(key);
         String hash = fingerprint(buyer, request);
         locks.acquire("key:" + normalizedKey);
@@ -125,6 +131,7 @@ public class CheckoutService {
         var selected = select(cart, cartItems.findForCheckout(cart.getId()), request.selectedItemIds());
         var lines = snapshots(buyer, selected);
         Order order = buildOrder(buyer, normalizedKey, hash, request, lines);
+        order.setBuyerEmail(email == null || email.isBlank() ? null : email);
         // Flush trước gọi kho để lỗi constraint/schema không gây reservation thừa; vẫn chưa commit đơn.
         order = orders.saveAndFlush(order);
         UUID orderId = order.getId();
@@ -212,7 +219,7 @@ public class CheckoutService {
         // Lấy seller từ cùng snapshot đã validate, không tải Catalog lần hai gây lệch dữ liệu.
         order.setSellerId(lines.getFirst().sellerId());
         order.setSourceType(OrderSourceType.REGULAR);
-        // Enum d?ng chung v?i qu?n l? ??n; DB v?n l?u t?n tr?ng th?i ?? t??ng th?ch Flyway.
+        // Enum dùng chung với quản lý đơn; DB vẫn lưu tên trạng thái theo Flyway.
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setSubtotal(subtotal(lines));
         order.setShippingFee(shippingFee());

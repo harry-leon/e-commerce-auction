@@ -2797,10 +2797,7 @@ export function SandboxPaymentPage() {
                                 navigate('payment-result', { status: 'cancelled', orderId })
                             }
                         >
-                            ←{' '}
-                            {lang === 'en'
-                                ? 'Cancel Payment'
-                                : 'Hủy thanh toán'}
+                            ← {lang === 'en' ? 'Cancel Payment' : 'Hủy thanh toán'}
                         </Button>
                     </div>
 
@@ -2818,17 +2815,23 @@ export function SandboxPaymentPage() {
 // ─── Payment Result Page ───────────────────────────────────────────────────────
 type ResolvedPaymentStatus = 'success' | 'failed' | 'cancelled' | 'pending' | 'unknown'
 
-/** URL ch? cung c?p ID tra c?u; m?i tr?ng th?i hi?n th? l?y t? API c? x?c th?c. */
+/** URL chỉ mang ID tra cứu; trạng thái hiển thị lấy từ API có xác thực. */
 export function PaymentResultPage() {
     const { pageParams } = useApp()
     const paymentId = String(pageParams?.vnp_TxnRef || pageParams?.paymentId || '')
     const orderId = String(pageParams?.orderId || '')
-    return <BuyerLayout>{paymentId
-        ? <VnpayPaymentResult key={paymentId} paymentId={paymentId} />
-        : <VerifiedOrderResult key={orderId} orderId={orderId} />}</BuyerLayout>
+    return (
+        <BuyerLayout>
+            {paymentId ? (
+                <VnpayPaymentResult key={paymentId} paymentId={paymentId} />
+            ) : (
+                <VerifiedOrderResult key={orderId} orderId={orderId} />
+            )}
+        </BuyerLayout>
+    )
 }
 
-/** L?ch s? ??n l?y t? backend; l?i ???c hi?n th? ?? ng??i mua c? th? th? l?i. */
+/** Lịch sử đơn lấy từ backend; lỗi hiển thị để người mua có thể thử lại. */
 export function OrderHistoryPage() {
     const { lang, navigate, showToast, user } = useApp()
     const [orders, setOrders] = useState<Order[]>([])

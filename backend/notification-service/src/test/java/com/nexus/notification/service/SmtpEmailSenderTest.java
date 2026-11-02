@@ -1,6 +1,5 @@
 package com.nexus.notification.service;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
@@ -44,10 +43,11 @@ class SmtpEmailSenderTest {
     }
 
     @Test
-    @DisplayName("Khi JavaMailSender không tồn tại (null): Bỏ qua êm dịu, không ném lỗi")
+    @DisplayName("Khi JavaMailSender không tồn tại (null): Trả lỗi để outbox không ghi SENT giả")
     void testNullMailSender() {
         SmtpEmailSender nullSender = new SmtpEmailSender(null);
-        assertDoesNotThrow(() -> nullSender.sendEmail(
+        // Thiếu SMTP không thể được coi là đã giao email.
+        assertThrows(EmailDeliveryException.class, () -> nullSender.sendEmail(
                 "no-reply@nexus.com", "to@nexus.com", "Subject", "<h1>Html</h1>", "Text"
         ));
     }

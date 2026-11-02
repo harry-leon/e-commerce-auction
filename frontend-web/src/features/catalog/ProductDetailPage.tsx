@@ -196,7 +196,7 @@ export function ProductDetailPage() {
         const guestCart = addGuestCartItem({
             skuId: skuId || product.id,
             skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
-            productName: lang === 'en' ? product.name : (product.nameVi || product.name),
+            productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: productImages[0],
             unitPrice: product.price,
             quantity: qty,
@@ -217,7 +217,7 @@ export function ProductDetailPage() {
         addGuestCartItem({
             skuId: skuId || product.id,
             skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
-            productName: lang === 'en' ? product.name : (product.nameVi || product.name),
+            productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: productImages[0],
             unitPrice: product.price,
             quantity: qty,

@@ -9,7 +9,6 @@ import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
-import com.nexus.fulfillment.enums.ReservationRefType;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;

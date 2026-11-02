@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * - Soạn tiêu đề và thân thư (HTML & Plain-Text) cho 3 sự kiện chính:
  *   1. OrderCreated: Đặt hàng thành công, hướng dẫn thanh toán.
  *   2. OrderPaid: Hóa đơn điện tử, thông báo xác nhận thanh toán và trừ kho chuẩn bị giao hàng.
- *   3. OrderPaymentFailed: Thông báo thanh toán thất bại kèm lý do và hạn chót giữ kho 30 phút.
+ *   3. OrderPaymentFailed: Thông báo thất bại/hủy đơn và hướng dẫn tạo đơn mới.
  *
  * Quy tắc:
  * - Định dạng số tiền theo tiền tệ Việt Nam (VND).
@@ -52,6 +52,7 @@ public class TransactionalEmailTemplateBuilder {
         String formattedTotal = formatCurrency(request.totalAmount());
         String orderNo = request.orderNo();
 
+        // Chỉ xác nhận tài chính; xuất kho chạy bất đồng bộ và có thể cần retry.
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">");
         sb.append("<style>");
@@ -88,7 +89,7 @@ public class TransactionalEmailTemplateBuilder {
                     .append("</strong> của quý khách đã được thanh toán thành công qua cổng Sandbox (")
                     .append(escapeHtml(request.paymentMethod() != null ? request.paymentMethod() : "SANDBOX_GATEWAY"))
                     .append(").</p>");
-            sb.append("<p>Hàng hóa đã được chính thức xuất kho (Commit) và chuyển giao cho bộ phận vận chuyển.</p>");
+            sb.append("<p>Nexus đã xác nhận thanh toán; trạng thái chuẩn bị và giao hàng được cập nhật trong lịch sử đơn hàng.</p>");
         } else if (request.eventType() == OrderEmailType.ORDER_PAYMENT_FAILED) {
             sb.append("<p>Rất tiếc, giao dịch thanh toán cho đơn hàng <strong>#")
                     .append(escapeHtml(orderNo))
@@ -98,8 +99,8 @@ public class TransactionalEmailTemplateBuilder {
                         .append(escapeHtml(request.failureReason()))
                         .append("</p>");
             }
-            sb.append("<p><em>Lưu ý quan trọng:</em> Hàng trong kho chỉ được tạm giữ tối đa <strong>30 phút</strong> kể từ khi đặt. ")
-                    .append("Vui lòng thực hiện thanh toán lại trước khi thời hạn giữ kho kết thúc.</p>");
+            sb.append("<p><em>Lưu ý quan trọng:</em> Đơn thanh toán thất bại đã được hủy và yêu cầu giải phóng tồn kho. ")
+                    .append("Vui lòng tạo đơn mới nếu muốn mua lại.</p>");
         } else {
             sb.append("<p>Cảm ơn quý khách đã đặt hàng tại Nexus Shop! Đơn hàng <strong>#")
                     .append(escapeHtml(orderNo))
@@ -152,13 +153,13 @@ public class TransactionalEmailTemplateBuilder {
         if (request.eventType() == OrderEmailType.ORDER_PAID) {
             sb.append("Nexus Shop xác nhận đơn hàng #").append(orderNo).append(" đã thanh toán thành công.\n");
             sb.append("Phương thức thanh toán: ").append(request.paymentMethod() != null ? request.paymentMethod() : "Sandbox").append("\n");
-            sb.append("Tồn kho đã được xác nhận xuất kho và chuyển sang trạng thái chuẩn bị giao hàng.\n\n");
+            sb.append("Theo dõi tiến độ chuẩn bị và giao hàng trong lịch sử đơn hàng.\n\n");
         } else if (request.eventType() == OrderEmailType.ORDER_PAYMENT_FAILED) {
             sb.append("Thông báo: Giao dịch thanh toán cho đơn hàng #").append(orderNo).append(" đã thất bại.\n");
             if (request.failureReason() != null) {
                 sb.append("Lý do: ").append(request.failureReason()).append("\n");
             }
-            sb.append("Vui lòng thanh toán lại trước khi hết thời hạn giữ kho 30 phút.\n\n");
+            sb.append("Đơn thanh toán thất bại đã được hủy; vui lòng tạo đơn mới nếu muốn mua lại.\n\n");
         } else {
             sb.append("Nexus Shop xác nhận quý khách đã đặt hàng thành công đơn hàng #").append(orderNo).append(".\n\n");
         }

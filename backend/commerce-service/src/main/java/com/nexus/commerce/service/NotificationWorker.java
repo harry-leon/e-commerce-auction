@@ -48,11 +48,16 @@ public class NotificationWorker {
         var row = rows.getFirst();
         UUID id = (UUID) row.get("id");
         try {
-            delivery.send(Map.of("id", id, "userId", row.get("user_id"), "orderId", row.get("order_id"),
+            var event = new java.util.LinkedHashMap<String, Object>(Map.of("id", id, "userId", row.get("user_id"), "orderId", row.get("order_id"),
                     "orderNo", row.get("order_no"), "type", row.get("event_type"), "amount", row.get("amount"),
                     "occurredAt", ((Timestamp) row.get("occurred_at")).toInstant().toString()));
+            // Snapshot email/items cùng transaction checkout; retry không lấy người nhận hoặc giá mới.
+            var snapshot = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                    row.get("email_payload").toString(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+            event.putAll(snapshot);
+            delivery.send(event);
             jdbc.update("UPDATE commerce_notification_outbox SET done=true,attempts=attempts+1 WHERE id=?", id);
-        } catch (RuntimeException error) {
+        } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException error) {
             // Không ghi payload/token/HTTP body vào log; lỗi 4xx cấu hình cũng giữ để vận hành sửa rồi retry.
             jdbc.update("UPDATE commerce_notification_outbox SET attempts=attempts+1, "
                     + "next_attempt_at=CURRENT_TIMESTAMP+least(attempts+1,60)*interval '10 seconds' WHERE id=?", id);

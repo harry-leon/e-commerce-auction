@@ -3,6 +3,8 @@ package com.nexus.notification.entity;
 import com.nexus.notification.enums.NotificationChannel;
 import com.nexus.notification.enums.NotificationStatus;
 import jakarta.persistence.Column;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -48,9 +50,11 @@ public class Notification {
     private NotificationStatus status;
 
     @Column(name = "sent_at")
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     private Instant sentAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     private Instant createdAt;
 
     public Notification() {

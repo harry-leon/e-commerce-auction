@@ -27,7 +27,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
 /**
@@ -48,12 +47,14 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Order {
-    /** Snapshot checkout v? phi?u kho; gi? c?ng ??n ?? IPN/outbox kh?ng ph? thu?c token ho?c gi? ?? x?a. */
+    /** Snapshot checkout và phiếu kho cùng đơn để IPN/outbox không phụ thuộc token hoặc giỏ đã xóa. */
     @ElementCollection
     @CollectionTable(name = "order_reservations", joinColumns = @JoinColumn(name = "order_id"))
     @Column(name = "reservation_id", nullable = false)
     @Builder.Default
     private List<UUID> reservationIds = new ArrayList<>();
+    /** Email từ JWT lúc checkout; đơn cũ thiếu email chỉ gửi IN_APP, không đoán người nhận. */
+    @Column(name = "buyer_email", length = 254) private String buyerEmail;
     @Column(name = "recipient_name") private String recipientName;
     @Column(name = "recipient_phone", length = 30) private String recipientPhone;
     @Column(name = "payment_method", length = 20) private String paymentMethod;
@@ -62,9 +63,10 @@ public class Order {
 
     /** Mã định danh đơn hàng (Primary Key, UUID tự sinh). */
     @Id
-    @UuidGenerator
     @Column(nullable = false, updatable = false)
-    private UUID id;
+    // UUID cấp tại ứng dụng trước reserve; không dùng generated-ID để Hibernate nhận đúng entity mới.
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
     /** Mã tham chiếu đơn hàng thân thiện với người dùng (duy nhất, ví dụ: ORD-20261029-001). */
     @Column(name = "order_no", nullable = false, unique = true, length = 50)

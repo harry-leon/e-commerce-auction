@@ -109,7 +109,7 @@ class OrderServiceAccessControlChallengeTest {
                 orderItemRepository,
                 orderStatusHistoryRepository,
                 orderStatusStateMachine,
-                orderMapper
+                orderMapper, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)
         );
 
         ValidatorFactory factory = Validation.buildDefaultValidatorFactory();
@@ -345,7 +345,7 @@ class OrderServiceAccessControlChallengeTest {
             UpdateOrderStatusRequest request = new UpdateOrderStatusRequest(
                     OrderStatus.PROCESSING, "Xac nhan dong goi"
             );
-            when(orderRepository.findById(nonExistentOrderId)).thenReturn(Optional.empty());
+            when(orderRepository.findForPayment(nonExistentOrderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -361,7 +361,7 @@ class OrderServiceAccessControlChallengeTest {
         @DisplayName("cancelOrder với ID không tồn tại ném 404 ORDER_NOT_FOUND")
         void test_cancelOrder_nonExistentOrder_throwsOrderNotFound() {
             CancelOrderRequest request = new CancelOrderRequest("Khong co nhu cau nua");
-            when(orderRepository.findById(nonExistentOrderId)).thenReturn(Optional.empty());
+            when(orderRepository.findForPayment(nonExistentOrderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -389,7 +389,7 @@ class OrderServiceAccessControlChallengeTest {
             UpdateOrderStatusRequest request = new UpdateOrderStatusRequest(OrderStatus.PROCESSING, longReason);
             List<String> roles = List.of("ROLE_SELLER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doNothing().when(orderStatusStateMachine).validateTransition(
                     OrderStatus.PAID, OrderStatus.PROCESSING, roles
             );
@@ -414,7 +414,7 @@ class OrderServiceAccessControlChallengeTest {
             CancelOrderRequest request = new CancelOrderRequest(hugeReason);
             List<String> roles = List.of("ROLE_BUYER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doNothing().when(orderStatusStateMachine).validateTransition(
                     OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, roles
             );
@@ -438,7 +438,7 @@ class OrderServiceAccessControlChallengeTest {
             UpdateOrderStatusRequest request = new UpdateOrderStatusRequest(OrderStatus.PROCESSING, null);
             List<String> roles = List.of("ROLE_SELLER");
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             doNothing().when(orderStatusStateMachine).validateTransition(
                     OrderStatus.PAID, OrderStatus.PROCESSING, roles
             );

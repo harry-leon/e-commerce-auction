@@ -23,6 +23,8 @@ class NotificationDeliveryTest {
     private int result = 204;
     private String authorization;
     private String payload;
+    private String emailPayload;
+    private String emailStatus = "SENT";
 
     @BeforeEach
     void setup() throws Exception {
@@ -40,6 +42,16 @@ class NotificationDeliveryTest {
             authorization = exchange.getRequestHeaders().getFirst("Authorization");
             payload = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(result, -1);
+            exchange.close();
+        });
+        // HTTP server giả lập contract Notification; mọi request vẫn phải có service bearer token.
+        server.createContext("/api/v1/notifications/transactional-email", exchange -> {
+            assertEquals("Bearer notification-service-token", exchange.getRequestHeaders().getFirst("Authorization"));
+            emailPayload = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            byte[] bytes = ("{\"success\":true,\"data\":{\"status\":\"" + emailStatus + "\"}}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
             exchange.close();
         });
         server.start();
@@ -74,5 +86,23 @@ class NotificationDeliveryTest {
         result = 200;
         assertThrows(IllegalStateException.class, () -> delivery.send(Map.of()));
         assertFalse(new NotificationDelivery("http://localhost", "", "", "").configured());
+    }
+
+    /** Email giữ đúng người nhận/số tiền từ snapshot; FAILED/PENDING không được ACK hoàn tất outbox. */
+    @Test
+    void sendsRealEmailSnapshotAndRetriesUnsentEmail() throws Exception {
+        var event = Map.<String, Object>of("id", "event-email", "userId", "buyer-id", "orderId", "order-id",
+                "orderNo", "ORD-REAL", "type", "PAYMENT_SUCCESS", "amount", 50000,
+                "recipientEmail", "buyer@example.test", "recipientName", "Người mua", "paymentMethod", "VNPAY");
+        delivery.send(event);
+        var data = new com.fasterxml.jackson.databind.ObjectMapper().readTree(emailPayload);
+        assertEquals("buyer@example.test", data.get("recipientEmail").asText());
+        assertEquals(50000, data.get("totalAmount").asInt());
+        assertEquals("ORDER_PAID", data.get("eventType").asText());
+        assertEquals("EMAIL-event-email", data.get("eventId").asText());
+        emailStatus = "FAILED";
+        assertThrows(IllegalStateException.class, () -> delivery.send(event));
+        emailStatus = "PENDING";
+        assertThrows(IllegalStateException.class, () -> delivery.send(event));
     }
 }

@@ -4,19 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
-import com.nexus.fulfillment.client.NotificationClient;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
-import com.nexus.fulfillment.entity.Inventory;
 import com.nexus.fulfillment.entity.InventoryLedger;
 import com.nexus.fulfillment.entity.InventoryReservation;
 import com.nexus.fulfillment.entity.Warehouse;
@@ -40,7 +35,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Kiểm thử tích hợp toàn luồng End-to-End (E2E Integration Test) Sprint 1 (SRS §3.2.3, §3.6.1, §5.2, §5.3).
@@ -63,6 +57,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  *    Cổng thanh toán Sandbox gửi liên tiếp 3 webhook OrderPaid cho cùng một đơn hàng ->
  *    Xử lý idempotent hoàn hảo, chỉ trừ kho 1 lần duy nhất, tồn kho không bị lệch.
  */
+/** T?ch h?p service/repository kho th?t; email c? suite outbox ri?ng ? Commerce. */
+@org.springframework.transaction.annotation.Transactional
 @SpringBootTest
 @ActiveProfiles("test")
 class E2ECheckoutOrderFulfillmentIntegrationTest {
@@ -85,22 +81,20 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
     @Autowired
     private InventoryEventListener inventoryEventListener;
 
-    @MockitoBean
-    private NotificationClient notificationClient;
 
     private UUID skuId;
     private Warehouse warehouse;
 
     @BeforeEach
     void setUp() {
-        ledgerRepository.deleteAll();
+// Mỗi test tạo SKU riêng và rollback fixture; không xóa sổ cái bất biến.
         reservationRepository.deleteAll();
         inventoryRepository.deleteAll();
         warehouseRepository.deleteAll();
 
         skuId = UUID.randomUUID();
         warehouse = new Warehouse(
-                UUID.fromString("b0000000-0000-0000-0000-000000000001"),
+                UUID.randomUUID(),
                 "WH_E2E_01",
                 "Kho tổng E2E Test",
                 "Hà Nội",
@@ -138,7 +132,7 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         assertEquals(1, reserveResp.items().size());
 
         // Kiểm tra tồn kho sau khi giữ: total=10, reserved=3, available=7
-        InventoryStockResponse stockAfterReserve = inventoryService.getStockBySku(skuId);
+        InventoryStockResponse stockAfterReserve = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(10, stockAfterReserve.totalQty());
         assertEquals(3, stockAfterReserve.reservedQty());
         assertEquals(7, stockAfterReserve.availableQty());
@@ -148,7 +142,7 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         inventoryEventListener.onOrderPaid(paidEvent);
 
         // Bước 3: Kiểm tra tồn kho sau khi trừ thật (Commit): total=7, reserved=0, available=7
-        InventoryStockResponse stockAfterCommit = inventoryService.getStockBySku(skuId);
+        InventoryStockResponse stockAfterCommit = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(7, stockAfterCommit.totalQty());
         assertEquals(0, stockAfterCommit.reservedQty());
         assertEquals(7, stockAfterCommit.availableQty());
@@ -159,13 +153,13 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         assertEquals(ReservationStatus.CONFIRMED, reservations.get(0).getStatus());
 
         // Bước 4: Kiểm tra sổ cái biến động kho (RESERVE -> OUTBOUND)
-        List<InventoryLedger> ledgers = ledgerRepository.findAll();
+        List<InventoryLedger> ledgers = ledgerRepository.findBySkuId(skuId, org.springframework.data.domain.Pageable.unpaged()).getContent();
         boolean hasOutboundLedger = ledgers.stream()
                 .anyMatch(l -> l.getMovementType() == LedgerMovementType.OUTBOUND && l.getQuantity() == purchaseQty);
         assertTrue(hasOutboundLedger);
 
         // Bước 5: Xác nhận NotificationClient đã được kích hoạt gửi email hóa đơn
-        verify(notificationClient, times(1)).sendOrderPaidNotification(eq(orderId), eq(null));
+        // Suite này kiểm tra kho thật; email được kiểm tra qua outbox Commerce.
     }
 
     @Test
@@ -186,7 +180,7 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         assertEquals(ErrorCode.INVENTORY_INSUFFICIENT.name(), exception.getCode());
 
         // Tồn kho không bị thay đổi
-        InventoryStockResponse stock = inventoryService.getStockBySku(skuId);
+        InventoryStockResponse stock = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(10, stock.totalQty());
         assertEquals(0, stock.reservedQty());
         assertEquals(10, stock.availableQty());
@@ -219,7 +213,7 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         reservationRepository.save(res);
 
         // Bộ quét tự động giải phóng phiếu quá hạn (Auto-release)
-        int releasedCount = inventoryService.releaseExpiredReservations();
+        int releasedCount = inventoryService.autoReleaseExpiredReservations();
         assertEquals(1, releasedCount);
 
         // Kiểm tra phiếu chuyển sang EXPIRED
@@ -227,13 +221,13 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         assertEquals(ReservationStatus.EXPIRED, updatedRes.getStatus());
 
         // Kiểm tra tồn kho đã hoàn lại đầy đủ: total=10, reserved=0, available=10
-        InventoryStockResponse stockAfterRelease = inventoryService.getStockBySku(skuId);
+        InventoryStockResponse stockAfterRelease = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(10, stockAfterRelease.totalQty());
         assertEquals(0, stockAfterRelease.reservedQty());
         assertEquals(10, stockAfterRelease.availableQty());
 
         // Kiểm tra sổ cái có bản ghi RELEASE hoàn tồn
-        List<InventoryLedger> ledgers = ledgerRepository.findAll();
+        List<InventoryLedger> ledgers = ledgerRepository.findBySkuId(skuId, org.springframework.data.domain.Pageable.unpaged()).getContent();
         boolean hasReleaseLedger = ledgers.stream()
                 .anyMatch(l -> l.getMovementType() == LedgerMovementType.RELEASE && l.getQuantity() == heldQty);
         assertTrue(hasReleaseLedger);
@@ -259,7 +253,7 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         inventoryEventListener.onOrderPaid(webhook1);
 
         // Tồn kho sau lần 1: total=8, reserved=0, available=8
-        InventoryStockResponse stock1 = inventoryService.getStockBySku(skuId);
+        InventoryStockResponse stock1 = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(8, stock1.totalQty());
         assertEquals(0, stock1.reservedQty());
         assertEquals(8, stock1.availableQty());
@@ -273,14 +267,14 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         inventoryEventListener.onOrderPaid(webhook3);
 
         // Xác nhận tồn kho sau 3 lần webhook vẫn giữ nguyên ở mức 8 (KHÔNG BỊ TRỪ LẶP)
-        InventoryStockResponse stockFinal = inventoryService.getStockBySku(skuId);
+        InventoryStockResponse stockFinal = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(8, stockFinal.totalQty());
         assertEquals(0, stockFinal.reservedQty());
         assertEquals(8, stockFinal.availableQty());
 
         // Kiểm tra sổ cái OUTBOUND chỉ xuất hiện ĐÚNG 1 LẦN cho đơn hàng này
-        long outboundCount = ledgerRepository.findAll().stream()
-                .filter(l -> l.getMovementType() == LedgerMovementType.OUTBOUND && orderId.equals(l.getReferenceId()))
+        long outboundCount = ledgerRepository.findBySkuId(skuId, org.springframework.data.domain.Pageable.unpaged()).getContent().stream()
+                .filter(l -> l.getMovementType() == LedgerMovementType.OUTBOUND && orderId.equals(l.getRefId()))
                 .count();
         assertEquals(1L, outboundCount);
     }

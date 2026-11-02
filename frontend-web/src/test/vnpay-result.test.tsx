@@ -3,6 +3,8 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { PaymentResultPage } from '../features/buyer/BuyerPages'
 import { getPayment, type PaymentResult } from '../api/payments'
 import type { AppState } from '../types'
+import type { Order } from '../types'
+import { ordersApi } from '../api/orders'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -52,4 +54,43 @@ it('shows an error instead of fake success when polling fails', async () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeVisible())
     expect(screen.queryByText('Thanh toán đã được xác nhận')).not.toBeInTheDocument()
     rendered.unmount()
+})
+
+/** Thiếu mã tra cứu thì mọi query thành công/thất bại đều không thể chứng minh đã thu tiền. */
+it.each(['success', 'SUCCESS', 'failed', 'pending', 'cancelled', 'unknown'])(
+    'does not trust a %s query without a transaction ID',
+    async (status) => {
+        holder.current.pageParams = { status, vnp_ResponseCode: '00' }
+        render(<PaymentResultPage />)
+        expect(screen.getByRole('alert')).toBeVisible()
+        expect(screen.queryByText('Thanh toán đã được xác nhận')).not.toBeInTheDocument()
+        expect(getPayment).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole('button', { name: 'Lịch sử đơn hàng' }))
+        expect(holder.current.navigate).toHaveBeenCalledWith('order-history')
+    },
+)
+
+/** COD đã tạo chỉ xác nhận đơn, không tuyên bố thanh toán thành công theo query browser. */
+it('loads a persisted COD order without claiming payment was received', async () => {
+    holder.current.pageParams = { orderId: 'order-cod', status: 'success' }
+    const spy = vi.spyOn(ordersApi, 'getOrderDetailV2').mockResolvedValue({
+        id: 'order-cod',
+        status: 'PENDING_PAYMENT',
+        paymentMethod: 'COD',
+    } as Order)
+    render(<PaymentResultPage />)
+    expect(await screen.findByText('Đơn hàng đã được ghi nhận')).toBeVisible()
+    expect(spy).toHaveBeenCalledWith('order-cod')
+    expect(screen.queryByText(/Thanh toán thành công/)).not.toBeInTheDocument()
+    spy.mockRestore()
+})
+
+/** Không dùng kho mock khi API đơn lỗi; mã đơn có thật trong URL cũng không chứng minh đã tạo thành công. */
+it('keeps an order unverified when the authenticated lookup fails', async () => {
+    holder.current.pageParams = { orderId: 'order-missing', status: 'success' }
+    const spy = vi.spyOn(ordersApi, 'getOrderDetailV2').mockRejectedValue(new Error('Not found'))
+    render(<PaymentResultPage />)
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(screen.queryByText('Đơn hàng đã được ghi nhận')).not.toBeInTheDocument()
+    spy.mockRestore()
 })

@@ -527,10 +527,9 @@ class InventoryServiceTest {
                 Instant.now().plus(30, ChronoUnit.MINUTES)
         );
 
-        when(reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(
                 ReservationRefType.ORDER,
-                orderId,
-                ReservationStatus.PENDING
+                orderId
         )).thenReturn(List.of(reservation));
         when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
 

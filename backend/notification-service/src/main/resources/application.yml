@@ -13,6 +13,9 @@ spring:
     password: ${DB_PASSWORD:nexus}
   jpa:
     open-in-view: false
+    # ERD lưu timestamp không múi giờ; JDBC luôn ghi/đọc UTC.
+    properties:
+      hibernate.jdbc.time_zone: UTC
     hibernate:
       ddl-auto: validate          # schema do Flyway quản lý
   flyway:
@@ -26,9 +29,13 @@ spring:
     properties:
       mail:
         smtp:
-          auth: false
+          # Timeout hữu hạn để Commerce outbox retry thay vì treo worker khi SMTP không phản hồi.
+          connectiontimeout: 2000
+          timeout: 2000
+          writetimeout: 2000
+          auth: ${SMTP_AUTH:false}
           starttls:
-            enable: false
+            enable: ${SMTP_STARTTLS:false}
 
 # Cấu hình kênh thông báo giao dịch (SRS §2.6 & §3.2.3)
 notification:

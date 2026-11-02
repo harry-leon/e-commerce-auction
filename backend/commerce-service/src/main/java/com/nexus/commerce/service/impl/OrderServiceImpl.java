@@ -38,7 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>Kiểm tra phân quyền truy cập đa người dùng (Multi-tenant Ownership Isolation) cho API xem chi tiết.</li>
  *   <li>Điều phối chuyển trạng thái đơn hàng an toàn qua máy trạng thái OrderStatusStateMachine.</li>
  *   <li>Ghi vết kiểm toán bất biến (Immutable Audit Trail) vào bảng order_status_history.</li>
- *   <li>Hỗ trợ tính lũy kế (Idempotent update) và hủy đơn hàng hợp lệ.</li>
+ *   <li>Hỗ trợ tính lũy kế và hủy đơn chưa thu tiền; chưa có provider hoàn tiền nên không ghi REFUNDED mới.</li>
  * </ul>
  *
  * <p>Quy tắc và lý do:
@@ -62,6 +62,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderStatusHistoryRepository orderStatusHistoryRepository;
     private final OrderStatusStateMachine orderStatusStateMachine;
     private final OrderMapper orderMapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     /**
      * Lấy danh sách lịch sử đơn hàng của người mua.
@@ -249,7 +250,7 @@ public class OrderServiceImpl implements OrderService {
             UUID currentUserId,
             List<String> userRoles
     ) {
-        Order order = findOrderById(orderId);
+        Order order = findOrderForUpdate(orderId);
         OrderStatus currentStatus = order.getStatus();
         OrderStatus targetStatus = request.status();
 
@@ -265,11 +266,19 @@ public class OrderServiceImpl implements OrderService {
             );
         }
 
+        rejectActiveVnpayCancellation(order, targetStatus);
         // 2. Kiểm tra tính Idempotent (chống trùng lặp yêu cầu mạng)
         if (currentStatus == targetStatus) {
             log.info("Đơn hàng {} hiện đã ở trạng thái {}, xử lý idempotent trả về kết quả hiện tại",
                     orderId, targetStatus);
             return orderMapper.toDetailResponse(order);
+        }
+
+        // Chưa có provider refund: không cho API đánh dấu đã hoàn tiền khi chưa hoàn tiền thật.
+        if (targetStatus == OrderStatus.REFUNDED) { throw refundUnavailable(); }
+        // VNPAY chỉ được xác nhận PAID qua IPN đã ký, kể cả khi actor là admin.
+        if (targetStatus == OrderStatus.PAID && "VNPAY".equals(order.getPaymentMethod())) {
+            throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID, "Thanh toán VNPAY chỉ xác nhận qua IPN");
         }
 
         // 3. Xác thực tính hợp lệ của chuyển đổi qua máy trạng thái
@@ -278,6 +287,7 @@ public class OrderServiceImpl implements OrderService {
         // 4. Cập nhật thực thể đơn hàng
         order.setStatus(targetStatus);
         Order savedOrder = orderRepository.save(order);
+        if (targetStatus == OrderStatus.CANCELLED) { enqueueRelease(order); }
 
         // 5. Định dạng lý do kèm vai trò người thực hiện: [ROLE] Lý do
         String primaryActor = resolvePrimaryActor(userRoles);
@@ -307,8 +317,8 @@ public class OrderServiceImpl implements OrderService {
      * <ul>
      *   <li>Chỉ người mua là chủ đơn hàng hoặc Admin hệ thống mới có quyền hủy đơn.</li>
      *   <li>Xử lý idempotent an toàn nếu đơn hàng đã ở trạng thái CANCELLED.</li>
-     *   <li>Xác thực bước chuyển sang CANCELLED qua OrderStatusStateMachine (chặn hủy khi đã PROCESSING, SHIPPED, terminal states).</li>
-     *   <li>Ghi nhận lý do hủy vào order_status_history với actor [BUYER] hoặc [ADMIN].</li>
+     *   <li>Chỉ hủy đơn chưa thu tiền và không có VNPAY đang chờ; đơn PAID bị từ chối khi chưa có refund provider.</li>
+     *   <li>Lưu lý do hủy và tác vụ release kho cùng transaction; worker retry sau commit bằng service account.</li>
      * </ul>
      */
     @Override
@@ -319,7 +329,7 @@ public class OrderServiceImpl implements OrderService {
             UUID currentUserId,
             List<String> userRoles
     ) {
-        Order order = findOrderById(orderId);
+        Order order = findOrderForUpdate(orderId);
         OrderStatus currentStatus = order.getStatus();
 
         // 1. Kiểm tra thẩm quyền hủy đơn (Buyer sở hữu đơn hoặc Admin)
@@ -342,12 +352,14 @@ public class OrderServiceImpl implements OrderService {
             return orderMapper.toDetailResponse(order);
         }
 
-        // Xác định trạng thái đích: PENDING_PAYMENT -> CANCELLED, PAID -> REFUNDED
+        rejectActiveVnpayCancellation(order, OrderStatus.CANCELLED);
+        // Chỉ hủy đơn chưa thanh toán; PAID giữ nguyên để xử lý refund riêng.
         OrderStatus targetStatus;
         if (currentStatus == OrderStatus.PENDING_PAYMENT) {
             targetStatus = OrderStatus.CANCELLED;
         } else if (currentStatus == OrderStatus.PAID) {
-            targetStatus = OrderStatus.REFUNDED;
+            // Giữ PAID khi chưa có refund provider; không ghi nhận hoàn tiền giả.
+            throw refundUnavailable();
         } else {
             log.warn("Không thể hủy đơn hàng {} khi đang ở trạng thái {}", orderId, currentStatus);
             throw new BusinessException(
@@ -362,12 +374,11 @@ public class OrderServiceImpl implements OrderService {
         // 4. Cập nhật trạng thái đơn hàng sang targetStatus
         order.setStatus(targetStatus);
         Order savedOrder = orderRepository.save(order);
+        if (targetStatus == OrderStatus.CANCELLED) { enqueueRelease(order); }
 
         // 5. Định dạng lý do hủy kèm vai trò người thực hiện
         String primaryActor = resolvePrimaryActor(userRoles);
-        String defaultReason = (targetStatus == OrderStatus.REFUNDED)
-                ? "Yêu cầu hủy đơn và hoàn tiền"
-                : "Người dùng yêu cầu hủy đơn";
+        String defaultReason = "Người dùng yêu cầu hủy đơn";
         String rawReason = (request != null && request.reason() != null && !request.reason().isBlank())
                 ? request.reason().trim()
                 : defaultReason;
@@ -397,6 +408,33 @@ public class OrderServiceImpl implements OrderService {
     /**
      * Tra cứu thực thể đơn hàng theo ID hoặc ném ngoại lệ ORDER_NOT_FOUND (HTTP 404).
      */
+    /** Không hủy đơn khi URL VNPAY còn có thể thu tiền; cần provider cancel/refund để mở nghiệp vụ này an toàn. */
+    private void rejectActiveVnpayCancellation(Order order, OrderStatus target) {
+        if (target == OrderStatus.CANCELLED && order.getStatus() == OrderStatus.PENDING_PAYMENT
+                && "VNPAY".equals(order.getPaymentMethod())) {
+            throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL,
+                    "Giao dịch VNPAY đang chờ kết quả; hãy kiểm tra thanh toán trước khi yêu cầu hủy");
+        }
+    }
+
+    /** Cùng commit với hủy đơn; worker dùng service account hoàn kho, retry không giải phóng hai lần. */
+    private void enqueueRelease(Order order) {
+        jdbc.update("INSERT INTO payment_inventory_tasks(id,order_id,target_id,action) VALUES (?,?,?,'RELEASE') ON CONFLICT DO NOTHING",
+                UUID.randomUUID(), order.getId(), order.getId());
+    }
+
+    /** Chưa có provider refund nên từ chối thay vì ghi trạng thái REFUNDED giả. */
+    private BusinessException refundUnavailable() {
+        return new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL, "Chưa hỗ trợ hoàn tiền tự động; đơn đã thanh toán cần đối soát trước khi hoàn tiền");
+    }
+
+    /** Khóa cùng bản ghi với IPN đến hết transaction; kiểm tra trạng thái sau khi chờ. */
+    private Order findOrderForUpdate(UUID orderId) {
+        return orderRepository.findForPayment(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
+    }
+
+    /** Đọc đơn phục vụ truy vấn, không khóa ghi hoặc thay đổi trạng thái. */
     private Order findOrderById(UUID orderId) {
         return orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException(
