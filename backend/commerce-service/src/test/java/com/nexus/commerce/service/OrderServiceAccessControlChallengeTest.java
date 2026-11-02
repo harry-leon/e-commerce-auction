@@ -24,7 +24,6 @@ import com.nexus.commerce.entity.OrderItem;
 import com.nexus.commerce.entity.OrderStatusHistory;
 import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.enums.OrderStatus;
-import com.nexus.commerce.repository.OrderItemRepository;
 import com.nexus.commerce.repository.OrderRepository;
 import com.nexus.commerce.repository.OrderStatusHistoryRepository;
 import com.nexus.commerce.service.impl.OrderServiceImpl;
@@ -76,9 +75,6 @@ class OrderServiceAccessControlChallengeTest {
     private OrderRepository orderRepository;
 
     @Mock
-    private OrderItemRepository orderItemRepository;
-
-    @Mock
     private OrderStatusHistoryRepository orderStatusHistoryRepository;
 
     @Mock
@@ -106,7 +102,6 @@ class OrderServiceAccessControlChallengeTest {
     void setUp() {
         orderService = new OrderServiceImpl(
                 orderRepository,
-                orderItemRepository,
                 orderStatusHistoryRepository,
                 orderStatusStateMachine,
                 orderMapper, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)
