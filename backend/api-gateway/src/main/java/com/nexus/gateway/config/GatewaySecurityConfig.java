@@ -40,6 +40,7 @@ public class GatewaySecurityConfig {
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(
             final ServerHttpSecurity http) {
+        // CookieAuthenticationFilter kiểm tra header chống CSRF trước chain.
         http.csrf(ServerHttpSecurity.CsrfSpec::disable)
             .cors(ServerHttpSecurity.CorsSpec::disable)
             .authorizeExchange(exchanges -> exchanges
@@ -52,6 +53,7 @@ public class GatewaySecurityConfig {
                 .pathMatchers(HttpMethod.GET,
                     "/api/v1/payments/vnpay/ipn").permitAll()
                 .pathMatchers("/api/v1/auth/login",
+                    "/api/v1/auth/logout",
                     "/api/v1/auth/refresh-token", "/api/v1/auth/refresh")
                     .permitAll()
                 .pathMatchers("/api/v1/auth/register",
