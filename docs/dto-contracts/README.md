@@ -2,7 +2,7 @@
 
 > **Phiên bản:** 1.0
 >
-> **Cập nhật theo source:** 25/10/2026
+> **Baseline Order/Payment được đối chiếu:** 03/11/2026; các service ngoài phạm vi giữ thời điểm tài liệu riêng
 >
 > **Phạm vi:** API đi qua `api-gateway`, các DTO request/response đã tồn tại trong source
 >
@@ -22,11 +22,13 @@ Tài liệu chỉ đánh dấu một contract là `CURRENT` khi controller/DTO t
 | API Gateway | [API_GATEWAY.md](API_GATEWAY.md) | Login, refresh, register đã triển khai |
 | User Service | [USER_SERVICE.md](USER_SERVICE.md) | User, role, password đã triển khai |
 | Catalog Service | [CATALOG_SERVICE.md](CATALOG_SERVICE.md) | Product, SKU, image, category, search đã triển khai |
-| Commerce Service | [COMMERCE_SERVICE.md](COMMERCE_SERVICE.md) | Cart, checkout COD/VNPAY và sandbox payment/IPN đã triển khai; đọc/hủy đơn chưa có controller |
+| Commerce Service | [COMMERCE_SERVICE.md](COMMERCE_SERVICE.md) | Cart, checkout COD/VNPAY, đọc/hủy/cập nhật đơn, payment/IPN và outbox đã triển khai |
 | Auction Service | [AUCTION_SERVICE.md](AUCTION_SERVICE.md) | Chưa có DTO nghiệp vụ |
 | Fulfillment Service | [FULFILLMENT_SERVICE.md](FULFILLMENT_SERVICE.md) | Chưa có DTO nghiệp vụ |
-| Notification Service | [NOTIFICATION_SERVICE.md](NOTIFICATION_SERVICE.md) | Hộp thư IN_APP, đọc/đọc tất cả và ingestion Commerce đã triển khai |
+| Notification Service | [NOTIFICATION_SERVICE.md](NOTIFICATION_SERVICE.md) | Inbox IN_APP, ingestion Commerce, transactional email và idempotency đã triển khai |
 | Reputation Service | [REPUTATION_SERVICE.md](REPUTATION_SERVICE.md) | Chưa có controller/DTO nghiệp vụ |
+
+Register tích hợp Sprint 2, nguồn nhánh, migration và bằng chứng kiểm tra: [TT-S2-1_ORDER_PAYMENT_BASELINE.md](../TT-S2-1_ORDER_PAYMENT_BASELINE.md).
 
 ## 3. Quy ước đọc bảng DTO
 
@@ -55,7 +57,7 @@ Tài liệu chỉ đánh dấu một contract là `CURRENT` khi controller/DTO t
 | Mã | Hiện trạng | Cách FE xử lý tạm thời | Hướng đồng bộ đề xuất |
 |---|---|---|---|
 | `CONTRACT-001` | Catalog và Commerce bọc success bằng `ApiResponse<T>`; User success trả DTO/`Page`/`Map` trực tiếp | Type riêng theo từng endpoint; không ép toàn bộ response về một wrapper | Chuyển User success sang envelope trong một thay đổi có phối hợp |
-| `CONTRACT-002` | Auth Gateway trả payload token trực tiếp; lỗi chỉ có `success` và `error`, thiếu `data`/`meta` | Auth client parse `AuthPayload` riêng | Chuẩn hóa Gateway theo envelope hoặc giữ rõ ngoại lệ BFF |
+| `CONTRACT-002` (đã xử lý) | Auth Gateway dùng ApiResponse; token chỉ trong cookie HttpOnly | AuthPayload JSON chỉ có user/expiresIn/tokenType; cookie tự gửi, có header chống CSRF | Theo contract hiện tại trong API_GATEWAY.md; không khôi phục token vào storage |
 | `CONTRACT-003` | `frontend-web/src/types.ts` chứa nhiều model mock rộng hơn DTO Backend thật | Dùng mapper từ API DTO sang UI model; field chưa có phải có default hiển thị rõ | Không dùng UI model làm API contract |
 | `CONTRACT-004` | User list/activity trả cấu trúc `Page` của Spring Data, không phải `meta.pagination` | Parse cấu trúc Page riêng | Chuẩn hóa sang `ApiResponse<List<T>>` kèm `meta.pagination` |
 | `CONTRACT-005` | `PageResponse` cục bộ tồn tại trong vài service nhưng controller hiện không dùng | Không xây FE type dựa vào class chưa được expose | Xóa class thừa hoặc dùng thống nhất trong lần refactor sau |
