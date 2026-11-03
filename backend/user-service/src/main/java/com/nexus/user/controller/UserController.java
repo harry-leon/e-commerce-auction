@@ -16,7 +16,6 @@ import jakarta.validation.Valid;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
@@ -35,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * REST Controller quản lý thông tin tài khoản người dùng theo SRS mục 3.1.1.
+ * Nhận JWT và DTO đã validation, gọi UserService rồi đóng gói kết quả qua ApiResponse; phân trang dùng Pageable.
  *
  * @author Nguyễn Tiến Thương
  * @since 06/10/2026

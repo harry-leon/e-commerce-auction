@@ -7,7 +7,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -333,15 +332,23 @@ public class GlobalExceptionHandler {
         } else if (ValidationCode.MAX_VALUE.equals(validationCode) && attributes.containsKey("value")) {
             params.put("max", attributes.get("value"));
         } else if (ValidationCode.MIN_SIZE.equals(validationCode) || ValidationCode.MAX_SIZE.equals(validationCode)) {
-            if (attributes.containsKey("min")) params.put("min", attributes.get("min"));
-            if (attributes.containsKey("max")) params.put("max", attributes.get("max"));
+            // Chỉ xuất giới hạn có trong constraint, giữ payload lỗi ổn định cho validation phía client.
+            if (attributes.containsKey("min")) {
+                params.put("min", attributes.get("min"));
+            }
+            if (attributes.containsKey("max")) {
+                params.put("max", attributes.get("max"));
+            }
         }
 
         return ValidationErrorDetail.of(field, validationCode, message, params.isEmpty() ? null : params);
     }
 
     private String resolveValidationCode(String constraint) {
-        if (constraint == null) return ValidationCode.INVALID_FORMAT;
+        // Constraint không xác định dùng mã dự phòng thay vì gây lỗi trong chính bộ xử lý exception.
+        if (constraint == null) {
+            return ValidationCode.INVALID_FORMAT;
+        }
         return switch (constraint) {
             case "NotBlank" -> ValidationCode.NOT_BLANK;
             case "NotNull" -> ValidationCode.NOT_NULL;

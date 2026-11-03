@@ -38,6 +38,8 @@ async function ready(label, check, timeout = 120000) {
     throw new Error(label + ' was not ready; logs: ' + logs)
 }
 
+// Nexus trả ApiResponse: kiểm tra success rồi lấy data cho assertion nghiệp vụ; Keycloak giữ JSON gốc.
+// Lỗi HTTP vẫn được so với expected trước; không unwrap lỗi hoặc response 204 không có body.
 async function request(base, path, method = 'GET', body, token, expected = 200) {
     const response = await fetch(base + path, {
         method,
@@ -47,7 +49,13 @@ async function request(base, path, method = 'GET', body, token, expected = 200) 
         signal: AbortSignal.timeout(20000),
     })
     assert.equal(response.status, expected, method + ' ' + path + ': unexpected status')
-    return response.status === 204 ? null : response.json()
+    if (response.status === 204) return null
+    const payload = await response.json()
+    if (new URL(base).pathname === '/api/v1' && expected < 400) {
+        assert.equal(payload.success, true, `${method} ${path}: expected successful ApiResponse`)
+        return payload.data
+    }
+    return payload
 }
 
 // Mỗi JAR nhận env riêng, tắt discovery/config; memory hữu hạn để có thể chạy nhiều module trên máy dev.
@@ -179,15 +187,15 @@ try {
     assert.deepEqual(updatedRole.privileges, ['PROFILE.UPDATE'])
     await request(base, '/roles/' + createdRole.id, 'DELETE', undefined, appAdmin)
     console.log('PASS Role API CRUD through Keycloak without local IAM tables')
-    const category = (await request(base, '/categories', 'POST', { name: 'ERD ' + suffix, status: 'ACTIVE' }, appAdmin, 201)).data
-    const product = (await request(base, '/products', 'POST', { name: 'ERD Product', categoryId: category.id,
-        auctionEnabled: false, skus: [{ skuCode: 'ERD-' + suffix, price: 125000, status: 'ACTIVE' }], images: [] }, appAdmin, 201)).data
+    const category = await request(base, '/categories', 'POST', { name: 'ERD ' + suffix, status: 'ACTIVE' }, appAdmin, 201)
+    const product = await request(base, '/products', 'POST', { name: 'ERD Product', categoryId: category.id,
+        auctionEnabled: false, skus: [{ skuCode: 'ERD-' + suffix, price: 125000, status: 'ACTIVE' }], images: [] }, appAdmin, 201)
     await request(base, '/products/' + product.id + '/approve', 'POST', undefined, appAdmin)
     const sku = product.skus[0]
-    const snapshot = (await request(base, '/products/skus/' + sku.id)).data
+    const snapshot = await request(base, '/products/skus/' + sku.id)
     assert.equal(snapshot.price, 125000)
     assert.equal(snapshot.stockQuantity, null)
-    const cart = (await request(base, '/cart/items', 'POST', { skuId: sku.id, quantity: 2 }, appAdmin)).data
+    const cart = await request(base, '/cart/items', 'POST', { skuId: sku.id, quantity: 2 }, appAdmin)
     assert.equal(cart.items[0].unitPrice, 125000)
     assert.equal(cart.items[0].stockAvailable, null)
     assert.equal(cart.items[0].isAvailable, true)
@@ -206,7 +214,9 @@ try {
     assert.equal(docker(['exec', pg, 'psql', '-U', 'postgres', '-d', 'nexus_user', '-tAc',
         "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='audit_logs'"]), '0')
     const history = await request(base, '/users/' + profile.id + '/activity-history', 'GET', undefined, appAdmin)
-    assert.ok(history.content.some((event) => event.action === 'CREATE_PROFILE'))
+    // Activity history hiện là List trong ApiResponse.data, không còn Page có trường content.
+    assert.ok(Array.isArray(history), 'Activity history must be an array')
+    assert.ok(history.some((event) => event.action === 'CREATE_PROFILE'))
     assert.equal(docker(['exec', pg, 'psql', '-U', 'postgres', '-d', 'nexus_notification', '-tAc',
         "SELECT count(*) FROM event_logs WHERE source_service='user-service' AND payload->>'action'='CREATE_PROFILE'"]), '1')
     console.log('PASS final ERD schema and profile audit persisted in notification.event_logs')

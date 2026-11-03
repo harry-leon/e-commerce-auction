@@ -27,7 +27,8 @@ test.beforeEach(async ({ page }) => {
     await page.route('**/api/v1/categories*', (route) =>
         route.fulfill({ json: { success: true, data: [] } }),
     )
-    await page.route('**/api/v1/products?*', (route) =>
+    // Cả trang chủ và tìm kiếm gọi catalog; chặn URL có hoặc không có query để test không phụ thuộc backend local.
+    await page.route(/\/api\/v1\/products(?:\?.*)?$/, (route) =>
         route.fulfill({
             json: { success: true, data: [product], meta: { total: 1, page: 0, pageSize: 12 } },
         }),
@@ -89,19 +90,26 @@ test('login sends credentials, persists session and saves profile through API', 
     await expect(page.getByText('Đã lưu thay đổi')).toBeVisible()
 })
 
-test('email reset link submits token and new password to reset endpoint', async ({ page }) => {
+// Luồng hiện tại gửi email UPDATE_PASSWORD qua Keycloak; token cũ trên URL không được gửi tới endpoint đã ngừng hỗ trợ.
+test('forgot password requests a Keycloak email instead of using legacy reset tokens', async ({
+    page,
+}) => {
+    let legacyRequests = 0
     await page.route('**/api/v1/auth/reset-password', async (route) => {
-        expect(route.request().postDataJSON()).toEqual({
-            token: 'email-token',
-            newPassword: 'NewPassword1!',
-        })
-        await route.fulfill({ json: { message: 'Password reset' } })
+        legacyRequests++
+        await route.fulfill({ status: 410, json: { message: 'AUTH_RESET_FLOW_CHANGED' } })
+    })
+    await page.route('**/api/v1/auth/forgot-password', async (route) => {
+        expect(route.request().method()).toBe('POST')
+        expect(route.request().postDataJSON()).toEqual({ email: user.email })
+        await route.fulfill({ json: { message: 'Request accepted' } })
     })
     await page.goto('/forgot-password?token=email-token')
-    await page.getByLabel('New Password', { exact: true }).fill('NewPassword1!')
-    await page.getByLabel('Confirm Password', { exact: true }).fill('NewPassword1!')
-    await page.getByRole('button', { name: 'Reset Password', exact: true }).click()
-    await expect(page.getByText('Password reset successfully!', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('New Password', { exact: true })).toHaveCount(0)
+    await page.getByLabel('Email', { exact: true }).fill(user.email)
+    await page.getByRole('button', { name: 'Send Reset Link', exact: true }).click()
+    await expect(page.getByRole('status')).toContainText('Keycloak')
+    expect(legacyRequests).toBe(0)
 })
 
 test('backend failures are displayed without showing demo products', async ({ page }) => {
@@ -113,6 +121,7 @@ test('backend failures are displayed without showing demo products', async ({ pa
     await expect(page.getByText('Real API Laptop')).toHaveCount(0)
 })
 
+// ERD chỉ lưu một name; bảo vệ hợp đồng POST/PUT/DELETE hiện tại thay vì form song ngữ đã bỏ.
 test('admin category form persists create, update and delete through the API', async ({ page }) => {
     await page.addInitScript(() =>
         sessionStorage.setItem(
@@ -133,7 +142,6 @@ test('admin category form persists create, update and delete through the API', a
     let categories: {
         id: string
         name: string
-        nameVi: string
         level: number
         parentId: null
         status: string
@@ -145,8 +153,7 @@ test('admin category form persists create, update and delete through the API', a
         if (method === 'POST') {
             const body = route.request().postDataJSON()
             expect(body).toMatchObject({
-                name: 'Electronics',
-                nameVi: 'Điện tử',
+                name: 'Điện tử',
                 parentId: null,
                 status: 'ACTIVE',
             })
@@ -161,12 +168,11 @@ test('admin category form persists create, update and delete through the API', a
         } else await route.fulfill({ json: { success: true, data: categories } })
     })
     await page.goto('/admin-categories')
-    await page.getByLabel('Tên tiếng Anh').fill('Electronics')
-    await page.getByLabel('Tên tiếng Việt').fill('Điện tử')
+    await page.getByLabel('Tên danh mục').fill('Điện tử')
     await page.getByRole('button', { name: 'Lưu', exact: true }).click()
     await expect(page.getByText('Điện tử · 0 sản phẩm · ACTIVE')).toBeVisible()
     await page.getByRole('button', { name: 'Sửa', exact: true }).click()
-    await page.getByLabel('Tên tiếng Việt').fill('Thiết bị điện tử')
+    await page.getByLabel('Tên danh mục').fill('Thiết bị điện tử')
     await page.getByRole('button', { name: 'Lưu', exact: true }).click()
     await expect(page.getByText('Thiết bị điện tử · 0 sản phẩm · ACTIVE')).toBeVisible()
     page.once('dialog', (dialog) => dialog.accept())
