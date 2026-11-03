@@ -44,5 +44,19 @@ class AuctionSettlementSchedulerTest {
 
         verify(auctionSettlementService).settleExpiredAuctions();
     }
+
+    /**
+     * Kiểm tra trường hợp không có phiên nào hết hạn cần quyết toán (count = 0).
+     * Kỳ vọng: Scheduler hoàn thành êm đềm mà không ghi nhận lỗi.
+     */
+    @Test
+    @DisplayName("Scheduler xử lý êm đềm khi không có phiên nào hết hạn (count = 0)")
+    void testRunSettlementJob_ZeroCount_HandlesGracefully() {
+        when(auctionSettlementService.settleExpiredAuctions()).thenReturn(0);
+
+        scheduler.runSettlementJob();
+
+        verify(auctionSettlementService).settleExpiredAuctions();
+    }
 }
 

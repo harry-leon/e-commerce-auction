@@ -70,6 +70,13 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
     }
 
     /**
+     * Thiết lập self-proxy phục vụ điều phối transaction độc lập giữa các phiên hoặc hỗ trợ test.
+     */
+    public void setSelf(AuctionSettlementService self) {
+        this.self = self;
+    }
+
+    /**
      * Quyết toán phiên đấu giá với bảo đảm tính lũy kế (Idempotency).
      *
      * Luồng:
@@ -112,13 +119,20 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
         Instant now = clock.instant();
 
         // Bước 3: Kiểm tra trạng thái và mốc thời gian kết thúc
-        if (auction.getStatus() == AuctionStatus.DRAFT
+        if (auction.getStatus() == null
+                || auction.getStatus() == AuctionStatus.DRAFT
                 || auction.getStatus() == AuctionStatus.SCHEDULED
                 || auction.getStatus() == AuctionStatus.CANCELLED
                 || auction.getStatus() == AuctionStatus.SETTLED) {
             throw new BusinessException(
                     ErrorCode.AUCTION_NOT_ACTIVE,
                     "Không thể quyết toán phiên đấu giá ở trạng thái " + auction.getStatus());
+        }
+
+        if (auction.getEndTime() == null) {
+            throw new BusinessException(
+                    ErrorCode.AUCTION_NOT_ACTIVE,
+                    "Thời gian kết thúc phiên đấu giá không hợp lệ");
         }
 
         if (auction.getStatus() == AuctionStatus.ACTIVE && now.isBefore(auction.getEndTime())) {
@@ -248,13 +262,19 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
             return false;
         }
 
-        // Không chấp nhận lượt đặt giá trước thời điểm bắt đầu phiên đấu giá
-        if (auction.getStartTime() != null && bidTime.isBefore(auction.getStartTime())) {
+        // Chỉ cho phép đặt giá khi phiên đang ACTIVE và có đầy đủ mốc thời gian hợp lệ
+        if (auction.getStatus() != AuctionStatus.ACTIVE
+                || auction.getStartTime() == null
+                || auction.getEndTime() == null) {
             return false;
         }
 
-        // Chỉ cho phép đặt giá khi trạng thái là ACTIVE và chưa chạm mốc endTime
-        return auction.getStatus() == AuctionStatus.ACTIVE && bidTime.isBefore(auction.getEndTime());
+        // Không chấp nhận lượt đặt giá trước thời điểm bắt đầu hoặc từ thời điểm kết thúc trở đi
+        if (bidTime.isBefore(auction.getStartTime()) || !bidTime.isBefore(auction.getEndTime())) {
+            return false;
+        }
+
+        return true;
     }
 }
 

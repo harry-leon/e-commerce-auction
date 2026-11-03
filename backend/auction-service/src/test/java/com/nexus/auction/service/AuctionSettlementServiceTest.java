@@ -592,4 +592,197 @@ class AuctionSettlementServiceTest {
     void testAuctionSettlementMapper_NullEntity_ReturnsNull() {
         assertThat(AuctionSettlementMapper.toResponse(null)).isNull();
     }
+
+    /**
+     * Kiểm tra từ chối quyết toán khi phiên ở trạng thái DRAFT.
+     * Kỳ vọng: Ném BusinessException với mã AUCTION_NOT_ACTIVE.
+     */
+    @Test
+    @DisplayName("settleAuction: Phiên ở trạng thái DRAFT -> Ném BusinessException")
+    void testSettleAuction_DraftStatus_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.DRAFT, now.minus(5, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+
+        assertThatThrownBy(() -> settlementService.settleAuction(auctionId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ErrorCode.AUCTION_NOT_ACTIVE.name()));
+    }
+
+    /**
+     * Kiểm tra từ chối quyết toán khi phiên ở trạng thái CANCELLED.
+     * Kỳ vọng: Ném BusinessException với mã AUCTION_NOT_ACTIVE.
+     */
+    @Test
+    @DisplayName("settleAuction: Phiên ở trạng thái CANCELLED -> Ném BusinessException")
+    void testSettleAuction_CancelledStatus_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.CANCELLED, now.minus(5, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+
+        assertThatThrownBy(() -> settlementService.settleAuction(auctionId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ErrorCode.AUCTION_NOT_ACTIVE.name()));
+    }
+
+    /**
+     * Kiểm tra từ chối quyết toán khi trạng thái phiên là null.
+     * Kỳ vọng: Ném BusinessException với mã AUCTION_NOT_ACTIVE.
+     */
+    @Test
+    @DisplayName("settleAuction: Trạng thái phiên là null -> Ném BusinessException")
+    void testSettleAuction_NullStatus_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, null, now.minus(5, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+
+        assertThatThrownBy(() -> settlementService.settleAuction(auctionId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ErrorCode.AUCTION_NOT_ACTIVE.name()));
+    }
+
+    /**
+     * Kiểm tra từ chối quyết toán khi mốc thời gian endTime của phiên bị null.
+     * Kỳ vọng: Ném BusinessException với mã AUCTION_NOT_ACTIVE.
+     */
+    @Test
+    @DisplayName("settleAuction: Thời gian kết thúc endTime là null -> Ném BusinessException")
+    void testSettleAuction_NullEndTime_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, null);
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+
+        assertThatThrownBy(() -> settlementService.settleAuction(auctionId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ErrorCode.AUCTION_NOT_ACTIVE.name()));
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi thời điểm bid trùng đúng mốc endTime (bidTime == endTime).
+     * Kỳ vọng: Trả về false vì phiên đóng tại mốc endTime.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Lượt bid gửi đúng thời điểm kết thúc endTime -> Trả về false")
+    void testCanAcceptBid_BidAtEndTime_ReturnsFalse() {
+        UUID auctionId = UUID.randomUUID();
+        Instant endTime = now.plus(1, ChronoUnit.HOURS);
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, endTime);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        boolean allowed = settlementService.canAcceptBid(auctionId, endTime);
+
+        assertThat(allowed).isFalse();
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi thời điểm bid sau mốc endTime trong khi trạng thái vẫn còn ACTIVE.
+     * Kỳ vọng: Trả về false.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Lượt bid gửi sau thời điểm kết thúc endTime -> Trả về false")
+    void testCanAcceptBid_BidAfterEndTime_ReturnsFalse() {
+        UUID auctionId = UUID.randomUUID();
+        Instant endTime = now.minus(1, ChronoUnit.MINUTES);
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, endTime);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        boolean allowed = settlementService.canAcceptBid(auctionId, now);
+
+        assertThat(allowed).isFalse();
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi phiên có startTime bị null.
+     * Kỳ vọng: Trả về false an toàn mà không phát sinh NPE.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Phiên có startTime là null -> Trả về false")
+    void testCanAcceptBid_NullStartTime_ReturnsFalse() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.plus(1, ChronoUnit.HOURS));
+        auction.setStartTime(null);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        boolean allowed = settlementService.canAcceptBid(auctionId, now);
+
+        assertThat(allowed).isFalse();
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi phiên có endTime bị null.
+     * Kỳ vọng: Trả về false an toàn mà không phát sinh NPE.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Phiên có endTime là null -> Trả về false")
+    void testCanAcceptBid_NullEndTime_ReturnsFalse() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, null);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        boolean allowed = settlementService.canAcceptBid(auctionId, now);
+
+        assertThat(allowed).isFalse();
+    }
+
+    /**
+     * Kiểm tra settleExpiredAuctions khi không có phiên nào hết hạn.
+     * Kỳ vọng: Trả về 0 và không thực hiện quyết toán.
+     */
+    @Test
+    @DisplayName("settleExpiredAuctions: Không có phiên hết hạn -> Trả về 0")
+    void testSettleExpiredAuctions_ZeroExpired_ReturnsZero() {
+        when(auctionRepository.findByStatusAndEndTimeLessThanEqual(AuctionStatus.ACTIVE, now))
+                .thenReturn(List.of());
+
+        int count = settlementService.settleExpiredAuctions();
+
+        assertThat(count).isEqualTo(0);
+    }
+
+    /**
+     * Kiểm tra settleExpiredAuctions khi self-proxy được tiêm vào service.
+     * Kỳ vọng: Lệnh quyết toán được ủy quyền qua self-proxy để tạo transaction riêng biệt.
+     */
+    @Test
+    @DisplayName("settleExpiredAuctions: Ủy quyền qua self-proxy khi có proxy được tiêm")
+    void testSettleExpiredAuctions_WithSelfProxy_DelegatesThroughProxy() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.minus(5, ChronoUnit.MINUTES));
+
+        when(auctionRepository.findByStatusAndEndTimeLessThanEqual(AuctionStatus.ACTIVE, now))
+                .thenReturn(List.of(auction));
+
+        AuctionSettlementService mockProxy = org.mockito.Mockito.mock(AuctionSettlementService.class);
+        when(mockProxy.settleAuction(auctionId)).thenReturn(new AuctionSettlementResponse());
+
+        AuctionSettlementServiceImpl impl = (AuctionSettlementServiceImpl) settlementService;
+        impl.setSelf(mockProxy);
+        try {
+            int count = settlementService.settleExpiredAuctions();
+            assertThat(count).isEqualTo(1);
+            verify(mockProxy).settleAuction(auctionId);
+        } finally {
+            impl.setSelf(null);
+        }
+    }
 }
