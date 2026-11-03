@@ -107,32 +107,35 @@ export function extractFieldErrors(error: unknown): Record<string, string> {
 }
 
 /**
- * Cổng gọi backend dùng chung: đọc session → gắn Bearer token → gọi API → chuẩn hóa lỗi.
+ * Cổng gọi backend dùng chung: gửi cookie HttpOnly → gọi API → chuẩn hóa lỗi.
  * Khi API nghiệp vụ trả 401, thử refresh rồi gửi lại tối đa một lần; không tự giả lập dữ liệu.
  */
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const tokenKey = 'nexus.session'
 export interface Session {
-    accessToken: string
-    refreshToken: string
     user: User
 }
 
-/** Chỉ khôi phục token từ sessionStorage của tab; xóa bản localStorage cũ khi nâng cấp để không giữ token lâu dài. */
+/** Chỉ khôi phục profile UI; xóa phiên cũ có token để chuyển sang cookie HttpOnly. */
 export function readSession(): Session | null {
     try {
         localStorage.removeItem(tokenKey)
-        return JSON.parse(sessionStorage.getItem(tokenKey) || 'null')
+        const stored = JSON.parse(sessionStorage.getItem(tokenKey) || 'null')
+        if (stored && ('accessToken' in stored || 'refreshToken' in stored)) {
+            sessionStorage.removeItem(tokenKey)
+            return null
+        }
+        return stored
     } catch {
         return null
     }
 }
 
-/** Token chỉ sống trong tab; logout xóa cả session và bản token localStorage của phiên bản cũ. */
+/** Chỉ lưu user; loại token trong payload thừa và xóa bản localStorage cũ. */
 export function saveSession(session: Session | null) {
     localStorage.removeItem(tokenKey)
     sessionStorage.removeItem(tokenKey)
-    if (session) sessionStorage.setItem(tokenKey, JSON.stringify(session))
+    if (session) sessionStorage.setItem(tokenKey, JSON.stringify({ user: session.user }))
 }
 
 /** Ghi nhớ email chỉ để điền sẵn form; không lưu mật khẩu/token hoặc khôi phục đăng nhập sau khi đóng tab. */
@@ -156,7 +159,7 @@ export function errorMessage(error: unknown): string {
 }
 
 // Các request cùng gặp 401 chờ chung một lần refresh, tránh phát sinh nhiều yêu cầu cấp token đồng thời.
-let refreshing: Promise<string> | null = null
+let refreshing: Promise<void> | null = null
 
 /**
  * Trả nguyên payload backend (User DTO hoặc Catalog envelope tùy endpoint).
@@ -167,25 +170,22 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     const session = readSession()
     const headers = new Headers(init.headers)
     if (init.body) headers.set('Content-Type', 'application/json')
-    // Không gắn token cũ lên login/register/refresh: Bearer hết hạn có thể khiến public endpoint bị chặn trước controller.
-    if (session && (!path.startsWith('/auth/') || path === '/auth/change-password')) {
-        headers.set('Authorization', `Bearer ${session.accessToken}`)
-    }
-    const response = await fetch(`${baseUrl}${path}`, { ...init, headers })
+    // Browser quản lý cookie; header riêng chống CSRF, JS không đọc hoặc gửi token.
+    headers.set('X-Nexus-Request', '1')
+    const response = await fetch(`${baseUrl}${path}`, { ...init, headers, credentials: 'include' })
     if (response.status === 401 && session && retry && !path.startsWith('/auth/')) {
         // retry=false giới hạn vòng lặp; refresh thất bại xóa session, finally mở lại khả năng refresh cho lần sau.
         refreshing ??= api<AuthPayload>(
             '/auth/refresh',
             {
                 method: 'POST',
-                body: JSON.stringify({ refreshToken: session.refreshToken }),
+                body: JSON.stringify({}),
             },
             false,
         )
             .then((payload) => {
                 const auth = (payload as any)?.data || payload
                 saveSession({ ...auth, user: mapUser(auth.user) })
-                return auth.accessToken
             })
             .catch((error) => {
                 saveSession(null)
@@ -243,8 +243,6 @@ export interface ApiUser {
     roles: string[]
 }
 export interface AuthPayload {
-    accessToken: string
-    refreshToken: string
     user: ApiUser
 }
 

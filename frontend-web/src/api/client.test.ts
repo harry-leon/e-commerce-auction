@@ -49,7 +49,7 @@ describe('API integration', () => {
         expect(errorMessage('unknown')).toBe('Request failed')
     })
     it('clears an invalid session if refresh fails and returns a failed request to the caller', async () => {
-        saveSession({ accessToken: 'old', refreshToken: 'expired', user: mapUser(user) })
+        saveSession({ user: mapUser(user) })
         vi.stubGlobal(
             'fetch',
             vi.fn(
@@ -75,20 +75,24 @@ describe('API integration', () => {
         })
     })
     it('keeps sessions in the selected storage and clears both on logout', () => {
-        const session = { accessToken: 'access', refreshToken: 'refresh', user: mapUser(user) }
+        const session = { user: mapUser(user) }
         saveSession(session)
-        expect(readSession()).toEqual(session)
+        expect(readSession()).toEqual({ user: session.user })
+        expect(sessionStorage.getItem('nexus.session')).not.toContain('accessToken')
         saveSession(session)
         expect(localStorage.getItem('nexus.session')).toBeNull()
         saveSession(null)
         expect(readSession()).toBeNull()
     })
-    it('attaches the bearer token to backend requests', async () => {
-        saveSession({ accessToken: 'access', refreshToken: 'refresh', user: mapUser(user) })
+    // Cookie được browser gửi; không có Bearer hoặc token trong request do JavaScript tạo.
+    it('uses cookies and a CSRF header for backend requests', async () => {
+        saveSession({ user: mapUser(user) })
         const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: '1' })))
         vi.stubGlobal('fetch', fetcher)
         await api('/users/me')
-        expect(fetcher.mock.calls[0][1].headers.get('Authorization')).toBe('Bearer access')
+        expect(fetcher.mock.calls[0][1].headers.has('Authorization')).toBe(false)
+        expect(fetcher.mock.calls[0][1].credentials).toBe('include')
+        expect(fetcher.mock.calls[0][1].headers.get('X-Nexus-Request')).toBe('1')
     })
     it('surfaces backend validation errors instead of reporting success', async () => {
         vi.stubGlobal(
@@ -104,22 +108,19 @@ describe('API integration', () => {
         )
     })
     it('refreshes an expired access token and retries the original request', async () => {
-        saveSession({ accessToken: 'old', refreshToken: 'refresh', user: mapUser(user) })
+        saveSession({ user: mapUser(user) })
         const fetcher = vi
             .fn()
             .mockResolvedValueOnce(new Response('{}', { status: 401 }))
-            .mockResolvedValueOnce(
-                new Response(
-                    JSON.stringify({ accessToken: 'new', refreshToken: 'new-refresh', user }),
-                ),
-            )
+            .mockResolvedValueOnce(new Response(JSON.stringify({ user })))
             .mockResolvedValueOnce(new Response(JSON.stringify({ id: '1' })))
         vi.stubGlobal('fetch', fetcher)
         await expect(api('/users/me')).resolves.toEqual({ id: '1' })
-        expect(fetcher.mock.calls[2][1].headers.get('Authorization')).toBe('Bearer new')
+        expect(fetcher.mock.calls[2][1].headers.has('Authorization')).toBe(false)
+        expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({})
     })
     it('does not attempt token refresh for an invalid login', async () => {
-        saveSession({ accessToken: 'expired', refreshToken: 'refresh', user: mapUser(user) })
+        saveSession({ user: mapUser(user) })
         const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 401 }))
         vi.stubGlobal('fetch', fetcher)
         await expect(api('/auth/login', { method: 'POST' })).rejects.toThrow('401')

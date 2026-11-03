@@ -20,7 +20,7 @@ This is the canonical project structure. Start with task-relevant files below. O
 - `src/main.tsx` - React entrypoint; imports `src/index.css` and mounts `src/App.tsx` into the `#root` element
 - `src/App.tsx` - Primary application component and the usual starting point for UI work
 - `src/features/<feature>/` - Domain screens and state; keep catalog, auth, profile, admin and later-sprint prototypes in their own feature directories
-- `src/api/client.ts` - Shared HTTP client; tokens stay in sessionStorage, never localStorage; the remember option saves only an email
+- `src/api/client.ts` - Shared HTTP client; tokens use HttpOnly cookies, sessionStorage stores only the UI profile; the remember option saves only an email
 - `src/hooks/` and `src/components/` - Shared hooks and UI primitives used across features
 - `src/index.css` - Global CSS entrypoint and Tailwind CSS v4 import
 - `index.html` - Vite HTML shell containing the `#root` element and loading `src/main.tsx`
