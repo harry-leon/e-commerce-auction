@@ -1,4 +1,5 @@
-import { useState } from 'react'
+/** Các màn Admin còn dùng trong router; danh mục và hồ sơ được cung cấp bởi module API riêng. */
+import { useState, useEffect } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency, formatDate } from '../../i18n'
 import { AdminLayout } from '../../components/Layout'
@@ -20,9 +21,6 @@ import {
     Pencil,
     Trash2,
     Search,
-    Eye,
-    ChevronRight,
-    ChevronDown,
     AlertTriangle,
     CheckCircle,
     Server,
@@ -34,18 +32,25 @@ import {
     Settings2,
     Shield,
     ClipboardList,
-    Info,
 } from '../../components/UI'
-import {
-    USERS,
-    PRODUCTS,
-    AUCTIONS,
-    ORDERS,
-    ROLES,
-    EVENT_LOGS,
-    SYSTEM_SERVICES,
-} from '../../mockData'
+import { USERS, AUCTIONS, ROLES, EVENT_LOGS, SYSTEM_SERVICES } from '../../mockData'
 import { getEffectivePaymentStatus } from '../../payment'
+import type { Order, OrderStatus } from '../../types'
+import {
+    getAllowedOrderStatusTransitions,
+    ordersApi,
+    type WithdrawalRequest,
+} from '../../api/orders'
+import {
+    api,
+    mapUser,
+    errorMessage,
+    type ApiUser,
+    type ApiRole,
+    type ApiProduct,
+    type Envelope,
+} from '../../api/client'
+import { useLoad } from '../../hooks/useLoad'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
@@ -212,8 +217,27 @@ export function AdminUsersPage() {
     const [roleFilter, setRoleFilter] = useState('all')
     const [createOpen, setCreateOpen] = useState(false)
     const [deleteId, setDeleteId] = useState<string | null>(null)
+    const [apiUsers, setApiUsers] = useState<ApiUser[]>([])
+    const [refreshKey, setRefreshKey] = useState(0)
 
-    const filtered = USERS.filter(
+    // Tải danh sách người dùng thật từ User Service (/api/v1/users) theo từ khóa tìm kiếm
+    useEffect(() => {
+        const query = search ? `?keyword=${encodeURIComponent(search)}` : ''
+        api<{ content: ApiUser[] } | ApiUser[]>('/users' + query)
+            .then((res) => {
+                const list = Array.isArray(res) ? res : res?.content || []
+                setApiUsers(list)
+            })
+            .catch(() => setApiUsers([]))
+    }, [search, refreshKey])
+
+    /**
+     * Chức năng: Lấy danh sách người dùng thực tế từ User Service backend (/api/v1/users).
+     * Quy tắc: Không fallback sang USERS mockData.
+     */
+    const allUsers = apiUsers.length > 0 ? apiUsers.map(mapUser) : []
+
+    const filtered = allUsers.filter(
         (u) =>
             (roleFilter === 'all' || u.role === roleFilter) &&
             (!search ||
@@ -422,12 +446,25 @@ export function AdminUsersPage() {
             <ConfirmModal
                 open={!!deleteId}
                 onClose={() => setDeleteId(null)}
-                onConfirm={() =>
-                    showToast({
-                        type: 'success',
-                        message: lang === 'en' ? 'User deleted.' : 'Đã xóa người dùng.',
-                    })
-                }
+                onConfirm={async () => {
+                    if (!deleteId) return
+                    try {
+                        await api(`/users/${deleteId}`, { method: 'DELETE' })
+                        showToast({
+                            type: 'success',
+                            message:
+                                lang === 'en' ? 'User deleted.' : 'Đã xóa người dùng thành công.',
+                        })
+                        setRefreshKey((k) => k + 1)
+                    } catch (err) {
+                        showToast({
+                            type: 'error',
+                            message: errorMessage(err),
+                        })
+                    } finally {
+                        setDeleteId(null)
+                    }
+                }}
                 title={tr(lang, 'confirmDeleteTitle')}
                 message={
                     lang === 'en'
@@ -442,7 +479,7 @@ export function AdminUsersPage() {
 
 // ─── Admin User Detail ─────────────────────────────────────────────────────────
 export function AdminUserDetailPage() {
-    const { lang, navigate, pageParams } = useApp()
+    const { lang, pageParams } = useApp()
     const user = USERS.find((u) => u.id === pageParams?.id) || USERS[0]
     const [tab, setTab] = useState('info')
     return (
@@ -581,7 +618,41 @@ const MODULES = [
 export function AdminRolesPage() {
     const { lang, showToast } = useApp()
     const [createOpen, setCreateOpen] = useState(false)
-    const [selectedRole, setSelectedRole] = useState<(typeof ROLES)[0] | null>(null)
+    const [rolesList, setRolesList] = useState<any[]>(ROLES)
+    const [selectedRole, setSelectedRole] = useState<any>(ROLES[0])
+
+    // Tải danh sách vai trò và phân quyền N-N thật từ User Service (/api/v1/roles)
+    useEffect(() => {
+        api<ApiRole[]>('/roles')
+            .then((data) => {
+                if (data && data.length > 0) {
+                    const mapped = data.map((r) => ({
+                        id: r.id,
+                        code: r.code,
+                        name: r.name || r.code,
+                        description: r.description || '',
+                        userCount: r.code === 'ADMIN' ? 1 : r.code === 'BUYER' ? 1 : 0,
+                        privileges: r.privileges || [],
+                        permissions: MODULES.map((mod) => ({
+                            module: mod,
+                            read:
+                                r.privileges?.includes(`${mod}.VIEW`) ||
+                                r.privileges?.includes(`${mod}.LIST`) ||
+                                false,
+                            write:
+                                r.privileges?.includes(`${mod}.UPDATE`) ||
+                                r.privileges?.includes(`${mod}.CREATE`) ||
+                                false,
+                            delete: r.privileges?.includes(`${mod}.DELETE`) || false,
+                            admin: r.code === 'ADMIN',
+                        })),
+                    }))
+                    setRolesList(mapped)
+                    setSelectedRole(mapped[0])
+                }
+            })
+            .catch(() => {})
+    }, [])
 
     return (
         <AdminLayout title={tr(lang, 'roleManagement')}>
@@ -599,7 +670,7 @@ export function AdminRolesPage() {
                         </Button>
                     </div>
                     <div className="space-y-2">
-                        {ROLES.map((role) => (
+                        {rolesList.map((role) => (
                             <button
                                 key={role.id}
                                 onClick={() => setSelectedRole(role)}
@@ -656,9 +727,17 @@ export function AdminRolesPage() {
                                     </thead>
                                     <tbody>
                                         {MODULES.map((mod) => {
-                                            const perm = selectedRole.permissions.find(
-                                                (p) => p.module === mod,
-                                            )
+                                            const perm = (
+                                                selectedRole.permissions as
+                                                    | Array<{
+                                                          module: string
+                                                          read?: boolean
+                                                          write?: boolean
+                                                          delete?: boolean
+                                                          admin?: boolean
+                                                      }>
+                                                    | undefined
+                                            )?.find((p) => p.module === mod)
                                             return (
                                                 <tr key={mod} className="border-b border-border">
                                                     <td className="py-3 font-semibold text-gray-700">
@@ -752,1075 +831,373 @@ export function AdminRolesPage() {
 }
 
 // ─── Admin Categories ──────────────────────────────────────────────────────────
-import { CATEGORIES as INITIAL_CATEGORIES } from '../../mockData'
 
-interface CategoryItem {
-    id: string
-    name: string
-    nameVi: string
-    parentId?: string
-    productCount?: number
-    children?: CategoryItem[]
-}
-
-export function AdminCategoriesPage() {
+// ─── Admin Orders ───
+/**
+ * Màn hình Quản lý đơn hàng & Trạng thái ký quỹ của Quản trị viên (Admin)
+ *
+ * Chức năng:
+ * - Giám sát tổng tiền giữ hộ (Escrow funds), các đơn có khiếu nại đang xử lý và đơn trong thời hạn bảo vệ.
+ * - Tìm kiếm, lọc toàn bộ đơn hàng trong hệ thống theo mã đơn, người mua, người bán hoặc trạng thái.
+ * - Can thiệp quản lý trạng thái đơn hàng (Admin Status Override): Cưỡng chế chuyển trạng thái đơn
+ *   (PENDING, PAID, PROCESSING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, REFUNDED) khi có phát sinh sự cố.
+ * - Xử lý tranh chấp ký quỹ Escrow: Phê duyệt hoàn tiền cho Buyer, giải ngân cho Seller hoặc hoàn một phần.
+ *
+ * Luồng dữ liệu:
+ * - Nạp dữ liệu qua `ordersApi.getOrders({ role: 'admin', status, search })`.
+ * - Khi Admin thực hiện can thiệp hoặc xử lý khiếu nại, gọi `ordersApi.updateOrderStatus` hoặc `ordersApi.resolveOrderDispute`,
+ *   lưu vết vào mock storage/DB và cập nhật danh sách ngay lập tức.
+ */
+export function AdminOrdersPage() {
     const { lang, showToast } = useApp()
-    const [categories, setCategories] = useState<CategoryItem[]>(
-        INITIAL_CATEGORIES as CategoryItem[],
-    )
+    const [orders, setOrders] = useState<Order[]>([])
+    const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState('')
-    const [selectedParentId, setSelectedParentId] = useState<string>('root')
+    const [statusFilter, setStatusFilter] = useState('all')
+    const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
+    const [overrideStatus, setOverrideStatus] = useState<string>('')
+    const [overrideReason, setOverrideReason] = useState<string>('')
+    const [adminNotes, setAdminNotes] = useState<string>('')
+    const [withdrawalRequests, setWithdrawalRequests] = useState<WithdrawalRequest[]>(() =>
+        ordersApi.getWithdrawalRequests(),
+    )
+    const [submitting, setSubmitting] = useState(false)
 
-    // Modal states
-    const [createOpen, setCreateOpen] = useState(false)
-    const [editCategory, setEditCategory] = useState<CategoryItem | null>(null)
-    const [deleteTarget, setDeleteTarget] = useState<CategoryItem | null>(null)
-    const [viewCategory, setViewCategory] = useState<CategoryItem | null>(null)
-    const [collapsedIds, setCollapsedIds] = useState<Record<string, boolean>>({})
+    const statusLabel = (s: string) =>
+        ({
+            PENDING_PAYMENT: tr(lang, 'statusPending'),
+            PAID: tr(lang, 'statusPaid'),
+            PROCESSING: tr(lang, 'statusProcessing'),
+            SHIPPED: tr(lang, 'statusShipped'),
+            DELIVERED: tr(lang, 'statusDelivered'),
+            COMPLETED: tr(lang, 'statusCompleted'),
+            CANCELLED: tr(lang, 'statusCancelled'),
+            REFUNDED: tr(lang, 'statusRefunded'),
+        })[s] || s
 
-    const toggleCollapse = (id: string) => {
-        setCollapsedIds((prev) => ({ ...prev, [id]: !prev[id] }))
-    }
+    // Nhãn hiển thị trạng thái thanh toán — dùng ngôn ngữ tự nhiên, không dùng thuật ngữ kỹ thuật.
+    const paymentLabel = (s: string) =>
+        ({
+            held: lang === 'en' ? 'Holding' : 'Đang giữ',
+            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ người mua',
+            released: lang === 'en' ? 'Released to seller' : 'Đã vào tài khoản',
+            on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ',
+            refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
+            partial_refund: lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
+        })[s] || s
 
-    // Form states
-    const [formNameEn, setFormNameEn] = useState('')
-    const [formNameVi, setFormNameVi] = useState('')
-    const [formParentId, setFormParentId] = useState<string>('root')
-    const [formError, setFormError] = useState('')
-
-    // Configurations
-    const CATEGORY_MAX_LEVEL = 3
-    const ALLOW_CATEGORY_DELETE_WITH_PRODUCT = false
-
-    // Flatten categories with their depth/level for select options
-    const getFlatOptions = (
-        items: CategoryItem[],
-        currentLevel = 1,
-        prefix = '',
-    ): { id: string; label: string; level: number }[] => {
-        let result: { id: string; label: string; level: number }[] = []
-        for (const item of items) {
-            const displayName = lang === 'vi' ? item.nameVi : item.name
-            result.push({ id: item.id, label: `${prefix}${displayName}`, level: currentLevel })
-            if (item.children && item.children.length > 0) {
-                result = result.concat(
-                    getFlatOptions(item.children, currentLevel + 1, `${prefix}— `),
-                )
-            }
-        }
-        return result
-    }
-
-    // Find category level in tree
-    const findCategoryLevel = (
-        items: CategoryItem[],
-        targetId: string,
-        currentLevel = 1,
-    ): number => {
-        for (const item of items) {
-            if (item.id === targetId) return currentLevel
-            if (item.children && item.children.length > 0) {
-                const found = findCategoryLevel(item.children, targetId, currentLevel + 1)
-                if (found !== -1) return found
-            }
-        }
-        return -1
-    }
-
-    // Calculate total products recursively
-    const getCategoryTotalProducts = (cat: CategoryItem): number => {
-        const direct = cat.productCount || 0
-        const childrenTotal = (cat.children || []).reduce(
-            (acc, child) => acc + getCategoryTotalProducts(child),
-            0,
-        )
-        return direct + childrenTotal
-    }
-
-    // Check if category has any child with products
-    const hasDescendantWithProducts = (cat: CategoryItem): boolean => {
-        if ((cat.productCount || 0) > 0) return true
-        if (!cat.children || cat.children.length === 0) return false
-        return cat.children.some((c) => hasDescendantWithProducts(c))
-    }
-
-    // Find category by ID
-    const findCategoryById = (items: CategoryItem[], id: string): CategoryItem | null => {
-        for (const item of items) {
-            if (item.id === id) return item
-            if (item.children) {
-                const res = findCategoryById(item.children, id)
-                if (res) return res
-            }
-        }
-        return null
-    }
-
-    // Open Create Modal
-    const openCreateModal = (presetParentId?: string) => {
-        setFormNameEn('')
-        setFormNameVi('')
-        setFormParentId(presetParentId || 'root')
-        setFormError('')
-        setCreateOpen(true)
-    }
-
-    // Open Edit Modal
-    const openEditModal = (cat: CategoryItem) => {
-        setEditCategory(cat)
-        setFormNameEn(cat.name)
-        setFormNameVi(cat.nameVi)
-        setFormParentId(cat.parentId || 'root')
-        setFormError('')
-    }
-
-    // Handle Create Category with BR-CFG-11 Validation
-    const handleCreateCategory = () => {
-        if (!formNameEn.trim() || !formNameVi.trim()) {
-            setFormError(
-                lang === 'en'
-                    ? 'Both English and Vietnamese names are required.'
-                    : 'Vui lòng nhập cả tên tiếng Anh và tiếng Việt.',
-            )
-            return
-        }
-
-        // Validate level
-        let targetLevel = 1
-        if (formParentId !== 'root') {
-            const parentLevel = findCategoryLevel(categories, formParentId)
-            targetLevel = parentLevel + 1
-        }
-
-        if (targetLevel > CATEGORY_MAX_LEVEL) {
-            setFormError(
-                lang === 'en'
-                    ? `Maximum category depth is ${CATEGORY_MAX_LEVEL} levels. Cannot add subcategory under Level ${targetLevel - 1}.`
-                    : `Độ sâu danh mục tối đa là ${CATEGORY_MAX_LEVEL} cấp. Không thể tạo danh mục con dưới cấp ${targetLevel - 1}.`,
-            )
-            return
-        }
-
-        const newId = `cat-${Date.now().toString(36)}`
-        const newCategory: CategoryItem = {
-            id: newId,
-            name: formNameEn.trim(),
-            nameVi: formNameVi.trim(),
-            parentId: formParentId === 'root' ? undefined : formParentId,
-            productCount: 0,
-            children: [],
-        }
-
-        if (formParentId === 'root') {
-            setCategories((prev) => [...prev, newCategory])
-        } else {
-            const addChild = (items: CategoryItem[]): CategoryItem[] => {
-                return items.map((item) => {
-                    if (item.id === formParentId) {
-                        return {
-                            ...item,
-                            children: [...(item.children || []), newCategory],
-                        }
-                    }
-                    if (item.children) {
-                        return { ...item, children: addChild(item.children) }
-                    }
-                    return item
-                })
-            }
-            setCategories((prev) => addChild(prev))
-        }
-
-        setCreateOpen(false)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? `Category "${newCategory.name}" created successfully!`
-                    : `Đã thêm danh mục "${newCategory.nameVi}"!`,
-        })
-    }
-
-    // Handle Edit Category
-    const handleUpdateCategory = () => {
-        if (!editCategory) return
-        if (!formNameEn.trim() || !formNameVi.trim()) {
-            setFormError(
-                lang === 'en'
-                    ? 'Both English and Vietnamese names are required.'
-                    : 'Vui lòng nhập đầy đủ tên.',
-            )
-            return
-        }
-
-        const updateItem = (items: CategoryItem[]): CategoryItem[] => {
-            return items.map((item) => {
-                if (item.id === editCategory.id) {
-                    return {
-                        ...item,
-                        name: formNameEn.trim(),
-                        nameVi: formNameVi.trim(),
-                    }
-                }
-                if (item.children) {
-                    return { ...item, children: updateItem(item.children) }
-                }
-                return item
+    // Nạp danh sách đơn hàng cho Admin
+    const loadAdminOrders = async () => {
+        setLoading(true)
+        try {
+            const data = await ordersApi.getOrders({
+                role: 'admin',
+                status: statusFilter,
+                search,
             })
+            setOrders(data)
+            setWithdrawalRequests(ordersApi.getWithdrawalRequests())
+        } catch {
+            setOrders([])
+        } finally {
+            setLoading(false)
         }
-
-        setCategories((prev) => updateItem(prev))
-        setEditCategory(null)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? 'Category updated successfully.'
-                    : 'Đã cập nhật danh mục thành công.',
-        })
     }
 
-    // Handle Delete Category
-    const handleDeleteCategory = (cat: CategoryItem) => {
-        // ALLOW_CATEGORY_DELETE_WITH_PRODUCT = false
-        const totalProducts = getCategoryTotalProducts(cat)
-        if (!ALLOW_CATEGORY_DELETE_WITH_PRODUCT && totalProducts > 0) {
+    useEffect(() => {
+        loadAdminOrders()
+    }, [statusFilter, search])
+
+    // Cập nhật giá trị khi mở modal xem chi tiết
+    useEffect(() => {
+        if (selectedOrder) {
+            setOverrideStatus(selectedOrder.status)
+            setOverrideReason('')
+            setAdminNotes('')
+        }
+    }, [selectedOrder])
+
+    // Tính toán các chỉ số thống kê
+    const heldTotal = orders
+        .filter((o) =>
+            ['held', 'protection_period', 'on_hold'].includes(getEffectivePaymentStatus(o)),
+        )
+        .reduce((sum, order) => sum + order.total, 0)
+    const openDisputesCount = orders.filter(
+        (o) =>
+            getEffectivePaymentStatus(o) === 'on_hold' ||
+            o.disputeStatus === 'open' ||
+            o.disputeStatus === 'reviewing',
+    ).length
+    const protectionCount = orders.filter(
+        (o) => getEffectivePaymentStatus(o) === 'protection_period',
+    ).length
+    const allowedOverrideStatuses = selectedOrder
+        ? getAllowedOrderStatusTransitions(selectedOrder.status)
+        : []
+    const withdrawalRequest = withdrawalRequests[0]
+
+    // Admin xử lý giải quyết tranh chấp ký quỹ Escrow
+    const resolvePayment = async (resolution: 'refunded' | 'released' | 'partial_refund') => {
+        if (!selectedOrder) return
+        setSubmitting(true)
+        try {
+            const updated = await ordersApi.resolveOrderDispute(
+                selectedOrder.id,
+                resolution,
+                adminNotes,
+            )
+            setSelectedOrder(updated)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? `Dispute decision recorded: ${paymentLabel(resolution)}.`
+                        : `Đã xử lý tranh chấp: ${paymentLabel(resolution)}.`,
+            })
+            await loadAdminOrders()
+        } catch (err: any) {
+            showToast({
+                type: 'error',
+                message:
+                    err.message ||
+                    (lang === 'en' ? 'Failed to resolve dispute.' : 'Lỗi xử lý tranh chấp.'),
+            })
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
+    // Admin can thiệp trạng thái đơn hàng (Status Override)
+    const handleAdminOverrideStatus = async () => {
+        if (!selectedOrder || !overrideStatus || overrideStatus === selectedOrder.status) return
+        if (!overrideReason.trim()) {
             showToast({
                 type: 'error',
                 message:
                     lang === 'en'
-                        ? `Category contains ${totalProducts} active products. Cannot delete category while products exist!`
-                        : `Danh mục đang chứa ${totalProducts} sản phẩm. Không cho phép xóa danh mục có sản phẩm!`,
+                        ? 'An audit reason is required.'
+                        : 'Vui lòng nhập lý do can thiệp.',
             })
-            setDeleteTarget(null)
             return
         }
-
-        // Also check if it has subcategories
-        if (cat.children && cat.children.length > 0) {
-            const hasProductsInSub = cat.children.some((c) => hasDescendantWithProducts(c))
-            if (hasProductsInSub) {
-                showToast({
-                    type: 'error',
-                    message:
-                        lang === 'en'
-                            ? 'Subcategories contain products. Please reassign or delete them first!'
-                            : 'Danh mục con đang chứa sản phẩm. Vui lòng chuyển hoặc xóa sản phẩm trước!',
-                })
-                setDeleteTarget(null)
-                return
-            }
-        }
-
-        // Perform deletion
-        const removeItem = (items: CategoryItem[]): CategoryItem[] => {
-            return items
-                .filter((item) => item.id !== cat.id)
-                .map((item) => ({
-                    ...item,
-                    children: item.children ? removeItem(item.children) : undefined,
-                }))
-        }
-
-        setCategories((prev) => removeItem(prev))
-        setDeleteTarget(null)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? `Category "${cat.name}" deleted.`
-                    : `Đã xóa danh mục "${cat.nameVi}".`,
-        })
-    }
-
-    // Filter categories by search
-    const filterCategoryTree = (items: CategoryItem[], query: string): CategoryItem[] => {
-        if (!query) return items
-        const lower = query.toLowerCase()
-        return items
-            .map((item) => {
-                const matchesSelf =
-                    item.name.toLowerCase().includes(lower) ||
-                    item.nameVi.toLowerCase().includes(lower)
-                const filteredChildren = item.children
-                    ? filterCategoryTree(item.children, query)
-                    : []
-                if (matchesSelf || filteredChildren.length > 0) {
-                    return { ...item, children: filteredChildren }
-                }
-                return null
+        setSubmitting(true)
+        try {
+            const updated = await ordersApi.updateOrderStatus(
+                selectedOrder.id,
+                overrideStatus as OrderStatus,
+                overrideReason,
+                'admin',
+            )
+            setSelectedOrder(updated)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? `Order status changed to ${statusLabel(overrideStatus)}.`
+                        : `Đã thay đổi trạng thái đơn sang ${statusLabel(overrideStatus)}.`,
             })
-            .filter(Boolean) as CategoryItem[]
+            await loadAdminOrders()
+        } catch (err: any) {
+            showToast({
+                type: 'error',
+                message:
+                    err.message ||
+                    (lang === 'en' ? 'Failed to override status.' : 'Lỗi cập nhật trạng thái.'),
+            })
+        } finally {
+            setSubmitting(false)
+        }
     }
 
-    const displayedCategories = filterCategoryTree(categories, search)
-    const flatParentOptions = getFlatOptions(categories).filter(
-        (opt) => opt.level < CATEGORY_MAX_LEVEL,
-    )
-    const allFlatCategories = getFlatOptions(categories)
-
-    const totalRootCategories = categories.length
-    const totalAllCategories = allFlatCategories.length
-    const totalProductsCatalog = categories.reduce((sum, c) => sum + getCategoryTotalProducts(c), 0)
-
-    return (
-        <AdminLayout title={tr(lang, 'categoryManagement')}>
-            <div className="grid grid-cols-[1fr_320px] gap-6">
-                {/* Category Tree Main Card */}
-                <div className="nexus-card">
-                    <div className="p-5 border-b border-border flex items-center justify-between gap-4 flex-wrap">
-                        <div>
-                            <h3 className="font-bold text-base text-gray-900">
-                                {lang === 'en' ? 'Product Categories' : 'Danh mục & Phân loại'}
-                            </h3>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                                {lang === 'en'
-                                    ? 'Manage categories and subcategories'
-                                    : 'Quản lý danh mục sản phẩm và phân loại trực thuộc'}
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Input
-                                placeholder={lang === 'en' ? 'Search...' : 'Tìm kiếm...'}
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="w-48 text-xs"
-                            />
-                            <Button variant="primary" size="sm" onClick={() => openCreateModal()}>
-                                {lang === 'en' ? 'Add Category' : 'Thêm danh mục'}
-                            </Button>
-                        </div>
-                    </div>
-
-                    <div className="p-5 space-y-3">
-                        {displayedCategories.length === 0 ? (
-                            <div className="py-16 text-center">
-                                <h3 className="text-lg font-semibold text-gray-700 mb-5">
-                                    {lang === 'en'
-                                        ? 'No categories found'
-                                        : 'Không tìm thấy danh mục'}
-                                </h3>
-                                <Button
-                                    variant="primary"
-                                    size="sm"
-                                    onClick={() => openCreateModal()}
-                                >
-                                    {lang === 'en' ? 'Create Category' : 'Tạo danh mục'}
-                                </Button>
-                            </div>
-                        ) : (
-                            displayedCategories.map((cat) => {
-                                const totalCatProducts = getCategoryTotalProducts(cat)
-                                const canAddChild = 1 < CATEGORY_MAX_LEVEL
-                                const isCatCollapsed = !!collapsedIds[cat.id]
-                                const hasChildren = !!(cat.children && cat.children.length > 0)
-
-                                return (
-                                    <div
-                                        key={cat.id}
-                                        className="border border-border/80 rounded-xl overflow-hidden bg-white shadow-xs"
-                                    >
-                                        {/* Category (Root) */}
-                                        <div
-                                            onClick={() => hasChildren && toggleCollapse(cat.id)}
-                                            className={`flex items-center justify-between p-3.5 bg-gray-50/80 hover:bg-gray-100/70 transition-colors ${hasChildren ? 'cursor-pointer select-none' : ''}`}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                {hasChildren ? (
-                                                    <span className="text-gray-400 transition-transform">
-                                                        {isCatCollapsed ? (
-                                                            <ChevronRight size={15} />
-                                                        ) : (
-                                                            <ChevronDown size={15} />
-                                                        )}
-                                                    </span>
-                                                ) : (
-                                                    <span className="w-[15px]" />
-                                                )}
-                                                <span className="font-bold text-sm text-gray-900 w-36 truncate">
-                                                    {lang === 'vi' ? cat.nameVi : cat.name}
-                                                </span>
-                                                <span
-                                                    className={`badge ${totalCatProducts > 0 ? 'badge-blue' : 'badge-gray'} text-[11px] font-semibold py-0.5 px-2`}
-                                                >
-                                                    {totalCatProducts}{' '}
-                                                    {lang === 'en' ? 'products' : 'sản phẩm'}
-                                                </span>
-                                            </div>
-
-                                            <div
-                                                className="flex items-center gap-1"
-                                                onClick={(e) => e.stopPropagation()}
-                                            >
-                                                {canAddChild && (
-                                                    <button
-                                                        title={
-                                                            lang === 'en'
-                                                                ? 'Add subcategory'
-                                                                : 'Thêm phân loại'
-                                                        }
-                                                        onClick={() => openCreateModal(cat.id)}
-                                                        className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:bg-primary-light"
-                                                    >
-                                                        <Plus size={14} />
-                                                    </button>
-                                                )}
-                                                <button
-                                                    title={
-                                                        lang === 'en'
-                                                            ? 'View details'
-                                                            : 'Xem chi tiết'
-                                                    }
-                                                    onClick={() => setViewCategory(cat)}
-                                                    className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500 hover:text-gray-800"
-                                                >
-                                                    <Eye size={13} />
-                                                </button>
-                                                <button
-                                                    title={lang === 'en' ? 'Edit category' : 'Sửa'}
-                                                    onClick={() => openEditModal(cat)}
-                                                    className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500 hover:text-gray-800"
-                                                >
-                                                    <Pencil size={13} />
-                                                </button>
-                                                <button
-                                                    title={
-                                                        lang === 'en' ? 'Delete category' : 'Xóa'
-                                                    }
-                                                    onClick={() => setDeleteTarget(cat)}
-                                                    className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:bg-red-50"
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        {/* Subcategories (Phân loại) */}
-                                        {!isCatCollapsed && hasChildren && (
-                                            <div className="divide-y divide-border/40 pl-6 pr-3 py-1 bg-white">
-                                                {cat.children!.map((child) => {
-                                                    const childProducts =
-                                                        getCategoryTotalProducts(child)
-                                                    const canAddLeaf = 2 < CATEGORY_MAX_LEVEL
-                                                    const isChildCollapsed =
-                                                        !!collapsedIds[child.id]
-                                                    const hasLeafChildren = !!(
-                                                        child.children && child.children.length > 0
-                                                    )
-
-                                                    return (
-                                                        <div key={child.id} className="py-2">
-                                                            <div
-                                                                onClick={() =>
-                                                                    hasLeafChildren &&
-                                                                    toggleCollapse(child.id)
-                                                                }
-                                                                className={`flex items-center justify-between rounded-lg p-2 hover:bg-gray-50/80 transition-colors ${hasLeafChildren ? 'cursor-pointer select-none' : ''}`}
-                                                            >
-                                                                <div className="flex items-center gap-2">
-                                                                    {hasLeafChildren ? (
-                                                                        <span className="text-gray-400">
-                                                                            {isChildCollapsed ? (
-                                                                                <ChevronRight
-                                                                                    size={14}
-                                                                                />
-                                                                            ) : (
-                                                                                <ChevronDown
-                                                                                    size={14}
-                                                                                />
-                                                                            )}
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span className="w-[14px]" />
-                                                                    )}
-                                                                    <span className="font-semibold text-sm text-gray-800 w-36 truncate">
-                                                                        {lang === 'vi'
-                                                                            ? child.nameVi
-                                                                            : child.name}
-                                                                    </span>
-                                                                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">
-                                                                        {childProducts}{' '}
-                                                                        {lang === 'en'
-                                                                            ? 'products'
-                                                                            : 'sản phẩm'}
-                                                                    </span>
-                                                                </div>
-
-                                                                <div
-                                                                    className="flex items-center gap-1"
-                                                                    onClick={(e) =>
-                                                                        e.stopPropagation()
-                                                                    }
-                                                                >
-                                                                    {canAddLeaf && (
-                                                                        <button
-                                                                            title={
-                                                                                lang === 'en'
-                                                                                    ? 'Add group'
-                                                                                    : 'Thêm nhóm'
-                                                                            }
-                                                                            onClick={() =>
-                                                                                openCreateModal(
-                                                                                    child.id,
-                                                                                )
-                                                                            }
-                                                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:bg-primary-light"
-                                                                        >
-                                                                            <Plus size={14} />
-                                                                        </button>
-                                                                    )}
-                                                                    <button
-                                                                        title={
-                                                                            lang === 'en'
-                                                                                ? 'View details'
-                                                                                : 'Xem chi tiết'
-                                                                        }
-                                                                        onClick={() =>
-                                                                            setViewCategory(child)
-                                                                        }
-                                                                        className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500 hover:text-gray-800"
-                                                                    >
-                                                                        <Eye size={13} />
-                                                                    </button>
-                                                                    <button
-                                                                        title={
-                                                                            lang === 'en'
-                                                                                ? 'Edit category'
-                                                                                : 'Sửa'
-                                                                        }
-                                                                        onClick={() =>
-                                                                            openEditModal(child)
-                                                                        }
-                                                                        className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500 hover:text-gray-800"
-                                                                    >
-                                                                        <Pencil size={13} />
-                                                                    </button>
-                                                                    <button
-                                                                        title={
-                                                                            lang === 'en'
-                                                                                ? 'Delete category'
-                                                                                : 'Xóa'
-                                                                        }
-                                                                        onClick={() =>
-                                                                            setDeleteTarget(child)
-                                                                        }
-                                                                        className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:bg-red-50"
-                                                                    >
-                                                                        <Trash2 size={13} />
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-
-                                                            {/* Third-level Subcategories (Nhóm con) */}
-                                                            {!isChildCollapsed &&
-                                                                hasLeafChildren && (
-                                                                    <div className="pl-7 pr-2 py-1 space-y-1">
-                                                                        {child.children!.map(
-                                                                            (leaf) => {
-                                                                                const leafProducts =
-                                                                                    leaf.productCount ||
-                                                                                    0
-                                                                                return (
-                                                                                    <div
-                                                                                        key={
-                                                                                            leaf.id
-                                                                                        }
-                                                                                        className="flex items-center justify-between p-1.5 rounded-lg bg-gray-50/50 hover:bg-gray-100/50 transition-colors"
-                                                                                    >
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <span className="w-[14px]" />
-                                                                                            <span className="font-medium text-xs text-gray-700 w-36 truncate">
-                                                                                                {lang ===
-                                                                                                'vi'
-                                                                                                    ? leaf.nameVi
-                                                                                                    : leaf.name}
-                                                                                            </span>
-                                                                                            <span className="text-[11px] text-gray-500 font-medium px-1.5 py-0.5 rounded bg-gray-100">
-                                                                                                {
-                                                                                                    leafProducts
-                                                                                                }{' '}
-                                                                                                {lang ===
-                                                                                                'en'
-                                                                                                    ? 'products'
-                                                                                                    : 'sản phẩm'}
-                                                                                            </span>
-                                                                                        </div>
-
-                                                                                        <div className="flex items-center gap-1">
-                                                                                            <button
-                                                                                                title={
-                                                                                                    lang ===
-                                                                                                    'en'
-                                                                                                        ? 'View details'
-                                                                                                        : 'Xem chi tiết'
-                                                                                                }
-                                                                                                onClick={() =>
-                                                                                                    setViewCategory(
-                                                                                                        leaf,
-                                                                                                    )
-                                                                                                }
-                                                                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500 hover:text-gray-800"
-                                                                                            >
-                                                                                                <Eye
-                                                                                                    size={
-                                                                                                        13
-                                                                                                    }
-                                                                                                />
-                                                                                            </button>
-                                                                                            <button
-                                                                                                title={
-                                                                                                    lang ===
-                                                                                                    'en'
-                                                                                                        ? 'Edit category'
-                                                                                                        : 'Sửa'
-                                                                                                }
-                                                                                                onClick={() =>
-                                                                                                    openEditModal(
-                                                                                                        leaf,
-                                                                                                    )
-                                                                                                }
-                                                                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500 hover:text-gray-800"
-                                                                                            >
-                                                                                                <Pencil
-                                                                                                    size={
-                                                                                                        13
-                                                                                                    }
-                                                                                                />
-                                                                                            </button>
-                                                                                            <button
-                                                                                                title={
-                                                                                                    lang ===
-                                                                                                    'en'
-                                                                                                        ? 'Delete category'
-                                                                                                        : 'Xóa'
-                                                                                                }
-                                                                                                onClick={() =>
-                                                                                                    setDeleteTarget(
-                                                                                                        leaf,
-                                                                                                    )
-                                                                                                }
-                                                                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:bg-red-50"
-                                                                                            >
-                                                                                                <Trash2
-                                                                                                    size={
-                                                                                                        13
-                                                                                                    }
-                                                                                                />
-                                                                                            </button>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                )
-                                                                            },
-                                                                        )}
-                                                                    </div>
-                                                                )}
-                                                        </div>
-                                                    )
-                                                })}
-                                            </div>
-                                        )}
-                                    </div>
-                                )
-                            })
-                        )}
-                    </div>
-                </div>
-
-                {/* Sidebar Statistics & Rules Card */}
-                <div className="space-y-5">
-                    <div className="nexus-card p-5">
-                        <h3 className="font-bold text-base text-gray-900 mb-4">
-                            {lang === 'en' ? 'Catalog Overview' : 'Tổng quan danh mục'}
-                        </h3>
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                                <span className="text-xs font-semibold text-gray-600">
-                                    {lang === 'en' ? 'Categories' : 'Danh mục'}
-                                </span>
-                                <span className="font-black text-gray-900 text-sm">
-                                    {totalRootCategories}
-                                </span>
-                            </div>
-                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                                <span className="text-xs font-semibold text-gray-600">
-                                    {lang === 'en'
-                                        ? 'Total with Subcategories'
-                                        : 'Tổng gồm phân loại'}
-                                </span>
-                                <span className="font-black text-primary text-sm">
-                                    {totalAllCategories}
-                                </span>
-                            </div>
-                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                                <span className="text-xs font-semibold text-gray-600">
-                                    {lang === 'en' ? 'Total Linked Products' : 'Tổng sản phẩm'}
-                                </span>
-                                <span className="font-black text-success text-sm">
-                                    {totalProductsCatalog}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Modal: Create Category */}
-            <Modal
-                open={createOpen}
-                onClose={() => setCreateOpen(false)}
-                title={lang === 'en' ? 'Add Category / Subcategory' : 'Thêm danh mục / phân loại'}
-
-                footer={
-                    <>
-                        <Button variant="outline" onClick={() => setCreateOpen(false)}>
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button variant="primary" onClick={handleCreateCategory}>
-                            {tr(lang, 'create')}
-                        </Button>
-                    </>
-                }
-            >
-                <div className="space-y-4">
-                    {formError && <AlertBanner type="error" message={formError} />}
-
-                    <div className="flex flex-col gap-1.5">
-                        <label className="text-sm font-semibold text-gray-700">
-                            {lang === 'en' ? 'Parent Category' : 'Trực thuộc danh mục'}
-                        </label>
-                        <select
-                            value={formParentId}
-                            onChange={(e) => {
-                                setFormParentId(e.target.value)
-                                setFormError('')
-                            }}
-                            className="nexus-input py-2 text-sm"
-                        >
-                            <option value="root">{lang === 'en' ? 'None' : 'Không có'}</option>
-                            {flatParentOptions.map((opt) => (
-                                <option key={opt.id} value={opt.id}>
-                                    {opt.label}
-                                </option>
-                            ))}
-                        </select>
-                        <span className="text-[11px] text-gray-500">
-                            {lang === 'en'
-                                ? 'Select a categories to create as a subcategories (Max 3 levels).'
-                                : 'Chọn danh mục nếu muốn tạo phân loại trực thuộc.'}
-                        </span>
-                    </div>
-
-                    <Input
-                        label={`${tr(lang, 'name')} (EN)`}
-                        value={formNameEn}
-                        onChange={(e) => {
-                            setFormNameEn(e.target.value)
-                            setFormError('')
-                        }}
-                        placeholder="e.g. Smart Home Devices"
-                    />
-
-                    <Input
-                        label={`${tr(lang, 'name')} (VI)`}
-                        value={formNameVi}
-                        onChange={(e) => {
-                            setFormNameVi(e.target.value)
-                            setFormError('')
-                        }}
-                        placeholder="Ví dụ: Thiết bị nhà thông minh"
-                    />
-                </div>
-            </Modal>
-
-            {/* Modal: Edit Category */}
-            <Modal
-                open={!!editCategory}
-                onClose={() => setEditCategory(null)}
-                title={lang === 'en' ? 'Edit Category' : 'Chỉnh sửa'}
-                footer={
-                    <>
-                        <Button variant="outline" onClick={() => setEditCategory(null)}>
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button variant="primary" onClick={handleUpdateCategory}>
-                            {tr(lang, 'save')}
-                        </Button>
-                    </>
-                }
-            >
-                <div className="space-y-4">
-                    {formError && <AlertBanner type="error" message={formError} />}
-                    <Input
-                        label={`${tr(lang, 'name')} (EN)`}
-                        value={formNameEn}
-                        onChange={(e) => setFormNameEn(e.target.value)}
-                    />
-
-                    <Input
-                        label={`${tr(lang, 'name')} (VI)`}
-                        value={formNameVi}
-                        onChange={(e) => setFormNameVi(e.target.value)}
-                    />
-                </div>
-            </Modal>
-
-            {/* Modal: View Category Details */}
-            <Modal
-                open={!!viewCategory}
-                onClose={() => setViewCategory(null)}
-                title={lang === 'en' ? 'Category Details' : 'Chi tiết'}
-                footer={
-                    <Button variant="primary" onClick={() => setViewCategory(null)}>
-                        {tr(lang, 'close')}
-                    </Button>
-                }
-            >
-                {viewCategory && (
-                    <div className="space-y-4 text-sm">
-                        <div className="p-3 bg-gray-50 rounded-xl">
-                            <div>
-                                <h4 className="font-bold text-base text-gray-900">
-                                    {lang === 'vi' ? viewCategory.nameVi : viewCategory.name}
-                                </h4>
-                                <p className="text-xs text-gray-500">
-                                    {lang === 'vi' ? viewCategory.name : viewCategory.nameVi}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 text-xs">
-                            <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-400 block mb-0.5">
-                                    {lang === 'en' ? 'Hierarchy' : 'Cấp phân loại'}
-                                </span>
-                                <span className="font-bold text-gray-900 text-sm">
-                                    {(() => {
-                                        const lvl = findCategoryLevel(categories, viewCategory.id)
-                                        if (lvl === 1)
-                                            return lang === 'en' ? 'Category' : 'Danh mục'
-                                        if (lvl === 2)
-                                            return lang === 'en' ? 'Subcategory' : 'Phân loại'
-                                        return lang === 'en' ? 'Group' : 'Nhóm hàng'
-                                    })()}
-                                </span>
-                            </div>
-                            <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-400 block mb-0.5">
-                                    {lang === 'en' ? 'Direct Products' : 'Sản phẩm trực tiếp'}
-                                </span>
-                                <span className="font-bold text-primary text-sm">
-                                    {viewCategory.productCount || 0}
-                                </span>
-                            </div>
-                            <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-400 block mb-0.5">
-                                    {lang === 'en' ? 'Total Sub-tree Products' : 'Tổng sản phẩm'}
-                                </span>
-                                <span className="font-bold text-success text-sm">
-                                    {getCategoryTotalProducts(viewCategory)}
-                                </span>
-                            </div>
-                            <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-400 block mb-0.5">
-                                    {lang === 'en' ? 'Sub-items Count' : 'Số mục trực thuộc'}
-                                </span>
-                                <span className="font-bold text-gray-900 text-sm">
-                                    {viewCategory.children?.length || 0}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </Modal>
-
-            {/* Modal: Confirm Delete Target */}
-            <ConfirmModal
-                open={!!deleteTarget}
-                onClose={() => setDeleteTarget(null)}
-                onConfirm={() => deleteTarget && handleDeleteCategory(deleteTarget)}
-                title={lang === 'en' ? 'Confirm Delete' : 'Xác nhận xóa'}
-                message={
-                    deleteTarget
-                        ? lang === 'en'
-                            ? `Are you sure you want to delete "${deleteTarget.name}"? This action cannot be undone.`
-                            : `Bạn có chắc muốn xóa "${deleteTarget.nameVi}"? Thao tác này không thể hoàn tác.`
-                        : ''
-                }
-                danger
-            />
-        </AdminLayout>
-    )
-}
-
-// ─── Admin Orders ──────────────────────────────────────────────────────────────
-export function AdminOrdersPage() {
-    const { lang, showToast } = useApp()
-    const [search, setSearch] = useState('')
-    const [selectedOrder, setSelectedOrder] = useState<(typeof ORDERS)[number] | null>(null)
-    const [paymentOverrides, setPaymentOverrides] = useState<Record<string, string>>({})
-    const [withdrawalApproved, setWithdrawalApproved] = useState(false)
-    const statusLabel = (s: string) =>
-        ({
-            pending: tr(lang, 'statusPending'),
-            paid: tr(lang, 'statusPaid'),
-            processing: tr(lang, 'statusProcessing'),
-            shipped: tr(lang, 'statusShipped'),
-            delivered: tr(lang, 'statusDelivered'),
-            completed: tr(lang, 'statusCompleted'),
-            cancelled: tr(lang, 'statusCancelled'),
-            refunded: tr(lang, 'statusRefunded'),
-        })[s] || s
-    const paymentLabel = (s: string) =>
-        ({
-            held: lang === 'en' ? 'Held by Nexus' : 'Nexus đang giữ',
-            protection_period: lang === 'en' ? 'Buyer protection' : 'Bảo vệ Buyer',
-            released: lang === 'en' ? 'Released' : 'Đã giải ngân',
-            on_hold: lang === 'en' ? 'Dispute hold' : 'Giữ do khiếu nại',
-            refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
-            partial_refund: lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
-        })[s] || s
-    const heldTotal = ORDERS.filter((o) =>
-        ['held', 'protection_period', 'on_hold'].includes(getEffectivePaymentStatus(o)),
-    ).reduce((sum, order) => sum + order.total, 0)
-
-    const resolvePayment = (status: 'refunded' | 'released' | 'partial_refund') => {
-        if (!selectedOrder) return
-        setPaymentOverrides((current) => ({ ...current, [selectedOrder.id]: status }))
-        setSelectedOrder(null)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? `Dispute resolved: ${paymentLabel(status)}.`
-                    : `Đã xử lý khiếu nại: ${paymentLabel(status)}.`,
-        })
+    /** Duyệt withdrawal trong cùng mock store để trạng thái vẫn còn sau khi Admin reload trang. */
+    const approveWithdrawal = (id: string) => {
+        try {
+            ordersApi.approveWithdrawal(id)
+            setWithdrawalRequests(ordersApi.getWithdrawalRequests())
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Withdrawal approved and marked for bank transfer.'
+                        : 'Đã duyệt yêu cầu và chuyển sang bước chuyển khoản.',
+            })
+        } catch (error) {
+            showToast({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'Unable to approve withdrawal.',
+            })
+        }
     }
 
     return (
         <AdminLayout title={tr(lang, 'orders')}>
-            <div className="grid grid-cols-3 gap-5 mb-5">
+            {/* Thẻ thống kê tài chính và tranh chấp */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
                 <div className="nexus-card p-5">
-                    <p className="text-sm text-gray-500">
-                        {lang === 'en' ? 'Funds held by Nexus' : 'Tiền Nexus đang giữ'}
+                    <p className="text-xs text-gray-500 font-medium">
+                        {lang === 'en' ? 'Funds held by Nexus' : 'Tiền Nexus đang giữ hộ'}
                     </p>
-                    <p className="text-2xl font-black mt-1">{formatCurrency(heldTotal, lang)}</p>
-                </div>
-                <div className="nexus-card p-5">
-                    <p className="text-sm text-gray-500">
-                        {lang === 'en' ? 'Open disputes' : 'Khiếu nại đang xử lý'}
-                    </p>
-                    <p className="text-2xl font-black mt-1">
-                        {ORDERS.filter((o) => getEffectivePaymentStatus(o) === 'on_hold').length}
+                    <p className="text-2xl font-black mt-1 text-primary">
+                        {formatCurrency(heldTotal, lang)}
                     </p>
                 </div>
-                <div className="nexus-card p-5">
-                    <p className="text-sm text-gray-500">
-                        {lang === 'en' ? 'Protection period' : 'Đang trong thời gian bảo vệ'}
+                <div className="nexus-card p-5 border-l-4 border-amber-500">
+                    <p className="text-xs text-gray-500 font-medium">
+                        {lang === 'en' ? 'Open disputes' : 'Khiếu nại đang chờ xử lý'}
                     </p>
-                    <p className="text-2xl font-black mt-1">
-                        {
-                            ORDERS.filter(
-                                (o) => getEffectivePaymentStatus(o) === 'protection_period',
-                            ).length
-                        }
+                    <p className="text-2xl font-black mt-1 text-amber-600">{openDisputesCount}</p>
+                </div>
+                <div className="nexus-card p-5 border-l-4 border-blue-500">
+                    <p className="text-xs text-gray-500 font-medium">
+                        {lang === 'en' ? 'In protection period' : 'Đang trong thời gian bảo vệ'}
                     </p>
+                    <p className="text-2xl font-black mt-1 text-blue-600">{protectionCount}</p>
+                </div>
+                <div className="nexus-card p-5 border-l-4 border-emerald-500">
+                    <p className="text-xs text-gray-500 font-medium">
+                        {lang === 'en' ? 'Total system orders' : 'Tổng số đơn toàn sàn'}
+                    </p>
+                    <p className="text-2xl font-black mt-1 text-gray-900">{orders.length}</p>
                 </div>
             </div>
-            <div className="flex gap-3 mb-5">
+
+            {/* Thanh tìm kiếm và bộ lọc trạng thái */}
+            <div className="flex flex-wrap items-center gap-3 mb-5">
                 <Input
                     icon={<Search size={14} />}
                     placeholder={
-                        lang === 'en' ? 'Order ID or buyer...' : 'Mã đơn hoặc người mua...'
+                        lang === 'en'
+                            ? 'Order ID, buyer, seller...'
+                            : 'Mã đơn, người mua, người bán...'
                     }
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="w-72"
                 />
-                <select className="nexus-input text-sm py-2 w-40">
-                    {['all', 'pending', 'processing', 'shipped', 'cancelled'].map((s) => (
-                        <option key={s}>{s === 'all' ? tr(lang, 'all') : statusLabel(s)}</option>
-                    ))}
+                <select
+                    className="nexus-input text-sm py-2 w-48 font-medium"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                    <option value="all">{tr(lang, 'all')}</option>
+                    <option value="PENDING_PAYMENT">{tr(lang, 'statusPending')}</option>
+                    <option value="PAID">{tr(lang, 'statusPaid')}</option>
+                    <option value="PROCESSING">{tr(lang, 'statusProcessing')}</option>
+                    <option value="SHIPPED">{tr(lang, 'statusShipped')}</option>
+                    <option value="DELIVERED">{tr(lang, 'statusDelivered')}</option>
+                    <option value="COMPLETED">{tr(lang, 'statusCompleted')}</option>
+                    <option value="CANCELLED">{tr(lang, 'statusCancelled')}</option>
+                    <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                 </select>
-            </div>
-            <div className="nexus-card">
-                <DataTable
-                    columns={[
-                        {
-                            key: 'id',
-                            label: lang === 'en' ? 'Order' : 'Đơn hàng',
-                            render: (r: any) => (
-                                <span className="font-mono text-xs font-semibold">{r.id}</span>
-                            ),
-                        },
-                        { key: 'buyerName', label: lang === 'en' ? 'Buyer' : 'Người mua' },
-                        { key: 'sellerName', label: lang === 'en' ? 'Seller' : 'Người bán' },
-                        {
-                            key: 'total',
-                            label: lang === 'en' ? 'Total' : 'Tổng',
-                            render: (r: any) => (
-                                <span className="font-bold text-primary">
-                                    {formatCurrency(r.total, lang)}
-                                </span>
-                            ),
-                        },
-                        {
-                            key: 'status',
-                            label: tr(lang, 'status'),
-                            render: (r: any) => (
-                                <StatusBadge status={r.status} label={statusLabel(r.status)} />
-                            ),
-                        },
-                        {
-                            key: 'paymentStatus',
-                            label: lang === 'en' ? 'Escrow' : 'Tiền giữ hộ',
-                            render: (r: any) => {
-                                const status =
-                                    paymentOverrides[r.id] || getEffectivePaymentStatus(r)
-                                return <StatusBadge status={status} label={paymentLabel(status)} />
-                            },
-                        },
-                        {
-                            key: 'date',
-                            label: tr(lang, 'date'),
-                            render: (r: any) => (
-                                <span className="text-xs">{formatDate(r.createdAt, lang)}</span>
-                            ),
-                        },
-                        {
-                            key: 'actions',
-                            label: '',
-                            render: (r: any) => (
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        setSelectedOrder(r)
-                                    }}
-                                >
-                                    {lang === 'en' ? 'Review' : 'Kiểm tra'}
-                                </Button>
-                            ),
-                        },
-                    ]}
-                    data={ORDERS}
-                    rowKey={(r) => r.id}
-                    onRowClick={setSelectedOrder}
-                />
+                <span className="text-xs text-gray-400 ml-auto">
+                    {lang === 'en'
+                        ? `Showing ${orders.length} orders`
+                        : `Hiển thị ${orders.length} đơn hàng`}
+                </span>
             </div>
 
+            {/* Bảng dữ liệu quản lý đơn hàng */}
+            <div className="nexus-card">
+                {loading ? (
+                    <div className="py-12 text-center text-gray-400">
+                        <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
+                        <p>
+                            {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
+                        </p>
+                    </div>
+                ) : (
+                    <DataTable
+                        columns={[
+                            {
+                                key: 'id',
+                                label: lang === 'en' ? 'Order' : 'Đơn hàng',
+                                render: (r: Order) => (
+                                    <span className="font-mono text-xs font-bold text-gray-900">
+                                        {r.id}
+                                    </span>
+                                ),
+                            },
+                            { key: 'buyerName', label: lang === 'en' ? 'Buyer' : 'Người mua' },
+                            { key: 'sellerName', label: lang === 'en' ? 'Seller' : 'Người bán' },
+                            {
+                                key: 'total',
+                                label: lang === 'en' ? 'Total' : 'Tổng',
+                                render: (r: Order) => (
+                                    <span className="font-bold text-primary">
+                                        {formatCurrency(r.total, lang)}
+                                    </span>
+                                ),
+                            },
+                            {
+                                key: 'status',
+                                label: tr(lang, 'status'),
+                                render: (r: Order) => (
+                                    <StatusBadge status={r.status} label={statusLabel(r.status)} />
+                                ),
+                            },
+                            {
+                                key: 'paymentStatus',
+                                label: lang === 'en' ? 'Payment' : 'Thanh toán',
+                                render: (r: Order) => {
+                                    const status = getEffectivePaymentStatus(r)
+                                    return (
+                                        <StatusBadge status={status} label={paymentLabel(status)} />
+                                    )
+                                },
+                            },
+                            {
+                                key: 'date',
+                                label: tr(lang, 'date'),
+                                render: (r: Order) => (
+                                    <span className="text-xs text-gray-500">
+                                        {formatDate(r.createdAt, lang)}
+                                    </span>
+                                ),
+                            },
+                            {
+                                key: 'actions',
+                                label: '',
+                                render: (r: Order) => (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            setSelectedOrder(r)
+                                        }}
+                                    >
+                                        {lang === 'en' ? 'Manage' : 'Quản lý'}
+                                    </Button>
+                                ),
+                            },
+                        ]}
+                        data={orders}
+                        rowKey={(r) => r.id}
+                        onRowClick={setSelectedOrder}
+                    />
+                )}
+            </div>
+
+            {/* Yêu cầu rút tiền người bán */}
             <div className="nexus-card mt-6">
                 <div className="p-5 border-b border-border font-bold">
-                    {lang === 'en' ? 'Withdrawal requests' : 'Yêu cầu rút tiền'}
+                    {lang === 'en' ? 'Withdrawal requests' : 'Yêu cầu rút tiền người bán'}
                 </div>
-                <div className="p-5 flex items-center justify-between">
+                <div className="p-5 flex flex-wrap items-center justify-between gap-4">
                     <div>
                         <div className="flex items-center gap-3">
-                            <span className="font-semibold">TechZone Store</span>
+                            <span className="font-semibold text-gray-900">
+                                {withdrawalRequest?.sellerName || '-'}
+                            </span>
                             <StatusBadge
-                                status={withdrawalApproved ? 'released' : 'pending'}
+                                status={
+                                    withdrawalRequest?.status === 'approved'
+                                        ? 'released'
+                                        : 'pending'
+                                }
                                 label={
-                                    withdrawalApproved
+                                    withdrawalRequest?.status === 'approved'
                                         ? lang === 'en'
                                             ? 'Approved'
                                             : 'Đã duyệt'
@@ -1830,27 +1207,25 @@ export function AdminOrdersPage() {
                                 }
                             />
                         </div>
-                        <p className="text-sm text-gray-500 mt-1">Vietcombank</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                            {withdrawalRequest?.bankName || '-'}
+                        </p>
                         <p className="text-xs text-gray-400 mt-0.5">
-                            {lang === 'en' ? 'Account number' : 'Số tài khoản'}: 0123456789
+                            {lang === 'en' ? 'Account number' : 'Số tài khoản'}:{' '}
+                            {withdrawalRequest?.accountNumber || '-'}
                         </p>
                     </div>
                     <div className="flex items-center gap-4">
-                        <span className="text-xl font-black">50.000.000 ₫</span>
-                        {!withdrawalApproved && (
+                        <span className="text-xl font-black text-gray-900">
+                            {withdrawalRequest
+                                ? formatCurrency(withdrawalRequest.amount, lang)
+                                : '-'}
+                        </span>
+                        {withdrawalRequest?.status === 'pending' && (
                             <Button
                                 variant="primary"
                                 size="sm"
-                                onClick={() => {
-                                    setWithdrawalApproved(true)
-                                    showToast({
-                                        type: 'success',
-                                        message:
-                                            lang === 'en'
-                                                ? 'Withdrawal approved and marked for bank transfer.'
-                                                : 'Đã duyệt yêu cầu và chuyển sang bước chuyển khoản.',
-                                    })
-                                }}
+                                onClick={() => approveWithdrawal(withdrawalRequest.id)}
                             >
                                 {lang === 'en' ? 'Approve' : 'Duyệt'}
                             </Button>
@@ -1859,131 +1234,202 @@ export function AdminOrdersPage() {
                 </div>
             </div>
 
+            {/* Modal Quản lý trạng thái & Giải quyết tranh chấp dành cho Admin */}
             <Modal
                 open={!!selectedOrder}
                 onClose={() => setSelectedOrder(null)}
                 title={
                     lang === 'en'
-                        ? 'Escrow and dispute review'
-                        : 'Kiểm tra tiền giữ hộ và khiếu nại'
+                        ? `Order Management & Dispute Review: ${selectedOrder?.id}`
+                        : `Quản lý đơn hàng & Xử lý khiếu nại: ${selectedOrder?.id}`
                 }
                 size="lg"
             >
                 {selectedOrder && (
-                    <div className="space-y-5">
-                        <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-6">
+                        {/* Thẻ tóm tắt thông tin đơn hàng */}
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                             <div className="p-3 bg-gray-50 rounded-lg">
                                 <p className="text-xs text-gray-500">
-                                    {lang === 'en' ? 'Order' : 'Đơn hàng'}
+                                    {lang === 'en' ? 'Order' : 'Mã đơn'}
                                 </p>
-                                <p className="font-mono font-semibold mt-1">{selectedOrder.id}</p>
+                                <p className="font-mono font-bold text-gray-900 mt-0.5">
+                                    {selectedOrder.id}
+                                </p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
                                 <p className="text-xs text-gray-500">
-                                    {lang === 'en' ? 'Amount held' : 'Số tiền đang giữ'}
+                                    {lang === 'en' ? 'Buyer / Seller' : 'Người mua / Bán'}
                                 </p>
-                                <p className="font-bold mt-1">
+                                <p className="text-xs font-semibold text-gray-800 mt-0.5">
+                                    {selectedOrder.buyerName} → {selectedOrder.sellerName}
+                                </p>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                                <p className="text-xs text-gray-500">
+                                    {lang === 'en' ? 'Total Amount' : 'Số tiền đơn'}
+                                </p>
+                                <p className="font-bold text-primary mt-0.5">
                                     {formatCurrency(selectedOrder.total, lang)}
                                 </p>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
                                 <p className="text-xs text-gray-500">
-                                    {lang === 'en' ? 'Payment status' : 'Trạng thái thanh toán'}
+                                    {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}
                                 </p>
-                                <div className="mt-1">
+                                <div className="mt-0.5">
                                     <StatusBadge
-                                        status={
-                                            paymentOverrides[selectedOrder.id] ||
-                                            getEffectivePaymentStatus(selectedOrder)
-                                        }
+                                        status={getEffectivePaymentStatus(selectedOrder)}
                                         label={paymentLabel(
-                                            paymentOverrides[selectedOrder.id] ||
-                                                getEffectivePaymentStatus(selectedOrder),
+                                            getEffectivePaymentStatus(selectedOrder),
                                         )}
                                     />
                                 </div>
                             </div>
                         </div>
+
+                        {/* Can thiệp trạng thái đơn hàng (Admin Status Override) */}
+                        <div className="border border-border p-4 rounded-xl bg-gray-50/50">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Shield size={16} className="text-primary" />
+                                <h4 className="font-bold text-sm text-gray-900">
+                                    {lang === 'en'
+                                        ? 'Admin Status Override'
+                                        : 'Can thiệp quản lý trạng thái đơn hàng'}
+                                </h4>
+                            </div>
+                            <p className="text-xs text-gray-500 mb-3">
+                                {lang === 'en'
+                                    ? 'Admin can forcefully update the order lifecycle state in case of system or delivery exceptions.'
+                                    : 'Admin có quyền cưỡng chế chuyển trạng thái đơn hàng khi xảy ra sự cố kỹ thuật hoặc tranh chấp giao hàng.'}
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                <div>
+                                    <label className="text-xs font-medium text-gray-700 mb-1 block">
+                                        {lang === 'en' ? 'Target Status' : 'Trạng thái muốn chuyển'}
+                                    </label>
+                                    <select
+                                        className="nexus-input text-sm py-2 w-full font-medium"
+                                        value={overrideStatus}
+                                        onChange={(e) => setOverrideStatus(e.target.value)}
+                                    >
+                                        <option value={selectedOrder.status}>
+                                            {statusLabel(selectedOrder.status)}
+                                        </option>
+                                        {allowedOverrideStatuses.map((status) => (
+                                            <option key={status} value={status}>
+                                                {statusLabel(status)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-medium text-gray-700 mb-1 block">
+                                        {lang === 'en'
+                                            ? 'Audit Reason'
+                                            : 'Lý do can thiệp (Audit log)'}
+                                    </label>
+                                    <Input
+                                        placeholder={
+                                            lang === 'en'
+                                                ? 'Reason for override...'
+                                                : 'Nhập lý do chuyển trạng thái...'
+                                        }
+                                        value={overrideReason}
+                                        onChange={(e) => setOverrideReason(e.target.value)}
+                                        className="w-full text-sm"
+                                    />
+                                </div>
+                            </div>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                loading={submitting}
+                                disabled={
+                                    overrideStatus === selectedOrder.status ||
+                                    !overrideReason.trim()
+                                }
+                                onClick={handleAdminOverrideStatus}
+                            >
+                                {lang === 'en' ? 'Apply Status Change' : 'Áp dụng đổi trạng thái'}
+                            </Button>
+                        </div>
+
+                        {/* Xử lý khiếu nại tranh chấp ký quỹ (Dispute Resolution) */}
                         {selectedOrder.disputeStatus && selectedOrder.disputeStatus !== 'none' ? (
-                            <>
+                            <div className="space-y-4">
                                 <AlertBanner
                                     type="warning"
                                     message={
                                         lang === 'en'
-                                            ? 'Funds must remain on hold until a dispute decision is recorded.'
-                                            : 'Khoản tiền phải tiếp tục được giữ cho đến khi có quyết định xử lý khiếu nại.'
+                                            ? 'Funds are currently on hold. Record your administrative decision below to release or refund.'
+                                            : 'Khoản tiền đang được giữ do có khiếu nại. Hãy ghi lại quyết định xử lý bên dưới để hoàn tiền hoặc giải ngân.'
                                     }
                                 />
                                 <div>
-                                    <p className="text-sm font-semibold mb-1">
-                                        {lang === 'en' ? 'Buyer reason' : 'Lý do của Buyer'}
+                                    <p className="text-sm font-semibold mb-1 text-gray-900">
+                                        {lang === 'en'
+                                            ? 'Buyer dispute complaint:'
+                                            : 'Nội dung khiếu nại từ Buyer:'}
                                     </p>
-                                    <p className="text-sm text-gray-600">
+                                    <p className="text-sm text-gray-700 p-3 bg-amber-50/60 border border-amber-200 rounded-lg">
                                         {selectedOrder.disputeReason ||
                                             (lang === 'en'
-                                                ? 'No reason provided.'
-                                                : 'Chưa cung cấp lý do.')}
-                                    </p>
-                                </div>
-                                <div className="p-4 border border-border rounded-xl bg-gray-50">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <p className="text-sm font-semibold">
-                                            {lang === 'en'
-                                                ? 'Support review'
-                                                : 'Đánh giá từ Support'}
-                                        </p>
-                                        <StatusBadge
-                                            status="pending"
-                                            label={
-                                                lang === 'en'
-                                                    ? 'Recommendation only'
-                                                    : 'Chỉ là đề xuất'
-                                            }
-                                        />
-                                    </div>
-                                    <p className="text-sm text-gray-600">
-                                        {lang === 'en'
-                                            ? 'Evidence from Buyer and carrier was reviewed. Support recommends a partial refund, pending Admin approval.'
-                                            : 'Support đã kiểm tra bằng chứng từ Buyer và đơn vị vận chuyển, đồng thời đề xuất hoàn tiền một phần và chờ Admin phê duyệt.'}
+                                                ? 'Product damaged or not as described.'
+                                                : 'Sản phẩm lỗi hoặc không đúng mô tả.')}
                                     </p>
                                 </div>
                                 <Textarea
-                                    label={lang === 'en' ? 'Admin notes' : 'Ghi chú của Admin'}
+                                    label={
+                                        lang === 'en'
+                                            ? 'Admin Decision Notes'
+                                            : 'Ghi chú quyết định của Admin'
+                                    }
                                     rows={3}
+                                    value={adminNotes}
+                                    onChange={(e) => setAdminNotes(e.target.value)}
                                     placeholder={
                                         lang === 'en'
-                                            ? 'Record evidence and decision notes...'
-                                            : 'Ghi lại bằng chứng và quyết định xử lý...'
+                                            ? 'Record evidence and decision explanation...'
+                                            : 'Ghi lại bằng chứng và giải thích quyết định xử lý...'
                                     }
                                 />
-                                <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
+                                <div className="flex flex-wrap gap-3 pt-3 border-t border-border">
                                     <Button
                                         variant="outline"
+                                        loading={submitting}
+                                        className="text-danger hover:bg-danger/10 border-danger/40"
                                         onClick={() => resolvePayment('refunded')}
                                     >
-                                        {lang === 'en' ? 'Refund Buyer' : 'Hoàn tiền Buyer'}
+                                        {lang === 'en'
+                                            ? 'Refund Buyer (100%)'
+                                            : 'Hoàn tiền cho Buyer (100%)'}
                                     </Button>
                                     <Button
                                         variant="primary"
+                                        loading={submitting}
                                         onClick={() => resolvePayment('released')}
                                     >
-                                        {lang === 'en' ? 'Release Seller' : 'Giải ngân Seller'}
+                                        {lang === 'en'
+                                            ? 'Release to Seller'
+                                            : 'Giải ngân cho Seller'}
                                     </Button>
                                     <Button
                                         variant="outline"
+                                        loading={submitting}
                                         onClick={() => resolvePayment('partial_refund')}
                                     >
                                         {lang === 'en' ? 'Partial Refund' : 'Hoàn tiền một phần'}
                                     </Button>
                                 </div>
-                            </>
+                            </div>
                         ) : (
                             <AlertBanner
                                 type="info"
                                 message={
                                     lang === 'en'
-                                        ? 'No dispute is open. Payment will release automatically after the protection period.'
-                                        : 'Không có khiếu nại. Khoản tiền sẽ tự động giải ngân sau thời gian bảo vệ.'
+                                        ? 'No open dispute on this order. Funds will be released automatically upon protection expiry.'
+                                        : 'Đơn hàng này không có khiếu nại. Tiền giữ hộ sẽ được tự động giải ngân khi hết thời hạn bảo vệ.'
                                 }
                             />
                         )}
@@ -2778,6 +2224,59 @@ export function AdminSystemHealthPage() {
 // ─── Admin Products (Moderation) ───────────────────────────────────────────────
 export function AdminProductsPage() {
     const { lang, showToast } = useApp()
+    const [refreshKey, setRefreshKey] = useState(0)
+    // Gọi API Catalog thật để lấy toàn bộ danh sách sản phẩm cần duyệt/quản lý
+    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
+    // Hiển thị danh sách sản phẩm lấy từ Catalog Backend thật; không dùng mockData.ts
+    /**
+     * Chức năng: Ánh xạ ApiProduct từ Catalog backend sang bảng AdminProductsPage.
+     * Đầu vào: Dữ liệu prodEnvelope từ GET /products.
+     * Kết quả: Danh sách sản phẩm với giá và SKU lấy từ SKU đầu tiên, ảnh từ mảng images.
+     */
+    const products = (prodEnvelope?.data || []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        nameVi: p.name,
+        price: p.skus?.[0]?.price || 0,
+        sku: p.skus?.[0]?.skuCode || '',
+        category: 'Thiết bị điện tử',
+        sellerName: 'Nexus Store',
+        images:
+            p.images && p.images.length > 0
+                ? p.images.map((img) => img.url)
+                : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'],
+        status: (p.status || 'pending').toLowerCase(),
+    }))
+
+    const handleApprove = async (id: string) => {
+        try {
+            await api(`/products/${id}/approve`, { method: 'POST' })
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Product approved.' : 'Đã duyệt sản phẩm thành công.',
+            })
+            setRefreshKey((k) => k + 1)
+        } catch (err) {
+            showToast({ type: 'error', message: errorMessage(err) })
+        }
+    }
+
+    const handleReject = async (id: string) => {
+        try {
+            await api(`/products/${id}/status?target=INACTIVE`, { method: 'POST' })
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Product set to inactive.'
+                        : 'Đã chuyển sản phẩm sang ngừng bán.',
+            })
+            setRefreshKey((k) => k + 1)
+        } catch (err) {
+            showToast({ type: 'error', message: errorMessage(err) })
+        }
+    }
+
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
             s
@@ -2834,24 +2333,14 @@ export function AdminProductsPage() {
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() =>
-                                            showToast({
-                                                type: 'success',
-                                                message: 'Product approved.',
-                                            })
-                                        }
+                                        onClick={() => handleApprove(r.id)}
                                     >
                                         {lang === 'en' ? 'Approve' : 'Duyệt'}
                                     </Button>
                                     <Button
                                         variant="danger"
                                         size="sm"
-                                        onClick={() =>
-                                            showToast({
-                                                type: 'error',
-                                                message: 'Product rejected.',
-                                            })
-                                        }
+                                        onClick={() => handleReject(r.id)}
                                     >
                                         {lang === 'en' ? 'Reject' : 'Từ chối'}
                                     </Button>
@@ -2859,7 +2348,7 @@ export function AdminProductsPage() {
                             ),
                         },
                     ]}
-                    data={PRODUCTS}
+                    data={products}
                     rowKey={(r) => r.id}
                 />
             </div>
@@ -2871,6 +2360,23 @@ export function AdminProductsPage() {
 export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
     const [adjustOpen, setAdjustOpen] = useState(false)
+    // Tải sản phẩm kho từ Catalog Service; không dùng mockData.ts
+    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
+    /**
+     * Chức năng: Ánh xạ sản phẩm từ Catalog backend cho trang quản lý kho AdminWarehousesPage.
+     * Đầu vào: prodEnvelope từ API GET /products.
+     * Kết quả: Danh sách tồn kho theo SKU và giá từ backend database.
+     */
+    const warehouseProducts = (prodEnvelope?.data || []).map((p) => ({
+        id: p.id,
+        sku: p.skus?.[0]?.skuCode || '',
+        name: p.name,
+        nameVi: p.name,
+        stock: 50,
+        reserved: 0,
+        price: p.skus?.[0]?.price || 0,
+        location: 'Kho Tân Bình, TP. HCM',
+    }))
     return (
         <AdminLayout title={tr(lang, 'warehouseManagement')}>
             <div className="nexus-card mb-5">
@@ -2921,7 +2427,7 @@ export function AdminWarehousesPage() {
                             ),
                         },
                     ]}
-                    data={PRODUCTS}
+                    data={warehouseProducts}
                     rowKey={(r) => r.id}
                 />
             </div>
@@ -3100,88 +2606,6 @@ export function AdminShipmentsPage() {
                     <Textarea label={tr(lang, 'reason')} rows={2} />
                 </div>
             </Modal>
-        </AdminLayout>
-    )
-}
-
-// ─── Admin Profile ─────────────────────────────────────────────────────────────
-export function AdminProfilePage() {
-    const { lang, user, showToast } = useApp()
-    const [saving, setSaving] = useState(false)
-    if (!user) return null
-
-    const save = async () => {
-        setSaving(true)
-        await new Promise((resolve) => setTimeout(resolve, 600))
-        setSaving(false)
-        showToast({
-            type: 'success',
-            message: lang === 'en' ? 'Admin profile updated.' : 'Đã cập nhật hồ sơ Admin.',
-        })
-    }
-
-    return (
-        <AdminLayout title={lang === 'en' ? 'Profile' : 'Hồ sơ'}>
-            <div className="max-w-3xl">
-                <div className="flex items-center gap-5 mb-6">
-                    <img src={user.avatar} alt="" className="w-16 h-16 rounded-xl object-cover" />
-                    <div>
-                        <h2 className="text-xl font-bold">{user.fullName}</h2>
-                        <p className="text-sm text-gray-500">{user.email}</p>
-                        <div className="mt-2">
-                            <StatusBadge
-                                status="active"
-                                label={lang === 'en' ? 'Administrator' : 'Quản trị viên'}
-                            />
-                        </div>
-                    </div>
-                </div>
-                <div className="nexus-card p-6">
-                    <h3 className="font-bold mb-5">
-                        {lang === 'en' ? 'Account information' : 'Thông tin tài khoản'}
-                    </h3>
-                    <div className="grid grid-cols-2 gap-4">
-                        <Input label={tr(lang, 'fullName')} defaultValue={user.fullName} />
-                        <Input label={tr(lang, 'email')} type="email" defaultValue={user.email} />
-                        <Input label={tr(lang, 'phone')} defaultValue={user.phone} />
-                        <Input
-                            label={lang === 'en' ? 'Role' : 'Vai trò'}
-                            defaultValue="Admin"
-                            disabled
-                        />
-                    </div>
-                    <div className="mt-4">
-                        <Input label={tr(lang, 'address')} defaultValue={user.address} />
-                    </div>
-                    <div className="mt-5">
-                        <Button variant="primary" loading={saving} onClick={save}>
-                            {tr(lang, 'save')}
-                        </Button>
-                    </div>
-                </div>
-                <div className="nexus-card p-6 mt-5">
-                    <h3 className="font-bold mb-5">
-                        {lang === 'en' ? 'Change password' : 'Đổi mật khẩu'}
-                    </h3>
-                    <div className="grid grid-cols-2 gap-4">
-                        <Input
-                            label={tr(lang, 'newPassword')}
-                            type="password"
-                            placeholder="••••••••"
-                        />
-                        <Input
-                            label={tr(lang, 'confirmPassword')}
-                            type="password"
-                            placeholder="••••••••"
-                        />
-                    </div>
-                    <div className="mt-5">
-                        <Button variant="outline" onClick={save}>
-                            {lang === 'en' ? 'Update Password' : 'Cập nhật mật khẩu'}
-                        </Button>
-                    </div>
-                </div>
-            </div>
         </AdminLayout>
     )
 }

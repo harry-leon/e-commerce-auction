@@ -3,6 +3,9 @@ package com.nexus.commerce.entity;
 import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.enums.OrderStatus;
 import jakarta.persistence.CascadeType;
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -10,8 +13,8 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
-import jakarta.validation.constraints.Min;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,20 +26,17 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
- * Entity đại diện cho bảng `orders` trong schema commerce_svc.
+ * Entity ánh xạ bảng orders trong cơ sở dữ liệu commerce_svc (V2__init_schema.sql).
  *
- * <p>Chức năng: Quản lý thông tin đơn hàng, tổng giá trị, địa chỉ giao hàng và trạng thái đơn hàng.
- * Tuân thủ mô hình Anemic Domain Model theo kiến trúc chuẩn của Project Nexus:
- * chỉ chứa ánh xạ JPA, thuộc tính và liên kết quan hệ; toàn bộ logic nghiệp vụ được xử lý ở OrderService.
- *
- * <p>Quy tắc và lý do:
+ * <p>Mô hình thực thể thuần (Anemic Domain Model) theo kiến trúc chuẩn của dự án Nexus:
  * <ul>
- *   <li>Khoá ngoại và liên kết: Quản lý các dòng sản phẩm (order_items) và lịch sử trạng thái (order_status_history).</li>
- *   <li>Idempotency: `idempotency_key` đảm bảo tính bất biến (idempotent) khi người dùng hoặc mạng retry đơn hàng.</li>
- *   <li>Snapshot: Lưu địa chỉ giao hàng và thông tin người nhận tại thời điểm đặt đơn.</li>
+ *   <li>Chứa các trường ánh xạ bảng, mối quan hệ và phương thức tiện ích quản lý quan hệ hai chiều.</li>
+ *   <li>Toàn bộ quy tắc xác thực máy trạng thái và phân quyền do OrderStatusStateMachine và OrderService đảm nhiệm.</li>
+ *   <li>Tuân thủ nghiêm ngặt Hibernate ddl-auto: validate (khớp 100% cột vật lý trong PostgreSQL, không thêm trường ngoài ERD).</li>
  * </ul>
  */
 @Entity
@@ -47,82 +47,109 @@ import org.hibernate.annotations.UuidGenerator;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Order {
+    /** Snapshot checkout và phiếu kho cùng đơn để IPN/outbox không phụ thuộc token hoặc giỏ đã xóa. */
+    @ElementCollection
+    @CollectionTable(name = "order_reservations", joinColumns = @JoinColumn(name = "order_id"))
+    @Column(name = "reservation_id", nullable = false)
+    @Builder.Default
+    private List<UUID> reservationIds = new ArrayList<>();
+    /** Email từ JWT lúc checkout; đơn cũ thiếu email chỉ gửi IN_APP, không đoán người nhận. */
+    @Column(name = "buyer_email", length = 254) private String buyerEmail;
+    @Column(name = "recipient_name") private String recipientName;
+    @Column(name = "recipient_phone", length = 30) private String recipientPhone;
+    @Column(name = "payment_method", length = 20) private String paymentMethod;
+    @Column(name = "request_hash", length = 64) private String requestHash;
 
+
+    /** Mã định danh đơn hàng (Primary Key, UUID tự sinh). */
     @Id
-    @UuidGenerator
     @Column(nullable = false, updatable = false)
-    private UUID id;
+    // UUID cấp tại ứng dụng trước reserve; không dùng generated-ID để Hibernate nhận đúng entity mới.
+    @Builder.Default
+    private UUID id = UUID.randomUUID();
 
+    /** Mã tham chiếu đơn hàng thân thiện với người dùng (duy nhất, ví dụ: ORD-20261029-001). */
     @Column(name = "order_no", nullable = false, unique = true, length = 50)
     private String orderNo;
 
+    /** ID của người mua (Keycloak User ID, không thể sửa đổi sau khi tạo). */
     @Column(name = "buyer_id", nullable = false, updatable = false)
     private UUID buyerId;
 
+    /** ID của người bán hoặc chủ gian hàng (Keycloak User ID, không thể sửa đổi sau khi tạo). */
     @Column(name = "seller_id", nullable = false, updatable = false)
     private UUID sellerId;
 
+    /** Nguồn phát sinh đơn hàng: Mua thông thường (REGULAR) hoặc từ phiên đấu giá (AUCTION). */
     @Enumerated(EnumType.STRING)
     @Column(name = "source_type", nullable = false, length = 20)
     @Builder.Default
     private OrderSourceType sourceType = OrderSourceType.REGULAR;
 
+    /** ID phiên đấu giá nếu đơn hàng xuất phát từ đấu giá (bắt buộc nếu sourceType là AUCTION). */
     @Column(name = "auction_id")
     private UUID auctionId;
 
+    /** ID phiếu giảm giá được áp dụng cho đơn hàng (FK vouchers.id, có thể null). */
     @Column(name = "voucher_id")
     private UUID voucherId;
 
+    /** Trạng thái hiện tại của đơn hàng theo máy trạng thái OrderStatus. */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     @Builder.Default
     private OrderStatus status = OrderStatus.PENDING_PAYMENT;
 
-    @Min(0)
+    /** Tổng giá trị tiền hàng trước giảm giá (subtotal >= 0). */
     @Column(nullable = false, precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal subtotal = BigDecimal.ZERO;
 
-    @Min(0)
+    /** Cước phí vận chuyển (shipping_fee >= 0). */
     @Column(name = "shipping_fee", nullable = false, precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal shippingFee = BigDecimal.ZERO;
 
-    @Min(0)
+    /** Số tiền được giảm giá qua voucher hoặc khuyến mãi (discount >= 0). */
     @Column(nullable = false, precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal discount = BigDecimal.ZERO;
 
-    @Min(0)
+    /** Tổng số tiền người mua phải thanh toán: max(0, subtotal - discount) + shipping_fee. */
     @Column(nullable = false, precision = 15, scale = 2)
-    private BigDecimal total;
+    @Builder.Default
+    private BigDecimal total = BigDecimal.ZERO;
 
+    /** Địa chỉ giao hàng snapshot tại thời điểm đặt hàng (tên, SĐT, địa chỉ chi tiết, tối đa 500 ký tự). */
     @Column(name = "shipping_address", nullable = false, length = 500)
     private String shippingAddress;
 
-    @Column(name = "recipient_name", length = 255)
-    private String recipientName;
-
-    @Column(name = "recipient_phone", length = 20)
-    private String recipientPhone;
-
+    /** Khóa chống trùng lặp request đặt hàng (Idempotency Key, duy nhất). */
     @Column(name = "idempotency_key", unique = true, length = 100)
     private String idempotencyKey;
 
+    /** Thời điểm tạo đơn hàng (lưu timestamp UTC theo ERD). */
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
+    @Builder.Default
+    private Instant createdAt = Instant.now();
 
+    /** Danh sách các dòng sản phẩm snapshot thuộc đơn hàng. */
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @Builder.Default
     private List<OrderItem> items = new ArrayList<>();
 
+    /** Lịch sử chuyển đổi trạng thái của đơn hàng, sắp xếp theo thời gian tăng dần. */
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OrderBy("changedAt ASC")
     @Builder.Default
-    private List<OrderStatusHistory> statusHistories = new ArrayList<>();
+    private List<OrderStatusHistory> statusHistory = new ArrayList<>();
 
     /**
-     * Phương thức helper để thêm một dòng chi tiết đơn hàng và đồng bộ hai chiều.
+     * Thêm dòng sản phẩm vào đơn hàng và thiết lập quan hệ hai chiều.
+     *
+     * @param item dòng sản phẩm cần thêm
      */
     public void addItem(OrderItem item) {
         if (items == null) {
@@ -133,13 +160,15 @@ public class Order {
     }
 
     /**
-     * Phương thức helper để ghi nhận một bản ghi thay đổi trạng thái và đồng bộ hai chiều.
+     * Ghi nhận một bước chuyển trạng thái mới vào lịch sử đơn hàng và thiết lập quan hệ hai chiều.
+     *
+     * @param history bản ghi lịch sử trạng thái
      */
     public void addStatusHistory(OrderStatusHistory history) {
-        if (statusHistories == null) {
-            statusHistories = new ArrayList<>();
+        if (statusHistory == null) {
+            statusHistory = new ArrayList<>();
         }
-        statusHistories.add(history);
+        statusHistory.add(history);
         history.setOrder(this);
     }
 }

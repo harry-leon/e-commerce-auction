@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { AppState, Page } from '../types'
-import { DEMO_ADMIN } from '../mockData'
+import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER } from '../mockData'
 import { AppRouter } from '../routes/AppRouter'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
@@ -51,6 +51,22 @@ it('requires a login for private routes and denies a wrong staff role', () => {
     }
 })
 
+it('opens a dashboard directly in the frontend demo without creating a real login session', async () => {
+    holder.current.user = null
+    holder.current.page = 'seller-dashboard'
+    holder.current.pageParams = {}
+    render(<AppRouter />)
+    await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_SELLER))
+})
+
+it('opens Buyer Home directly with the buyer mock user in frontend demo mode', async () => {
+    holder.current.user = null
+    holder.current.page = 'home'
+    holder.current.pageParams = {}
+    render(<AppRouter />)
+    await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_BUYER))
+})
+
 const pages = [
     'login',
     'register',
@@ -60,6 +76,7 @@ const pages = [
     'product-detail',
     'cart',
     'checkout',
+    'sandbox-payment',
     'payment-result',
     'order-history',
     'order-detail',

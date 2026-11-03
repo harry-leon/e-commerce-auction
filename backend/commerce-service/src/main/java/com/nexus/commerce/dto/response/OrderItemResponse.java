@@ -1,41 +1,43 @@
 package com.nexus.commerce.dto.response;
 
-import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.util.UUID;
+import lombok.Builder;
 
 /**
- * DTO phản hồi thông tin chi tiết một dòng sản phẩm trong đơn hàng.
+ * DTO biểu diễn một dòng sản phẩm snapshot trong đơn hàng.
  *
- * @param id          Mã định danh dòng sản phẩm đơn hàng
- * @param skuId       Mã định danh SKU
- * @param skuCode     Mã SKU code (ví dụ: NK-AF1-WHT-42)
- * @param productName Tên sản phẩm tại thời điểm đặt hàng
- * @param unitPrice   Đơn giá tại thời điểm đặt hàng
- * @param quantity    Số lượng mua
- * @param subtotal    Thành tiền = unitPrice * quantity
+ * <p>Chức năng:
+ * Cung cấp thông tin chi tiết từng sản phẩm được đóng băng dữ liệu tại thời điểm đặt hàng thành công.
+ * Đảm bảo giá trị sản phẩm, mã biến thể SKU, số lượng và giá mua không bị thay đổi ngay cả khi
+ * Catalog Service cập nhật giá bán hoặc xóa sản phẩm sau này.
+ *
+ * <p>Đầu vào và kết quả:
+ * Nhận dữ liệu từ thực thể OrderItem được OrderMapper ánh xạ thành record bất biến để hiển thị trong OrderDetailResponse.
+ *
+ * <p>Luồng xử lý:
+ * OrderService truy xuất Order kèm danh sách OrderItem -> OrderMapper chuyển đổi từng OrderItem sang OrderItemResponse.
+ *
+ * <p>Quy tắc và lý do:
+ * Ràng buộc số lượng quantity phải lớn hơn 0 và thành tiền subtotal được tính bằng unitPrice * quantity
+ * với scale 2 và RoundingMode.HALF_UP chuẩn kế toán.
+ *
+ * @param id Mã định danh của dòng sản phẩm (Primary Key, UUID).
+ * @param skuId ID của biến thể sản phẩm từ Catalog Service.
+ * @param productName Tên sản phẩm được lưu snapshot tại thời điểm mua.
+ * @param skuCode Mã SKU của biến thể sản phẩm snapshot.
+ * @param unitPrice Đơn giá của một sản phẩm tại thời điểm đặt mua.
+ * @param quantity Số lượng sản phẩm đặt mua (quantity > 0).
+ * @param subtotal Thành tiền của dòng sản phẩm (unitPrice * quantity).
  */
-@Schema(description = "Thông tin chi tiết dòng sản phẩm trong đơn hàng")
+@Builder
 public record OrderItemResponse(
-        @Schema(description = "ID của dòng sản phẩm đơn hàng")
         UUID id,
-
-        @Schema(description = "ID của SKU")
         UUID skuId,
-
-        @Schema(description = "Mã SKU", example = "NK-AF1-WHT-42")
-        String skuCode,
-
-        @Schema(description = "Tên sản phẩm", example = "Nike Air Force 1 '07")
         String productName,
-
-        @Schema(description = "Đơn giá snapshot", example = "2900000.00")
+        String skuCode,
         BigDecimal unitPrice,
-
-        @Schema(description = "Số lượng mua", example = "2")
         Integer quantity,
-
-        @Schema(description = "Tổng tiền dòng sản phẩm", example = "5800000.00")
         BigDecimal subtotal
 ) {
 }

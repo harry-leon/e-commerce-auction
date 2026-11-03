@@ -8,6 +8,7 @@ import { flatten } from '../catalog/catalog'
 
 /**
  * Quản trị danh mục: GET cây → chọn tạo/sửa → POST/PUT → tải lại cây từ DB.
+ * ERD chỉ có name: form gửi một tên danh mục, không thu bản dịch riêng nameVi.
  * Xóa cần xác nhận rồi DELETE; backend là nơi chặn vượt cấp, vòng lặp và danh mục còn sản phẩm.
  */
 export function AdminCategoriesPage() {
@@ -66,15 +67,8 @@ export function AdminCategoriesPage() {
                 <h2 className="font-bold">{editing ? 'Sửa danh mục' : 'Thêm danh mục'}</h2>
                 <Input
                     name="name"
-                    label="Tên tiếng Anh"
+                    label="Tên danh mục"
                     defaultValue={editing?.name}
-                    maxLength={255}
-                    required
-                />
-                <Input
-                    name="nameVi"
-                    label="Tên tiếng Việt"
-                    defaultValue={editing?.nameVi}
                     maxLength={255}
                     required
                 />

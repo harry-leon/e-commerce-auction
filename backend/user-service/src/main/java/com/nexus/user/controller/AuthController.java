@@ -1,19 +1,14 @@
 package com.nexus.user.controller;
 
-import com.nexus.user.dto.AuthResponse;
+import com.nexus.common.response.ApiResponse;
 import com.nexus.user.dto.ChangePasswordRequest;
 import com.nexus.user.dto.ForgotPasswordRequest;
-import com.nexus.user.dto.LoginRequest;
-import com.nexus.user.dto.RefreshTokenRequest;
-import com.nexus.user.dto.RegisterRequest;
-import com.nexus.user.dto.ResetPasswordRequest;
-import com.nexus.user.service.AuthService;
+import com.nexus.user.service.KeycloakClient;
+import com.nexus.user.service.UserService;
+import com.nexus.user.repository.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.Map;
-import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,141 +18,44 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * REST Controller xử lý các yêu cầu xác thực, cấp phát JWT và quản lý mật khẩu.
- *
- * @author Nguyễn Tiến Thương
- * @since 06/10/2026
- */
+/** Adapter mật khẩu giữ endpoint UI; token reset và credential hoàn toàn do Keycloak quản lý. */
 @RestController
 @RequestMapping("/api/v1/auth")
-@Tag(name = "Authentication & IAM", description = "Các API xác thực, đăng nhập, cấp JWT, quên mật khẩu")
 public class AuthController {
+    private final UserService users;
+    private final UserRepository profiles;
+    private final KeycloakClient keycloak;
 
-    private final AuthService authService;
-
-    /**
-     * Khởi tạo AuthController với AuthService.
-     *
-     * @param authService Service xử lý nghiệp vụ xác thực
-     */
-    public AuthController(AuthService authService) {
-        this.authService = authService;
+    public AuthController(UserService users, UserRepository profiles, KeycloakClient keycloak) {
+        this.users = users;
+        this.profiles = profiles;
+        this.keycloak = keycloak;
     }
 
-    /**
-     * Đăng ký tài khoản người dùng mới vào hệ thống.
-     *
-     * @param request     Dữ liệu đăng ký
-     * @param httpRequest Đối tượng HttpServletRequest lấy IP và User-Agent
-     * @return AuthResponse kèm HTTP 201 Created
-     */
-    @PostMapping("/register")
-    @Operation(summary = "Đăng ký tài khoản mới", description = "Tạo tài khoản người dùng và tự động phát hành JWT")
-    public ResponseEntity<AuthResponse> register(
-            @Valid @RequestBody RegisterRequest request,
-            HttpServletRequest httpRequest) {
-        String ip = extractClientIp(httpRequest);
-        String userAgent = httpRequest.getHeader("User-Agent");
-        AuthResponse response = authService.register(request, ip, userAgent);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
-    }
-
-    /**
-     * Đăng nhập vào hệ thống bằng Email và Mật khẩu.
-     *
-     * @param request     Thông tin đăng nhập
-     * @param httpRequest Đối tượng HttpServletRequest
-     * @return AuthResponse chứa Access Token và Refresh Token
-     */
-    @PostMapping("/login")
-    @Operation(summary = "Đăng nhập hệ thống", description = "Xác thực email và mật khẩu, kiểm tra giới hạn 5 lần đăng nhập sai")
-    public ResponseEntity<AuthResponse> login(
-            @Valid @RequestBody LoginRequest request,
-            HttpServletRequest httpRequest) {
-        String ip = extractClientIp(httpRequest);
-        String userAgent = httpRequest.getHeader("User-Agent");
-        AuthResponse response = authService.login(request, ip, userAgent);
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * Làm mới Access Token khi hết hạn bằng Refresh Token hợp lệ.
-     *
-     * @param request Yêu cầu chứa refresh token
-     * @return AuthResponse chứa Access Token và Refresh Token mới
-     */
-    @PostMapping("/refresh")
-    @Operation(summary = "Làm mới Access Token", description = "Cấp Access Token mới từ Refresh Token hợp lệ")
-    public ResponseEntity<AuthResponse> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
-        AuthResponse response = authService.refreshToken(request);
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * Gửi yêu cầu quên mật khẩu qua địa chỉ email đăng ký.
-     *
-     * @param request     Yêu cầu chứa email
-     * @param httpRequest Đối tượng HttpServletRequest
-     * @return Thông báo phản hồi kết quả
-     */
+    /** Email không tồn tại vẫn trả cùng thông báo; Keycloak gửi action email khi tìm được profile liên kết. */
     @PostMapping("/forgot-password")
-    @Operation(summary = "Yêu cầu quên mật khẩu qua email", description = "Sinh mã xác nhận và gửi email đặt lại mật khẩu")
-    public ResponseEntity<Map<String, String>> forgotPassword(
-            @Valid @RequestBody ForgotPasswordRequest request,
-            HttpServletRequest httpRequest) {
-        String ip = extractClientIp(httpRequest);
-        String userAgent = httpRequest.getHeader("User-Agent");
-        authService.forgotPassword(request, ip, userAgent);
-        return ResponseEntity.ok(Map.of("message", "Nếu email tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi"));
+    @Operation(summary = "Gửi email reset qua Keycloak")
+    public ResponseEntity<ApiResponse<Map<String, String>>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        profiles.findByEmailAndIsDeletedFalse(request.getEmail().trim().toLowerCase(java.util.Locale.ROOT))
+                .filter(user -> user.getKeycloakId() != null)
+                .ifPresent(user -> keycloak.sendResetEmail(user.getKeycloakId()));
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("message", "Nếu tài khoản tồn tại, hãy làm theo liên kết đặt lại mật khẩu trong email.")));
     }
 
-    /**
-     * Đặt lại mật khẩu mới thông qua mã token xác thực nhận từ email.
-     *
-     * @param request     Yêu cầu chứa token và mật khẩu mới
-     * @param httpRequest Đối tượng HttpServletRequest
-     * @return Thông báo kết quả
-     */
+    /** Token reset nội bộ cũ đã ngừng hỗ trợ; email mới dẫn tới trang Keycloak, không báo thành công giả. */
     @PostMapping("/reset-password")
-    @Operation(summary = "Đặt lại mật khẩu bằng mã token", description = "Cập nhật mật khẩu mới và hủy hiệu lực token cũ")
-    public ResponseEntity<Map<String, String>> resetPassword(
-            @Valid @RequestBody ResetPasswordRequest request,
-            HttpServletRequest httpRequest) {
-        String ip = extractClientIp(httpRequest);
-        String userAgent = httpRequest.getHeader("User-Agent");
-        authService.resetPassword(request, ip, userAgent);
-        return ResponseEntity.ok(Map.of("message", "Mật khẩu đã được đặt lại thành công. Vui lòng đăng nhập lại."));
+    public ResponseEntity<ApiResponse<Void>> resetPassword() {
+        return ResponseEntity.status(HttpStatus.GONE).body(ApiResponse.error(
+                "AUTH_RESET_FLOW_CHANGED", "Hãy yêu cầu email mới và đặt mật khẩu tại trang Keycloak."));
     }
 
-    /**
-     * Đổi mật khẩu cho người dùng hiện tại đang đăng nhập.
-     *
-     * @param jwt     Thông tin JWT xác thực của người dùng
-     * @param request Yêu cầu chứa mật khẩu cũ và mới
-     * @return Thông báo kết quả
-     */
+    /** Xác thực mật khẩu hiện tại tại IAM, cập nhật credential và logout session; UI phải đăng nhập lại. */
     @PostMapping("/change-password")
-    @Operation(summary = "Đổi mật khẩu", description = "Thay đổi mật khẩu cho người dùng đang đăng nhập")
-    public ResponseEntity<Map<String, String>> changePassword(
-            @AuthenticationPrincipal Jwt jwt,
-            @Valid @RequestBody ChangePasswordRequest request) {
-        UUID userId = UUID.fromString(jwt.getSubject());
-        authService.changePassword(userId, request);
-        return ResponseEntity.ok(Map.of("message", "Mật khẩu đã được thay đổi thành công"));
-    }
-
-    /**
-     * Trích xuất địa chỉ IP thực tế của client từ header của proxy / gateway.
-     *
-     * @param request Đối tượng HttpServletRequest
-     * @return Địa chỉ IP
-     */
-    private String extractClientIp(HttpServletRequest request) {
-        String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader == null || xfHeader.isEmpty()) {
-            return request.getRemoteAddr();
-        }
-        return xfHeader.split(",")[0].trim();
+    public ResponseEntity<ApiResponse<Map<String, String>>> changePassword(@AuthenticationPrincipal Jwt jwt,
+                                             @Valid @RequestBody ChangePasswordRequest request) {
+        var user = users.findBySubject(jwt.getSubject());
+        keycloak.changePassword(new KeycloakClient.UserIdentity(user.getKeycloakId(), user.getEmail()),
+                request.getCurrentPassword(), request.getNewPassword());
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("message", "Đổi mật khẩu thành công. Vui lòng đăng nhập lại.")));
     }
 }

@@ -1,115 +1,62 @@
 package com.nexus.user.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.nexus.user.dto.CreateRoleRequest;
-import com.nexus.user.dto.RoleResponse;
 import com.nexus.user.dto.UpdateRoleRequest;
-import com.nexus.user.entity.Privilege;
-import com.nexus.user.entity.Role;
-import com.nexus.user.repository.PrivilegeRepository;
-import com.nexus.user.repository.RoleRepository;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/**
- * Kiểm thử đơn vị cho RoleService và phân quyền N-N.
- *
- * @author Nguyễn Tiến Thương
- * @since 06/10/2026
- */
+/** Role API tiếp tục phục vụ UI qua Keycloak; không còn phụ thuộc bảng roles đã bị drop. */
 @ExtendWith(MockitoExtension.class)
 class RoleServiceTest {
+    @Mock private KeycloakClient client;
 
-    @Mock
-    private RoleRepository roleRepository;
-
-    @Mock
-    private PrivilegeRepository privilegeRepository;
-
-    @Mock
-    private AuditService auditService;
-
-    private RoleService roleService;
-
-    @BeforeEach
-    void setUp() {
-        roleService = new RoleService(roleRepository, privilegeRepository, auditService);
+    @Test
+    void listsCreatesAndUpdatesApplicationRoles() {
+        UUID id = UUID.randomUUID();
+        var role = new KeycloakClient.RealmRole(id.toString(), "ROLE_CUSTOM", "Mô tả", Map.of("displayName", List.of("Custom")));
+        var privilege = new KeycloakClient.RealmRole(UUID.randomUUID().toString(), "PROFILE.VIEW", "", Map.of());
+        when(client.roles()).thenReturn(List.of(role));
+        when(client.privileges(id.toString())).thenReturn(Set.of("PROFILE.VIEW"));
+        when(client.privilegeRoles()).thenReturn(List.of(privilege));
+        var service = new RoleService(client);
+        assertEquals("CUSTOM", service.getAllRoles().getFirst().getCode());
+        var create = new CreateRoleRequest();
+        create.setCode("custom");
+        create.setName("Custom");
+        create.setPrivilegeCodes(Set.of("PROFILE.VIEW"));
+        assertEquals("Custom", service.createRole(create).getName());
+        var update = new UpdateRoleRequest();
+        update.setName("New display");
+        update.setPrivilegeCodes(Set.of());
+        assertEquals(id, service.updateRole(id, update).getId());
+        service.deleteRole(id);
+        verify(client).mutate(eq("DELETE"), eq("/roles-by-id/" + id), any());
     }
 
     @Test
-    void testCreateRoleWithPrivileges() {
-        CreateRoleRequest request = new CreateRoleRequest();
-        request.setCode("MANAGER");
-        request.setName("Store Manager");
-        request.setDescription("Manager Role");
-        request.setPrivilegeCodes(Set.of("PRODUCT.CREATE", "PRODUCT.UPDATE"));
-
-        when(roleRepository.existsByCode("MANAGER")).thenReturn(false);
-        Privilege p1 = new Privilege(UUID.randomUUID(), "PRODUCT.CREATE", "Create product");
-        Privilege p2 = new Privilege(UUID.randomUUID(), "PRODUCT.UPDATE", "Update product");
-        when(privilegeRepository.findByCode("PRODUCT.CREATE")).thenReturn(Optional.of(p1));
-        when(privilegeRepository.findByCode("PRODUCT.UPDATE")).thenReturn(Optional.of(p2));
-        when(roleRepository.save(any(Role.class))).thenAnswer(i -> i.getArgument(0));
-
-        RoleResponse response = roleService.createRole(request);
-
-        assertNotNull(response);
-        assertEquals("MANAGER", response.getCode());
-        assertEquals("Store Manager", response.getName());
-        assertEquals(2, response.getPrivileges().size());
-        assertTrue(response.getPrivileges().contains("PRODUCT.CREATE"));
-        assertTrue(response.getPrivileges().contains("PRODUCT.UPDATE"));
-        verify(roleRepository).save(any(Role.class));
-    }
-
-    @Test
-    void testGetAllRoles() {
-        Role role1 = new Role(UUID.randomUUID(), "BUYER", "Buyer", "Buyer role");
-        Role role2 = new Role(UUID.randomUUID(), "SELLER", "Seller", "Seller role");
-        when(roleRepository.findAll()).thenReturn(List.of(role1, role2));
-
-        List<RoleResponse> list = roleService.getAllRoles();
-        assertEquals(2, list.size());
-    }
-
-    @Test
-    void testUpdateRole() {
-        UUID roleId = UUID.randomUUID();
-        Role existingRole = new Role(roleId, "BUYER", "Old Buyer", "Desc");
-        when(roleRepository.findById(roleId)).thenReturn(Optional.of(existingRole));
-        when(roleRepository.save(any(Role.class))).thenAnswer(i -> i.getArgument(0));
-
-        UpdateRoleRequest request = new UpdateRoleRequest();
-        request.setName("Updated Buyer");
-        request.setDescription("New Desc");
-        request.setPrivilegeCodes(Set.of());
-
-        RoleResponse response = roleService.updateRole(roleId, request);
-
-        assertEquals("Updated Buyer", response.getName());
-        assertEquals("New Desc", response.getDescription());
-    }
-
-    @Test
-    void testDeleteAdminRoleThrowsException() {
-        UUID roleId = UUID.randomUUID();
-        Role adminRole = new Role(roleId, "ADMIN", "Administrator", "Desc");
-        when(roleRepository.findById(roleId)).thenReturn(Optional.of(adminRole));
-
-        assertThrows(IllegalArgumentException.class, () -> roleService.deleteRole(roleId));
+    void protectsBuiltInRolesAndRejectsUnknownPrivileges() {
+        UUID id = UUID.randomUUID();
+        when(client.roles()).thenReturn(List.of(new KeycloakClient.RealmRole(id.toString(), "ROLE_ADMIN", "", Map.of())));
+        var service = new RoleService(client);
+        assertThrows(IllegalArgumentException.class, () -> service.deleteRole(id));
+        assertThrows(com.nexus.common.exception.ResourceNotFoundException.class, () -> service.getRoleById(UUID.randomUUID()));
+        var request = new CreateRoleRequest();
+        request.setCode("NEW");
+        request.setName("New");
+        request.setPrivilegeCodes(Set.of("UNKNOWN.PRIVILEGE"));
+        assertThrows(IllegalArgumentException.class, () -> service.createRole(request));
     }
 }

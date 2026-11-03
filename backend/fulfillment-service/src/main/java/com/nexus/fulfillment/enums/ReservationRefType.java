@@ -1,14 +1,16 @@
 package com.nexus.fulfillment.enums;
 
 /**
- * Loại thực thể tham chiếu phát sinh phiếu giữ hàng.
+ * Định nghĩa loại nghiệp vụ nguồn gốc yêu cầu giữ hàng tồn kho.
  *
- * Chức năng: Phân loại nguồn gốc của yêu cầu giữ hàng theo ràng buộc DB chk_reservation_ref_type.
- * Giá trị:
- * - ORDER: Giữ hàng cho quy trình mua sắm / checkout đơn hàng thông thường.
- * - AUCTION: Giữ hàng cho người thắng phiên đấu giá (Auction Settlement) theo SRS §3.5.3 & §3.6.1.
+ * Chức năng:
+ * - Phân loại yêu cầu giữ hàng từ đơn hàng thương mại điện tử (ORDER) hay phiên đấu giá (AUCTION).
+ * - Khớp với CHECK constraint 'chk_reservation_ref_type' trong bảng inventory_reservations.
  */
 public enum ReservationRefType {
+    /** Giữ hàng phục vụ quy trình Checkout đơn hàng từ Commerce Service. */
     ORDER,
+
+    /** Giữ hàng phục vụ niêm yết hoặc kết thúc phiên đấu giá từ Auction Service. */
     AUCTION
 }

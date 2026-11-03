@@ -7,7 +7,7 @@ import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.entity.Sku;
 import com.nexus.catalog.enums.ProductStatus;
 import com.nexus.catalog.enums.SkuStatus;
-import com.nexus.catalog.exception.BusinessException;
+import com.nexus.common.exception.BusinessException;
 import com.nexus.catalog.repository.ProductRepository;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;

@@ -25,19 +25,285 @@
     "realm": [
       {
         "name": "ROLE_BUYER",
-        "description": "Standard buyer customer role"
+        "description": "Standard buyer customer role",
+        "composite": true,
+        "composites": {
+          "realm": [
+            "PROFILE.VIEW",
+            "PROFILE.UPDATE",
+            "PRODUCT.VIEW",
+            "PRODUCT.LIST",
+            "PRODUCT.SEARCH",
+            "CATEGORY.VIEW",
+            "CATEGORY.LIST",
+            "CART.CREATE",
+            "CART.UPDATE",
+            "CART.REMOVE_ITEM",
+            "CART.VIEW",
+            "CHECKOUT.START",
+            "ORDER.CREATE",
+            "ORDER.CANCEL",
+            "ORDER.VIEW",
+            "ORDER.LIST",
+            "AUCTION.BID"
+          ]
+        }
       },
       {
         "name": "ROLE_SELLER",
-        "description": "Merchant seller role"
+        "description": "Merchant seller role",
+        "composite": true,
+        "composites": {
+          "realm": [
+            "PROFILE.VIEW",
+            "PROFILE.UPDATE",
+            "PRODUCT.CREATE",
+            "PRODUCT.UPDATE",
+            "PRODUCT.DELETE",
+            "PRODUCT.VIEW",
+            "PRODUCT.LIST",
+            "PRODUCT.SEARCH",
+            "CATEGORY.VIEW",
+            "CATEGORY.LIST",
+            "ORDER.VIEW",
+            "ORDER.LIST",
+            "AUCTION.CREATE",
+            "AUCTION.UPDATE",
+            "AUCTION.CANCEL"
+          ]
+        }
       },
       {
         "name": "ROLE_ADMIN",
-        "description": "System administrator role"
+        "description": "System administrator role",
+        "composite": true,
+        "composites": {
+          "realm": [
+            "PROFILE.VIEW",
+            "PROFILE.UPDATE",
+            "PRODUCT.VIEW",
+            "PRODUCT.LIST",
+            "PRODUCT.SEARCH",
+            "CATEGORY.VIEW",
+            "CATEGORY.LIST",
+            "CART.CREATE",
+            "CART.UPDATE",
+            "CART.REMOVE_ITEM",
+            "CART.VIEW",
+            "CHECKOUT.START",
+            "ORDER.CREATE",
+            "ORDER.CANCEL",
+            "ORDER.VIEW",
+            "ORDER.LIST",
+            "AUCTION.BID",
+            "PRODUCT.CREATE",
+            "PRODUCT.UPDATE",
+            "PRODUCT.DELETE",
+            "AUCTION.CREATE",
+            "AUCTION.UPDATE",
+            "AUCTION.CANCEL",
+            "USER.VIEW",
+            "USER.LIST",
+            "USER.UPDATE",
+            "ROLE.VIEW",
+            "ROLE.LIST",
+            "ORDER.REFUND",
+            "USER.DELETE",
+            "USER.CREATE",
+            "ROLE.CREATE",
+            "ROLE.UPDATE",
+            "ROLE.DELETE",
+            "CATEGORY.CREATE",
+            "CATEGORY.UPDATE",
+            "CATEGORY.DELETE",
+            "PRODUCT.APPROVE"
+          ]
+        }
       },
       {
         "name": "ROLE_SUPPORT",
-        "description": "Customer support and dispute staff"
+        "description": "Customer support and dispute staff",
+        "composite": true,
+        "composites": {
+          "realm": [
+            "PROFILE.VIEW",
+            "PROFILE.UPDATE",
+            "USER.VIEW",
+            "USER.LIST",
+            "USER.UPDATE",
+            "ROLE.VIEW",
+            "ROLE.LIST",
+            "PRODUCT.VIEW",
+            "PRODUCT.LIST",
+            "PRODUCT.SEARCH",
+            "CATEGORY.VIEW",
+            "CATEGORY.LIST",
+            "ORDER.VIEW",
+            "ORDER.LIST",
+            "ORDER.CANCEL",
+            "ORDER.REFUND"
+          ]
+        }
+      },
+      {
+        "name": "PROFILE.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PROFILE.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.LIST",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.SEARCH",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CATEGORY.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CATEGORY.LIST",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CART.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CART.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CART.REMOVE_ITEM",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CART.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CHECKOUT.START",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ORDER.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ORDER.CANCEL",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ORDER.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ORDER.LIST",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "AUCTION.BID",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.DELETE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "AUCTION.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "AUCTION.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "AUCTION.CANCEL",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "USER.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "USER.LIST",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "USER.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ROLE.VIEW",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ROLE.LIST",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ORDER.REFUND",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "USER.DELETE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "USER.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ROLE.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ROLE.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ROLE.DELETE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CATEGORY.CREATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CATEGORY.UPDATE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "CATEGORY.DELETE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "PRODUCT.APPROVE",
+        "description": "Nexus application privilege"
+      },
+      {
+        "name": "ROLE_PROFILE_WRITER",
+        "description": "Internal profile creation only"
+      },
+      {
+        "name": "ROLE_NOTIFICATION_WRITER",
+        "description": "Commerce service account notification ingestion only"
       }
     ]
   },
@@ -75,12 +341,37 @@
       "enabled": true,
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
-      "secret": "nexus-internal-admin-secret-key-123456",
+      "secret": "${KEYCLOAK_ADMIN_CLIENT_SECRET}",
       "directAccessGrantsEnabled": false,
       "standardFlowEnabled": false,
       "serviceAccountsEnabled": true,
       "protocol": "openid-connect"
     }
   ],
-  "users": []
+  "users": [
+    {
+      "username": "service-account-nexus-admin-cli",
+      "enabled": true,
+      "serviceAccountClientId": "nexus-admin-cli",
+      "realmRoles": [
+        "ROLE_PROFILE_WRITER"
+      ],
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "view-realm",
+          "manage-realm"
+        ]
+      }
+    }
+  ],
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "noreply@nexus.local",
+    "auth": "false",
+    "starttls": "false"
+  },
+  "passwordPolicy": "length(8) and maxLength(100) and upperCase(1) and digits(1) and specialChars(1) and regexPattern((?s)^(?=.*\\p{Lu})(?=.*\\p{Nd})(?=.*[\\p{P}\\p{S}]).*$)"
 }

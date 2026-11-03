@@ -1,16 +1,45 @@
-# Config Server chạy profile native, đọc các file trong configuration/ rồi phục vụ qua /{application}/{profile}.
+# Cấu hình Spring Cloud Config Server cho toàn hệ thống Nexus.
+# Hỗ trợ cả 2 chế độ:
+# 1. Native Profile (mặc định cho Local Dev): Đọc cấu hình từ thư mục classpath:/configuration/
+# 2. Git Profile (cho Staging/Prod): Đọc cấu hình từ Git Repository tập trung
 server:
   port: 8888
+
 spring:
   application:
     name: config-server
   profiles:
-    active: native
+    active: ${CONFIG_SERVER_PROFILE:native}
+
+---
+# Cấu hình cho môi trường Local Development (Native)
+spring:
+  config:
+    activate:
+      on-profile: native
   cloud:
     config:
       server:
         native:
-          search-locations: classpath:/configuration/
+          search-locations: classpath:/configuration/,file:./config/
+
+---
+# Cấu hình cho môi trường Staging / Production (Git Repository)
+spring:
+  config:
+    activate:
+      on-profile: git
+  cloud:
+    config:
+      server:
+        git:
+          uri: ${CONFIG_GIT_URI:https://github.com/nexus-marketplace/nexus-config.git}
+          default-label: ${CONFIG_GIT_BRANCH:main}
+          clone-on-start: true
+          search-paths: '{application}'
+
+---
+# Quản lý giám sát Actuator cho Config Server
 management:
   endpoints:
     web:

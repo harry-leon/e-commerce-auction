@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.UUID;
 import org.hibernate.annotations.UuidGenerator;
 
+/** Danh mục theo ERD: chỉ lưu một tên name; cấp và quan hệ cha–con do CategoryService kiểm soát. */
 @Entity
 @Table(name = "categories")
 public class Category {
@@ -49,13 +50,6 @@ public class Category {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private CategoryStatus status = CategoryStatus.ACTIVE;
-
-    @Column(name = "name_vi", length = 255)
-    // Tên tiếng Việt lưu riêng với name; cột được thêm bằng Flyway V3 để form Admin giữ được hai ngôn ngữ.
-    private String nameVi;
-
-    public String getNameVi() { return nameVi; }
-    public void setNameVi(String nameVi) { this.nameVi = nameVi; }
 
     public Category() {}
 

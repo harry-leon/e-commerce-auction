@@ -7,15 +7,14 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
- * Default fallback / stub implementation of CatalogClient.
- * Provides resilient stubbed data during early integration testing until Feign client is activated.
+ * Chỉ cung cấp SKU demo khi bật profile catalog-mock; mặc định không dùng giá/tồn giả.
  */
 @Component
-@ConditionalOnMissingBean(name = "catalogFeignClient")
+@Profile("catalog-mock")
 public class MockCatalogClient implements CatalogClient {
 
     @Override

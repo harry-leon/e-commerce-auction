@@ -2,6 +2,7 @@ package com.nexus.fulfillment.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -10,25 +11,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ErrorCode;
+import com.nexus.common.exception.GlobalExceptionHandler;
 import com.nexus.fulfillment.config.SecurityConfig;
-import com.nexus.fulfillment.dto.request.CommitReservationRequest;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
-import com.nexus.fulfillment.dto.request.InventoryCheckItemRequest;
-import com.nexus.fulfillment.dto.request.InventoryCheckRequest;
-import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
+import com.nexus.fulfillment.dto.request.OrderFailureEventRequest;
+import com.nexus.fulfillment.dto.request.OrderPaidEventRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
-import com.nexus.fulfillment.dto.response.InventoryCheckItemResult;
-import com.nexus.fulfillment.dto.response.InventoryCheckResponse;
+import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
+import com.nexus.fulfillment.dto.request.StockInboundRequest;
+import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
+import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
-import com.nexus.fulfillment.dto.response.SkuInventoryResponse;
+import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
+import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
-import com.nexus.fulfillment.exception.InsufficientStockException;
-import com.nexus.fulfillment.exception.InventoryErrorCode;
-import com.nexus.fulfillment.exception.ReservationExpiredException;
-import com.nexus.fulfillment.exception.ReservationNotFoundException;
-import com.nexus.fulfillment.exception.SkuNotFoundException;
 import com.nexus.fulfillment.service.InventoryService;
 import java.time.Instant;
 import java.util.List;
@@ -38,29 +38,27 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Kiểm thử MockMvc cho InventoryController trong Fulfillment Service.
+ * Kiểm thử tầng Web REST Controller cho Quản lý tồn kho và Khóa giữ hàng Checkout (InventoryController).
  *
- * Chức năng:
- * - Kiểm chứng định dạng hợp đồng API (API Contracts & DTOs) cho toàn bộ chu trình tồn kho:
- *   1. Kiểm tra tồn kho khả dụng (/api/v1/inventory/check).
- *   2. Tạo phiếu giữ hàng (/api/v1/inventory/reservations).
- *   3. Tra cứu phiếu giữ hàng (/api/v1/inventory/reservations/{id}).
- *   4. Xác nhận xuất kho (/api/v1/inventory/reservations/{id}/commit).
- *   5. Hủy giữ hàng hoàn kho (/api/v1/inventory/reservations/{id}/release).
- *   6. Tra cứu tồn kho SKU (/api/v1/inventory/sku/{skuId}).
- * - Kiểm chứng bọc ApiResponse<T> chuẩn cho kết quả thành công.
- * - Kiểm chứng mã lỗi HTTP và Business Error Codes:
- *   + ERR_INSUFFICIENT_STOCK (HTTP 409)
- *   + ERR_RESERVATION_EXPIRED (HTTP 410)
- *   + ERR_SKU_NOT_FOUND (HTTP 404)
- *   + ERR_RESERVATION_NOT_FOUND (HTTP 404)
- *   + VALIDATION_ERROR (HTTP 400)
+ * Tình huống kiểm thử:
+ * 1. GET /api/v1/inventory/sku/{skuId}: Công khai không cần token, trả về đúng phong bì ApiResponse chuẩn.
+ * 2. POST /api/v1/inventory/check: Kiểm tra tồn hàng loạt cho Cart.
+ * 3. POST /api/v1/inventory/reserve: Khóa giữ hàng Atomic Reservation thành công (HTTP 201 Created).
+ * 4. POST /api/v1/inventory/reserve: Bán vượt tồn kho bị từ chối với HTTP 409 Conflict (INVENTORY_INSUFFICIENT).
+ * 5. POST /api/v1/inventory/reservations/{id}/confirm: Xác nhận xuất kho thành công.
+ * 6. POST /api/v1/inventory/reservations/{id}/release: Hoàn trả giữ kho.
+ * 7. POST /api/v1/inventory/inbound: Nhập kho (yêu cầu quyền ADMIN hoặc SELLER).
+ * 8. GET /api/v1/inventory/ledger: Đọc sổ cái bất biến (yêu cầu quyền ADMIN hoặc SUPPORT).
  */
 @WebMvcTest(InventoryController.class)
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
@@ -77,252 +75,329 @@ class InventoryControllerTest {
     private InventoryService inventoryService;
 
     @Test
-    @DisplayName("Kiểm tra tồn kho thành công trả về ApiResponse<InventoryCheckResponse> với HTTP 200")
-    void checkStockReturnsSuccess() throws Exception {
+    @DisplayName("GET /api/v1/inventory/sku/{skuId} - Truy cập công khai, trả về 4 trạng thái tồn kho chuẩn ApiResponse v2")
+    void testGetStockBySku_Public_Success() throws Exception {
         UUID skuId = UUID.randomUUID();
-        UUID whId = UUID.randomUUID();
-        var request = new InventoryCheckRequest(List.of(
-                new InventoryCheckItemRequest(skuId, whId, 2)
-        ));
+        UUID warehouseId = UUID.randomUUID();
+        InventoryStockResponse stock = new InventoryStockResponse(skuId, warehouseId, "WH_001", 100, 70, 20, 10);
 
-        var response = new InventoryCheckResponse(
-                true,
-                List.of(new InventoryCheckItemResult(skuId, whId, 2, 10, true))
-        );
+        when(inventoryService.getStockBySku(eq(skuId), any())).thenReturn(stock);
 
-        when(inventoryService.checkStock(any())).thenReturn(response);
-
-        mockMvc.perform(post("/api/v1/inventory/check")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+        mockMvc.perform(get("/api/v1/inventory/sku/" + skuId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.available").value(true))
-                .andExpect(jsonPath("$.data.items[0].skuId").value(skuId.toString()))
-                .andExpect(jsonPath("$.data.items[0].availableQuantity").value(10))
-                .andExpect(jsonPath("$.meta.version").value("v1"));
+                .andExpect(jsonPath("$.data.skuId").value(skuId.toString()))
+                .andExpect(jsonPath("$.data.totalQty").value(100))
+                .andExpect(jsonPath("$.data.availableQty").value(70))
+                .andExpect(jsonPath("$.data.reservedQty").value(20))
+                .andExpect(jsonPath("$.data.unavailableQty").value(10))
+                .andExpect(jsonPath("$.meta.requestId").exists())
+                .andExpect(jsonPath("$.meta.timestamp").exists());
     }
 
     @Test
-    @DisplayName("Kiểm tra tồn kho thất bại do validation lỗi (items rỗng) trả về HTTP 400 VALIDATION_ERROR")
-    void checkStockFailsValidation() throws Exception {
-        var request = new InventoryCheckRequest(List.of());
+    @DisplayName("POST /api/v1/inventory/check - Kiểm tra tồn hàng loạt cho Cart công khai")
+    void testCheckAvailability_Success() throws Exception {
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        SkuAvailabilityResponse item = new SkuAvailabilityResponse(skuId, warehouseId, 50, true);
+
+        when(inventoryService.checkAvailability(any())).thenReturn(List.of(item));
+
+        SkuAvailabilityCheckRequest req = new SkuAvailabilityCheckRequest(List.of(skuId), warehouseId);
 
         mockMvc.perform(post("/api/v1/inventory/check")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].skuId").value(skuId.toString()))
+                .andExpect(jsonPath("$.data[0].availableQty").value(50))
+                .andExpect(jsonPath("$.data[0].inStock").value(true));
     }
 
     @Test
-    @DisplayName("Tạo phiếu giữ hàng thành công trả về ApiResponse<ReservationResponse> với HTTP 201 CREATED")
-    void createReservationSuccess() throws Exception {
-        UUID orderId = UUID.randomUUID();
+    @DisplayName("POST /api/v1/inventory/reserve - Yêu cầu giữ kho khi Checkout cần xác thực JWT, trả HTTP 201 Created")
+    void testReserveStock_Success() throws Exception {
         UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
         UUID reservationId = UUID.randomUUID();
-        Instant now = Instant.now();
-        Instant expiresAt = now.plusSeconds(1800);
+        Instant expiresAt = Instant.now().plusSeconds(1800);
 
-        var request = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                expiresAt,
-                List.of(new ReservationItemRequest(skuId, null, 2))
-        );
-
-        var response = new ReservationResponse(
+        ReservationItemResponse item = new ReservationItemResponse(
                 reservationId,
-                orderId,
-                ReservationRefType.ORDER,
+                skuId,
+                warehouseId,
+                2,
                 ReservationStatus.PENDING,
-                now,
-                expiresAt,
-                List.of(new ReservationItemResponse(UUID.randomUUID(), skuId, UUID.randomUUID(), 2))
+                expiresAt
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                List.of(item),
+                expiresAt
         );
 
-        when(inventoryService.createReservation(any())).thenReturn(response);
+        when(inventoryService.reserveStock(any())).thenReturn(res);
 
-        mockMvc.perform(post("/api/v1/inventory/reservations")
-                        .with(jwt().jwt(j -> j.subject("user-1")))
+        CreateReservationRequest req = new CreateReservationRequest(
+                ReservationRefType.ORDER,
+                orderId,
+                List.of(new ReservationItemRequest(skuId, 2, warehouseId)),
+                30
+        );
+
+        mockMvc.perform(post("/api/v1/inventory/reserve")
+                        .with(jwt().jwt(j -> j.subject("buyer-123")))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+                        .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.reservationId").value(reservationId.toString()))
                 .andExpect(jsonPath("$.data.status").value("PENDING"))
-                .andExpect(jsonPath("$.data.orderId").value(orderId.toString()))
-                .andExpect(jsonPath("$.meta.version").value("v1"));
+                .andExpect(jsonPath("$.data.items[0].quantity").value(2));
     }
 
     @Test
-    @DisplayName("Tạo phiếu giữ hàng thất bại do không đủ tồn trả về HTTP 409 ERR_INSUFFICIENT_STOCK")
-    void createReservationInsufficientStock() throws Exception {
-        UUID orderId = UUID.randomUUID();
+    @DisplayName("POST /api/v1/inventory/reserve - Chặn bán vượt tồn (ALLOW_OVERSELL = false), trả HTTP 409 Conflict")
+    void testReserveStock_InsufficientStock_ReturnsConflict() throws Exception {
         UUID skuId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
 
-        var request = new CreateReservationRequest(
-                orderId,
+        when(inventoryService.reserveStock(any())).thenThrow(new BusinessException(
+                ErrorCode.INVENTORY_INSUFFICIENT,
+                "Số lượng tồn kho khả dụng không đủ đáp ứng yêu cầu đặt mua"
+        ));
+
+        CreateReservationRequest req = new CreateReservationRequest(
                 ReservationRefType.ORDER,
-                null,
-                List.of(new ReservationItemRequest(skuId, null, 100))
+                orderId,
+                List.of(new ReservationItemRequest(skuId, 100, null)),
+                30
         );
 
-        when(inventoryService.createReservation(any()))
-                .thenThrow(new InsufficientStockException(skuId, 100, 5));
-
-        mockMvc.perform(post("/api/v1/inventory/reservations")
-                        .with(jwt().jwt(j -> j.subject("user-1")))
+        mockMvc.perform(post("/api/v1/inventory/reserve")
+                        .with(jwt().jwt(j -> j.subject("buyer-123")))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+                        .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value(InventoryErrorCode.ERR_INSUFFICIENT_STOCK))
-                .andExpect(jsonPath("$.message").isNotEmpty())
-                .andExpect(jsonPath("$.details").isArray());
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("INVENTORY_INSUFFICIENT"))
+                .andExpect(jsonPath("$.error.message").value("Số lượng tồn kho khả dụng không đủ đáp ứng yêu cầu đặt mua"));
     }
 
     @Test
-    @DisplayName("Tạo phiếu giữ hàng thất bại do SKU không tồn tại trả về HTTP 404 ERR_SKU_NOT_FOUND")
-    void createReservationSkuNotFound() throws Exception {
-        UUID orderId = UUID.randomUUID();
+    @DisplayName("POST /api/v1/inventory/reservations/{id}/confirm - Xác nhận xuất kho thành công")
+    void testConfirmReservation_Success() throws Exception {
+        UUID reservationId = UUID.randomUUID();
         UUID skuId = UUID.randomUUID();
-
-        var request = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                null,
-                List.of(new ReservationItemRequest(skuId, null, 1))
-        );
-
-        when(inventoryService.createReservation(any()))
-                .thenThrow(new SkuNotFoundException(skuId));
-
-        mockMvc.perform(post("/api/v1/inventory/reservations")
-                        .with(jwt().jwt(j -> j.subject("user-1")))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value(InventoryErrorCode.ERR_SKU_NOT_FOUND));
-    }
-
-    @Test
-    @DisplayName("Tra cứu phiếu giữ hàng thành công trả về ApiResponse<ReservationResponse>")
-    void getReservationSuccess() throws Exception {
-        UUID resId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
         UUID orderId = UUID.randomUUID();
-        var response = new ReservationResponse(
-                resId,
-                orderId,
-                ReservationRefType.ORDER,
-                ReservationStatus.PENDING,
-                Instant.now(),
-                Instant.now().plusSeconds(1800),
-                List.of()
-        );
+        Instant expiresAt = Instant.now().plusSeconds(1800);
 
-        when(inventoryService.getReservation(resId)).thenReturn(response);
-
-        mockMvc.perform(get("/api/v1/inventory/reservations/{id}", resId)
-                        .with(jwt().jwt(j -> j.subject("user-1"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.reservationId").value(resId.toString()));
-    }
-
-    @Test
-    @DisplayName("Tra cứu phiếu giữ hàng không tồn tại trả về HTTP 404 ERR_RESERVATION_NOT_FOUND")
-    void getReservationNotFound() throws Exception {
-        UUID resId = UUID.randomUUID();
-        when(inventoryService.getReservation(resId))
-                .thenThrow(new ReservationNotFoundException(resId));
-
-        mockMvc.perform(get("/api/v1/inventory/reservations/{id}", resId)
-                        .with(jwt().jwt(j -> j.subject("user-1"))))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value(InventoryErrorCode.ERR_RESERVATION_NOT_FOUND));
-    }
-
-    @Test
-    @DisplayName("Commit phiếu giữ hàng thành công trả về trạng thái CONFIRMED")
-    void commitReservationSuccess() throws Exception {
-        UUID resId = UUID.randomUUID();
-        UUID orderId = UUID.randomUUID();
-        var response = new ReservationResponse(
-                resId,
-                orderId,
-                ReservationRefType.ORDER,
+        ReservationItemResponse item = new ReservationItemResponse(
+                reservationId,
+                skuId,
+                warehouseId,
+                1,
                 ReservationStatus.CONFIRMED,
-                Instant.now(),
-                Instant.now().plusSeconds(1800),
-                List.of()
+                expiresAt
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.CONFIRMED,
+                List.of(item),
+                expiresAt
         );
 
-        when(inventoryService.commitReservation(eq(resId), any())).thenReturn(response);
+        when(inventoryService.confirmReservation(reservationId)).thenReturn(res);
 
-        mockMvc.perform(post("/api/v1/inventory/reservations/{id}/commit", resId)
-                        .with(jwt().jwt(j -> j.subject("user-1")))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CommitReservationRequest("PAYMENT_SUCCESS"))))
+        mockMvc.perform(post("/api/v1/inventory/reservations/" + reservationId + "/confirm")
+                        .with(jwt().jwt(j -> j.subject("service-caller"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
     }
 
     @Test
-    @DisplayName("Commit phiếu giữ hàng đã hết hạn trả về HTTP 410 ERR_RESERVATION_EXPIRED")
-    void commitReservationExpired() throws Exception {
-        UUID resId = UUID.randomUUID();
-        when(inventoryService.commitReservation(eq(resId), any()))
-                .thenThrow(new ReservationExpiredException(resId, Instant.now().minusSeconds(60)));
-
-        mockMvc.perform(post("/api/v1/inventory/reservations/{id}/commit", resId)
-                        .with(jwt().jwt(j -> j.subject("user-1")))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new CommitReservationRequest("PAYMENT_SUCCESS"))))
-                .andExpect(status().isGone())
-                .andExpect(jsonPath("$.code").value(InventoryErrorCode.ERR_RESERVATION_EXPIRED));
-    }
-
-    @Test
-    @DisplayName("Release phiếu giữ hàng thành công trả về trạng thái RELEASED")
-    void releaseReservationSuccess() throws Exception {
-        UUID resId = UUID.randomUUID();
+    @DisplayName("POST /api/v1/inventory/orders/{orderId}/commit - Xác nhận trừ kho thành công theo mã đơn hàng")
+    void testCommitByOrder_Success() throws Exception {
         UUID orderId = UUID.randomUUID();
-        var response = new ReservationResponse(
-                resId,
-                orderId,
+        UUID reservationId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(1800);
+
+        ReservationItemResponse item = new ReservationItemResponse(
+                reservationId,
+                skuId,
+                warehouseId,
+                2,
+                ReservationStatus.CONFIRMED,
+                expiresAt
+        );
+        ReservationResponse res = new ReservationResponse(
                 ReservationRefType.ORDER,
-                ReservationStatus.RELEASED,
-                Instant.now(),
-                Instant.now().plusSeconds(1800),
-                List.of()
+                orderId,
+                ReservationStatus.CONFIRMED,
+                List.of(item),
+                expiresAt
         );
 
-        when(inventoryService.releaseReservation(eq(resId), any())).thenReturn(response);
+        when(inventoryService.commitByOrder(orderId)).thenReturn(res);
 
-        mockMvc.perform(post("/api/v1/inventory/reservations/{id}/release", resId)
-                        .with(jwt().jwt(j -> j.subject("user-1")))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReleaseReservationRequest("ORDER_CANCELLED"))))
+        mockMvc.perform(post("/api/v1/inventory/orders/" + orderId + "/commit")
+                        .with(jwt().jwt(j -> j.subject("service-caller"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.status").value("RELEASED"));
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.data.refId").value(orderId.toString()));
     }
 
     @Test
-    @DisplayName("Tra cứu tồn kho SKU trả về ApiResponse<SkuInventoryResponse> với HTTP 200")
-    void getSkuInventorySuccess() throws Exception {
+    @DisplayName("POST /api/v1/inventory/orders/{orderId}/release - Giải phóng hàng giữ kho thành công theo mã đơn")
+    void testReleaseByOrder_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
+
+        mockMvc.perform(post("/api/v1/inventory/orders/" + orderId + "/release")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .param("reason", "ORDER_CANCELLED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/events/order-paid - Tiếp nhận sự kiện OrderPaid thành công")
+    void testHandleOrderPaidEvent_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID reservationId = UUID.randomUUID();
         UUID skuId = UUID.randomUUID();
-        UUID whId = UUID.randomUUID();
-        var response = new SkuInventoryResponse(skuId, whId, 100, 20, 5, 75);
+        UUID warehouseId = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(1800);
 
-        when(inventoryService.getSkuInventory(skuId, whId)).thenReturn(response);
+        ReservationItemResponse item = new ReservationItemResponse(
+                reservationId,
+                skuId,
+                warehouseId,
+                1,
+                ReservationStatus.CONFIRMED,
+                expiresAt
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.CONFIRMED,
+                List.of(item),
+                expiresAt
+        );
 
-        mockMvc.perform(get("/api/v1/inventory/sku/{skuId}", skuId)
-                        .param("warehouseId", whId.toString()))
+        when(inventoryService.commitByOrder(orderId)).thenReturn(res);
+
+        OrderPaidEventRequest req = new OrderPaidEventRequest(orderId, null, UUID.randomUUID());
+
+        mockMvc.perform(post("/api/v1/inventory/events/order-paid")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.skuId").value(skuId.toString()))
-                .andExpect(jsonPath("$.data.availableQuantity").value(75));
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/events/order-payment-failed - Tiếp nhận sự kiện OrderPaymentFailed thành công")
+    void testHandleOrderPaymentFailedEvent_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
+
+        OrderFailureEventRequest req = new OrderFailureEventRequest(orderId, null, "INSUFFICIENT_FUNDS");
+
+        mockMvc.perform(post("/api/v1/inventory/events/order-payment-failed")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/events/order-cancelled - Tiếp nhận sự kiện OrderCancelled thành công")
+    void testHandleOrderCancelledEvent_Success() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
+
+        OrderFailureEventRequest req = new OrderFailureEventRequest(orderId, null, "BUYER_REQUESTED");
+
+        mockMvc.perform(post("/api/v1/inventory/events/order-cancelled")
+                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/reservations/{id}/release - Hoàn trả phiếu giữ kho thành công")
+    void testReleaseReservation_Success() throws Exception {
+        UUID reservationId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseReservation(eq(reservationId), any());
+
+        mockMvc.perform(post("/api/v1/inventory/reservations/" + reservationId + "/release")
+                        .with(jwt().jwt(j -> j.subject("buyer-123")))
+                        .param("reason", "CANCELLED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/inbound - Nhập kho yêu cầu quyền ADMIN hoặc SELLER")
+    void testInboundStock_Success() throws Exception {
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        InventoryStockResponse stock = new InventoryStockResponse(skuId, warehouseId, "WH_001", 50, 50, 0, 0);
+
+        when(inventoryService.inboundStock(any())).thenReturn(stock);
+
+        StockInboundRequest req = new StockInboundRequest(skuId, warehouseId, 50, UUID.randomUUID());
+
+        mockMvc.perform(post("/api/v1/inventory/inbound")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.totalQty").value(50));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/inventory/ledger - Đọc Sổ cái tồn kho bất biến có phân trang, yêu cầu quyền SUPPORT/ADMIN")
+    void testGetLedger_Success() throws Exception {
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        InventoryLedgerResponse item = new InventoryLedgerResponse(
+                UUID.randomUUID(),
+                skuId,
+                warehouseId,
+                LedgerMovementType.INBOUND,
+                100,
+                "INBOUND",
+                null,
+                Instant.now()
+        );
+        Page<InventoryLedgerResponse> page = new PageImpl<>(List.of(item), PageRequest.of(0, 10), 1);
+
+        when(inventoryService.getLedger(any(), any(), any())).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/inventory/ledger")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].movementType").value("INBOUND"))
+                .andExpect(jsonPath("$.data[0].quantity").value(100))
+                .andExpect(jsonPath("$.meta.pagination.totalElements").value(1));
     }
 }
