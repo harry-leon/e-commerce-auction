@@ -39,9 +39,10 @@ public class AuctionSettlementController {
 
     /**
      * Kích hoạt quyết toán một phiên đấu giá.
+     * Quy tắc phân quyền: Chỉ cho phép người dùng có vai trò ADMIN hoặc SELLER. Người dùng ẩn danh bị từ chối 401.
      */
     @PostMapping("/{auctionId}/settle")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SELLER') or hasRole('ROLE_ANONYMOUS')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SELLER')")
     @Operation(summary = "Kích hoạt quyết toán phiên đấu giá", description = "Khóa phiên và xác định người chiến thắng khi phiên kết thúc")
     public ResponseEntity<ApiResponse<AuctionSettlementResponse>> settleAuction(
             @PathVariable("auctionId") UUID auctionId) {
@@ -51,9 +52,10 @@ public class AuctionSettlementController {
 
     /**
      * Tra cứu thông tin kết quả quyết toán của phiên đấu giá.
+     * Quy tắc phân quyền: Yêu cầu người dùng đã xác thực (BUYER, SELLER, ADMIN).
      */
     @GetMapping("/{auctionId}/settlement")
-    @PreAuthorize("isAuthenticated() or hasRole('ROLE_ANONYMOUS')")
+    @PreAuthorize("isAuthenticated()")
     @Operation(summary = "Tra cứu kết quả quyết toán", description = "Lấy thông tin người thắng cuộc và giá chốt của phiên đấu giá")
     public ResponseEntity<ApiResponse<AuctionSettlementResponse>> getSettlement(
             @PathVariable("auctionId") UUID auctionId) {

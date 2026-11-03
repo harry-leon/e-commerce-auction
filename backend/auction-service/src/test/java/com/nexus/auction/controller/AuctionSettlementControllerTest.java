@@ -114,4 +114,34 @@ class AuctionSettlementControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
     }
+
+    /**
+     * Kiểm tra yêu cầu kích hoạt quyết toán từ client chưa xác thực.
+     * Đầu vào: Request POST không có Bearer token.
+     * Kết quả mong đợi: 403 Forbidden do @PreAuthorize chặn người dùng ẩn danh khi đi qua filter permitAll.
+     */
+    @Test
+    @DisplayName("POST /settle: Người dùng chưa đăng nhập gọi bị từ chối 403 Forbidden")
+    void testSettleAuction_Unauthenticated_Forbidden() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+
+        mockMvc.perform(post("/api/v1/auctions/{auctionId}/settle", auctionId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Kiểm tra yêu cầu tra cứu quyết toán từ client chưa xác thực.
+     * Đầu vào: Request GET không có Bearer token.
+     * Kết quả mong đợi: 403 Forbidden do @PreAuthorize("isAuthenticated()") chặn người dùng ẩn danh.
+     */
+    @Test
+    @DisplayName("GET /settlement: Người dùng chưa đăng nhập gọi bị từ chối 403 Forbidden")
+    void testGetSettlement_Unauthenticated_Forbidden() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+
+        mockMvc.perform(get("/api/v1/auctions/{auctionId}/settlement", auctionId))
+                .andExpect(status().isForbidden());
+    }
 }

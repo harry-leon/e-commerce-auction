@@ -22,6 +22,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
  * - Dùng Clock để dễ dàng kiểm thử các mốc thời gian.
  * - Khóa phiên bi quan (findByIdForUpdate) trong transaction để tránh race condition giữa các worker chốt phiên.
  * - Bắt ngoại lệ DataIntegrityViolationException trên ràng buộc unique uq_settlement_auction để đảm bảo an toàn tuyệt đối.
+ * - Tự tham chiếu self-proxy để mỗi phiên trong scheduler chạy transaction độc lập, tránh lỗi dây chuyền rollback cả batch.
  */
 @Service
 public class AuctionSettlementServiceImpl implements AuctionSettlementService {
@@ -50,6 +53,10 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
     private final BidRepository bidRepository;
     private final AuctionSettlementRepository auctionSettlementRepository;
     private final Clock clock;
+
+    @Autowired
+    @Lazy
+    private AuctionSettlementService self;
 
     public AuctionSettlementServiceImpl(
             AuctionRepository auctionRepository,
@@ -107,7 +114,8 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
         // Bước 3: Kiểm tra trạng thái và mốc thời gian kết thúc
         if (auction.getStatus() == AuctionStatus.DRAFT
                 || auction.getStatus() == AuctionStatus.SCHEDULED
-                || auction.getStatus() == AuctionStatus.CANCELLED) {
+                || auction.getStatus() == AuctionStatus.CANCELLED
+                || auction.getStatus() == AuctionStatus.SETTLED) {
             throw new BusinessException(
                     ErrorCode.AUCTION_NOT_ACTIVE,
                     "Không thể quyết toán phiên đấu giá ở trạng thái " + auction.getStatus());
@@ -173,17 +181,19 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
 
     /**
      * Quét các phiên đang ACTIVE và đã quá endTime để tự động quyết toán.
+     * Luồng: Lấy danh sách phiên hết hạn -> Gọi settleAuction qua self-proxy cho từng phiên độc lập.
+     * Lý do không đặt @Transactional tại đây: Đảm bảo mỗi phiên có transaction độc lập, một phiên lỗi không làm rollback toàn bộ batch.
      */
     @Override
-    @Transactional
     public int settleExpiredAuctions() {
         Instant now = clock.instant();
         List<Auction> expiredAuctions = auctionRepository.findByStatusAndEndTimeLessThanEqual(AuctionStatus.ACTIVE, now);
         int settledCount = 0;
 
+        AuctionSettlementService service = (self != null) ? self : this;
         for (Auction auction : expiredAuctions) {
             try {
-                settleAuction(auction.getId());
+                service.settleAuction(auction.getId());
                 settledCount++;
             } catch (Exception e) {
                 log.error("Lỗi khi tự động quyết toán phiên đấu giá [{}]: {}", auction.getId(), e.getMessage(), e);

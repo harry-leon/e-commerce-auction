@@ -285,4 +285,85 @@ class AuctionSettlementServiceTest {
 
         assertThat(allowed).isFalse();
     }
+
+    /**
+     * Kiểm tra truyền mã phiên null vào settleAuction.
+     * Kỳ vọng: Ném BusinessException với mã INVALID_PARAM_VALUE.
+     */
+    @Test
+    @DisplayName("settleAuction: auctionId là null -> ném BusinessException INVALID_PARAM_VALUE")
+    void testSettleAuction_NullAuctionId_ThrowsException() {
+        assertThatThrownBy(() -> settlementService.settleAuction(null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode()).isEqualTo(ErrorCode.INVALID_PARAM_VALUE.name()));
+    }
+
+    /**
+     * Kiểm tra truyền mã phiên null vào getSettlementByAuctionId.
+     * Kỳ vọng: Ném BusinessException với mã INVALID_PARAM_VALUE.
+     */
+    @Test
+    @DisplayName("getSettlementByAuctionId: auctionId là null -> ném BusinessException INVALID_PARAM_VALUE")
+    void testGetSettlementByAuctionId_NullAuctionId_ThrowsException() {
+        assertThatThrownBy(() -> settlementService.getSettlementByAuctionId(null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode()).isEqualTo(ErrorCode.INVALID_PARAM_VALUE.name()));
+    }
+
+    /**
+     * Kiểm tra truyền tham số null vào canAcceptBid.
+     * Kỳ vọng: Trả về false an toàn mà không phát sinh NPE.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Tham số null -> Trả về false")
+    void testCanAcceptBid_NullArguments_ReturnsFalse() {
+        assertThat(settlementService.canAcceptBid(null, now)).isFalse();
+        assertThat(settlementService.canAcceptBid(UUID.randomUUID(), null)).isFalse();
+    }
+
+    /**
+     * Kiểm tra từ chối quyết toán khi phiên đã có trạng thái SETTLED.
+     * Kỳ vọng: Ném BusinessException với mã AUCTION_NOT_ACTIVE.
+     */
+    @Test
+    @DisplayName("settleAuction: Phiên có trạng thái SETTLED -> Ném BusinessException")
+    void testSettleAuction_SettledStatus_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.SETTLED, now.minus(10, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+
+        assertThatThrownBy(() -> settlementService.settleAuction(auctionId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode()).isEqualTo(ErrorCode.AUCTION_NOT_ACTIVE.name()));
+    }
+
+    /**
+     * Kiểm tra tính chịu lỗi của settleExpiredAuctions khi 1 phiên bị lỗi và 1 phiên thành công.
+     * Kỳ vọng: Phiên lỗi không làm dừng tiến trình, phiên sau vẫn được xử lý và trả về số lượng thành công = 1.
+     */
+    @Test
+    @DisplayName("settleExpiredAuctions: Một phiên lỗi không ảnh hưởng phiên còn lại")
+    void testSettleExpiredAuctions_OneFailsOneSucceeds_HandlesGracefully() {
+        UUID auc1 = UUID.randomUUID();
+        UUID auc2 = UUID.randomUUID();
+
+        Auction a1 = createSampleAuction(auc1, AuctionStatus.ACTIVE, now.minus(10, ChronoUnit.MINUTES));
+        Auction a2 = createSampleAuction(auc2, AuctionStatus.ACTIVE, now.minus(5, ChronoUnit.MINUTES));
+
+        when(auctionRepository.findByStatusAndEndTimeLessThanEqual(AuctionStatus.ACTIVE, now))
+                .thenReturn(List.of(a1, a2));
+        // auc1 gặp lỗi DB
+        when(auctionSettlementRepository.findByAuctionId(auc1)).thenThrow(new RuntimeException("DB Connection timeout"));
+        // auc2 thành công
+        when(auctionSettlementRepository.findByAuctionId(auc2)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auc2)).thenReturn(Optional.of(a2));
+        when(bidRepository.findFirstByAuctionIdOrderByAmountDescPlacedAtAsc(auc2)).thenReturn(Optional.empty());
+        when(auctionSettlementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        int settledCount = settlementService.settleExpiredAuctions();
+
+        assertThat(settledCount).isEqualTo(1);
+    }
 }
