@@ -2,7 +2,9 @@
 
 > **Gateway paths:** `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/payments/**`
 >
-> **CURRENT:** chỉ có Cart
+> **CURRENT:** Cart, checkout COD/VNPAY, Order Management, Payment/IPN và notification outbox
+>
+> **Baseline Sprint 2:** [TT-S2-1 Contract register](../TT-S2-1_ORDER_PAYMENT_BASELINE.md)
 >
 > **Success wrapper:** `ApiResponse<T>`; xem [COMMON.md](COMMON.md)
 
@@ -13,7 +15,9 @@
 | `AddToCartRequest`, `UpdateCartItemRequest`, `MergeCartRequest` | Request body Cart | Có |
 | `CartResponse`, `CartItemResponse` | Public response Cart | Có |
 | `SkuInfo` | DTO nội bộ Commerce nhận từ Catalog | Không trực tiếp; ánh xạ từ `SkuSnapshot` |
-| `PageResponse<T>` | Wrapper phân trang dành cho nghiệp vụ sau này | **Không**; chưa có controller dùng |
+| `CheckoutPreviewRequest`, `CreateOrderRequest` | Request checkout | Có; mục 4 |
+| `OrderSummaryResponse`, `OrderDetailResponse`, `UpdateOrderStatusRequest`, `CancelOrderRequest` | Quản lý đơn | Có; mục 6 |
+| `PaymentResponse` | Tạo/poll attempt VNPAY | Có; mục 5 |
 
 ## 1. Endpoint matrix hiện có
 
@@ -209,7 +213,7 @@ Commerce gọi Fulfillment qua `FULFILLMENT_SERVICE_URL` và chuyển tiếp JWT
 
 Các lỗi đáng chú ý: `409 INVENTORY_INSUFFICIENT`, `409 CART_SKU_NOT_AVAILABLE`, `404 CART_ITEM_NOT_FOUND`, `422 CHECKOUT_EXPIRED`, `422 CHECKOUT_MULTIPLE_SELLERS`, `422 ORDER_DAILY_LIMIT_EXCEEDED`, `422 CHECKOUT_INVALID_IDEMPOTENCY_KEY`, `502 CATALOG_INVALID_RESPONSE`/`INVENTORY_UNAVAILABLE`. Thiếu header trả 400; DTO không hợp lệ trả 422.
 
-Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; V5 thêm payment snapshot, reservation IDs và outbox kho sau IPN. Cần triển khai Catalog có `sellerId` trước Commerce mới. Route đọc/hủy đơn vẫn `PLANNED`; mock COD/demo còn tồn tại, VNPAY không fallback mock.
+Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; V5 thêm payment snapshot, reservation IDs và outbox kho sau IPN. Cần triển khai Catalog có `sellerId` trước Commerce mới. Route đọc/hủy/cập nhật đơn đã có backend; mock COD/demo phía FE còn tồn tại, VNPAY không fallback mock.
 
 ## 5. VNPAY sandbox — TT-S1-3
 
@@ -227,6 +231,26 @@ Outbox sau IPN commit cùng Payment và worker retry confirm/release bằng serv
 
 Cấu hình, RspCode, giới hạn, cách test và hướng review: [PAYMENT_SANDBOX_INTEGRATION.md](../PAYMENT_SANDBOX_INTEGRATION.md).
 
-## Thông báo TT-S1-4
+## 6. Order Management — baseline TT-S2-1
+
+Tất cả path dưới đây tính từ `/api/v1`. Identity lấy từ JWT; tại Gateway JWT có thể đến từ cookie HttpOnly, service vẫn nhận Bearer đã xác minh. POST/PATCH qua cookie cần `X-Nexus-Request: 1`.
+
+| Method | Path | Quyền/phạm vi | `data` / HTTP |
+|---|---|---|---|
+| GET | `/orders` | JWT; mặc định đơn buyer; `role=seller`/`admin` phải đúng vai trò | `OrderSummaryResponse[]`, `meta.pagination` / 200 |
+| GET | `/orders/seller` | SELLER/ADMIN, lọc shop theo service | `OrderSummaryResponse[]`, `meta.pagination` / 200 |
+| GET | `/orders/{orderId}` | Buyer/chủ shop của đơn hoặc ADMIN | `OrderDetailResponse` / 200 |
+| POST | `/orders/{orderId}/cancel` | BUYER/ADMIN, service kiểm tra chủ đơn | `OrderDetailResponse` / 200 |
+| PATCH | `/orders/{orderId}/status` | SELLER/ADMIN, service kiểm tra chủ shop và state machine | `OrderDetailResponse` / 200 |
+
+Danh sách nhận `status`, `startDate`, `endDate` (ISO local datetime), `page` (mặc định 0), `size` (1–100, mặc định 20), `sortBy` (mặc định `createdAt`), `sortDirection` (mặc định DESC). `role` không cấp thêm quyền. Không dùng `PageResponse` cũ hoặc Spring Page làm shape của API này.
+
+Summary có `id`, `orderNo`, `buyerId`, `sellerId`, `sourceType`, `status`, `total`, `itemCount`, `shippingAddress`, `createdAt`. Detail thêm `auctionId`, `voucherId`, `subtotal`, `shippingFee`, `discount`, `items`, `statusHistory`. `createdAt` là Instant UTC. Detail hiện không trả `paymentUrl` hoặc thông tin người nhận; lấy URL từ response tạo đơn/payment.
+
+Cancel nhận `{ "reason": "Đổi nhu cầu mua hàng" }`; nếu gửi body thì reason phải nonblank, tối đa 500 ký tự. Bỏ toàn bộ body được controller thay bằng lý do mặc định. Status nhận `{ "status": "PROCESSING", "reason": "Đã tiếp nhận đơn" }`; status bắt buộc thuộc enum, reason tùy chọn tối đa 500 ký tự. Enum: PENDING_PAYMENT, PAID, PROCESSING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, REFUNDED.
+
+Không được dùng API status để đánh dấu VNPAY PAID; chỉ IPN hợp lệ được làm việc đó. Chưa có refund provider nên REFUNDED bị từ chối. Hủy chỉ áp dụng đơn chưa thanh toán, không có VNPAY đang chờ; PAID không được báo hoàn tiền giả. Cancel/status khóa Order trong transaction; hủy enqueue RELEASE cùng transaction. Phân quyền/sai chủ đơn trả 403, thiếu đơn 404, chuyển trạng thái/hủy không hợp lệ 409; chuyển trùng trạng thái hợp lệ giữ lịch sử không tăng thêm.
+
+## 7. Thông báo TT-S1-4 và transactional email
 
 Checkout mới enqueue ORDER_CREATED; IPN terminal đầu tiên enqueue PAYMENT_SUCCESS/PAYMENT_FAILED. Snapshot buyer/orderNo/total lấy từ Order, commit cùng transaction; worker gửi HTTP sau commit với retry và event UUID cố định. Không đổi request/response checkout/payment. Xem [Notification contract](NOTIFICATION_SERVICE.md) và [demo/vận hành](../ORDER_PAYMENT_NOTIFICATIONS_DEMO.md).

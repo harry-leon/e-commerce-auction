@@ -73,4 +73,20 @@ Endpoint chẩn đoán mẫu khác khi gọi trực tiếp service:
 
 Gateway không route hai endpoint mẫu theo prefix Notification, nên FE không sử dụng chúng như public contract.
 
-Các API ngoài phần CURRENT ở trên không được FE coi là đã triển khai.
+## Transactional email — baseline TT-S2-1
+
+Các endpoint POST dưới `/api/v1/notifications` yêu cầu service account có `ROLE_NOTIFICATION_WRITER`; không cho buyer tự gửi email đơn hàng:
+
+| Method | Path | Kết quả |
+|---|---|---|
+| POST | `/transactional-email` | 200, `ApiResponse<NotificationResponse>` |
+| POST | `/transactional-email/async` | 202, `data: "ACCEPTED"`; chưa chứng minh đã gửi SMTP |
+| POST | `/events/order-created` | 200, `ApiResponse<NotificationResponse>` |
+| POST | `/events/order-paid` | 200, `ApiResponse<NotificationResponse>` |
+| POST | `/events/order-payment-failed` | 200, `ApiResponse<NotificationResponse>` |
+
+DTO gốc là `OrderEmailRequest`; Commerce gửi snapshot người nhận/items/payment từ đơn đã commit, không lấy dữ liệu mới từ trình duyệt. Worker dùng `/transactional-email` và chỉ đánh dấu outbox done sau khi IN_APP đã nhận và email có status SENT. Retry cùng event không gửi lại IN_APP hoặc email SENT. Email cũ thiếu recipient snapshot không được tự suy đoán địa chỉ để gửi.
+
+Notification migration hiện tại là V1–V4: V3 thêm liên kết inbox Commerce, V4 bảo vệ event EMAIL bằng unique partial index. V4 giữ bản SENT trong nhóm event trùng và chỉ bỏ event_id của bản còn lại, không xóa notification/attempt. Số V6/V7 trong task thuộc **Commerce**, không phải Notification; không đổi tên migration đã chạy.
+
+Chi tiết version và bằng chứng: [TT-S2-1 register](../TT-S2-1_ORDER_PAYMENT_BASELINE.md). Các API ngoài phần CURRENT ở trên không được FE coi là đã triển khai.
