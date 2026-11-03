@@ -222,7 +222,12 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
 
     /**
      * Kiểm tra phiên có chấp nhận lượt bid mới hay không.
-     * Quy tắc: Chỉ chấp nhận khi phiên đang ACTIVE và thời điểm bid trước endTime.
+     * Quy tắc:
+     * - Từ chối ngay nếu auctionId hoặc bidTime là null.
+     * - Từ chối nếu không tìm thấy phiên trong cơ sở dữ liệu.
+     * - Từ chối nếu phiên đã có bản ghi settlement (đã chốt kết quả).
+     * - Từ chối nếu thời điểm đặt giá trước thời gian mở phiên (bidTime < startTime).
+     * - Chỉ chấp nhận khi phiên đang ACTIVE và thời điểm bid trước endTime (startTime <= bidTime < endTime).
      */
     @Override
     @Transactional(readOnly = true)
@@ -240,6 +245,11 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
 
         // Nếu phiên đã có bản ghi settlement, dứt khoát từ chối nhận bid
         if (auctionSettlementRepository.existsByAuctionId(auctionId)) {
+            return false;
+        }
+
+        // Không chấp nhận lượt đặt giá trước thời điểm bắt đầu phiên đấu giá
+        if (auction.getStartTime() != null && bidTime.isBefore(auction.getStartTime())) {
             return false;
         }
 

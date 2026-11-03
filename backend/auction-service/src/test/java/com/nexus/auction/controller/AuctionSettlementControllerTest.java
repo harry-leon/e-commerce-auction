@@ -70,6 +70,33 @@ class AuctionSettlementControllerTest {
     }
 
     @Test
+    @WithMockUser(roles = "SELLER")
+    @DisplayName("POST /settle: Seller gọi kích hoạt settle thành công -> 200 OK với ApiResponse success")
+    void testSettleAuction_AsSeller_Success() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        UUID winnerId = UUID.randomUUID();
+
+        AuctionSettlementResponse response = new AuctionSettlementResponse();
+        response.setId(UUID.randomUUID());
+        response.setAuctionId(auctionId);
+        response.setWinnerId(winnerId);
+        response.setFinalPrice(new BigDecimal("750000.00"));
+        response.setResult(SettlementResult.SUCCESS);
+        response.setSettledAt(Instant.now());
+
+        when(auctionSettlementService.settleAuction(auctionId)).thenReturn(response);
+
+        mockMvc.perform(post("/api/v1/auctions/{auctionId}/settle", auctionId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.auctionId").value(auctionId.toString()))
+                .andExpect(jsonPath("$.data.winnerId").value(winnerId.toString()))
+                .andExpect(jsonPath("$.data.result").value("SUCCESS"));
+    }
+
+    @Test
     @WithMockUser(roles = "BUYER")
     @DisplayName("POST /settle: Buyer gọi bị từ chối 403 Forbidden")
     void testSettleAuction_AsBuyer_Forbidden() throws Exception {

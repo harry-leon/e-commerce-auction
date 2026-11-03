@@ -1,5 +1,6 @@
 package com.nexus.auction.service;
 
+import com.nexus.auction.dto.mapper.AuctionSettlementMapper;
 import com.nexus.auction.dto.response.AuctionSettlementResponse;
 import com.nexus.auction.entity.Auction;
 import com.nexus.auction.entity.AuctionSettlement;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -365,5 +367,229 @@ class AuctionSettlementServiceTest {
         int settledCount = settlementService.settleExpiredAuctions();
 
         assertThat(settledCount).isEqualTo(1);
+    }
+
+    /**
+     * Kiểm tra quyết toán phiên đã ở trạng thái ENDED nhưng có lượt bid hợp lệ.
+     * Kỳ vọng: Chuyển sang SETTLED, xác định Winner và kết quả SUCCESS.
+     */
+    @Test
+    @DisplayName("settleAuction: Phiên đã ở trạng thái ENDED có bid -> Quyết toán thành công SETTLED")
+    void testSettleAuction_EndedStatusWithBids_SetsSettledAndSuccess() {
+        UUID auctionId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        BigDecimal winningAmount = new BigDecimal("300000.00");
+
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ENDED, now.minus(15, ChronoUnit.MINUTES));
+
+        Bid highestBid = new Bid();
+        highestBid.setId(UUID.randomUUID());
+        highestBid.setAuctionId(auctionId);
+        highestBid.setBidderId(buyerId);
+        highestBid.setAmount(winningAmount);
+        highestBid.setPlacedAt(now.minus(20, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+        when(bidRepository.findFirstByAuctionIdOrderByAmountDescPlacedAtAsc(auctionId))
+                .thenReturn(Optional.of(highestBid));
+        when(auctionSettlementRepository.save(any(AuctionSettlement.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        AuctionSettlementResponse response = settlementService.settleAuction(auctionId);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getResult()).isEqualTo(SettlementResult.SUCCESS);
+        assertThat(response.getWinnerId()).isEqualTo(buyerId);
+        assertThat(auction.getStatus()).isEqualTo(AuctionStatus.SETTLED);
+    }
+
+    /**
+     * Kiểm tra cơ chế Double-Checked Locking khi tiến trình khác chốt phiên ngay trước khi lấy lock.
+     * Kỳ vọng: Trả về kết quả settlement vừa tạo bởi tiến trình song song mà không insert lại.
+     */
+    @Test
+    @DisplayName("settleAuction: Phát hiện settlement sau khi lấy lock -> Trả về kết quả hiện tại")
+    void testSettleAuction_ConcurrentSettlementDetectedAfterLock_ReturnsExistingSettlement() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.minus(5, ChronoUnit.MINUTES));
+
+        AuctionSettlement concurrentSettlement = new AuctionSettlement();
+        concurrentSettlement.setId(UUID.randomUUID());
+        concurrentSettlement.setAuctionId(auctionId);
+        concurrentSettlement.setResult(SettlementResult.SUCCESS);
+        concurrentSettlement.setFinalPrice(new BigDecimal("500000.00"));
+        concurrentSettlement.setSettledAt(now);
+
+        // Lần kiểm tra 1 (trước lock): chưa có; Lần kiểm tra 2 (sau lock): thread khác đã kịp insert
+        when(auctionSettlementRepository.findByAuctionId(auctionId))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(concurrentSettlement));
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+
+        AuctionSettlementResponse response = settlementService.settleAuction(auctionId);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getId()).isEqualTo(concurrentSettlement.getId());
+        assertThat(response.getResult()).isEqualTo(SettlementResult.SUCCESS);
+
+        verify(auctionSettlementRepository, never()).save(any());
+    }
+
+    /**
+     * Kiểm tra bắt ngoại lệ xung đột Unique Constraint khi lưu settlement.
+     * Kỳ vọng: Đọc lại bản ghi vừa được commit và trả về an toàn.
+     */
+    @Test
+    @DisplayName("settleAuction: Bắt DataIntegrityViolationException và đọc lại bản ghi gốc thành công")
+    void testSettleAuction_UniqueConstraintConflictHandledGracefully() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.minus(5, ChronoUnit.MINUTES));
+
+        AuctionSettlement existingSettlement = new AuctionSettlement();
+        existingSettlement.setId(UUID.randomUUID());
+        existingSettlement.setAuctionId(auctionId);
+        existingSettlement.setResult(SettlementResult.SUCCESS);
+        existingSettlement.setFinalPrice(new BigDecimal("100000.00"));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId))
+                .thenReturn(Optional.empty()) // Lần 1: Idempotency trước lock
+                .thenReturn(Optional.empty()) // Lần 2: Sau lock
+                .thenReturn(Optional.of(existingSettlement)); // Lần 3: Sau khi bắt catch exception
+
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+        when(bidRepository.findFirstByAuctionIdOrderByAmountDescPlacedAtAsc(auctionId)).thenReturn(Optional.empty());
+        when(auctionSettlementRepository.save(any(AuctionSettlement.class)))
+                .thenThrow(new DataIntegrityViolationException("Duplicate key uq_settlement_auction"));
+
+        AuctionSettlementResponse response = settlementService.settleAuction(auctionId);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getId()).isEqualTo(existingSettlement.getId());
+    }
+
+    /**
+     * Kiểm tra trường hợp DataIntegrityViolationException xảy ra nhưng không tìm thấy bản ghi gốc.
+     * Kỳ vọng: Ném lại ngoại lệ DataIntegrityViolationException.
+     */
+    @Test
+    @DisplayName("settleAuction: Ném lại DataIntegrityViolationException khi không tìm thấy bản ghi gốc")
+    void testSettleAuction_UniqueConstraintConflictRethrownWhenSettlementNotFound() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.minus(5, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId))
+                .thenReturn(Optional.empty()); // Cả trước lock, sau lock và trong catch đều empty
+
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+        when(bidRepository.findFirstByAuctionIdOrderByAmountDescPlacedAtAsc(auctionId)).thenReturn(Optional.empty());
+        when(auctionSettlementRepository.save(any(AuctionSettlement.class)))
+                .thenThrow(new DataIntegrityViolationException("Database constraint violation"));
+
+        assertThatThrownBy(() -> settlementService.settleAuction(auctionId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /**
+     * Kiểm tra tra cứu kết quả quyết toán thành công qua getSettlementByAuctionId.
+     * Kỳ vọng: Trả về AuctionSettlementResponse khớp với entity.
+     */
+    @Test
+    @DisplayName("getSettlementByAuctionId: Tra cứu thành công bản ghi settlement hiện hữu")
+    void testGetSettlementByAuctionId_Success() {
+        UUID auctionId = UUID.randomUUID();
+        AuctionSettlement settlement = new AuctionSettlement();
+        settlement.setId(UUID.randomUUID());
+        settlement.setAuctionId(auctionId);
+        settlement.setFinalPrice(new BigDecimal("250000.00"));
+        settlement.setResult(SettlementResult.SUCCESS);
+        settlement.setSettledAt(now);
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.of(settlement));
+
+        AuctionSettlementResponse response = settlementService.getSettlementByAuctionId(auctionId);
+
+        assertThat(response).isNotNull();
+        assertThat(response.getAuctionId()).isEqualTo(auctionId);
+        assertThat(response.getFinalPrice()).isEqualTo(new BigDecimal("250000.00"));
+        assertThat(response.getResult()).isEqualTo(SettlementResult.SUCCESS);
+    }
+
+    /**
+     * Kiểm tra tra cứu kết quả quyết toán không tồn tại qua getSettlementByAuctionId.
+     * Kỳ vọng: Ném ResourceNotFoundException.
+     */
+    @Test
+    @DisplayName("getSettlementByAuctionId: Không tìm thấy kết quả -> Ném ResourceNotFoundException")
+    void testGetSettlementByAuctionId_NotFound_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> settlementService.getSettlementByAuctionId(auctionId))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi phiên không tồn tại trong database.
+     * Kỳ vọng: Trả về false.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Không tìm thấy phiên đấu giá -> Trả về false")
+    void testCanAcceptBid_AuctionNotFound_ReturnsFalse() {
+        UUID auctionId = UUID.randomUUID();
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.empty());
+
+        boolean allowed = settlementService.canAcceptBid(auctionId, now);
+
+        assertThat(allowed).isFalse();
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi thời điểm bid trước thời gian mở phiên (bidTime < startTime).
+     * Kỳ vọng: Trả về false.
+     */
+    @Test
+    @DisplayName("canAcceptBid: Lượt bid gửi trước thời gian mở phiên -> Trả về false")
+    void testCanAcceptBid_BidBeforeStartTime_ReturnsFalse() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.plus(1, ChronoUnit.HOURS));
+        auction.setStartTime(now);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        // bidTime xảy ra trước startTime 1 giây
+        boolean allowed = settlementService.canAcceptBid(auctionId, now.minus(1, ChronoUnit.SECONDS));
+
+        assertThat(allowed).isFalse();
+    }
+
+    /**
+     * Kiểm tra canAcceptBid khi thời điểm bid trùng với thời gian mở phiên (bidTime == startTime).
+     * Kỳ vọng: Trả về true (biên hợp lệ).
+     */
+    @Test
+    @DisplayName("canAcceptBid: Lượt bid gửi đúng thời điểm mở phiên -> Trả về true")
+    void testCanAcceptBid_BidAtStartTime_ReturnsTrue() {
+        UUID auctionId = UUID.randomUUID();
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.plus(1, ChronoUnit.HOURS));
+        auction.setStartTime(now);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        boolean allowed = settlementService.canAcceptBid(auctionId, now);
+
+        assertThat(allowed).isTrue();
+    }
+
+    /**
+     * Kiểm tra chuyển đổi AuctionSettlementMapper khi thực thể null.
+     * Kỳ vọng: Trả về null an toàn.
+     */
+    @Test
+    @DisplayName("AuctionSettlementMapper: Thực thể null -> Trả về null")
+    void testAuctionSettlementMapper_NullEntity_ReturnsNull() {
+        assertThat(AuctionSettlementMapper.toResponse(null)).isNull();
     }
 }
