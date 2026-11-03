@@ -29,6 +29,8 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                // Cho phép truy cập endpoint đấu giá tại tầng filter; kiểm tra phân quyền chi tiết được xử lý bằng @PreAuthorize tại Controller
+                .requestMatchers("/api/v1/auctions/**").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();
