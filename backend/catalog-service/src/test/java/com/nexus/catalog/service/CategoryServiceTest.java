@@ -10,8 +10,8 @@ import static org.mockito.ArgumentMatchers.any;
 import com.nexus.catalog.dto.request.CategoryRequest;
 import com.nexus.catalog.entity.Category;
 import com.nexus.catalog.enums.CategoryStatus;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import java.util.List;
@@ -40,7 +40,7 @@ class CategoryServiceTest {
     }
 
     private CategoryRequest request(Category parent) {
-        return new CategoryRequest("Updated", "Translated", parent == null ? null : parent.getId(), CategoryStatus.ACTIVE);
+        return new CategoryRequest("Updated", parent == null ? null : parent.getId(), CategoryStatus.ACTIVE);
     }
 
     @Test
@@ -60,7 +60,8 @@ class CategoryServiceTest {
         Category root = category(null);
         var created = service.create(request(root));
         assertEquals(2, created.level());
-        assertEquals("Translated", created.nameVi());
+        // ERD chỉ có name: alias UI phải phản ánh đúng tên đã lưu.
+        assertEquals("Updated", created.nameVi());
     }
 
     @Test
@@ -109,6 +110,6 @@ class CategoryServiceTest {
         Category root = category(null);
         service.delete(root.getId());
         verify(categories).delete(root);
-        assertThrows(NotFoundException.class, () -> service.get(UUID.randomUUID()));
+        assertThrows(ResourceNotFoundException.class, () -> service.get(UUID.randomUUID()));
     }
 }

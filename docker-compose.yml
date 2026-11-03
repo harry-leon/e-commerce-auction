@@ -21,6 +21,15 @@ x-service: &service
     EUREKA_ENABLED: "true"
     EUREKA_URL: http://discovery-server:8761/eureka/
     CONFIG_SERVER_URL: http://config-server:8888
+    # User gửi/đọc audit qua API notification, không truy cập trực tiếp DB của service khác.
+    NOTIFICATION_SERVICE_URL: http://notification-service:8080
+    # Không log body HTTP chứa mật khẩu/token khi gọi Keycloak, kể cả khi file .env cũ bật DEBUG.
+    LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB: INFO
+    LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: INFO
+    # JWKS dùng DNS nội bộ; issuer phải khớp URL public Keycloak phát trong JWT.
+    KEYCLOAK_URL: http://keycloak:8080
+    KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8180/realms/nexus-realm}
+    KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}
 
   depends_on:
     discovery-server:
@@ -71,10 +80,20 @@ services:
     image: quay.io/keycloak/keycloak:24.0.5
     command: start-dev --import-realm
     environment:
+      # Realm import đọc secret từ biến môi trường; hostname cố định giữ issuer giống nhau qua Gateway/local.
+      KC_HOSTNAME_URL: http://localhost:8180
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/nexus_keycloak
-      KC_DB_USERNAME: ${LOCAL_DB_USERNAME:-nexus}
-      KC_DB_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
+      # Có thể dùng Supabase qua KEYCLOAK_DB_*; schema riêng tách bảng IAM khỏi dữ liệu nghiệp vụ.
+      # Khi chưa cấu hình remote, giữ database local cũ; URL Supabase cần TLS và session pooler cổng 5432.
+      KC_DB_URL: ${KEYCLOAK_DB_URL:-jdbc:postgresql://postgres:5432/nexus_keycloak}
+      KC_DB_SCHEMA: ${KEYCLOAK_DB_SCHEMA:-public}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Giới hạn số kết nối IAM để không chiếm hết session pool của Supabase dùng chung.
+      KC_DB_POOL_INITIAL_SIZE: 1
+      KC_DB_POOL_MIN_SIZE: 1
+      KC_DB_POOL_MAX_SIZE: ${KEYCLOAK_DB_POOL_MAX_SIZE:-5}
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
@@ -87,79 +106,177 @@ services:
 
   user-service:
     <<: *service
-    build: ./backend/user-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/user-service/Dockerfile
     environment:
       <<: *cloud-env
       SMTP_HOST: mailpit
       FRONTEND_URL: http://localhost:3000
       SERVICE_NAME: user-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_user
+      # Giữ DB profile Supabase khi triển khai IAM mới; chỉ dùng local nếu chưa cấu hình USER_DB_*.
+      DB_URL: ${USER_DB_URL:-jdbc:postgresql://postgres:5432/nexus_user}
+      DB_USERNAME: ${USER_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${USER_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
     ports:
       - "8081:8080"
 
   catalog-service:
     <<: *service
-    build: ./backend/catalog-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/catalog-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: catalog-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_catalog
+      # Dùng Supabase khi cấu hình CATALOG_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${CATALOG_DB_URL:-jdbc:postgresql://postgres:5432/nexus_catalog}
+      DB_USERNAME: ${CATALOG_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${CATALOG_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${CATALOG_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8082:8080"
 
   commerce-service:
     <<: *service
-    build: ./backend/commerce-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/commerce-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: commerce-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_commerce
+      # Cart đọc dữ liệu sản phẩm thật; mock chỉ dùng khi bật profile catalog-mock.
+      CATALOG_SERVICE_URL: http://catalog-service:8080
+      # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
+      FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
+      # Merchant VNPAY và service account outbox được cấp ngoài repo; để trống thì chỉ dùng được COD.
+      # OAuth thông báo riêng; thiếu config giữ backlog, không chặn checkout hoặc IPN.
+      NOTIFICATION_TOKEN_URL: ${NOTIFICATION_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
+      NOTIFICATION_CLIENT_ID: ${NOTIFICATION_CLIENT_ID:-}
+      NOTIFICATION_CLIENT_SECRET: ${NOTIFICATION_CLIENT_SECRET:-}
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-}
+      PAYMENT_INVENTORY_TOKEN_URL: ${PAYMENT_INVENTORY_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
+      PAYMENT_INVENTORY_CLIENT_ID: ${PAYMENT_INVENTORY_CLIENT_ID:-}
+      PAYMENT_INVENTORY_CLIENT_SECRET: ${PAYMENT_INVENTORY_CLIENT_SECRET:-}
+      # Dùng Supabase khi cấu hình COMMERCE_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${COMMERCE_DB_URL:-jdbc:postgresql://postgres:5432/nexus_commerce}
+      DB_USERNAME: ${COMMERCE_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${COMMERCE_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${COMMERCE_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8083:8080"
 
   auction-service:
     <<: *service
-    build: ./backend/auction-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/auction-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: auction-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_auction
+      # Dùng Supabase khi cấu hình AUCTION_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${AUCTION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_auction}
+      DB_USERNAME: ${AUCTION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${AUCTION_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${AUCTION_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8084:8080"
 
   fulfillment-service:
     <<: *service
-    build: ./backend/fulfillment-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/fulfillment-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: fulfillment-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_fulfillment
+      # Dùng Supabase khi cấu hình FULFILLMENT_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${FULFILLMENT_DB_URL:-jdbc:postgresql://postgres:5432/nexus_fulfillment}
+      DB_USERNAME: ${FULFILLMENT_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${FULFILLMENT_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${FULFILLMENT_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8085:8080"
 
   notification-service:
     <<: *service
-    build: ./backend/notification-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/notification-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: notification-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_notification
+      # Email giao dịch gửi tới SMTP/Mailpit trong mạng Compose; credential chỉ lấy từ môi trường.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_AUTH: ${SMTP_AUTH:-false}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@nexus.com}
+      # Dùng Supabase khi cấu hình NOTIFICATION_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${NOTIFICATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_notification}
+      DB_USERNAME: ${NOTIFICATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${NOTIFICATION_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8086:8080"
 
   reputation-service:
     <<: *service
-    build: ./backend/reputation-service
+    # Build context root để Dockerfile đọc được backend/common.
+    build:
+      context: .
+      dockerfile: backend/reputation-service/Dockerfile
     environment:
       <<: *cloud-env
       SERVICE_NAME: reputation-service
-      DB_URL: jdbc:postgresql://postgres:5432/nexus_reputation
+      SERVER_PORT: 8080
+      # Dùng Supabase khi cấu hình REPUTATION_DB_*; để trống thì dùng PostgreSQL local.
+      DB_URL: ${REPUTATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_reputation}
+      DB_USERNAME: ${REPUTATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
+      DB_PASSWORD: ${REPUTATION_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Flyway chỉ quản lý schema nghiệp vụ; JDBC search_path thêm public để tìm extension pg_trgm.
+      SPRING_FLYWAY_SCHEMAS: ${REPUTATION_DB_SCHEMAS:-public}
+      # Giới hạn pool vì các service chia sẻ hạn mức kết nối Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8087:8080"
 
   # Gateway tra registry Eureka qua các URI lb://... thay vì phụ thuộc IP cố định của container.
   api-gateway:
-    build: ./backend/api-gateway
+    build:
+      context: .
+      dockerfile: backend/api-gateway/Dockerfile
     environment:
       <<: *cloud-env
       USER_SERVICE_URL: lb://user-service
@@ -169,6 +286,8 @@ services:
       FULFILLMENT_SERVICE_URL: lb://fulfillment-service
       NOTIFICATION_SERVICE_URL: lb://notification-service
       REPUTATION_SERVICE_URL: lb://reputation-service
+      # URL HTTP riêng cho BFF gọi profile; routes khác tiếp tục dùng Eureka.
+      USER_PROFILE_URL: http://user-service:8080
       KEYCLOAK_URL: http://keycloak:8080
     ports:
       - "8080:8080"

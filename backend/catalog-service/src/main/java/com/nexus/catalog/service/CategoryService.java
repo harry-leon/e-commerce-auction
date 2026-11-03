@@ -3,8 +3,8 @@ package com.nexus.catalog.service;
 import com.nexus.catalog.dto.request.CategoryRequest;
 import com.nexus.catalog.dto.response.CategoryResponse;
 import com.nexus.catalog.entity.Category;
-import com.nexus.catalog.exception.BusinessException;
-import com.nexus.catalog.exception.NotFoundException;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import java.util.List;
@@ -83,7 +83,6 @@ public class CategoryService {
         }
         category.setParent(parent);
         category.setName(request.name().trim());
-        category.setNameVi(request.nameVi() == null ? request.name().trim() : request.nameVi().trim());
         category.setStatus(request.status());
         setLevels(category, level);
     }
@@ -101,12 +100,13 @@ public class CategoryService {
 
     /** Gom xử lý không tìm thấy vào một chỗ để controller nhận lỗi 404 thống nhất. */
     private Category find(UUID id) {
-        return categories.findById(id).orElseThrow(() -> new NotFoundException("Category not found: " + id));
+        return categories.findById(id).orElseThrow(() -> new ResourceNotFoundException("Category not found: " + id));
     }
 
-    /** productCount chỉ đếm sản phẩm gắn trực tiếp với node, không cộng dồn sản phẩm của các node con. */
+    /** nameVi là alias của name để tương thích UI, không có cột bản dịch riêng trong ERD.
+     * productCount chỉ đếm sản phẩm gắn trực tiếp với node, không cộng dồn sản phẩm của các node con. */
     private CategoryResponse response(Category category) {
-        return new CategoryResponse(category.getId(), category.getName(), category.getNameVi(),
+        return new CategoryResponse(category.getId(), category.getName(), category.getName(),
                 category.getParent() == null ? null : category.getParent().getId(),
                 category.getLevel(), category.getStatus(), products.countByCategoryId(category.getId()),
                 category.getChildren().stream().map(this::response).toList());

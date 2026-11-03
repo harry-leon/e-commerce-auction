@@ -12,7 +12,6 @@ import {
     Package,
     Gavel,
     Star,
-    X,
     Home,
     BarChart2,
     Users,
@@ -20,11 +19,9 @@ import {
     Settings2,
     Shield,
     Truck,
-    AlertTriangle,
     Activity,
     FileText,
     Server,
-    Plus,
     Warehouse,
     HeartHandshake,
     CreditCard,
@@ -143,6 +140,10 @@ function IconCollectibles(p: SVGProps<SVGSVGElement>) {
     )
 }
 
+/**
+ * Bản đồ icon danh mục: hỗ trợ cả mã demo cũ (c1-c6) và UUID thật từ Catalog Service trong PostgreSQL.
+ * Giúp PublicHeader và HomePage luôn hiển thị đúng icon tương ứng cho từng nhóm ngành hàng.
+ */
 export const CATEGORY_ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => React.JSX.Element> = {
     c1: IconElectronics,
     c2: IconFashion,
@@ -150,6 +151,13 @@ export const CATEGORY_ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => Reac
     c4: IconSports,
     c5: IconBooks,
     c6: IconCollectibles,
+    '00000000-0000-0000-0000-000000000001': IconElectronics,
+    '11111111-1111-1111-1111-111111111111': IconElectronics,
+    '22222222-2222-2222-2222-222222222222': IconFashion,
+    '33333333-3333-3333-3333-333333333333': IconHome,
+    '44444444-4444-4444-4444-444444444444': IconSports,
+    '55555555-5555-5555-5555-555555555555': IconBooks,
+    '66666666-6666-6666-6666-666666666666': IconCollectibles,
 }
 
 // ─── Public Header ─────────────────────────────────────────────────────────────
@@ -164,7 +172,7 @@ export function PublicHeader() {
             .catch(() => setCategories([]))
         return () => controller.abort()
     }, [])
-    const { lang, navigate, user, setUser, cartCount, page } = useApp()
+    const { lang, navigate, user, setUser, cartCount } = useApp()
     const [searchQ, setSearchQ] = useState('')
     const [userOpen, setUserOpen] = useState(false)
     const [notifOpen, setNotifOpen] = useState(false)
@@ -174,18 +182,26 @@ export function PublicHeader() {
     }
 
     return (
-        <header className="bg-white border-b border-border sticky top-0 z-40 shadow-sm">
+        /**
+         * Chức năng: Header công khai phong cách Shopee (Shopee Orange theme #ee4d2d).
+         * Gồm đường kẻ gradient cam nổi bật ở đỉnh, Logo thương hiệu Nexus, thanh tìm kiếm bo tròn và giỏ hàng.
+         */
+        <header className="bg-white border-b border-orange-100/60 sticky top-0 z-40 shadow-xs">
+            {/* Đường viền cam nhận diện thương hiệu đặc trưng kiểu Shopee */}
+            <div className="h-1 bg-gradient-to-r from-[#ee4d2d] via-[#f53d2d] to-[#ff7337]" />
             {/* Top bar */}
             <div className="max-w-[1440px] mx-auto px-8 h-16 flex items-center gap-6">
-                {/* Logo */}
+                {/* Logo Nexus phong cách cam Shopee */}
                 <button
                     onClick={() => navigate('home')}
-                    className="flex items-center gap-2 shrink-0"
+                    className="flex items-center gap-2 shrink-0 group"
                 >
-                    <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                    <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
                         <Gavel size={16} className="text-white" />
                     </div>
-                    <span className="text-xl font-black text-gray-900">Nexus</span>
+                    <span className="text-xl font-black text-gray-900 tracking-tight">
+                        Nexus<span className="text-primary font-bold">.</span>
+                    </span>
                 </button>
 
                 {/* Search */}
@@ -225,12 +241,11 @@ export function PublicHeader() {
                                 className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
                             >
                                 <Bell size={20} />
-                                <span className="absolute top-1 right-1 w-4 h-4 bg-gray-800 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                                    {
-                                        NOTIFICATIONS.filter((notification) => !notification.read)
-                                            .length
-                                    }
-                                </span>
+                                {0 > 0 && (
+                                    <span className="absolute top-1 right-1 w-4 h-4 bg-gray-800 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                                        0
+                                    </span>
+                                )}
                             </button>
                             {notifOpen && (
                                 <div className="absolute right-0 top-full pt-2 w-96 z-50">
@@ -971,7 +986,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
 
 // ─── Support Layout ────────────────────────────────────────────────────────────
 export function SupportLayout({ children, title }: { children: ReactNode; title: string }) {
-    const { lang, page, navigate, user, setUser } = useApp()
+    const { lang, page, navigate, setUser } = useApp()
     const SUPPORT_NAV = [
         {
             id: 'support-dashboard',

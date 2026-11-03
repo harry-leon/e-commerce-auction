@@ -13,6 +13,9 @@ spring:
     password: ${DB_PASSWORD:nexus}
   jpa:
     open-in-view: false
+    # Timestamp trong ERD không có múi giờ; chuyển Instant qua JDBC bằng UTC để tránh lệch giờ theo máy chủ.
+    properties:
+      hibernate.jdbc.time_zone: UTC
     hibernate:
       ddl-auto: validate          # schema do Flyway quản lý
   flyway:
@@ -23,12 +26,34 @@ server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
 
+# Credential merchant và service account chỉ lấy từ môi trường; thiếu cấu hình thì COD vẫn hoạt động.
+# Return URL là trang hiển thị; IPN URL /api/v1/payments/vnpay/ipn phải đăng ký riêng trên merchant VNPAY.
+app:
+  notification:
+    # Service account riêng chỉ có NOTIFICATION_WRITER; gửi sau commit, không dùng JWT buyer.
+    url: ${NOTIFICATION_SERVICE_URL:http://localhost:8086}
+    token-url: ${NOTIFICATION_TOKEN_URL:}
+    client-id: ${NOTIFICATION_CLIENT_ID:}
+    client-secret: ${NOTIFICATION_CLIENT_SECRET:}
+  payment:
+    vnpay:
+      tmn-code: ${VNPAY_TMN_CODE:}
+      hash-secret: ${VNPAY_HASH_SECRET:}
+      return-url: ${VNPAY_RETURN_URL:}
+    inventory:
+      # Worker dùng client_credentials để gọi kho sau IPN không có JWT buyer, không lưu JWT vào outbox.
+      token-url: ${PAYMENT_INVENTORY_TOKEN_URL:}
+      client-id: ${PAYMENT_INVENTORY_CLIENT_ID:}
+      client-secret: ${PAYMENT_INVENTORY_CLIENT_SECRET:}
+
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,refresh
   endpoint:
+    refresh:
+      enabled: true
     health:
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
@@ -41,11 +66,6 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
-
-app:
-  security:
-    # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
-    jwt-secret: ${JWT_SECRET:}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.

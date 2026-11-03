@@ -13,11 +13,36 @@ spring:
     password: ${DB_PASSWORD:nexus}
   jpa:
     open-in-view: false
+    # ERD lưu timestamp không múi giờ; JDBC luôn ghi/đọc UTC.
+    properties:
+      hibernate.jdbc.time_zone: UTC
     hibernate:
       ddl-auto: validate          # schema do Flyway quản lý
   flyway:
     enabled: true
     locations: classpath:db/migration
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          # Timeout hữu hạn để Commerce outbox retry thay vì treo worker khi SMTP không phản hồi.
+          connectiontimeout: 2000
+          timeout: 2000
+          writetimeout: 2000
+          auth: ${SMTP_AUTH:false}
+          starttls:
+            enable: ${SMTP_STARTTLS:false}
+
+# Cấu hình kênh thông báo giao dịch (SRS §2.6 & §3.2.3)
+notification:
+  email-enabled: ${EMAIL_NOTIFICATION_ENABLED:true}
+  retry-limit: ${NOTIFICATION_RETRY_LIMIT:3}
+  transactional-mandatory: ${TRANSACTIONAL_NOTIFICATION_MANDATORY:true}
+  sender-from: ${MAIL_FROM:no-reply@nexus.com}
 
 server:
   port: ${SERVER_PORT:8080}
@@ -41,11 +66,6 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
-
-app:
-  security:
-    # Bắt buộc >= 32 ký tự. KHÔNG commit secret thật; truyền qua biến môi trường / Secret Manager.
-    jwt-secret: ${JWT_SECRET:}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.

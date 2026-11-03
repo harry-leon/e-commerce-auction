@@ -29,14 +29,9 @@ import {
     OrderDetailPage,
     OrderHistoryPage,
     PaymentResultPage,
-    ReputationPage,
+    SandboxPaymentPage,
     SellerShopPage,
 } from '../features/buyer/BuyerPages'
-import {
-    AdminProfilePage,
-    SellerProfilePage,
-    SupportProfilePage,
-} from '../features/profile/ProfilePages'
 import {
     CreateAuctionPage,
     CreateProductPage,
@@ -58,18 +53,84 @@ import { SearchPage } from '../features/catalog/SearchPage'
 import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
-import { LoginPage as SignIn } from '../features/auth/AuthPages'
+import { useEffect } from 'react'
 import { useApp } from '../context'
+import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER, DEMO_SUPPORT } from '../mockData'
+import type { User } from '../types'
+
+/**
+ * Khởi tạo user mock khi mở URL demo trực tiếp, ví dụ `/admin-dashboard` ở Vite dev.
+ * Chỉ thay state trong bộ nhớ của trình duyệt để route guard render đúng giao diện; không ghi token,
+ * không gọi backend và khi tải lại URL demo sẽ khởi tạo lại từ route/query.
+ */
+function DemoRouteBootstrap({
+    user,
+    setUser,
+}: {
+    user: User
+    setUser: (user: User | null) => void
+}) {
+    useEffect(() => {
+        setUser(user)
+    }, [setUser, user])
+
+    return null
+}
+
+/** Chỉ công nhận ba role demo có dữ liệu mock sẵn; query khác vẫn đi theo cơ chế bảo vệ route bình thường. */
+function demoUserFor(role: unknown): User | null {
+    if (role === 'buyer') return DEMO_BUYER
+    if (role === 'seller') return DEMO_SELLER
+    if (role === 'admin') return DEMO_ADMIN
+    return null
+}
+
+/**
+ * Chức năng: Khởi tạo vai trò demo khi dev màn hình Buyer và Dashboard không qua Keycloak IAM.
+ * Đầu vào và kết quả: Nhận `page` hiện tại; trả về đối tượng `User` (DEMO_BUYER/ADMIN/SELLER/SUPPORT) hoặc null.
+ * Luồng xử lý: Kiểm tra biến môi trường dev; nếu đúng, gán quyền demo tương ứng cho route.
+ * Quy tắc và lý do: Màn home, cart, checkout, payment-result dùng DEMO_BUYER; production tắt hoàn toàn để bảo vệ bảo mật.
+ * Lỗi và giới hạn: Dữ liệu demo chỉ lưu trong React state, không có JWT thật trên server backend.
+ */
+function demoUserForDashboard(page: string): User | null {
+    if (!import.meta.env.DEV) return null
+    if (page === 'home' || page === 'cart' || page === 'checkout' || page === 'payment-result')
+        return DEMO_BUYER
+    if (page.startsWith('admin-')) return DEMO_ADMIN
+    if (page.startsWith('seller-')) return DEMO_SELLER
+    if (page.startsWith('support-')) return DEMO_SUPPORT
+    return null
+}
 
 /**
  * Chọn màn hình từ route state, yêu cầu đăng nhập cho trang riêng và kiểm tra vai trò cho các khu vực.
  * Đây là bảo vệ điều hướng UI; API backend vẫn xác minh JWT và quyền cho từng thao tác.
- * Các trang features dùng dữ liệu thật; một số màn của sprint sau vẫn giữ bản demo hiện có.
+ * Search/ProductDetail/Profile chỉ trỏ tới module gọi API riêng; không giữ bản màn trùng trong BuyerPages.
+ * Các màn của sprint sau vẫn có thể dùng demo hiện có.
  */
 export function AppRouter() {
-    const { page, user, pageParams: routeParams } = useApp()
-    const publicPages = ['login', 'register', 'forgot-password', 'home', 'search', 'product-detail']
-    if (!user && !publicPages.includes(page)) return <SignIn />
+    const { page, user, setUser, pageParams: routeParams } = useApp()
+    /**
+     * Danh sách các trang công khai (public pages) không yêu cầu đăng nhập:
+     * - Bao gồm auth, home, search, product-detail, cart, sandbox-payment, payment-result.
+     * - Khách vãng lai xem giỏ hàng hoặc nhận kết quả thanh toán callback từ sandbox không bị đá về Login.
+     */
+    const publicPages = [
+        'login',
+        'register',
+        'forgot-password',
+        'home',
+        'search',
+        'product-detail',
+        'cart',
+        'sandbox-payment',
+        'payment-result',
+    ]
+    const demoUser = demoUserFor(routeParams.demo) || demoUserForDashboard(page)
+
+    // URL demo chỉ nâng quyền khi chưa có phiên thật; phiên đã đăng nhập vẫn giữ quyền backend cấp.
+    if (!user && demoUser) return <DemoRouteBootstrap user={demoUser} setUser={setUser} />
+    if (!user && !publicPages.includes(page)) return <LoginPage />
     if (page.startsWith('admin-') && user?.role !== 'admin')
         return <p role="alert">Access denied</p>
     if (page.startsWith('seller-') && user?.role !== 'seller' && user?.role !== 'admin')
@@ -78,6 +139,7 @@ export function AppRouter() {
         return <p role="alert">Access denied</p>
 
     // key theo tham số URL buộc catalog/chi tiết khởi tạo lại bộ lọc hoặc ảnh khi điều hướng sang dữ liệu khác.
+    // Trang 'home' hiển thị HomePage (Banner Hero, Đấu giá, Danh mục theo Figma); trang 'search' dùng SearchPage gọi API catalog thật.
     switch (page) {
         case 'login':
             return <LoginPage />
@@ -86,7 +148,7 @@ export function AppRouter() {
         case 'forgot-password':
             return <ForgotPasswordPage />
         case 'home':
-            return <SearchPage key={JSON.stringify(routeParams)} />
+            return <HomePage />
         case 'search':
             return <SearchPage key={JSON.stringify(routeParams)} />
         case 'product-detail':
@@ -95,6 +157,8 @@ export function AppRouter() {
             return <CartPage />
         case 'checkout':
             return <CheckoutPage />
+        case 'sandbox-payment':
+            return <SandboxPaymentPage />
         case 'payment-result':
             return <PaymentResultPage />
         case 'order-history':

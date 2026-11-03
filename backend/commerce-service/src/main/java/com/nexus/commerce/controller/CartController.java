@@ -3,7 +3,7 @@ package com.nexus.commerce.controller;
 import com.nexus.commerce.dto.request.AddToCartRequest;
 import com.nexus.commerce.dto.request.MergeCartRequest;
 import com.nexus.commerce.dto.request.UpdateCartItemRequest;
-import com.nexus.commerce.dto.response.ApiResponse;
+import com.nexus.common.response.ApiResponse;
 import com.nexus.commerce.dto.response.CartResponse;
 import com.nexus.commerce.service.CartService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -41,12 +41,10 @@ public class CartController {
     private final CartService cartService;
 
     /**
-     * Resolves the current user's UUID from JWT principal or Gateway forwarded X-User-Id header.
+     * Lấy UUID từ principal JWT đã xác minh; bỏ qua header để ngăn truy cập giỏ của người khác.
      */
     private UUID resolveUserId(Jwt jwt, String headerUserId) {
-        if (headerUserId != null && !headerUserId.isBlank()) {
-            return UUID.fromString(headerUserId);
-        }
+        // Chỉ JWT đã xác minh quyết định chủ sở hữu giỏ; header client không thể đổi user ID.
         if (jwt != null) {
             String subject = jwt.getSubject();
             if (subject != null && !subject.isBlank()) {

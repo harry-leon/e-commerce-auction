@@ -1,7 +1,7 @@
 package com.nexus.catalog.controller;
 
 import com.nexus.catalog.dto.request.CategoryRequest;
-import com.nexus.catalog.dto.response.ApiResponse;
+import com.nexus.common.response.ApiResponse;
 import com.nexus.catalog.dto.response.CategoryResponse;
 import com.nexus.catalog.service.CategoryService;
 import io.swagger.v3.oas.annotations.tags.Tag;

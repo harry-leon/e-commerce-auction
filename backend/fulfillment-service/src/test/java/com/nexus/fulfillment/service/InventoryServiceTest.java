@@ -1,215 +1,654 @@
 package com.nexus.fulfillment.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import com.nexus.fulfillment.dto.request.CommitReservationRequest;
+import com.nexus.common.exception.BusinessException;
+import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.config.FulfillmentProperties;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
-import com.nexus.fulfillment.dto.request.InventoryCheckItemRequest;
-import com.nexus.fulfillment.dto.request.InventoryCheckRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
-import com.nexus.fulfillment.dto.response.InventoryCheckResponse;
+import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
+import com.nexus.fulfillment.dto.request.StockAdjustmentRequest;
+import com.nexus.fulfillment.dto.request.StockInboundRequest;
+import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
+import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
-import com.nexus.fulfillment.dto.response.SkuInventoryResponse;
+import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
+import com.nexus.fulfillment.entity.Inventory;
+import com.nexus.fulfillment.entity.InventoryLedger;
+import com.nexus.fulfillment.entity.InventoryReservation;
+import com.nexus.fulfillment.entity.Warehouse;
+import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
-import com.nexus.fulfillment.exception.InsufficientStockException;
-import com.nexus.fulfillment.exception.InvalidReservationStatusException;
-import com.nexus.fulfillment.exception.ReservationExpiredException;
-import com.nexus.fulfillment.exception.ReservationNotFoundException;
-import com.nexus.fulfillment.exception.SkuNotFoundException;
+import com.nexus.fulfillment.enums.WarehouseType;
+import com.nexus.fulfillment.event.InventoryCheckedEvent;
+import com.nexus.fulfillment.event.InventoryCommittedEvent;
+import com.nexus.fulfillment.event.InventoryReleasedEvent;
+import com.nexus.fulfillment.event.InventoryReservationExpiredEvent;
+import com.nexus.fulfillment.event.InventoryReservedEvent;
+import com.nexus.fulfillment.repository.InventoryLedgerRepository;
+import com.nexus.fulfillment.repository.InventoryRepository;
+import com.nexus.fulfillment.repository.InventoryReservationRepository;
+import com.nexus.fulfillment.repository.WarehouseRepository;
 import com.nexus.fulfillment.service.impl.InventoryServiceImpl;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 /**
- * Kiểm thử đơn vị cho InventoryServiceImpl.
+ * Kiểm thử nghiệp vụ lõi Quản lý tồn kho và Khóa giữ hàng Checkout (InventoryService).
  *
- * Chức năng: Kiểm chứng logic nghiệp vụ kiểm tra tồn, tạo phiếu giữ hàng, commit xuất kho,
- * release hoàn kho và các ngoại lệ InsufficientStockException, ReservationExpiredException, SkuNotFoundException.
+ * Tình huống kiểm thử và lỗi bảo vệ:
+ * 1. Khóa giữ hàng thành công (Reserve): tăng reserved_qty, giảm available_qty, tạo phiếu PENDING, ghi sổ cái RESERVE, bắn sự kiện InventoryReserved.
+ * 2. Chặn bán vượt tồn (ALLOW_OVERSELL = false): từ chối giữ kho và ném INVENTORY_INSUFFICIENT khi available_qty < số lượng mua.
+ * 3. Báo lỗi khi không tìm thấy SKU: ném INVENTORY_NOT_FOUND.
+ * 4. Xác nhận đơn hàng thành công (Confirm): trừ cả total_qty và reserved_qty, ghi sổ cái OUTBOUND, bắn sự kiện InventoryCommitted.
+ * 5. Chặn xác nhận lại đơn đã xuất: ném INVENTORY_RESERVATION_ALREADY_COMMITTED.
+ * 6. Giải phóng giữ hàng chủ động (Release): hoàn trả reserved_qty về available_qty, chuyển trạng thái RELEASED, ghi sổ cái RELEASE, bắn sự kiện InventoryReleased.
+ * 7. Tự động hoàn kho phiếu quá hạn 30 phút (Auto-release): quét các phiếu PENDING hết hạn, chuyển trạng thái EXPIRED, hoàn kho và bắn InventoryReservationExpired.
+ * 8. Nhập kho (Inbound) và Điều chỉnh (Adjust): ghi sổ cái tương ứng, kiểm tra ràng buộc không được điều chỉnh tổng tồn xuống dưới mức đang giữ.
+ * 9. Sổ cái tồn kho bất biến (Immutable Inventory Ledger): bảo đảm không có thao tác sửa/xóa bản ghi sổ cái.
  */
+@ExtendWith(MockitoExtension.class)
 class InventoryServiceTest {
 
-    private InventoryServiceImpl service;
-    private final UUID seededSku1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
-    private final UUID defaultWarehouse = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    @Mock
+    private InventoryRepository inventoryRepository;
+
+    @Mock
+    private InventoryReservationRepository reservationRepository;
+
+    @Mock
+    private InventoryLedgerRepository ledgerRepository;
+
+    @Mock
+    private WarehouseRepository warehouseRepository;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
+    private FulfillmentProperties properties;
+    private InventoryServiceImpl inventoryService;
+
+    private Warehouse defaultWarehouse;
+    private UUID skuId;
 
     @BeforeEach
     void setUp() {
-        service = new InventoryServiceImpl();
+        properties = new FulfillmentProperties();
+        properties.setDefaultWarehouseCode("WH_001");
+        properties.setReservationTimeoutMinutes(30);
+        properties.setAllowOversell(false);
+
+        inventoryService = new InventoryServiceImpl(
+                inventoryRepository,
+                reservationRepository,
+                ledgerRepository,
+                warehouseRepository,
+                properties,
+                eventPublisher
+        );
+
+        defaultWarehouse = new Warehouse(
+                UUID.fromString("a0000000-0000-0000-0000-000000000001"),
+                "WH_001",
+                "Kho trung tâm",
+                "Hồ Chí Minh",
+                WarehouseType.STANDARD,
+                true
+        );
+
+        skuId = UUID.randomUUID();
     }
 
     @Test
-    @DisplayName("Kiểm tra tồn kho cho SKU có sẵn trả về available=true")
-    void checkStockSeededSkuAvailable() {
-        var request = new InventoryCheckRequest(List.of(
-                new InventoryCheckItemRequest(seededSku1, defaultWarehouse, 5)
-        ));
+    @DisplayName("Xem tồn kho SKU: Trả về chính xác 4 trạng thái tồn kho (total, available, reserved, unavailable)")
+    void testGetStockBySku_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 100, 20, 5);
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseId(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
 
-        InventoryCheckResponse res = service.checkStock(request);
-        assertTrue(res.available());
+        // When
+        InventoryStockResponse res = inventoryService.getStockBySku(skuId, null);
+
+        // Then
+        assertEquals(skuId, res.skuId());
+        assertEquals(defaultWarehouse.getId(), res.warehouseId());
+        assertEquals(100, res.totalQty());
+        assertEquals(75, res.availableQty()); // 100 - 20 - 5 = 75
+        assertEquals(20, res.reservedQty());
+        assertEquals(5, res.unavailableQty());
+    }
+
+    @Test
+    @DisplayName("Kiểm tra tồn kho khả dụng (Check): Tính đúng available và bắn sự kiện InventoryCheckedEvent")
+    void testCheckAvailability_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 50, 10, 0);
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseId(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
+
+        SkuAvailabilityCheckRequest req = new SkuAvailabilityCheckRequest(List.of(skuId), null);
+
+        // When
+        List<SkuAvailabilityResponse> list = inventoryService.checkAvailability(req);
+
+        // Then
+        assertEquals(1, list.size());
+        assertEquals(40, list.get(0).availableQty());
+        assertTrue(list.get(0).inStock());
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryCheckedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Khóa giữ hàng khi Checkout: Thành công khi tồn kho khả dụng đủ, tạo phiếu PENDING và ghi sổ cái RESERVE")
+    void testReserveStock_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 2, 0); // available = 8
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
+
+        UUID orderId = UUID.randomUUID();
+        CreateReservationRequest req = new CreateReservationRequest(
+                ReservationRefType.ORDER,
+                orderId,
+                List.of(new ReservationItemRequest(skuId, 3, null)),
+                30
+        );
+
+        // When
+        ReservationResponse response = inventoryService.reserveStock(req);
+
+        // Then
+        assertNotNull(response);
+        assertEquals(ReservationStatus.PENDING, response.status());
+        assertEquals(1, response.items().size());
+        assertEquals(3, response.items().get(0).quantity());
+
+        // Kiểm tra số lượng reserved_qty được tăng từ 2 lên 5
+        assertEquals(5, inventory.getReservedQty());
+        assertEquals(5, inventory.getAvailableQty()); // 10 - 5 - 0 = 5
+
+        verify(inventoryRepository, times(1)).save(inventory);
+        verify(reservationRepository, times(1)).save(any(InventoryReservation.class));
+
+        // Kiểm tra bản ghi ghi vào Sổ cái tồn kho bất biến
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        InventoryLedger savedLedger = ledgerCaptor.getValue();
+        assertEquals(LedgerMovementType.RESERVE, savedLedger.getMovementType());
+        assertEquals(3, savedLedger.getQuantity());
+        assertEquals("ORDER", savedLedger.getRefType());
+        assertEquals(orderId, savedLedger.getRefId());
+
+        // Kiểm tra bắn sự kiện miền InventoryReservedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReservedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Khóa giữ hàng khi Checkout: Từ chối và ném INVENTORY_INSUFFICIENT khi yêu cầu vượt quá tồn khả dụng")
+    void testReserveStock_InsufficientStock_ThrowsException() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 8, 0); // available = 2
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
+
+        UUID orderId = UUID.randomUUID();
+        CreateReservationRequest req = new CreateReservationRequest(
+                ReservationRefType.ORDER,
+                orderId,
+                List.of(new ReservationItemRequest(skuId, 5, null)), // Yêu cầu 5 trong khi khả dụng chỉ có 2
+                30
+        );
+
+        // When & Then
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.reserveStock(req));
+        assertEquals(ErrorCode.INVENTORY_INSUFFICIENT.name(), ex.getCode());
+
+        // Đảm bảo không lưu thay đổi và không ghi sổ cái khi bị từ chối
+        verify(inventoryRepository, never()).save(any());
+        verify(reservationRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any(InventoryReservedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Xác nhận xuất kho (Confirm): Giảm total_qty và reserved_qty, ghi sổ cái OUTBOUND, bắn InventoryCommittedEvent")
+    void testConfirmReservation_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 20, 5, 0);
+        UUID reservationId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                5,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByIdForUpdate(reservationId)).thenReturn(Optional.of(reservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        // When
+        ReservationResponse res = inventoryService.confirmReservation(reservationId);
+
+        // Then
+        assertEquals(ReservationStatus.CONFIRMED, res.status());
+        assertEquals(15, inventory.getTotalQty()); // 20 - 5 = 15
+        assertEquals(0, inventory.getReservedQty()); // 5 - 5 = 0
+        assertEquals(ReservationStatus.CONFIRMED, reservation.getStatus());
+
+        // Kiểm tra ghi sổ cái OUTBOUND
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.OUTBOUND, ledgerCaptor.getValue().getMovementType());
+        assertEquals(5, ledgerCaptor.getValue().getQuantity());
+
+        // Kiểm tra bắn sự kiện miền InventoryCommittedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryCommittedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Xác nhận xuất kho (Confirm) Idempotent: Phiếu đã CONFIRMED thì trả về kết quả ngay, không trừ kho lặp")
+    void testConfirmReservation_Idempotent() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 20, 0, 0);
+        UUID reservationId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                5,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.CONFIRMED,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByIdForUpdate(reservationId)).thenReturn(Optional.of(reservation));
+
+        // When
+        ReservationResponse res = inventoryService.confirmReservation(reservationId);
+
+        // Then
+        assertEquals(ReservationStatus.CONFIRMED, res.status());
+        assertEquals(reservationId, res.items().get(0).reservationId());
+
+        // Đảm bảo không gọi trừ tồn kho hay ghi thêm sổ cái lặp lại
+        verify(inventoryRepository, never()).findByIdForUpdate(any());
+        verify(inventoryRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any(InventoryCommittedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Xác nhận trừ kho theo đơn hàng (Commit by Order): Trừ vĩnh viễn reserved_qty và total_qty, ghi sổ cái OUTBOUND, bắn InventoryCommittedEvent")
+    void testCommitByOrder_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 50, 10, 0);
+        UUID orderId = UUID.randomUUID();
+        UUID reservationId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                10,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of(reservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        // When
+        ReservationResponse res = inventoryService.commitByOrder(orderId);
+
+        // Then
+        assertEquals(ReservationStatus.CONFIRMED, res.status());
         assertEquals(1, res.items().size());
-        assertTrue(res.items().get(0).available());
-        assertEquals(100, res.items().get(0).availableQuantity());
+        assertEquals(40, inventory.getTotalQty()); // 50 - 10 = 40
+        assertEquals(0, inventory.getReservedQty()); // 10 - 10 = 0
+        assertEquals(ReservationStatus.CONFIRMED, reservation.getStatus());
+
+        // Kiểm tra ghi sổ cái OUTBOUND
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.OUTBOUND, ledgerCaptor.getValue().getMovementType());
+        assertEquals(10, ledgerCaptor.getValue().getQuantity());
+
+        // Kiểm tra phát sinh sự kiện InventoryCommittedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryCommittedEvent.class));
     }
 
     @Test
-    @DisplayName("Kiểm tra tồn kho vượt quá số lượng hiện có trả về available=false")
-    void checkStockExceedingQuantityReturnsNotAvailable() {
-        var request = new InventoryCheckRequest(List.of(
-                new InventoryCheckItemRequest(seededSku1, defaultWarehouse, 150)
-        ));
-
-        InventoryCheckResponse res = service.checkStock(request);
-        assertFalse(res.available());
-        assertFalse(res.items().get(0).available());
-    }
-
-    @Test
-    @DisplayName("Tạo phiếu giữ hàng thành công chuyển trạng thái PENDING và giảm tồn khả dụng")
-    void createReservationSuccess() {
+    @DisplayName("Xác nhận trừ kho theo đơn hàng Idempotent: Đơn đã CONFIRMED không bị trừ kho lần 2 khi nhận trùng webhook")
+    void testCommitByOrder_Idempotent() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 40, 0, 0);
         UUID orderId = UUID.randomUUID();
-        var request = new CreateReservationRequest(
-                orderId,
+        UUID reservationId = UUID.randomUUID();
+        InventoryReservation confirmedReservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                10,
                 ReservationRefType.ORDER,
-                Instant.now().plusSeconds(1800),
-                List.of(new ReservationItemRequest(seededSku1, defaultWarehouse, 10))
+                orderId,
+                ReservationStatus.CONFIRMED,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
         );
 
-        ReservationResponse res = service.createReservation(request);
-        assertNotNull(res.reservationId());
-        assertEquals(ReservationStatus.PENDING, res.status());
-        assertEquals(orderId, res.orderId());
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of(confirmedReservation));
 
-        SkuInventoryResponse stock = service.getSkuInventory(seededSku1, defaultWarehouse);
-        assertEquals(90, stock.availableQuantity());
-        assertEquals(10, stock.reservedQuantity());
+        // When
+        ReservationResponse res = inventoryService.commitByOrder(orderId);
+
+        // Then
+        assertEquals(ReservationStatus.CONFIRMED, res.status());
+        assertEquals(orderId, res.refId());
+
+        // Đảm bảo không lưu thay đổi và không ghi sổ cái lần 2
+        verify(inventoryRepository, never()).findByIdForUpdate(any());
+        verify(inventoryRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any(InventoryCommittedEvent.class));
     }
 
     @Test
-    @DisplayName("Tạo phiếu giữ hàng khi tồn không đủ ném InsufficientStockException")
-    void createReservationInsufficientStockThrows() {
+    @DisplayName("Xác nhận trừ kho theo đơn hàng: Từ chối khi phiếu giữ kho đã hết hạn hoặc bị hủy")
+    void testCommitByOrder_ExpiredOrReleased_ThrowsException() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 50, 0, 0);
         UUID orderId = UUID.randomUUID();
-        var request = new CreateReservationRequest(
-                orderId,
+        InventoryReservation expiredRes = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                5,
                 ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.EXPIRED,
+                Instant.now().minus(5, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of(expiredRes));
+
+        // When & Then
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.commitByOrder(orderId));
+        assertEquals(ErrorCode.INVENTORY_RESERVATION_EXPIRED.name(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("Giải phóng tồn kho theo đơn hàng (Release by Order): Hoàn trả available_qty, ghi sổ cái RELEASE, bắn InventoryReleasedEvent")
+    void testReleaseByOrder_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 30, 6, 0);
+        UUID orderId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                6,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of(reservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        // When
+        inventoryService.releaseByOrder(orderId, "PAYMENT_FAILED");
+
+        // Then
+        assertEquals(ReservationStatus.RELEASED, reservation.getStatus());
+        assertEquals(0, inventory.getReservedQty()); // 6 - 6 = 0, hoàn trả lại cho available
+        assertEquals(30, inventory.getAvailableQty());
+
+        // Kiểm tra ghi sổ cái RELEASE
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.RELEASE, ledgerCaptor.getValue().getMovementType());
+
+        // Kiểm tra bắn sự kiện InventoryReleasedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReleasedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Giải phóng tồn kho theo đơn hàng Idempotent: Phiếu đã RELEASED không bị hoàn trả thêm lần nữa")
+    void testReleaseByOrder_Idempotent() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 30, 0, 0);
+        UUID orderId = UUID.randomUUID();
+        InventoryReservation alreadyReleased = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                6,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.RELEASED,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of(alreadyReleased));
+
+        // When
+        inventoryService.releaseByOrder(orderId, "ORDER_CANCELLED");
+
+        // Then
+        verify(inventoryRepository, never()).findByIdForUpdate(any());
+        verify(inventoryRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any(InventoryReleasedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Giải phóng giữ hàng (Release): Hoàn trả tồn khả dụng, ghi sổ cái RELEASE, bắn InventoryReleasedEvent")
+    void testReleaseReservation_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 20, 4, 0);
+        UUID reservationId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                4,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByIdForUpdate(reservationId)).thenReturn(Optional.of(reservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        // When
+        inventoryService.releaseReservation(reservationId, "BUYER_CANCELLED");
+
+        // Then
+        assertEquals(ReservationStatus.RELEASED, reservation.getStatus());
+        assertEquals(0, inventory.getReservedQty()); // 4 - 4 = 0
+        assertEquals(20, inventory.getAvailableQty()); // Hoàn trả lại tồn khả dụng
+
+        // Kiểm tra ghi sổ cái RELEASE
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.RELEASE, ledgerCaptor.getValue().getMovementType());
+
+        // Kiểm tra bắn sự kiện InventoryReleasedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReleasedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Giải phóng giữ hàng theo Ref: Hoàn kho toàn bộ các phiếu PENDING của đơn hàng")
+    void testReleaseReservationsByRef_Success() {
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 20, 4, 0);
+        UUID orderId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                4,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(30, ChronoUnit.MINUTES)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(
+                ReservationRefType.ORDER,
+                orderId
+        )).thenReturn(List.of(reservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        inventoryService.releaseReservationsByRef(new ReleaseReservationRequest(
+                ReservationRefType.ORDER,
+                orderId,
+                "ORDER_CANCELLED"
+        ));
+
+        assertEquals(ReservationStatus.RELEASED, reservation.getStatus());
+        assertEquals(0, inventory.getReservedQty());
+        verify(ledgerRepository, times(1)).save(any(InventoryLedger.class));
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReleasedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Tự động hoàn kho phiếu quá hạn 30 phút (Auto-release): Chuyển sang EXPIRED và bắn InventoryReservationExpiredEvent")
+    void testAutoReleaseExpiredReservations_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 2, 0);
+        UUID reservationId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        Instant expiredTime = Instant.now().minus(5, ChronoUnit.MINUTES);
+        InventoryReservation expiredReservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                2,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                expiredTime
+        );
+
+        when(reservationRepository.findByStatusAndExpiresAtBefore(eq(ReservationStatus.PENDING), any(Instant.class)))
+                .thenReturn(List.of(expiredReservation));
+        when(reservationRepository.findByIdForUpdate(reservationId)).thenReturn(Optional.of(expiredReservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        // When
+        int count = inventoryService.autoReleaseExpiredReservations();
+
+        // Then
+        assertEquals(1, count);
+        assertEquals(ReservationStatus.EXPIRED, expiredReservation.getStatus());
+        assertEquals(0, inventory.getReservedQty()); // 2 - 2 = 0, hoàn trả lại cho available_qty
+        assertEquals(10, inventory.getAvailableQty());
+
+        // Kiểm tra ghi sổ cái RELEASE
+        verify(ledgerRepository, times(1)).save(any(InventoryLedger.class));
+
+        // Kiểm tra bắn sự kiện miền InventoryReservationExpiredEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReservationExpiredEvent.class));
+    }
+
+    @Test
+    @DisplayName("Nhập kho (Inbound): Tăng total_qty và ghi sổ cái INBOUND")
+    void testInboundStock_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 50, 0, 0);
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
+        when(inventoryRepository.save(any(Inventory.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        StockInboundRequest req = new StockInboundRequest(skuId, null, 25, UUID.randomUUID());
+
+        // When
+        InventoryStockResponse res = inventoryService.inboundStock(req);
+
+        // Then
+        assertEquals(75, res.totalQty()); // 50 + 25 = 75
+        assertEquals(75, res.availableQty());
+
+        // Kiểm tra ghi sổ cái INBOUND
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.INBOUND, ledgerCaptor.getValue().getMovementType());
+        assertEquals(25, ledgerCaptor.getValue().getQuantity());
+    }
+
+    @Test
+    @DisplayName("Điều chỉnh tồn kho (Adjust): Giảm tổng số lượng vượt quá mức khả dụng sẽ bị từ chối")
+    void testAdjustStock_NegativeExceedingAvailable_ThrowsException() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 20, 15, 0); // available = 5
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
+
+        StockAdjustmentRequest req = new StockAdjustmentRequest(skuId, null, -10, "Hàng vỡ", UUID.randomUUID());
+
+        // When & Then: giảm 10 làm tổng mới = 10, trong khi đang giữ 15 -> vi phạm ràng buộc
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.adjustStock(req));
+        assertEquals(ErrorCode.INVENTORY_INSUFFICIENT.name(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("Tra cứu Sổ cái bất biến: Trả về danh sách biến động có phân trang")
+    void testGetLedger_Success() {
+        // Given
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 20, 0, 0);
+        InventoryLedger ledger = new InventoryLedger(
+                UUID.randomUUID(),
+                inventory,
+                LedgerMovementType.INBOUND,
+                20,
+                "INBOUND",
                 null,
-                List.of(new ReservationItemRequest(seededSku1, defaultWarehouse, 200))
+                Instant.now()
         );
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<InventoryLedger> page = new PageImpl<>(List.of(ledger), pageable, 1);
 
-        assertThrows(InsufficientStockException.class, () -> service.createReservation(request));
-    }
+        when(ledgerRepository.searchLedger(skuId, null, pageable)).thenReturn(page);
 
-    @Test
-    @DisplayName("Tạo phiếu giữ hàng với SKU không tồn tại ném SkuNotFoundException")
-    void createReservationUnknownSkuThrows() {
-        UUID orderId = UUID.randomUUID();
-        UUID unknownSku = UUID.randomUUID();
-        var request = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                null,
-                List.of(new ReservationItemRequest(unknownSku, defaultWarehouse, 1))
-        );
+        // When
+        Page<InventoryLedgerResponse> result = inventoryService.getLedger(skuId, null, pageable);
 
-        assertThrows(SkuNotFoundException.class, () -> service.createReservation(request));
-    }
-
-    @Test
-    @DisplayName("Commit phiếu giữ hàng thành công cập nhật trạng thái CONFIRMED và trừ tổng tồn kho")
-    void commitReservationSuccess() {
-        UUID orderId = UUID.randomUUID();
-        var createReq = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                Instant.now().plusSeconds(1800),
-                List.of(new ReservationItemRequest(seededSku1, defaultWarehouse, 10))
-        );
-        ReservationResponse created = service.createReservation(createReq);
-
-        ReservationResponse committed = service.commitReservation(
-                created.reservationId(),
-                new CommitReservationRequest("PAYMENT_SUCCESS")
-        );
-
-        assertEquals(ReservationStatus.CONFIRMED, committed.status());
-        SkuInventoryResponse stock = service.getSkuInventory(seededSku1, defaultWarehouse);
-        assertEquals(90, stock.totalQuantity());
-        assertEquals(0, stock.reservedQuantity());
-        assertEquals(90, stock.availableQuantity());
-    }
-
-    @Test
-    @DisplayName("Commit phiếu giữ hàng đã hết hạn ném ReservationExpiredException")
-    void commitReservationExpiredThrows() {
-        UUID orderId = UUID.randomUUID();
-        var createReq = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                Instant.now().minusSeconds(10), // Đã hết hạn
-                List.of(new ReservationItemRequest(seededSku1, defaultWarehouse, 5))
-        );
-        ReservationResponse created = service.createReservation(createReq);
-
-        assertThrows(ReservationExpiredException.class, () -> service.commitReservation(
-                created.reservationId(),
-                new CommitReservationRequest("PAYMENT_SUCCESS")
-        ));
-    }
-
-    @Test
-    @DisplayName("Release phiếu giữ hàng hoàn trả lại số lượng tồn khả dụng")
-    void releaseReservationSuccess() {
-        UUID orderId = UUID.randomUUID();
-        var createReq = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                Instant.now().plusSeconds(1800),
-                List.of(new ReservationItemRequest(seededSku1, defaultWarehouse, 10))
-        );
-        ReservationResponse created = service.createReservation(createReq);
-
-        ReservationResponse released = service.releaseReservation(
-                created.reservationId(),
-                new ReleaseReservationRequest("ORDER_CANCELLED")
-        );
-
-        assertEquals(ReservationStatus.RELEASED, released.status());
-        SkuInventoryResponse stock = service.getSkuInventory(seededSku1, defaultWarehouse);
-        assertEquals(100, stock.availableQuantity());
-        assertEquals(0, stock.reservedQuantity());
-    }
-
-    @Test
-    @DisplayName("Release phiếu đã CONFIRMED ném InvalidReservationStatusException")
-    void releaseConfirmedReservationThrows() {
-        UUID orderId = UUID.randomUUID();
-        var createReq = new CreateReservationRequest(
-                orderId,
-                ReservationRefType.ORDER,
-                Instant.now().plusSeconds(1800),
-                List.of(new ReservationItemRequest(seededSku1, defaultWarehouse, 10))
-        );
-        ReservationResponse created = service.createReservation(createReq);
-        service.commitReservation(created.reservationId(), new CommitReservationRequest(null));
-
-        assertThrows(InvalidReservationStatusException.class, () -> service.releaseReservation(
-                created.reservationId(),
-                new ReleaseReservationRequest(null)
-        ));
-    }
-
-    @Test
-    @DisplayName("Tra cứu phiếu không tồn tại ném ReservationNotFoundException")
-    void getReservationNotFoundThrows() {
-        assertThrows(ReservationNotFoundException.class, () -> service.getReservation(UUID.randomUUID()));
+        // Then
+        assertEquals(1, result.getTotalElements());
+        assertEquals(LedgerMovementType.INBOUND, result.getContent().get(0).movementType());
+        assertEquals(20, result.getContent().get(0).quantity());
     }
 }

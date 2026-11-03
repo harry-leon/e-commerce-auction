@@ -1,0 +1,10 @@
+# Root build context chỉ cần source/config; loại token, Git và artifact local khỏi Docker daemon.
+.git
+.env
+**/target
+**/node_modules
+**/dist
+**/coverage
+**/.idea
+**/playwright-report
+**/test-results

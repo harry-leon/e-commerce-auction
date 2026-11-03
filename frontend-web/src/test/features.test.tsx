@@ -8,8 +8,10 @@ import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { ProfilePage } from '../features/profile/ProfilePage'
 import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
+import { CartPage, CheckoutPage, SandboxPaymentPage } from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession } from '../api/client'
+import { ordersApi } from '../api/orders'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -44,6 +46,34 @@ const product = {
     createdAt: '',
     skus: [{ id: 'sku-1', skuCode: 'LAPTOP-1', price: 500, status: 'ACTIVE' }],
     images: [{ id: 'img-1', url: '/laptop.png', sortOrder: 0 }],
+}
+
+const mockCartItem = {
+    id: 'item-1',
+    skuId: 'sku-1',
+    skuCode: 'LAPTOP-1',
+    productName: 'API Laptop',
+    thumbnailUrl: '/laptop.png',
+    unitPrice: 500,
+    quantity: 1,
+    stockAvailable: 10,
+    isAvailable: true,
+    subtotal: 500,
+}
+
+const mockCart = {
+    cartId: 'cart-1',
+    userId: 'user-1',
+    status: 'ACTIVE' as const,
+    items: [mockCartItem],
+    totalItems: 1,
+    totalQuantity: 1,
+    subtotal: 500,
+    discountAmount: 0,
+    shippingFee: 15,
+    taxAmount: 40,
+    totalAmount: 555,
+    expiresAt: null,
 }
 
 /** Mock tại ranh giới HTTP để kiểm tra form → client → payload thật, gồm lỗi nghiệp vụ và cập nhật sau khi lưu. */
@@ -97,7 +127,42 @@ beforeEach(() => {
                 }
             else if (path.endsWith('/products/product-1'))
                 payload = { success: true, data: product }
-            else
+            else if (path.includes('/cart/items') && init.method === 'DELETE') {
+                payload = {
+                    success: true,
+                    data: {
+                        ...mockCart,
+                        items: [],
+                        totalItems: 0,
+                        totalQuantity: 0,
+                        subtotal: 0,
+                        totalAmount: 0,
+                    },
+                }
+            } else if (path.includes('/cart/items') && init.method === 'PUT') {
+                const body = init.body ? JSON.parse(String(init.body)) : { quantity: 2 }
+                const qty = body.quantity || 1
+                payload = {
+                    success: true,
+                    data: {
+                        ...mockCart,
+                        items: [
+                            {
+                                ...mockCartItem,
+                                quantity: qty,
+                                subtotal: mockCartItem.unitPrice * qty,
+                            },
+                        ],
+                        totalQuantity: qty,
+                        subtotal: mockCartItem.unitPrice * qty,
+                        totalAmount: mockCartItem.unitPrice * qty + 15 + 40,
+                    },
+                }
+            } else if (path.includes('/cart/items') && init.method === 'POST') {
+                payload = { success: true, data: mockCart }
+            } else if (path.includes('/cart')) {
+                payload = { success: true, data: mockCart }
+            } else
                 payload = {
                     success: true,
                     data: [product],
@@ -208,8 +273,8 @@ describe('profile and category writes', () => {
     it('persists category edits and handles cancellation and failed deletion', async () => {
         render(<AdminCategoriesPage />)
         await screen.findByText(/Điện tử ·/)
-        fireEvent.change(screen.getByLabelText('Tên tiếng Anh'), { target: { value: 'Books' } })
-        fireEvent.change(screen.getByLabelText('Tên tiếng Việt'), { target: { value: 'Sách' } })
+        // ERD chỉ có name: form lưu một tên, không gửi bản dịch nameVi riêng.
+        fireEvent.change(screen.getByLabelText('Tên danh mục'), { target: { value: 'Books' } })
         fireEvent.click(screen.getByRole('button', { name: 'Lưu' }))
         await waitFor(() =>
             expect(
@@ -278,24 +343,447 @@ describe('IAM forms', () => {
             gender: 'MALE',
         })
     })
-    it('sends email, rejects mismatching passwords and consumes the reset token', async () => {
+    // Hồi quy chuyển IAM: ứng dụng chỉ yêu cầu email, không còn nhập/reset token cục bộ.
+    it('requests an IAM reset email and directs the user to the email link', async () => {
         const ui = userEvent.setup()
         render(<ForgotPasswordPage />)
         await ui.click(screen.getByRole('button', { name: 'Send Reset Link' }))
         expect(screen.getByText(/Invalid email/i)).toBeVisible()
         await ui.type(screen.getByLabelText('Email'), user.email)
         await ui.click(screen.getByRole('button', { name: 'Send Reset Link' }))
-        await screen.findByLabelText('Reset token')
-        await ui.type(screen.getByLabelText('Reset token'), 'mail-token')
-        await ui.type(screen.getByLabelText('New Password'), 'NewPassword1!')
-        await ui.type(screen.getByLabelText('Confirm Password'), 'Mismatch')
-        await ui.click(screen.getByRole('button', { name: 'Reset Password' }))
-        expect(screen.getByText(/match/i)).toBeVisible()
-        await ui.clear(screen.getByLabelText('Confirm Password'))
-        await ui.type(screen.getByLabelText('Confirm Password'), 'NewPassword1!')
-        await ui.click(screen.getByRole('button', { name: 'Reset Password' }))
-        await screen.findByText('Password reset successfully!')
+        expect(await screen.findByRole('status')).toHaveTextContent(/link in your email/i)
+        expect(screen.queryByLabelText('Reset token')).not.toBeInTheDocument()
         await ui.click(screen.getByRole('button', { name: 'Back to Login' }))
         expect(holder.current.navigate).toHaveBeenCalledWith('login')
+    })
+})
+
+describe('Cart, Checkout và Payment Result', () => {
+    /**
+     * Kiểm tra CartPage: apply voucher hợp lệ/không hợp lệ.
+    /**
+     * Kiểm tra CartPage:
+     * 1. Lấy và hiển thị sản phẩm giỏ hàng từ backend API (Accept Criteria 1)
+     * 2. Áp dụng mã giảm giá voucher (hợp lệ và không hợp lệ)
+     * 3. Hiển thị tổng tiền và tóm tắt thanh toán (Accept Criteria 3)
+     */
+    it('CartPage: hiển thị danh sách sản phẩm từ backend và áp dụng voucher', async () => {
+        render(<CartPage />)
+        // Accept Criteria 1: Buyer lấy và xem được danh sách sản phẩm trong giỏ hàng từ Backend
+        await screen.findByRole('heading', { level: 1 })
+        expect(screen.getByText('API Laptop')).toBeVisible()
+
+        // Accept Criteria 3: Tổng tiền được hiển thị dựa trên dữ liệu API
+        expect(screen.getByText(/order summary|tóm tắt đơn hàng/i)).toBeVisible()
+
+        // Nhập voucher sai → hiển thị lỗi
+        const voucherInput = screen.getByPlaceholderText('NEXUS10')
+        fireEvent.change(voucherInput, { target: { value: 'WRONG' } })
+        fireEvent.click(screen.getByRole('button', { name: /áp|apply/i }))
+        await waitFor(() => expect(screen.getByText(/invalid|không hợp lệ/i)).toBeVisible())
+
+        // Nhập voucher đúng → showToast được gọi
+        fireEvent.change(voucherInput, { target: { value: 'NEXUS10' } })
+        fireEvent.click(screen.getByRole('button', { name: /áp|apply/i }))
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+    })
+
+    /**
+     * Kiểm tra CartPage: cập nhật số lượng và xóa sản phẩm khỏi giỏ hàng (Accept Criteria 2).
+     */
+    it('CartPage: cập nhật số lượng và xóa sản phẩm khỏi giỏ hàng', async () => {
+        render(<CartPage />)
+        await screen.findByText('API Laptop')
+
+        // Cập nhật số lượng qua nút tăng (+) của NumberStepper
+        const plusBtn = screen.getByRole('button', { name: '+' })
+        fireEvent.click(plusBtn)
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+
+        // Xóa sản phẩm đơn lẻ bằng nút Trash
+        const trashBtn = screen.getByRole('button', { name: /xóa khỏi giỏ|remove item/i })
+        fireEvent.click(trashBtn)
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+    })
+
+    /**
+     * Kiểm tra CartPage: mở modal xác nhận và dọn toàn bộ giỏ hàng (Accept Criteria 2).
+     */
+    it('CartPage: mở modal xác nhận và dọn toàn bộ giỏ hàng', async () => {
+        render(<CartPage />)
+        await screen.findByText('API Laptop')
+
+        // Bấm nút Xóa tất cả
+        const clearBtn = screen.getByRole('button', { name: /clear cart|xóa tất cả/i })
+        fireEvent.click(clearBtn)
+
+        // Modal xác nhận xuất hiện
+        await waitFor(() =>
+            expect(screen.getByText(/are you sure you want to remove all items/i)).toBeVisible(),
+        )
+        // Bấm Confirm
+        const confirmBtn = screen.getByRole('button', { name: /confirm|xác nhận/i })
+        fireEvent.click(confirmBtn)
+        await waitFor(() => expect(holder.current.showToast).toHaveBeenCalled())
+    })
+
+    it('CartPage: điều hướng sang Checkout khi bấm nút', async () => {
+        render(<CartPage />)
+        const checkoutBtn = await screen.findByRole('button', { name: /checkout|thanh toán/i })
+        fireEvent.click(checkoutBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+    })
+
+    /**
+     * Kiểm tra CartPage: xử lý trạng thái giỏ hàng trống và lỗi API (Accept Criteria 5).
+     */
+    it('CartPage: xử lý trạng thái giỏ hàng trống', async () => {
+        const prevFetch = globalThis.fetch
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (input: string, init: RequestInit = {}) => {
+                const path = input.split('?')[0]
+                if (path.includes('/cart')) {
+                    return new Response(
+                        JSON.stringify({
+                            success: true,
+                            data: {
+                                ...mockCart,
+                                items: [],
+                                totalItems: 0,
+                                totalQuantity: 0,
+                                subtotal: 0,
+                                totalAmount: 0,
+                            },
+                        }),
+                        { status: 200 },
+                    )
+                }
+                return prevFetch(input, init)
+            }),
+        )
+
+        render(<CartPage />)
+        await waitFor(() => expect(screen.getByText(/cart is empty|đang trống/i)).toBeVisible())
+        const startShoppingBtn = screen.getByRole('button', {
+            name: /start shopping|bắt đầu mua sắm/i,
+        })
+        fireEvent.click(startShoppingBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('home')
+    })
+
+    it('CartPage: xử lý trạng thái lỗi API và cho phép thử lại', async () => {
+        sessionStorage.setItem(
+            'nexus.session',
+            JSON.stringify({ accessToken: 'token', refreshToken: 'r', user }),
+        )
+        const prevFetch = globalThis.fetch
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (input: string, init: RequestInit = {}) => {
+                const path = input.split('?')[0]
+                if (path.includes('/cart')) {
+                    return new Response(
+                        JSON.stringify({
+                            success: false,
+                            message: 'Connection timed out',
+                        }),
+                        { status: 500 },
+                    )
+                }
+                return prevFetch(input, init)
+            }),
+        )
+
+        render(<CartPage />)
+        await waitFor(() => expect(screen.getByText(/connection timed out/i)).toBeVisible())
+        const tryAgainBtn = screen.getByRole('button', { name: /try again|thử lại/i })
+        expect(tryAgainBtn).toBeVisible()
+    })
+
+    /**
+     * Kiểm tra CheckoutPage: kiểm tra dữ liệu bắt buộc (Accept Criteria 4).
+     * Bắt lỗi khi bỏ trống hoặc nhập sai định dạng tại Bước 1 và Bước 3.
+     */
+    it('CheckoutPage: kiểm tra dữ liệu bắt buộc tại Bước 1 (Họ tên, SĐT, Địa chỉ)', async () => {
+        render(<CheckoutPage />)
+        expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible()
+
+        // Xóa sạch các trường để kích hoạt validation
+        const nameInput = screen.getByPlaceholderText('Nguyen Van A')
+        const phoneInput = screen.getByPlaceholderText('0901234567')
+        const streetInput = screen.getByPlaceholderText('123 Nguyen Hue Street')
+
+        fireEvent.change(nameInput, { target: { value: '' } })
+        fireEvent.change(phoneInput, { target: { value: '123' } }) // SĐT sai định dạng VN
+        fireEvent.change(streetInput, { target: { value: '' } })
+
+        // Bấm Next
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Vẫn ở bước 1 và hiển thị lỗi validation
+        await waitFor(() => {
+            expect(screen.getByText(/full name is required|họ và tên là bắt buộc/i)).toBeVisible()
+            expect(
+                screen.getByText(/invalid phone number|số điện thoại không hợp lệ/i),
+            ).toBeVisible()
+            expect(
+                screen.getByText(/street address is required|địa chỉ cụ thể là bắt buộc/i),
+            ).toBeVisible()
+        })
+    })
+
+    it('CheckoutPage: kiểm tra dữ liệu bắt buộc tại Bước 3 (Thông tin thẻ)', async () => {
+        render(<CheckoutPage />)
+        // Sang bước 2
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+
+        // Sang bước 3
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+
+        // Nhập sai số thẻ và mã CVV
+        const cardInput = screen.getByPlaceholderText('4242 4242 4242 4242')
+        const cvvInput = screen.getByPlaceholderText('123')
+        fireEvent.change(cardInput, { target: { value: '1234' } })
+        fireEvent.change(cvvInput, { target: { value: '9' } })
+
+        // Bấm Next
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Hiển thị lỗi validation thẻ
+        await waitFor(() => {
+            expect(
+                screen.getByText(/card number must be 16 digits|số thẻ phải gồm đúng 16 chữ số/i),
+            ).toBeVisible()
+            expect(
+                screen.getByText(/cvv must be 3 or 4 digits|mã cvv phải gồm 3 hoặc 4 chữ số/i),
+            ).toBeVisible()
+        })
+    })
+
+    /**
+     * Kiểm tra CheckoutPage: flow đa bước (1→2→3→4), mỗi bước có nút Next/Back.
+     * Bảo vệ hồi quy luồng mua hàng quan trọng nhất của Buyer.
+     */
+    it('CheckoutPage: điều hướng qua các bước 1→2→3→4 và hiển thị đúng nội dung', async () => {
+        render(<CheckoutPage />)
+        // Bước 1: Địa chỉ giao hàng
+        expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible()
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Bước 2: Phương thức vận chuyển
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        // Chọn GHTK
+        const radios = screen.getAllByRole('radio')
+        fireEvent.click(radios[1])
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Bước 3: Thanh toán
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+
+        // Bước 4: Xác nhận – hiển thị GHTK Standard
+        await waitFor(() => expect(screen.getByText(/GHTK Standard/i)).toBeVisible())
+    })
+
+    it('CheckoutPage: nút Back đưa về bước trước', async () => {
+        render(<CheckoutPage />)
+        // Vào bước 2
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        // Back về bước 1
+        fireEvent.click(screen.getByRole('button', { name: /back|quay lại/i }))
+        await waitFor(() =>
+            expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible(),
+        )
+    })
+
+    it('CheckoutPage: đặt hàng với phương thức VNPAY và chuyển hướng tới sandbox-payment (Accept Criteria 1, 3, 4)', async () => {
+        // Cô lập kiểm tra điều hướng UI bằng response fixture; VNPAY production không còn fallback URL mock.
+        const createSpy = vi.spyOn(ordersApi, 'createOrder').mockResolvedValueOnce({
+            id: 'test-order',
+            orderNo: 'ORD-TEST',
+            status: 'PENDING_PAYMENT',
+            subtotal: 100,
+            shippingFee: 0,
+            discount: 0,
+            total: 100,
+            paymentMethod: 'VNPAY',
+            paymentUrl: '/sandbox-payment?provider=vnpay',
+        })
+        render(<CheckoutPage />)
+        // Bước 1 -> Bước 2
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+
+        // Bước 2 -> Bước 3
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
+
+        // Chọn VNPAY
+        const vnpayRadio = screen.getByLabelText(/VNPAY QR/i)
+        fireEvent.click(vnpayRadio)
+
+        // Bước 3 -> Bước 4
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
+        )
+
+        // Bấm Đặt hàng
+        fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
+
+        // Chuyển hướng sang sandbox-payment
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith(
+                'sandbox-payment',
+                expect.objectContaining({ provider: 'vnpay' }),
+            )
+        })
+        createSpy.mockRestore()
+    })
+
+    it('CheckoutPage: hiển thị thông báo lỗi khi đặt hàng thất bại (Accept Criteria 2, 5)', async () => {
+        const spy = vi
+            .spyOn(ordersApi, 'createOrder')
+            .mockRejectedValueOnce(new Error('Gateway connection timeout'))
+        render(<CheckoutPage />)
+        // 1 -> 2 -> 3 -> 4
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
+        )
+
+        // Bấm Đặt hàng
+        fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
+
+        // Hiển thị lỗi rõ ràng trên AlertBanner
+        await waitFor(() => {
+            expect(screen.getByText(/Gateway connection timeout/i)).toBeVisible()
+        })
+        expect(holder.current.showToast).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'error', message: 'Gateway connection timeout' }),
+        )
+        spy.mockRestore()
+    })
+
+    it('SandboxPaymentPage: hiển thị giao diện sandbox và mô phỏng thanh toán thành công (Accept Criteria 3)', async () => {
+        holder.current.pageParams = {
+            orderId: 'ORD-TEST-999',
+            amount: 450000,
+            provider: 'vnpay',
+        }
+        render(<SandboxPaymentPage />)
+
+        expect(screen.getByText('ORD-TEST-999')).toBeVisible()
+        expect(screen.getByText(/Sandbox Environment|Môi trường Sandbox/i)).toBeVisible()
+
+        // Bấm Xác nhận thanh toán thành công
+        const successBtn = screen.getByRole('button', {
+            name: /Simulate Success|thanh toán thành công/i,
+        })
+        fireEvent.click(successBtn)
+
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+                status: 'success',
+                orderId: 'ORD-TEST-999',
+            })
+        })
+    })
+
+    it('SandboxPaymentPage: mô phỏng thanh toán thất bại điều hướng về payment-result failed (Accept Criteria 2)', async () => {
+        holder.current.pageParams = {
+            orderId: 'ORD-TEST-999',
+            amount: 450000,
+            provider: 'vnpay',
+        }
+        render(<SandboxPaymentPage />)
+
+        // Bấm Mô phỏng thanh toán thất bại
+        const failBtn = screen.getByRole('button', {
+            name: /Simulate Failure|thanh toán thất bại/i,
+        })
+        fireEvent.click(failBtn)
+
+        await waitFor(() => {
+            expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+                status: 'failed',
+                orderId: 'ORD-TEST-999',
+                reason: 'Sandbox transaction rejected',
+            })
+        })
+    })
+
+    /**
+     * Kiểm tra nút Hủy thanh toán tại SandboxPaymentPage điều hướng về payment-result cancelled.
+     */
+    it('SandboxPaymentPage: nút hủy thanh toán chuyển sang payment-result cancelled', async () => {
+        holder.current.pageParams = {
+            orderId: 'ORD-CANCEL-TEST',
+            amount: 200000,
+            provider: 'vnpay',
+        }
+        render(<SandboxPaymentPage />)
+        const cancelBtn = screen.getByRole('button', {
+            name: /cancel payment|hủy thanh toán/i,
+        })
+        expect(cancelBtn).toBeVisible()
+        fireEvent.click(cancelBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('payment-result', {
+            status: 'cancelled',
+            orderId: 'ORD-CANCEL-TEST',
+        })
+    })
+})
+
+describe('ProductDetailPage (catalog) – Add to Cart và Tab', () => {
+    /**
+     * Kiểm tra các luồng trong ProductDetailPage của catalog chưa được cover:
+     * - Nút Add to Cart gọi setCartCount và showToast
+     * - Nút Buy Now điều hướng đến trang checkout
+     * - Chuyển tab mô tả/đánh giá/thông số
+     */
+    it('click Add to Cart cập nhật cartCount và hiển thị toast', async () => {
+        holder.current.pageParams = { id: 'product-1' }
+        render(<ProductDetailPage />)
+        await screen.findByText('Live description')
+
+        // Bấm nút Thêm vào giỏ
+        const addBtn = screen.getByRole('button', { name: /thêm vào giỏ|add to cart/i })
+        fireEvent.click(addBtn)
+        expect(holder.current.showToast).toHaveBeenCalled()
+    })
+
+    it('click Buy Now điều hướng đến trang checkout', async () => {
+        holder.current.pageParams = { id: 'product-1' }
+        render(<ProductDetailPage />)
+        await screen.findByText('Live description')
+
+        const buyBtn = screen.getByRole('button', { name: /mua ngay|buy now/i })
+        fireEvent.click(buyBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+    })
+
+    it('chuyển tab sang Specifications hiển thị thông số kỹ thuật', async () => {
+        holder.current.pageParams = { id: 'product-1' }
+        render(<ProductDetailPage />)
+        await screen.findByText('Live description')
+
+        // Tìm tất cả buttons, click tab Specifications
+        const allButtons = screen.getAllByRole('button')
+        const specsTab = allButtons.find((btn) =>
+            /^specifications|^thông số/i.test(btn.textContent || ''),
+        )
+        expect(specsTab).toBeDefined()
+        fireEvent.click(specsTab!)
+        // Tab Specifications hiển thị bảng thông số (có row "Weight")
+        await waitFor(() => expect(screen.getByText('Weight')).toBeVisible())
     })
 })

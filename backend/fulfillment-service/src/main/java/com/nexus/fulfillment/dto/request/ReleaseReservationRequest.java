@@ -1,18 +1,26 @@
 package com.nexus.fulfillment.dto.request;
 
-import io.swagger.v3.oas.annotations.media.Schema;
+import com.nexus.fulfillment.enums.ReservationRefType;
+import jakarta.validation.constraints.NotNull;
+import java.util.UUID;
 
 /**
- * Yêu cầu hủy giữ hàng và hoàn kho (Release Reservation Request).
+ * Yêu cầu giải phóng phiếu giữ hàng theo mã tham chiếu đơn hàng (SRS §3.6.1).
  *
- * Chức năng: Tiếp nhận thông tin bổ sung khi giải phóng tồn kho bị giữ (SRS §2.8 & §3.6.1)
- * khi đơn hàng bị hủy, thanh toán thất bại hoặc quá hạn.
+ * Chức năng:
+ * - Được Commerce Service gọi khi đơn hàng bị người dùng hủy hoặc thanh toán không thành công.
  *
- * @param reason Lý do hủy giữ hàng (tùy chọn, ví dụ: "ORDER_CANCELLED", "PAYMENT_EXPIRED", "USER_ABANDONED")
+ * @param refType Loại tham chiếu (ORDER hoặc AUCTION)
+ * @param refId   Mã đơn hàng hoặc phiên đấu giá cần giải phóng tồn kho
+ * @param reason  Lý do giải phóng (ví dụ: BUYER_CANCELLED, PAYMENT_FAILED)
  */
-@Schema(description = "Yêu cầu giải phóng tồn kho đã giữ (Release Reservation)")
 public record ReleaseReservationRequest(
-        @Schema(description = "Lý do hoàn trả tồn kho", example = "ORDER_CANCELLED")
+        @NotNull(message = "refType không được để trống")
+        ReservationRefType refType,
+
+        @NotNull(message = "refId không được để trống")
+        UUID refId,
+
         String reason
 ) {
 }

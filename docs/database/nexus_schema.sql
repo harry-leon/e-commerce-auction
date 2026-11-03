@@ -1,5 +1,9 @@
--- Project Nexus: schema theo microservice (PostgreSQL)
--- Moi schema = 1 service/database. Khong co FK giua cac service.
+-- Project Nexus: schema nghiệp vụ theo ERD Nerum V2 (1).json đã chốt (PostgreSQL)
+-- Bản tổng hợp để đọc/đối chiếu: mỗi schema biểu diễn database của một service.
+-- Khi chạy ứng dụng, deploy/postgres/init-databases.sh tạo database riêng;
+-- Flyway trong từng service quản lý bảng ở schema mặc định. Không chạy file này thay Flyway.
+-- Audit hồ sơ thuộc notification_svc.event_logs; danh mục chỉ có một name. Xem erd-alignment.md trước khi nâng cấp DB cũ.
+-- Không có FK giữa các service; các bảng hạ tầng service_metadata/Flyway không đưa vào bản tổng hợp.
 
 CREATE SCHEMA IF NOT EXISTS user_svc;
 CREATE SCHEMA IF NOT EXISTS catalog_svc;
@@ -21,7 +25,8 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE user_svc.users (
   id uuid NOT NULL,
-  keycloak_id varchar(255) UNIQUE,
+  -- Theo migration user V5: định danh Keycloak là UUID, credential do Keycloak quản lý.
+  keycloak_id uuid UNIQUE,
   email varchar(255) NOT NULL UNIQUE,
   phone varchar(20),
   full_name varchar(255) NOT NULL,
@@ -29,11 +34,10 @@ CREATE TABLE user_svc.users (
   gender varchar(10),
   date_of_birth date,
   address varchar(500),
-  password_hash varchar(255),
   status varchar(20) NOT NULL DEFAULT 'ACTIVE',
   is_deleted boolean NOT NULL DEFAULT false,
   created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  locked_until timestamp,
+  updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   CONSTRAINT chk_users_status CHECK (status IN ('ACTIVE', 'INACTIVE', 'LOCKED', 'SUSPENDED')),
   CONSTRAINT chk_users_gender CHECK (gender IS NULL OR gender IN ('MALE', 'FEMALE', 'OTHER'))
@@ -134,7 +138,6 @@ CREATE TABLE commerce_svc.carts (
   id uuid NOT NULL,
   user_id uuid NOT NULL,
   status varchar(20) NOT NULL DEFAULT 'ACTIVE',
-  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at timestamp,
   PRIMARY KEY (id),
   CONSTRAINT chk_cart_status CHECK (status IN ('ACTIVE', 'MERGED', 'EXPIRED', 'CONVERTED'))
@@ -159,7 +162,7 @@ CREATE TABLE commerce_svc.cart_items (
 CREATE TABLE commerce_svc.vouchers (
   id uuid NOT NULL,
   code varchar(50) NOT NULL UNIQUE,
-  name varchar(255) NOT NULL,
+  name varchar(30) NOT NULL,
   description text,
   discount_type varchar(20) NOT NULL,
   discount_value numeric(15, 2) NOT NULL,
@@ -323,7 +326,6 @@ CREATE TABLE auction_svc.auctions (
   end_time timestamp NOT NULL,
   extension_count integer NOT NULL DEFAULT 0,
   version integer NOT NULL DEFAULT 1,
-  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   CONSTRAINT chk_auction_start_price CHECK (start_price > 0),
   CONSTRAINT chk_auction_bid_increment CHECK (bid_increment > 0), -- BR-CFG-24: Bước giá phải dương
@@ -414,14 +416,12 @@ CREATE TABLE fulfillment_svc.inventory_reservations (
   ref_type varchar(20) NOT NULL,
   ref_id uuid NOT NULL,
   status varchar(20) NOT NULL DEFAULT 'PENDING',
-  created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   expires_at timestamp NOT NULL,
   PRIMARY KEY (id),
   FOREIGN KEY (inventory_id) REFERENCES fulfillment_svc.inventories(id) ON DELETE CASCADE,
   CONSTRAINT chk_reservation_quantity CHECK (quantity > 0),
   CONSTRAINT chk_reservation_ref_type CHECK (ref_type IN ('ORDER', 'AUCTION')),
-  CONSTRAINT chk_reservation_status CHECK (status IN ('PENDING', 'CONFIRMED', 'RELEASED', 'EXPIRED')),
-  CONSTRAINT chk_reservation_expiry CHECK (expires_at >= created_at)
+  CONSTRAINT chk_reservation_status CHECK (status IN ('PENDING', 'CONFIRMED', 'RELEASED', 'EXPIRED'))
 );
 
 CREATE TABLE fulfillment_svc.inventory_ledger (
@@ -554,9 +554,6 @@ CREATE TABLE reputation_svc.reputations (
   failed_tx integer NOT NULL DEFAULT 0,
   auction_won integer NOT NULL DEFAULT 0,
   auction_failed integer NOT NULL DEFAULT 0,
-  avg_rating numeric(3, 2) NOT NULL DEFAULT 5.00,
-  total_ratings integer NOT NULL DEFAULT 0,
-  updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id),
   CONSTRAINT chk_reputation_score CHECK (score >= 0),
   CONSTRAINT chk_reputation_trust_level CHECK (trust_level IN ('LOW', 'STANDARD', 'HIGH', 'VIP')),
@@ -565,8 +562,7 @@ CREATE TABLE reputation_svc.reputations (
     success_tx >= 0 AND 
     failed_tx >= 0 AND 
     auction_won >= 0 AND 
-    auction_failed >= 0 AND
-    total_ratings >= 0
+    auction_failed >= 0
   ),
   CONSTRAINT chk_reputation_tx_consistency CHECK (total_tx >= (success_tx + failed_tx))
 );

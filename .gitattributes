@@ -1,1 +1,4 @@
 *.sh text eol=lf
+# Prettier yêu cầu LF: giữ frontend nhất quán khi checkout trên Windows có core.autocrlf=true.
+# text=auto chỉ chuẩn hóa file văn bản; ảnh và các asset nhị phân giữ nguyên byte.
+frontend-web/** text=auto eol=lf

@@ -1,46 +1,36 @@
 package com.nexus.fulfillment.dto.request;
 
 import com.nexus.fulfillment.enums.ReservationRefType;
-import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Yêu cầu tạo phiếu giữ hàng tồn kho (Create Reservation Request).
+ * Yêu cầu khóa giữ hàng tồn kho khi Checkout (Atomic Reservation) từ Commerce Service hoặc Auction Service.
  *
- * Chức năng: Tiếp nhận thông tin order_id, danh sách mặt hàng SKU, số lượng yêu cầu và thời gian hết hạn (expires_at)
- * phục vụ việc giữ hàng tạm thời khi người dùng checkout đơn hàng hoặc thắng đấu giá (SRS §3.6.1).
+ * Chức năng:
+ * - Nhận danh sách các SKU cần giữ cùng số lượng và thông tin tham chiếu đơn hàng.
  *
- * @param orderId   Mã đơn hàng liên kết (hoặc ref_id)
- * @param refType   Loại tham chiếu (ORDER hoặc AUCTION; mặc định là ORDER)
- * @param expiresAt Thời gian hết hạn phiếu giữ (nếu null, hệ thống tự động gán theo cấu hình INVENTORY_RESERVATION_TIMEOUT_MINUTES = 30 phút)
- * @param items     Danh sách các mặt hàng SKU và số lượng cần giữ (bắt buộc)
+ * @param refType        Loại nghiệp vụ tham chiếu (ORDER hoặc AUCTION)
+ * @param refId          Mã đơn hàng (order_id) hoặc mã phiên đấu giá (auction_id)
+ * @param items          Danh sách SKU và số lượng cần giữ (không rỗng)
+ * @param timeoutMinutes Thời gian hết hạn tính theo phút (tùy chọn, mặc định 30 phút theo SRS §2.6)
  */
-@Schema(description = "Yêu cầu tạo phiếu giữ hàng tồn kho")
 public record CreateReservationRequest(
-        @NotNull(message = "order_id is required")
-        @Schema(description = "Mã đơn hàng liên kết", example = "7c9e6679-7425-40de-944b-e07fc1f90ae7", requiredMode = Schema.RequiredMode.REQUIRED)
-        UUID orderId,
-
-        @Schema(description = "Loại tham chiếu nguồn (mặc định ORDER)", example = "ORDER")
+        @NotNull(message = "refType không được để trống")
         ReservationRefType refType,
 
-        @Schema(description = "Thời gian hết hạn hiệu lực của phiếu giữ (UTC timestamp)", example = "2026-10-20T10:00:00Z")
-        Instant expiresAt,
+        @NotNull(message = "refId không được để trống")
+        UUID refId,
 
-        @NotEmpty(message = "items list must not be empty")
+        @NotEmpty(message = "Danh sách items cần giữ kho không được để trống")
         @Valid
-        @Schema(description = "Danh sách mặt hàng và số lượng cần giữ", requiredMode = Schema.RequiredMode.REQUIRED)
-        List<ReservationItemRequest> items
-) {
+        List<ReservationItemRequest> items,
 
-    public CreateReservationRequest {
-        if (refType == null) {
-            refType = ReservationRefType.ORDER;
-        }
-    }
+        @Min(value = 1, message = "Thời gian giữ kho tối thiểu phải là 1 phút")
+        Integer timeoutMinutes
+) {
 }

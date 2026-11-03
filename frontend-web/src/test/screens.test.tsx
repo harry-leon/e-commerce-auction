@@ -9,14 +9,14 @@ import * as Admin from '../features/admin/AdminPages'
 import * as Buyer from '../features/buyer/BuyerPages'
 import * as Seller from '../features/seller/SellerPages'
 import * as Auction from '../features/auction/AuctionPages'
-import * as Profile from '../features/profile/ProfilePages'
+import * as Profile from '../features/profile/ProfilePage'
 import * as Support from '../features/support/SupportPages'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
 
 /**
- * Hồi quy giao diện: mỗi màn đã tồn tại phải dựng được với đúng vai trò và dữ liệu fixture hợp lệ.
+ * Hồi quy các màn đang được router dùng; hồ sơ chỉ kiểm tra ProfilePage gọi API, không chạy bản demo đã thay thế.
  * Đây là kiểm tra khả dụng/render UI sau khi chuyển thư mục, không coi prototype là nghiệp vụ backend hoàn chỉnh.
  */
 beforeEach(() => {
@@ -60,11 +60,8 @@ for (const [area, pages, user] of groups) {
     describe(`${area} screen availability`, () => {
         for (const [name, Page] of Object.entries(pages)) {
             it(`${name} renders navigation and content for its role`, async () => {
-                holder.current.user = name.startsWith('SellerProfile')
-                    ? DEMO_SELLER
-                    : name.startsWith('SupportProfile')
-                      ? DEMO_SUPPORT
-                      : user
+                // Mỗi module nhận đúng vai trò của nhóm route; các hồ sơ role cũ đã dùng chung ProfilePage.
+                holder.current.user = user
                 const { container } = render(<Page />)
                 expect(container.textContent?.trim().length).toBeGreaterThan(20)
                 expect(
@@ -197,24 +194,4 @@ it('opens a support case, saves progress and requires a recommendation before es
     expect(holder.current.showToast).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'Case escalated to Admin for a financial decision.' }),
     )
-})
-
-// Bảo vệ hành vi prototype danh mục cũ khi tái tổ chức source; màn production dùng AdminCategoriesPage qua HTTP riêng.
-it('validates names and supports create, rename and delete in the legacy category prototype', () => {
-    holder.current.user = DEMO_ADMIN
-    render(<Admin.AdminCategoriesPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'Add Category' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
-    expect(screen.getByText('Both English and Vietnamese names are required.')).toBeVisible()
-    fireEvent.change(screen.getByLabelText('Name (EN)'), { target: { value: 'Test category' } })
-    fireEvent.change(screen.getByLabelText('Name (VI)'), { target: { value: 'Danh mục test' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
-    expect(screen.getByText('Test category')).toBeVisible()
-    fireEvent.click(screen.getAllByTitle('Edit category').slice(-1)[0])
-    fireEvent.change(screen.getByLabelText('Name (EN)'), { target: { value: 'Renamed category' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(screen.getByText('Renamed category')).toBeVisible()
-    fireEvent.click(screen.getAllByTitle('Delete category').slice(-1)[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-    expect(screen.queryByText('Renamed category')).not.toBeInTheDocument()
 })

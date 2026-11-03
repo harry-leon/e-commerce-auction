@@ -33,6 +33,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * Kiểm thử WebMvc cho UserController.
+ * Xác thực các endpoint người dùng trả về chuẩn Envelope ApiResponse ({success, data, error, meta}).
  *
  * @author Nguyễn Tiến Thương
  * @since 06/10/2026
@@ -41,6 +42,16 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import(SecurityConfig.class)
 @ActiveProfiles("test")
 class UserControllerTest {
+
+    /** Các API /me phải tra sub qua keycloak_id trước khi dùng profile ID. */
+    @org.junit.jupiter.api.BeforeEach
+    void resolveProfileSubjects() {
+        org.mockito.Mockito.lenient().when(userService.findBySubject(any())).thenAnswer(invocation -> {
+            var profile = new com.nexus.user.entity.User();
+            profile.setId(UUID.fromString(invocation.getArgument(0)));
+            return profile;
+        });
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -64,7 +75,8 @@ class UserControllerTest {
                         .with(jwt().jwt(j -> j.subject(userId.toString()))
                                 .authorities(new SimpleGrantedAuthority("PROFILE.VIEW"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("me@nexus.com"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.email").value("me@nexus.com"));
     }
 
     @Test
@@ -85,7 +97,8 @@ class UserControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.fullName").value("Updated My Name"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.fullName").value("Updated My Name"));
     }
 
     @Test
@@ -100,7 +113,8 @@ class UserControllerTest {
         mockMvc.perform(get("/api/v1/users/" + userId)
                         .with(jwt().authorities(new SimpleGrantedAuthority("USER.VIEW"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("user1@nexus.com"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.email").value("user1@nexus.com"));
     }
 
     @Test
@@ -112,7 +126,9 @@ class UserControllerTest {
         mockMvc.perform(get("/api/v1/users")
                         .with(jwt().authorities(new SimpleGrantedAuthority("USER.LIST"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].email").value("u1@nexus.com"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].email").value("u1@nexus.com"))
+                .andExpect(jsonPath("$.meta.pagination").exists());
     }
 
     @Test
@@ -122,7 +138,8 @@ class UserControllerTest {
         mockMvc.perform(delete("/api/v1/users/" + userId)
                         .with(jwt().authorities(new SimpleGrantedAuthority("USER.DELETE"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").exists());
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.message").exists());
     }
 
     @Test
@@ -134,11 +151,12 @@ class UserControllerTest {
         when(userService.assignRoles(eq(userId), any())).thenReturn(response);
 
         mockMvc.perform(put("/api/v1/users/" + userId + "/roles")
-                        .with(jwt().authorities(new SimpleGrantedAuthority("USER.UPDATE")))
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Set.of("SELLER"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.roles[0]").value("SELLER"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.roles[0]").value("SELLER"));
     }
 
     @Test
@@ -153,7 +171,9 @@ class UserControllerTest {
                         .with(jwt().jwt(j -> j.subject(userId.toString()))
                                 .authorities(new SimpleGrantedAuthority("PROFILE.VIEW"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].action").value("LOGIN"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].action").value("LOGIN"))
+                .andExpect(jsonPath("$.meta.pagination").exists());
     }
 
     @Test
@@ -167,6 +187,8 @@ class UserControllerTest {
         mockMvc.perform(get("/api/v1/users/" + userId + "/activity-history")
                         .with(jwt().authorities(new SimpleGrantedAuthority("USER.VIEW"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content[0].action").value("USER_UPDATE"));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].action").value("USER_UPDATE"))
+                .andExpect(jsonPath("$.meta.pagination").exists());
     }
 }

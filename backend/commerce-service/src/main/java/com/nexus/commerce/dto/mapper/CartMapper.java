@@ -40,8 +40,10 @@ public class CartMapper {
         int quantity = item.getQuantity() != null ? item.getQuantity() : 0;
         BigDecimal itemSubtotal = unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
 
-        int stock = (skuInfo != null && skuInfo.stockQuantity() != null) ? skuInfo.stockQuantity() : 0;
-        boolean isAvailable = (skuInfo != null && Boolean.TRUE.equals(skuInfo.isActive())) && (stock >= quantity);
+        // Catalog không sở hữu tồn kho; null giữ nghĩa chưa kiểm tra Fulfillment, không giả thành hết hàng hoặc tồn 100.
+        Integer stock = skuInfo == null ? null : skuInfo.stockQuantity();
+        boolean isAvailable = skuInfo != null && Boolean.TRUE.equals(skuInfo.isActive())
+                && (stock == null || stock >= quantity);
 
         return new CartItemResponse(
                 item.getId(),

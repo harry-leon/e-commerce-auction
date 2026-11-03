@@ -1,14 +1,14 @@
 # Database ERD
 
-Generated from service-owned Flyway CREATE TABLE statements by `node scripts/generate-erd.mjs`. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. Later ALTER migrations remain authoritative for added columns.
+Generated from service-owned Flyway migrations by `node scripts/generate-erd.mjs`, including column ADD/DROP/TYPE changes. Each diagram is a physical database boundary. IDs referring to another service are logical references, not cross-database foreign keys. The approved Nerum V2 ERD defines the business tables; these migrations implement it. This diagram does not describe constraints or data backfills.
 
 ## user-service
 
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   users {
     uuid id
@@ -19,22 +19,11 @@ erDiagram
     varchar gender
     date date_of_birth
     varchar address
-    varchar password_hash
     varchar status
     boolean is_deleted
     timestamp created_at
-    integer token_version
-    timestamp locked_until
-  }
-  audit_logs {
-    uuid id
-    uuid user_id
-    varchar action
-    text description
-    varchar ip_address
-    varchar user_agent
-    varchar status
-    timestamp created_at
+    uuid keycloak_id
+    timestamp updated_at
   }
 
 ```
@@ -44,8 +33,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   categories {
     uuid id
@@ -106,14 +95,13 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   carts {
     uuid id
     uuid user_id
     varchar status
-    timestamp created_at
     timestamp expires_at
   }
   cart_items {
@@ -224,8 +212,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   auctions {
     uuid id
@@ -242,7 +230,6 @@ erDiagram
     timestamp end_time
     integer extension_count
     integer version
-    timestamp created_at
   }
   bids {
     uuid id
@@ -271,8 +258,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   warehouses {
     uuid id
@@ -298,7 +285,6 @@ erDiagram
     varchar ref_type
     uuid ref_id
     varchar status
-    timestamp created_at
     timestamp expires_at
   }
   inventory_ledger {
@@ -347,8 +333,8 @@ erDiagram
 ```mermaid
 erDiagram
   service_metadata {
-    VARCHAR key
-    VARCHAR value
+    varchar key
+    varchar value
   }
   notifications {
     uuid id
@@ -400,9 +386,6 @@ erDiagram
     integer failed_tx
     integer auction_won
     integer auction_failed
-    numeric avg_rating
-    integer total_ratings
-    timestamp updated_at
   }
   ratings {
     uuid id

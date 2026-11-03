@@ -20,8 +20,10 @@ Chiều phụ thuộc: `controller -> service -> repository -> entity`.
 ## Phân quyền
 JWT chứa claim `privileges` (danh sách như `PRODUCT.CREATE`, `AUCTION.BID`, khớp SRS mục 2.7).
 Dùng `@PreAuthorize("hasAuthority('PRODUCT.CREATE')")` trên method.
-Lưu ý: user-service sẽ phát hành JWT; các service còn lại chỉ xác thực bằng cùng secret/khóa.
-Khi triển khai thật, cân nhắc chuyển sang RS256 (khóa công khai) để không phải chia sẻ secret giữa các service.
+Keycloak phát JWT RS256. Gateway và từng service xác minh chữ ký bằng JWKS, kiểm tra issuer;
+`KeycloakAuthorities` chuyển realm composites thành authority. Không xác thực bằng header client tự gửi.
+User Service chỉ giữ profile và gọi Admin API khi cần quản lý IAM.
+Xem [bàn giao ERD V2](ERD_V2_ALIGNMENT.md) để biết migration và các API thay đổi.
 
 ## Thêm dependency khi cần
 | Service | Thêm |

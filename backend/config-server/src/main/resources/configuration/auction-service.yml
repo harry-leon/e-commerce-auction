@@ -1,0 +1,9 @@
+# Cấu hình tập trung dành riêng cho auction-service do Config Server quản lý.
+# Các thông số nghiệp vụ đấu giá này có thể thay đổi tại runtime và cập nhật qua POST /actuator/refresh.
+app:
+  auction:
+    bidding:
+      min-increment: 1000          # Bước giá tối thiểu khi đặt bid (VND)
+      anti-sniping-seconds: 120    # Gia hạn thời gian nếu có bid trong những giây cuối
+    rules:
+      max-active-auctions-per-seller: 20 # Số phiên đấu giá đang mở tối đa của 1 seller

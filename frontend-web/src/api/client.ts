@@ -1,4 +1,110 @@
 import type { User, UserRole } from '../types'
+import type {
+    ApiResponse,
+    ErrorDetail,
+    ValidationErrorDetail,
+    MetaInfo,
+    PaginationInfo,
+    PaginatedResult,
+} from './types'
+
+export type {
+    ApiResponse,
+    ErrorDetail,
+    ValidationErrorDetail,
+    MetaInfo,
+    PaginationInfo,
+    PaginatedResult,
+}
+
+/**
+ * Lớp lỗi chuẩn hóa phía Client khi gọi API thất bại.
+ * Đóng gói đầy đủ HTTP status, mã lỗi nghiệp vụ, message và chi tiết validation.
+ */
+export class ApiClientError<TDetails = unknown> extends Error {
+    readonly code: string
+    readonly status: number
+    readonly details: TDetails | null
+    readonly requestId?: string
+    readonly timestamp?: string
+
+    constructor(
+        message: string,
+        code = 'INTERNAL_SERVER_ERROR',
+        status = 500,
+        details: TDetails | null = null,
+        requestId?: string,
+        timestamp?: string,
+    ) {
+        super(message)
+        this.name = 'ApiClientError'
+        this.code = code
+        this.status = status
+        this.details = details
+        this.requestId = requestId
+        this.timestamp = timestamp
+    }
+
+    /** Kiểm tra xem có phải lỗi validation đầu vào (HTTP 422) hay không */
+    isValidationError(): this is ApiClientError<ValidationErrorDetail[]> {
+        return this.status === 422 && Array.isArray(this.details)
+    }
+
+    /**
+     * Lấy map lỗi theo từng field để bind nhanh vào form validation.
+     * Khi một field có nhiều lỗi (ví dụ mật khẩu vừa thiếu chữ hoa vừa thiếu số),
+     * gộp các message phân tách bằng dấu chấm để không bỏ sót thông báo.
+     */
+    getFieldErrors(): Record<string, string> {
+        if (!Array.isArray(this.details)) return {}
+        const record: Record<string, string> = {}
+        for (const item of this.details as ValidationErrorDetail[]) {
+            if (item.field) {
+                if (record[item.field]) {
+                    record[item.field] += '. ' + item.message
+                } else {
+                    record[item.field] = item.message
+                }
+            }
+        }
+        return record
+    }
+
+    /** Lấy danh sách toàn bộ message chi tiết từ details */
+    getAllDetailMessages(): string[] {
+        if (!Array.isArray(this.details)) return []
+        return (this.details as ValidationErrorDetail[]).map((d) => d.message).filter(Boolean)
+    }
+}
+
+/**
+ * Trích xuất map lỗi theo field từ ApiClientError hoặc error object bất kỳ.
+ * Hỗ trợ đọc cấu trúc error.details[] hoặc details[] từ response 422 của Backend/Gateway.
+ */
+export function extractFieldErrors(error: unknown): Record<string, string> {
+    if (error instanceof ApiClientError) {
+        return error.getFieldErrors()
+    }
+    const anyErr = error as {
+        details?: ValidationErrorDetail[]
+        error?: { details?: ValidationErrorDetail[] }
+    }
+    const details = anyErr?.details || anyErr?.error?.details
+    if (Array.isArray(details)) {
+        const record: Record<string, string> = {}
+        for (const item of details) {
+            if (item?.field) {
+                if (record[item.field]) {
+                    record[item.field] += '. ' + item.message
+                } else {
+                    record[item.field] = item.message
+                }
+            }
+        }
+        return record
+    }
+    return {}
+}
 
 /**
  * Cổng gọi backend dùng chung: đọc session → gắn Bearer token → gọi API → chuẩn hóa lỗi.
@@ -77,8 +183,9 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             false,
         )
             .then((payload) => {
-                saveSession({ ...payload, user: mapUser(payload.user) })
-                return payload.accessToken
+                const auth = (payload as any)?.data || payload
+                saveSession({ ...auth, user: mapUser(auth.user) })
+                return auth.accessToken
             })
             .catch((error) => {
                 saveSession(null)
@@ -92,12 +199,26 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     }
     if (response.status === 204) return undefined as T
     const payload = await response.json().catch(() => ({}))
-    if (!response.ok || payload.success === false) {
-        throw new Error(
-            payload.error?.message ||
-                payload.message ||
-                payload.detail ||
-                `Request failed (${response.status})`,
+    // Nguyên tắc Fail-Fast: Kiểm tra status/success trước tiên.
+    // Nếu false hoặc HTTP status >= 400: dừng ngay lập tức và ném lỗi, không format hay xử lý tiếp để giảm tải hệ thống.
+    const isSuccess = response.ok && payload.success !== false && payload.status !== false
+    if (!isSuccess) {
+        const errorObj: Partial<ErrorDetail> = payload.error || {}
+        const msg =
+            errorObj.message ||
+            payload.message ||
+            payload.detail ||
+            `Request failed (${response.status})`
+        const code =
+            errorObj.code ||
+            (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
+        throw new ApiClientError(
+            msg,
+            code,
+            response.status,
+            errorObj.details ?? payload.details ?? null,
+            payload.meta?.requestId,
+            payload.meta?.timestamp,
         )
     }
     return payload as T
@@ -126,13 +247,43 @@ export interface AuthPayload {
     refreshToken: string
     user: ApiUser
 }
+
+/** Vai trò và danh sách quyền từ User Service (RoleController) theo SRS §3.1.1 */
+export interface ApiRole {
+    id: string
+    code: string
+    name: string
+    description: string
+    privileges: string[]
+}
 /**
  * Chuyển DTO backend sang User của UI; chọn vai trò điều hướng theo thứ tự admin → support → seller → buyer.
  * Avatar/reputation dùng giá trị mặc định vì UserResponse hiện chưa cung cấp các trường này.
  * Vai trò trong UI chỉ phục vụ hiển thị; backend vẫn là nơi kiểm tra quyền truy cập thực sự.
  */
-export function mapUser(user: ApiUser): User {
-    const roles = user.roles.map((role) => role.toLowerCase())
+export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
+    const raw: any = user && typeof user === 'object' && 'data' in user ? (user as any).data : user
+    if (!raw) {
+        return {
+            id: '',
+            fullName: '',
+            email: '',
+            phone: '',
+            idNumber: '',
+            gender: 'other',
+            dateOfBirth: '',
+            address: '',
+            role: 'buyer',
+            trustLevel: 'bronze',
+            reputationScore: 100,
+            avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop&auto=format',
+            status: 'active',
+            createdAt: new Date().toISOString(),
+        }
+    }
+    const roles: string[] = ((raw.roles || []) as string[]).map((role: string) =>
+        role.replace(/^ROLE_/, '').toLowerCase(),
+    )
     const role: UserRole = roles.includes('admin')
         ? 'admin'
         : roles.includes('support')
@@ -141,17 +292,18 @@ export function mapUser(user: ApiUser): User {
             ? 'seller'
             : 'buyer'
     return {
-        id: user.id,
-        fullName: user.fullName,
-        email: user.email,
-        phone: user.phone || '',
-        idNumber: user.identifyNumber || '',
-        gender: (user.gender?.toLowerCase() || 'other') as User['gender'],
-        dateOfBirth: user.dateOfBirth || '',
-        address: user.address || '',
+        id: raw.id || '',
+        fullName: raw.fullName || '',
+        email: raw.email || '',
+        phone: raw.phone || '',
+        idNumber: raw.identifyNumber || '',
+        gender: (raw.gender?.toLowerCase() || 'other') as User['gender'],
+        dateOfBirth: raw.dateOfBirth || '',
+        address: raw.address || '',
         role,
-        status: user.status === 'ACTIVE' ? 'active' : 'locked',
-        createdAt: user.createdAt,
+        status:
+            raw.status?.toUpperCase() === 'ACTIVE' || raw.status === 'active' ? 'active' : 'locked',
+        createdAt: raw.createdAt || new Date().toISOString(),
         avatar: '/avatar.svg',
         trustLevel: 'bronze',
         reputationScore: 0,

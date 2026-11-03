@@ -1,5 +1,6 @@
 package com.nexus.user.controller;
 
+import com.nexus.common.response.ApiResponse;
 import com.nexus.user.dto.CreateRoleRequest;
 import com.nexus.user.dto.RoleResponse;
 import com.nexus.user.dto.UpdateRoleRequest;
@@ -23,7 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST Controller quản lý vai trò và phân quyền (Roles & Privileges N-N) theo SRS mục 3.1.1.
+ * REST Controller giữ contract quản lý vai trò; RoleService gọi realm roles/composites của Keycloak.
+ * Role ID do IAM cấp, không còn đọc bảng roles/privileges trong database profile.
  *
  * @author Nguyễn Tiến Thương
  * @since 06/10/2026
@@ -52,8 +54,8 @@ public class RoleController {
     @GetMapping
     @PreAuthorize("hasAuthority('ROLE.LIST')")
     @Operation(summary = "Danh sách vai trò", description = "Lấy tất cả các vai trò và quyền trong hệ thống")
-    public ResponseEntity<List<RoleResponse>> getAllRoles() {
-        return ResponseEntity.ok(roleService.getAllRoles());
+    public ResponseEntity<ApiResponse<List<RoleResponse>>> getAllRoles() {
+        return ResponseEntity.ok(ApiResponse.ok(roleService.getAllRoles()));
     }
 
     /**
@@ -65,8 +67,8 @@ public class RoleController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('ROLE.VIEW')")
     @Operation(summary = "Xem chi tiết vai trò", description = "Lấy thông tin chi tiết vai trò theo ID")
-    public ResponseEntity<RoleResponse> getRoleById(@PathVariable UUID id) {
-        return ResponseEntity.ok(roleService.getRoleById(id));
+    public ResponseEntity<ApiResponse<RoleResponse>> getRoleById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(roleService.getRoleById(id)));
     }
 
     /**
@@ -77,10 +79,10 @@ public class RoleController {
      */
     @PostMapping
     @PreAuthorize("hasAuthority('ROLE.CREATE')")
-    @Operation(summary = "Tạo vai trò mới", description = "Tạo vai trò và gán danh sách đặc quyền liên kết (N-N)")
-    public ResponseEntity<RoleResponse> createRole(@Valid @RequestBody CreateRoleRequest request) {
+    @Operation(summary = "Tạo vai trò mới", description = "Tạo realm role và gán composite privileges tại Keycloak")
+    public ResponseEntity<ApiResponse<RoleResponse>> createRole(@Valid @RequestBody CreateRoleRequest request) {
         RoleResponse response = roleService.createRole(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
     }
 
     /**
@@ -93,10 +95,10 @@ public class RoleController {
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('ROLE.UPDATE')")
     @Operation(summary = "Cập nhật vai trò", description = "Cập nhật tên, mô tả và quyền của vai trò")
-    public ResponseEntity<RoleResponse> updateRole(
+    public ResponseEntity<ApiResponse<RoleResponse>> updateRole(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateRoleRequest request) {
-        return ResponseEntity.ok(roleService.updateRole(id, request));
+        return ResponseEntity.ok(ApiResponse.ok(roleService.updateRole(id, request)));
     }
 
     /**
@@ -108,8 +110,8 @@ public class RoleController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('ROLE.DELETE')")
     @Operation(summary = "Xóa vai trò", description = "Xóa vai trò khỏi hệ thống (ngoại trừ ADMIN)")
-    public ResponseEntity<Map<String, String>> deleteRole(@PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Map<String, String>>> deleteRole(@PathVariable UUID id) {
         roleService.deleteRole(id);
-        return ResponseEntity.ok(Map.of("message", "Đã xóa vai trò thành công"));
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("message", "Đã xóa vai trò thành công")));
     }
 }

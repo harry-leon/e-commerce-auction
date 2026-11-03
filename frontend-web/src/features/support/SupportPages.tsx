@@ -11,7 +11,6 @@ import {
     AlertBanner,
     EmptyState,
     StatusBadge,
-    DataTable,
     Search,
 } from '../../components/UI'
 import { ORDERS, USERS } from '../../mockData'
