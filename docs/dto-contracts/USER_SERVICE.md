@@ -58,8 +58,8 @@
 | Field | Kiểu | Bắt buộc | Validation |
 |---|---|---|---|
 | `fullName` | `string` | Có | Không blank, tối đa `255` ký tự |
-| `phone` | `string` | Không | `null`, rỗng hoặc `10–11` chữ số; không có khoảng trắng/dấu phân cách |
-| `identifyNumber` | `string` | Không | Chưa có validation trong DTO |
+| `phone` | `string` | Không | `null`/rỗng hoặc đúng 10 chữ số ASCII, bắt đầu `03`, `05`, `07`, `08`, `09`; không nhận `+84`, khoảng trắng/dấu phân cách. Dùng chung cho tạo và cập nhật hồ sơ; chưa xác minh OTP |
+| `identifyNumber` | `string` | Có | Không blank, đúng 12 chữ số ASCII; áp dụng cả tạo và cập nhật hồ sơ, trả 422 theo field khi sai. Chưa xác minh danh tính hoặc kiểm tra trùng CCCD |
 | `gender` | `string` | Không | `MALE`, `FEMALE`, `OTHER`; validator chấp nhận chữ thường rồi service chuẩn hóa |
 | `dateOfBirth` | `string` | Không | `YYYY-MM-DD` |
 | `address` | `string` | Không | Tối đa `500` ký tự |

@@ -3,14 +3,18 @@ package com.nexus.user.controller;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexus.common.exception.GlobalExceptionHandler;
 import com.nexus.user.config.SecurityConfig;
 import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.dto.UpdateUserRequest;
@@ -39,7 +43,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * @since 06/10/2026
  */
 @WebMvcTest(UserController.class)
-@Import(SecurityConfig.class)
+// WebMvcTest không nạp auto-configuration của nexus-common; import handler để kiểm tra đúng contract 422 như runtime.
+@Import({SecurityConfig.class, GlobalExceptionHandler.class})
 @ActiveProfiles("test")
 class UserControllerTest {
 
@@ -84,6 +89,8 @@ class UserControllerTest {
         UUID userId = UUID.randomUUID();
         UpdateUserRequest request = new UpdateUserRequest();
         request.setFullName("Updated My Name");
+        // Cập nhật hồ sơ hợp lệ phải kèm CCCD 12 chữ số, kể cả khi chỉ đổi tên trên giao diện.
+        request.setIdentifyNumber("079203001234");
 
         UserResponse userResponse = new UserResponse();
         userResponse.setId(userId);
@@ -115,6 +122,27 @@ class UserControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.email").value("user1@nexus.com"));
+    }
+
+    /** API trực tiếp không được bỏ qua validation CCCD; lỗi trả theo field và chưa gọi service lưu hồ sơ. */
+    @Test
+    void rejectsInvalidIdentityOnCreateAndUpdate() throws Exception {
+        String subject = UUID.randomUUID().toString();
+        String body = "{\"email\":\"test@example.com\",\"fullName\":\"Test Buyer\",\"identifyNumber\":\"079xxxxxxxxx\"}";
+        mockMvc.perform(post("/api/v1/users")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_PROFILE_WRITER")))
+                        .header("X-Profile-Subject", subject)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error.details[0].field").value("identifyNumber"));
+        mockMvc.perform(put("/api/v1/users/me")
+                        .with(jwt().jwt(j -> j.subject(subject))
+                                .authorities(new SimpleGrantedAuthority("PROFILE.UPDATE")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error.details[0].field").value("identifyNumber"));
+        verify(userService, never()).createUserProfile(any(), any());
+        verify(userService, never()).updateUser(any(), any());
     }
 
     @Test

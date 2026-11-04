@@ -134,7 +134,8 @@ try {
     const base = gateway + '/api/v1'
     const email = 'erd-' + suffix + '@example.com'
     const password = 'ErdVerification1!'
-    const profile = await request(base, '/auth/register', 'POST', { email, password, fullName: 'ERD Verification' }, undefined, 201)
+    // Hồ sơ thử dùng CCCD giả đúng 12 chữ số để tiếp tục kiểm chứng luồng IAM theo validation mới.
+    const profile = await request(base, '/auth/register', 'POST', { email, password, fullName: 'ERD Verification', identifyNumber: '079000000001' }, undefined, 201)
     assert.ok(profile.id)
     const login = await request(base, '/auth/login', 'POST', { email, password })
     assert.ok(login.accessToken && login.refreshToken && login.user.id)

@@ -37,12 +37,26 @@ class ValidationTest {
 
     @Test
     void testPhoneValidator_tenDigitsIsValid() {
-        assertTrue(phoneValidator.isValid("0912345678", null));
+        // Chấp nhận các nhóm đầu số di động nội địa, không giới hạn theo nhà mạng của người dùng.
+        for (String phone : new String[]{"0321234567", "0561234567", "0701234567", "0812345678", "0912345678"}) {
+            assertTrue(phoneValidator.isValid(phone, null));
+        }
     }
 
     @Test
-    void testPhoneValidator_elevenDigitsIsValid() {
-        assertTrue(phoneValidator.isValid("09123456789", null));
+    void testPhoneValidator_elevenDigitsIsInvalid() {
+        // Chặn số 11 chữ số dù có đầu 09 hợp lệ để bảo vệ quy tắc độ dài mới.
+        assertFalse(phoneValidator.isValid("09123456789", null));
+    }
+
+    /** Chặn đầu số cố định/sai nhóm, dạng quốc tế, dấu phân cách và chữ số không phải ASCII. */
+    @Test
+    void rejectsNonDomesticMobileFormats() {
+        for (String phone : new String[]{"0212345678", "0412345678", "0612345678", "0123456789",
+                "1234567890", "+84912345678", "84912345678", " 0912345678", "0912345678 ",
+                "091-234-5678", "０９１２３４５６７８"}) {
+            assertFalse(phoneValidator.isValid(phone, null));
+        }
     }
 
     @Test

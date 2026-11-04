@@ -3,6 +3,7 @@ package com.nexus.user.dto;
 import com.nexus.user.validation.ValidGender;
 import com.nexus.user.validation.ValidPhoneNumber;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 
@@ -21,6 +22,9 @@ public class UpdateUserRequest {
     @ValidPhoneNumber
     private String phone;
 
+    // Áp dụng cùng quy tắc tạo hồ sơ để API cập nhật không lưu CCCD rỗng/sai định dạng; không sửa dữ liệu cũ tự động.
+    @NotBlank(message = "Số CCCD không được để trống")
+    @Pattern(regexp = "[0-9]{12}", message = "Số CCCD phải gồm đúng 12 chữ số")
     private String identifyNumber;
 
     @ValidGender

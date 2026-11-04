@@ -13,10 +13,10 @@ import jakarta.validation.ConstraintValidatorContext;
 public class PhoneNumberValidator implements ConstraintValidator<ValidPhoneNumber, String> {
 
     /**
-     * Pattern: rỗng hoặc đúng 10–11 chữ số.
-     * Không cho phép dấu cách, dấu chấm, dấu gạch ngang.
+     * Chỉ nhận dạng nội địa 10 chữ số ASCII, bắt đầu 03/05/07/08/09; rỗng vẫn là trường tùy chọn.
+     * Không tự đổi +84, trim hoặc nhận số cố định; đây là kiểm tra định dạng, không xác minh thuê bao/OTP.
      */
-    private static final String PHONE_PATTERN = "^$|^[0-9]{10,11}$";
+    private static final String PHONE_PATTERN = "(?:|0[35789][0-9]{8})";
 
     /**
      * Kiểm tra giá trị số điện thoại có hợp lệ hay không.

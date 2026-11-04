@@ -10,13 +10,13 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Annotation kiểm tra số điện thoại Việt Nam hợp lệ (10–11 chữ số, có thể rỗng).
- * Dùng chung cho tất cả service cần validate số điện thoại.
+ * Annotation dùng chung cho DTO tạo/cập nhật hồ sơ trong User Service.
+ * Kiểm tra định dạng di động nội địa 10 chữ số, không xác minh thuê bao hoặc OTP.
  *
  * <p>Số điện thoại hợp lệ:
  * <ul>
  *   <li>Rỗng hoặc null (không bắt buộc)</li>
- *   <li>Chứa đúng 10 hoặc 11 chữ số</li>
+ *   <li>Đúng 10 chữ số ASCII, bắt đầu 03/05/07/08/09</li>
  *   <li>Không chứa ký tự đặc biệt, khoảng trắng hay dấu chấm</li>
  * </ul>
  *
@@ -34,7 +34,7 @@ public @interface ValidPhoneNumber {
      *
      * @return Chuỗi thông báo lỗi
      */
-    String message() default "Số điện thoại không hợp lệ, phải có 10–11 chữ số";
+    String message() default "Số điện thoại phải có đúng 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09";
 
     /**
      * Nhóm validation.

@@ -1,5 +1,6 @@
 package com.nexus.user.dto;
 
+import com.nexus.user.validation.ValidPhoneNumber;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -20,9 +21,13 @@ public class CreateUserProfileRequest {
     @Size(max = 255, message = "Họ và tên tối đa 255 ký tự")
     private String fullName;
 
-    @Pattern(regexp = "^$|[0-9]{10,11}", message = "Số điện thoại không hợp lệ")
+    // Dùng chung quy tắc di động Việt Nam với API cập nhật; bỏ trống được phép vì phone chưa bắt buộc ở BE.
+    @ValidPhoneNumber
     private String phone;
 
+    // Hồ sơ mới bắt buộc có CCCD đúng 12 chữ số ASCII, giữ số 0 đầu; chỉ kiểm tra định dạng, chưa xác minh danh tính.
+    @NotBlank(message = "Số CCCD không được để trống")
+    @Pattern(regexp = "[0-9]{12}", message = "Số CCCD phải gồm đúng 12 chữ số")
     private String identifyNumber;
 
     @Pattern(regexp = "^$|MALE|FEMALE|OTHER", message = "Giới tính phải là MALE, FEMALE hoặc OTHER")
