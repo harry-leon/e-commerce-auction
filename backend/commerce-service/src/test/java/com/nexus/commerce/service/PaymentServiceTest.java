@@ -72,6 +72,8 @@ class PaymentServiceTest {
         payment.setAmount(order.getTotal());
         payment.setExpiresAt(Instant.now().plusSeconds(600));
         lenient().when(orders.findForPayment(order.getId())).thenReturn(Optional.of(order));
+        // IPN dùng query fetch sẵn items để tạo notification snapshot trong cùng transaction.
+        lenient().when(orders.findForPaymentWithItems(order.getId())).thenReturn(Optional.of(order));
         lenient().when(orders.findById(order.getId())).thenReturn(Optional.of(order));
         lenient().when(payments.findById(payment.getId())).thenReturn(Optional.of(payment));
         lenient().when(payments.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));

@@ -37,6 +37,17 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from Order o where o.id = :id")
     Optional<Order> findForPayment(UUID id);
+    /**
+     * Giống findForPayment nhưng eager-fetch items trong cùng câu truy vấn.
+     * Dùng trong PaymentService.ipn() để NotificationOutbox.emailSnapshot() truy cập order.getItems()
+     * không gặp LazyInitializationException - nguyên nhân gây RspCode 99 thay vì 00.
+     * Không fetch reservationIds cùng lúc vì cả hai đều là List; Hibernate không cho join-fetch hai bag
+     * và sẽ làm callback hợp lệ bị rollback trước khi trả ACK cho VNPAY.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select distinct o from Order o left join fetch o.items where o.id = :id")
+    Optional<Order> findForPaymentWithItems(UUID id);
+
 
     /** Đếm đơn theo ngày Việt Nam; buyer lock bảo vệ hạn mức khi checkout đồng thời. */
     long countByBuyerIdAndCreatedAtGreaterThanEqual(UUID buyer, Instant start);

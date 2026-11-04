@@ -120,7 +120,9 @@ public class PaymentService {
         locks.acquire("payment:" + id);
         Payment payment = payments.findById(id).orElse(null);
         if (payment == null || !"VNPAY".equals(payment.getProvider())) { return reply("01", "Order not found"); }
-        Order order = orders.findForPayment(payment.getOrderId()).orElse(null);
+        // Fetch trước order.items vì NotificationOutbox.emailSnapshot() cần snapshot dòng hàng trong callback.
+        // reservationIds vẫn lazy để không join-fetch đồng thời hai List, vốn bị Hibernate từ chối.
+        Order order = orders.findForPaymentWithItems(payment.getOrderId()).orElse(null);
         if (order == null || !"VNPAY".equals(order.getPaymentMethod())) { return reply("01", "Order not found"); }
         if (!params.get("vnp_TmnCode").equals(payment.getMerchantCode())) { return reply("97", "Invalid merchant"); }
         String amount = params.get("vnp_Amount");
