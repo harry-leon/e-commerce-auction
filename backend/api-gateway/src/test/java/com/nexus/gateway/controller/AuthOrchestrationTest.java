@@ -142,7 +142,7 @@ class AuthOrchestrationTest {
     /** Payload hợp lệ để test điều phối IAM/profile thay vì nhánh validation. */
     private Map<String, Object> registration() {
         return Map.of("email", "buyer@example.test", "password", "Nexus12@",
-                "fullName", "Test Buyer");
+                "fullName", "Test Buyer", "identifyNumber", "079203001234");
     }
 
     /** Fixture route ghi thứ tự gọi và kiểm tra JWT/subject liên kết profile. */

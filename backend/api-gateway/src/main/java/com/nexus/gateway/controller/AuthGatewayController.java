@@ -177,7 +177,7 @@ public class AuthGatewayController {
     }
 
     /**
-     * Validate email/tên/password rồi tạo user IAM và profile.
+     * Validate email/tên/password/CCCD/số di động rồi tạo user IAM và profile.
      * Gán role BUYER từ server; lỗi gán role/lưu profile sẽ bù trừ.
      * @param body dữ liệu đăng ký; password chỉ gửi IAM
      * @return hồ sơ đã tạo (201) hoặc lỗi nghiệp vụ/hạ tầng
@@ -210,6 +210,31 @@ public class AuthGatewayController {
             return Mono.just(ResponseEntity.unprocessableEntity().body(
                 ApiResponse.error("VALIDATION_ERROR",
                     "Mật khẩu chưa đạt yêu cầu", passwordErrors)
+            ));
+        }
+
+        // Chặn CCCD thiếu/sai kiểu/sai 12 chữ số trước khi tạo IAM để không phát sinh
+        // tài khoản rồi mới rollback. Trả field identifyNumber cho FE; không lộ số đã nhập.
+        // Chỉ kiểm tra định dạng ASCII, không xác minh danh tính hoặc kiểm tra trùng CCCD.
+        Object identifyNumber = body.get("identifyNumber");
+        if (!(identifyNumber instanceof String number)
+                || !number.matches("[0-9]{12}")) {
+            return Mono.just(ResponseEntity.unprocessableEntity().body(
+                ApiResponse.error("VALIDATION_ERROR", "Số CCCD không hợp lệ",
+                    List.of(Map.of("field", "identifyNumber", "code", "PATTERN",
+                        "message", "Số CCCD phải gồm đúng 12 chữ số")))
+            ));
+        }
+
+        // Phone tùy chọn; nếu có phải là chuỗi số di động nội địa 10 chữ số.
+        // Chặn trước IAM để tránh tạo rồi rollback tài khoản vì số 11 chữ số, +84 hoặc sai đầu số.
+        Object phone = body.get("phone");
+        if (phone != null && (!(phone instanceof String phoneNumber)
+                || !phoneNumber.matches("(?:|0[35789][0-9]{8})"))) {
+            return Mono.just(ResponseEntity.unprocessableEntity().body(
+                ApiResponse.error("VALIDATION_ERROR", "Số điện thoại không hợp lệ",
+                    List.of(Map.of("field", "phone", "code", "PATTERN",
+                        "message", "Số điện thoại phải có đúng 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09")))
             ));
         }
 

@@ -60,8 +60,8 @@ Token chỉ lấy từ cookie nexus_refresh; bỏ hỗ trợ refreshToken/refres
 | `email` | `string` | Có | Trim, lowercase, phải chứa `@`; user-service kiểm tra email chuẩn lần nữa |
 | `password` | `string` | Có | Từ `8` đến `100` ký tự, có chữ in hoa, chữ số và dấu/ký hiệu; khoảng trắng không tính là ký tự đặc biệt. Chỉ gửi sang Keycloak, không lưu trong profile DB |
 | `fullName` | `string` | Có | Không rỗng, trim, tối đa `255` tại user-service |
-| `phone` | `string` | Không | Nếu có: rỗng hoặc `10–11` chữ số |
-| `identifyNumber` | `string` | Không | Source hiện chưa đặt validation độ dài |
+| `phone` | `string` | Không | `null`/rỗng hoặc đúng 10 chữ số ASCII, bắt đầu `03`, `05`, `07`, `08`, `09`; không nhận `+84`, dấu phân cách hay khoảng trắng. Sai trả 422 theo field `phone` trước khi gọi IAM; chưa xác minh OTP |
+| `identifyNumber` | `string` | Có | Đúng 12 chữ số ASCII, giữ số 0 đầu; thiếu/sai kiểu/sai định dạng trả 422 với `error.details[].field=identifyNumber` trước khi gọi IAM. Chưa xác minh danh tính hoặc kiểm tra trùng CCCD |
 | `gender` | `"MALE" \| "FEMALE" \| "OTHER" \| ""` | Không | Phân biệt hoa thường tại request đăng ký |
 | `dateOfBirth` | `string` | Không | `YYYY-MM-DD` |
 | `address` | `string` | Không | Tối đa `500` ký tự |
