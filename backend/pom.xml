@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Gom các module backend để IntelliJ import một lần và Maven build bằng Reactor.
+         POM này chỉ tổng hợp module; từng service vẫn dùng Spring Boot parent và cấu hình riêng. -->
+    <groupId>com.nexus</groupId>
+    <artifactId>nexus-backend</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>Nexus Backend</name>
+
+    <!-- Đọc POM tại từng đường dẫn; Reactor tự sắp xếp dependency nội bộ để build common
+         trước các service cần nó. Lệnh -pl phải kèm -am nếu cần build cả dependency nội bộ. -->
+    <modules>
+        <module>common</module>
+        <module>api-gateway</module>
+        <module>auction-service</module>
+        <module>catalog-service</module>
+        <module>commerce-service</module>
+        <module>config-server</module>
+        <module>discovery-server</module>
+        <module>fulfillment-service</module>
+        <module>notification-service</module>
+        <module>reputation-service</module>
+        <module>user-service</module>
+    </modules>
+</project>
