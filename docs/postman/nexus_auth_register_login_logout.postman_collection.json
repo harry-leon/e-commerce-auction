@@ -1,0 +1,218 @@
+{
+  "info": {
+    "_postman_id": "nexus-auth-register-login-logout-v1",
+    "name": "Nexus - Auth Testing (Register, Login, Logout)",
+    "description": "Collection độc lập cho luồng xác thực: kiểm tra CCCD không hợp lệ → đăng ký buyer mới → đăng nhập → refresh qua cookie HttpOnly → logout → xác nhận refresh bị từ chối. Không thuộc Sprint 1 E2E. Email test được tạo mới mỗi lần chạy request đăng ký.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "testEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "testPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "testCccd",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01. Register rejects invalid CCCD",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Rejects an 11-digit CCCD with HTTP 422', function () {",
+              "    pm.response.to.have.status(422);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.eql(false);",
+              "    pm.expect(body.error.code).to.eql('VALIDATION_ERROR');",
+              "    pm.expect(body.error.details.some(detail => detail.field === 'identifyNumber')).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Nexus-Request", "value": "1" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"invalid-cccd-{{$timestamp}}@example.com\",\n  \"password\": \"NexusTest1!\",\n  \"fullName\": \"Postman Invalid CCCD\",\n  \"phone\": \"0901234567\",\n  \"identifyNumber\": \"07920300123\",\n  \"gender\": \"OTHER\",\n  \"dateOfBirth\": \"2000-01-01\",\n  \"address\": \"Postman test\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/register"
+      }
+    },
+    {
+      "name": "02. Register a new buyer",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Dùng timestamp để lần chạy nào cũng có email mới; password/CCCD chỉ là dữ liệu test, không chứa secret thật.",
+              "const runId = Date.now();",
+              "pm.collectionVariables.set('testEmail', `postman.buyer.${runId}@example.com`);",
+              "pm.collectionVariables.set('testPassword', 'NexusTest1!');",
+              "pm.collectionVariables.set('testCccd', `079${String(runId).slice(-9)}`);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Registers a buyer with HTTP 201', function () {",
+              "    pm.response.to.have.status(201);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.eql(true);",
+              "    pm.expect(body.data.email).to.eql(pm.collectionVariables.get('testEmail'));",
+              "    pm.expect(body.data.identifyNumber).to.eql(pm.collectionVariables.get('testCccd'));",
+              "    pm.expect(body.data.roles).to.include('BUYER');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Nexus-Request", "value": "1" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\",\n  \"fullName\": \"Postman Test Buyer\",\n  \"phone\": \"0901234567\",\n  \"identifyNumber\": \"{{testCccd}}\",\n  \"gender\": \"OTHER\",\n  \"dateOfBirth\": \"2000-01-01\",\n  \"address\": \"Postman authentication test\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/register"
+      }
+    },
+    {
+      "name": "03. Login with the registered buyer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Logs in and sets the HttpOnly session cookies', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.eql(true);",
+              "    pm.expect(body.data.tokenType).to.eql('Bearer');",
+              "    pm.expect(body.data.user.email).to.eql(pm.collectionVariables.get('testEmail'));",
+              "    pm.expect(pm.response.headers.get('Set-Cookie')).to.exist;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Nexus-Request", "value": "1" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "04. Refresh session through HttpOnly cookie",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Refresh succeeds while the login cookie exists', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.eql(true);",
+              "    pm.expect(body.data.user.email).to.eql(pm.collectionVariables.get('testEmail'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Nexus-Request", "value": "1" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/refresh"
+      }
+    },
+    {
+      "name": "05. Logout and clear session cookies",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Logs out with HTTP 204', function () {",
+              "    pm.response.to.have.status(204);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Nexus-Request", "value": "1" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/logout"
+      }
+    },
+    {
+      "name": "06. Refresh is rejected after logout",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Cannot refresh after logout because the refresh cookie was cleared', function () {",
+              "    // Gateway có thể chặn tại security layer (401) hoặc Auth controller (400) khi refresh cookie đã bị xóa.",
+              "    pm.expect(pm.response.code).to.be.oneOf([400, 401]);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.eql(false);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Nexus-Request", "value": "1" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/refresh"
+      }
+    }
+  ]
+}

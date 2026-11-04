@@ -5,6 +5,18 @@
     "description": "Bộ kịch bản kiểm thử tích hợp toàn trình (E2E Test Suite) cho Sprint 1 theo Issue [LD-S1-4].\nĐã tối ưu hóa 100% bám sát payload thực tế của Web Frontend (không truyền selectedItemIds để mua toàn bộ giỏ hàng, script query params tự động cho VNPAY IPN tránh lỗi URL encoding).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Gateway dùng cookie HttpOnly thay vì Bearer token. Header này là tín hiệu chống CSRF cho mọi request thay đổi dữ liệu.",
+          "pm.request.headers.upsert({ key: 'X-Nexus-Request', value: '1' });"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "baseUrl",
@@ -12,7 +24,12 @@
       "type": "string"
     },
     {
-      "key": "buyerToken",
+      "key": "buyerEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "buyerPassword",
       "value": "",
       "type": "string"
     },
@@ -38,6 +55,52 @@
     }
   ],
   "item": [
+    {
+      "name": "00. Buyer Login (required before E2E)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Buyer login returns 200 and creates cookie session', function () {",
+              "    pm.expect(pm.collectionVariables.get('buyerEmail'), 'Set buyerEmail in collection variables before running').to.not.be.empty;",
+              "    pm.expect(pm.collectionVariables.get('buyerPassword'), 'Set buyerPassword in collection variables before running').to.not.be.empty;",
+              "    pm.response.to.have.status(200);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.success).to.eql(true);",
+              "    pm.expect(body.data.user.email).to.eql(pm.collectionVariables.get('buyerEmail'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{buyerEmail}}\",\n  \"password\": \"{{buyerPassword}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "login"
+          ]
+        }
+      }
+    },
     {
       "name": "01. Kịch bản 1: Thanh toán thành công (Happy Path)",
       "item": [
@@ -79,10 +142,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               }
             ],
             "body": {
@@ -143,10 +202,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               }
             ],
             "body": {
@@ -179,7 +234,16 @@
                   "    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);",
                   "    return v.toString(16);",
                   "});",
-                  "pm.variables.set(\"currentIdempotencyKey\", uuid);"
+                  "pm.variables.set(\"currentIdempotencyKey\", uuid);",
+                  "// Checkout đúng dòng vừa thêm, không mua các SKU cũ của shop khác còn trong giỏ.",
+                  "pm.request.body.raw = JSON.stringify({",
+                  "    shippingAddress: '123 Đường Demo, Quận 1, TP. HCM',",
+                  "    recipientName: 'Nguyễn Văn Demo',",
+                  "    recipientPhone: '0901234567',",
+                  "    paymentMethod: 'VNPAY',",
+                  "    sourceType: 'REGULAR',",
+                  "    selectedItemIds: [pm.globals.get('cartItemId')]",
+                  "});"
                 ],
                 "type": "text/javascript"
               }
@@ -216,10 +280,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               },
               {
                 "key": "Idempotency-Key",
@@ -273,10 +333,6 @@
           "request": {
             "method": "GET",
             "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
@@ -304,11 +360,13 @@
                   "const amount = pm.globals.get(\"orderAmount\") || '50000';",
                   "const amountParam = String(Math.round(Number(amount) * 100));",
                   "const tmnCode = pm.collectionVariables.get(\"vnp_TmnCode\") || 'TESTONLY';",
+                  "// Mỗi payment thành công phải có transactionNo riêng; replay 5.1 dùng lại mã này cho chính payment đó.",
+                  "const transactionNo = String(Date.now()) + String(Math.floor(Math.random() * 1000)).padStart(3, '0');",
                   "const params = {",
                   "    vnp_Amount: amountParam,",
                   "    vnp_ResponseCode: '00',",
                   "    vnp_TmnCode: tmnCode,",
-                  "    vnp_TransactionNo: '99887766',",
+                  "    vnp_TransactionNo: transactionNo,",
                   "    vnp_TransactionStatus: '00',",
                   "    vnp_TxnRef: txnRef",
                   "};",
@@ -319,7 +377,8 @@
                   "sortedKeys.forEach(k => pm.request.url.query.add({ key: k, value: params[k] }));",
                   "pm.request.url.query.add({ key: 'vnp_SecureHash', value: hash });",
                   "pm.globals.set(\"successTxnRef\", txnRef);",
-                  "pm.globals.set(\"successAmountParam\", amountParam);"
+                  "pm.globals.set(\"successAmountParam\", amountParam);",
+                  "pm.globals.set(\"successTransactionNo\", transactionNo);"
                 ],
                 "type": "text/javascript"
               }
@@ -340,12 +399,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn",
               "host": [
@@ -391,10 +445,6 @@
           "request": {
             "method": "GET",
             "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
@@ -440,10 +490,6 @@
           "request": {
             "method": "GET",
             "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}",
@@ -473,6 +519,10 @@
                 "exec": [
                   "pm.test(\"Thêm giỏ hàng thành công cho ca hủy\", function () {",
                   "    pm.response.to.have.status(200);",
+                  "    const res = pm.response.json();",
+                  "    const targetSku = pm.variables.get(\"skuId\") || pm.collectionVariables.get(\"skuId\");",
+                  "    const item = res.data.items.find(i => i.skuId === targetSku) || res.data.items[0];",
+                  "    pm.globals.set(\"failCartItemId\", item.id);",
                   "});"
                 ],
                 "type": "text/javascript"
@@ -485,10 +535,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               }
             ],
             "body": {
@@ -520,7 +566,16 @@
                   "    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);",
                   "    return v.toString(16);",
                   "});",
-                  "pm.variables.set(\"failIdempotencyKey\", uuid);"
+                  "pm.variables.set(\"failIdempotencyKey\", uuid);",
+                  "// Chỉ dùng item của kịch bản hủy để không bị chặn khi giỏ còn sản phẩm nhiều shop.",
+                  "pm.request.body.raw = JSON.stringify({",
+                  "    shippingAddress: '456 Đường Hủy, Quận 3, TP. HCM',",
+                  "    recipientName: 'Khách Thử Hủy',",
+                  "    recipientPhone: '0909999888',",
+                  "    paymentMethod: 'VNPAY',",
+                  "    sourceType: 'REGULAR',",
+                  "    selectedItemIds: [pm.globals.get('failCartItemId')]",
+                  "});"
                 ],
                 "type": "text/javascript"
               }
@@ -549,10 +604,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               },
               {
                 "key": "Idempotency-Key",
@@ -622,12 +673,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn",
               "host": [
@@ -673,10 +719,6 @@
           "request": {
             "method": "GET",
             "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/orders/{{failOrderId}}",
@@ -718,10 +760,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               },
               {
                 "key": "Idempotency-Key",
@@ -771,10 +809,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
               }
             ],
             "body": {
@@ -830,10 +864,6 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              },
-              {
                 "key": "Idempotency-Key",
                 "value": "11223344-5566-4778-8899-aabbccddeeff"
               }
@@ -881,10 +911,6 @@
                 "value": "application/json"
               },
               {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              },
-              {
                 "key": "Idempotency-Key",
                 "value": "11223344-5566-4778-8899-aabbccddeeff"
               }
@@ -922,11 +948,12 @@
                   "const txnRef = pm.globals.get(\"successTxnRef\");",
                   "const amountParam = pm.globals.get(\"successAmountParam\") || '5000000';",
                   "const tmnCode = pm.collectionVariables.get(\"vnp_TmnCode\") || 'TESTONLY';",
+                  "const transactionNo = pm.globals.get(\"successTransactionNo\");",
                   "const params = {",
                   "    vnp_Amount: amountParam,",
                   "    vnp_ResponseCode: '00',",
                   "    vnp_TmnCode: tmnCode,",
-                  "    vnp_TransactionNo: '99887766',",
+                  "    vnp_TransactionNo: transactionNo,",
                   "    vnp_TransactionStatus: '00',",
                   "    vnp_TxnRef: txnRef",
                   "};",
@@ -956,12 +983,7 @@
           ],
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{buyerToken}}"
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/payments/vnpay/ipn",
               "host": [
