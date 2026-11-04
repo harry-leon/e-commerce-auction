@@ -13,7 +13,9 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 
-it('synchronizes navigation, browser history, session and shared UI state', () => {
+// Logout chỉ xóa state sau khi server xác nhận xóa cookie HttpOnly.
+it('synchronizes navigation, browser history, session and shared UI state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
     const { result } = renderHook(() => useApp(), { wrapper: AppProvider })
     act(() => result.current.navigate('search', { q: 'laptop' }))
     expect(window.location.pathname).toBe('/search')
@@ -35,8 +37,11 @@ it('synchronizes navigation, browser history, session and shared UI state', () =
     expect(result.current.auctionReviews['auction-1']?.reason).toBe('Missing details')
     act(() => result.current.submitAuction(AUCTIONS[0]))
     expect(result.current.createdAuctions[0].id).toBe(AUCTIONS[0].id)
-    act(() => result.current.setUser(null))
+    await act(async () => {
+        await result.current.setUser(null)
+    })
     expect(result.current.user).toBeNull()
+    vi.unstubAllGlobals()
 })
 
 it('dismisses a toast manually and expires another after its timeout', () => {

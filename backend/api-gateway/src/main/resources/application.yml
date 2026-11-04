@@ -43,6 +43,9 @@ spring:
             - Path=/api/v1/reputations/**
 
 app:
+  auth:
+    # Mặc định HTTPS; chạy localhost HTTP phải đặt AUTH_COOKIE_SECURE=false.
+    cookie-secure: ${AUTH_COOKIE_SECURE:true}
   keycloak:
     token-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/token
     jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/certs

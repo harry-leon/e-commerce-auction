@@ -44,6 +44,32 @@ docker compose up --build
 
 Dev hằng ngày thường chỉ chạy phần mình làm: `npm run dev` trong `frontend-web/`, hoặc `mvn spring-boot:run` trong một service.
 
+## Mở backend trong IntelliJ IDEA
+
+`backend/pom.xml` tổng hợp 11 module Maven (10 ứng dụng và thư viện `common`).
+Các service giữ Spring Boot parent riêng, có thể chạy/debug độc lập sau khi import.
+
+1. Mở thư mục `nexus` trong IntelliJ.
+2. Chuột phải `backend/pom.xml` → **Add as Maven Project** (hoặc **Link Maven Project**).
+3. Chọn JDK 21 cho Project SDK và Maven importer/runner; đợi Maven đồng bộ dependencies.
+
+Nếu không thấy Maven hay lệnh import: mở **Settings → Plugins → Installed**,
+kiểm tra plugin **Maven** đã bật, rồi khởi động lại IDE nếu vừa bật plugin.
+Bạn cũng có thể dùng **File → Open**, chọn `backend/pom.xml` và mở như project
+để import toàn bộ backend; cách này mở backend thay vì toàn bộ monorepo.
+POM tổng không tự cài hoặc bật plugin Maven trong IDE.
+
+Build từ thư mục gốc repo bằng Maven đã cài trên máy (hoặc Maven tích hợp trong IntelliJ):
+
+```bash
+mvn -f backend/pom.xml clean verify
+mvn -f backend/pom.xml -pl auction-service -am clean package -DskipTests
+```
+
+Lệnh thứ hai build `auction-service` cùng các dependency nội bộ cần thiết;
+`-DskipTests` bỏ qua chạy test. Build riêng một service ngoài Reactor vẫn cần
+cài dependency nội bộ vào Maven local repository trước, ví dụ `mvn -f backend/common/pom.xml install`.
+
 ## Quy ước
 - Git: [CONTRIBUTING.md](CONTRIBUTING.md) (Gitflow, Conventional Commits, Merge Request)
 - Cài đặt GitLab: [docs/GITLAB_SETUP.md](docs/GITLAB_SETUP.md)

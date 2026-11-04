@@ -15,11 +15,22 @@
 | Method | Path | Request | Success response | HTTP | Xác thực |
 |---|---|---|---|---|---|
 | `POST` | `/auth/login` | `LoginRequest` | `ApiResponse<AuthPayload>` | `200` | Public |
-| `POST` | `/auth/refresh` | `RefreshTokenRequest` | `ApiResponse<AuthPayload>` | `200` | Public |
-| `POST` | `/auth/refresh-token` | `RefreshTokenRequest` | `ApiResponse<AuthPayload>` | `200` | Public, alias |
+| `POST` | `/auth/refresh` | `{}` + cookie HttpOnly | `ApiResponse<AuthPayload>` | `200` | Public |
+| `POST` | `/auth/refresh-token` | `{}` + cookie HttpOnly | `ApiResponse<AuthPayload>` | `200` | Public, alias |
+| `POST` | `/auth/logout` | Cookie + header CSRF | Không có body | `204` | Public |
 | `POST` | `/auth/register` | `RegisterRequest` | `ApiResponse<UserResponse>` | `201` | Public |
 
-`Content-Type: application/json` là bắt buộc cho bốn endpoint trên.
+Login/register dùng Content-Type: application/json. Refresh không cần body.
+
+### Cookie và chống CSRF
+
+Login/refresh đặt cookie host-only nexus_access (Path=/) và nexus_refresh (Path=/api/v1/auth), HttpOnly, SameSite=Strict, Secure. JSON chỉ trả user, expiresIn, tokenType; không trả token. Hạn cookie theo expires_in/refresh_expires_in của IAM.
+
+FE gọi cùng origin qua proxy /api/v1 với credentials: include và X-Nexus-Request: 1. Gateway yêu cầu header này cho request thay đổi dữ liệu dùng cookie và POST auth; CORS không mở cho origin khác. Gateway đổi access cookie thành Bearer, xác minh JWT rồi chuyển tiếp service.
+
+POST /auth/logout trả 204 và xóa cả hai cookie đúng path, không cần access token còn hạn. Logout hiện chưa thu hồi session IAM; JWT bị sao chép vẫn có hiệu lực tới hạn.
+
+Mặc định AUTH_COOKIE_SECURE=true cho HTTPS. Chạy trực tiếp bằng HTTP localhost đặt AUTH_COOKIE_SECURE=false; Compose demo mặc định false. Sau thay đổi phải rebuild/restart Gateway và đăng nhập lại; token cũ trong storage bị xóa.
 
 ## 2. Request DTO
 
@@ -38,18 +49,9 @@
 }
 ```
 
-### `RefreshTokenRequest`
+### Refresh
 
-| Field | Kiểu | Bắt buộc | Validation/xử lý |
-|---|---|---|---|
-| `refreshToken` | `string` | Có | Tên field FE ưu tiên dùng |
-| `refresh_token` | `string` | Không | Alias tương thích; chỉ đọc khi thiếu `refreshToken` |
-
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token"
-}
-```
+Token chỉ lấy từ cookie nexus_refresh; bỏ hỗ trợ refreshToken/refresh_token trong JSON. Gửi POST /auth/refresh với header X-Nexus-Request: 1; browser tự gửi cookie.
 
 ### `RegisterRequest`
 
@@ -85,8 +87,6 @@ Gateway bỏ qua role do client gửi và luôn gán `ROLE_BUYER`. Nếu tạo p
 
 ```ts
 interface AuthPayload {
-  accessToken: string
-  refreshToken: string
   expiresIn: number
   tokenType: 'Bearer'
   user: UserResponse
@@ -101,8 +101,6 @@ Ví dụ response của login/refresh (`200 OK`):
 {
   "success": true,
   "data": {
-    "accessToken": "eyJhbGciOiJSUzI1NiJ9.example-access-token",
-    "refreshToken": "eyJhbGciOiJIUzI1NiJ9.example-refresh-token",
     "expiresIn": 3600,
     "tokenType": "Bearer",
     "user": {

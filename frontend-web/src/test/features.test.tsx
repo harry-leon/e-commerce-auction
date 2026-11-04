@@ -104,8 +104,7 @@ beforeEach(() => {
         vi.fn(async (input: string, init: RequestInit = {}) => {
             const path = input.split('?')[0]
             let payload: unknown
-            if (path.endsWith('/auth/login') || path.endsWith('/auth/register'))
-                payload = { accessToken: 'access', refreshToken: 'refresh', user }
+            if (path.endsWith('/auth/login') || path.endsWith('/auth/register')) payload = { user }
             else if (path.includes('/auth/')) payload = { message: 'OK' }
             else if (path.includes('/activity-history'))
                 payload = {
@@ -311,7 +310,9 @@ describe('IAM forms', () => {
         await ui.click(screen.getByText('Remember email'))
         await ui.click(screen.getByRole('button', { name: 'Login' }))
         await waitFor(() => expect(holder.current.navigate).toHaveBeenCalledWith('home'))
-        expect(readSession()?.accessToken).toBe('access')
+        // Sau đăng nhập chỉ cache profile; token nằm trong cookie HttpOnly.
+        expect(readSession()?.user.id).toBe(user.id)
+        expect(sessionStorage.getItem('nexus.session')).not.toContain('accessToken')
         expect(localStorage.getItem('nexus.session')).toBeNull()
         expect(localStorage.getItem('nexus.remembered-email')).toBe(user.email)
     })
@@ -473,10 +474,7 @@ describe('Cart, Checkout và Payment Result', () => {
     })
 
     it('CartPage: xử lý trạng thái lỗi API và cho phép thử lại', async () => {
-        sessionStorage.setItem(
-            'nexus.session',
-            JSON.stringify({ accessToken: 'token', refreshToken: 'r', user }),
-        )
+        sessionStorage.setItem('nexus.session', JSON.stringify({ user }))
         const prevFetch = globalThis.fetch
         vi.stubGlobal(
             'fetch',

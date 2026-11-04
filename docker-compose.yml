@@ -288,6 +288,8 @@ services:
       REPUTATION_SERVICE_URL: lb://reputation-service
       # URL HTTP riêng cho BFF gọi profile; routes khác tiếp tục dùng Eureka.
       USER_PROFILE_URL: http://user-service:8080
+      # Compose demo dùng HTTP localhost; production HTTPS phải đặt true.
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       KEYCLOAK_URL: http://keycloak:8080
     ports:
       - "8080:8080"

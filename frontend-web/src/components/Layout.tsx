@@ -384,8 +384,16 @@ export function PublicHeader() {
                                     ))}
                                     <div className="border-t border-border mt-1 pt-1">
                                         <button
-                                            onClick={() => {
-                                                setUser(null)
+                                            onClick={async () => {
+                                                // Chỉ rời trang sau khi server xóa cookie; lỗi cho phép thử lại.
+                                                try {
+                                                    await setUser(null)
+                                                } catch {
+                                                    window.alert(
+                                                        'Đăng xuất thất bại, vui lòng thử lại.',
+                                                    )
+                                                    return
+                                                }
                                                 navigate('login')
                                                 setUserOpen(false)
                                             }}

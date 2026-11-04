@@ -88,18 +88,22 @@ class AuthOrchestrationTest {
                 calls.getLast());
     }
 
-    /** Login/refresh vẫn trả envelope token + profile theo contract FE cũ. */
+    /** Login/refresh chỉ trả profile; token nằm trong Set-Cookie HttpOnly, Strict và Secure. */
     @Test
     void loginAndRefreshPreserveTokenAndProfileEnvelope() {
         var login = controller.login(Map.of("email", "buyer@example.test",
                 "password", "test-only-password")).block();
         assertTrue(login.getBody().success());
-        assertEquals("fixture-access",
-                login.getBody().data().get("accessToken"));
+        assertFalse(login.getBody().data().containsKey("accessToken"));
+        assertFalse(login.getBody().data().containsKey("refreshToken"));
+        var cookies = login.getHeaders().get("Set-Cookie");
+        assertEquals(2, cookies.size());
+        assertTrue(cookies.stream().allMatch(value -> value.contains("HttpOnly")
+            && value.contains("SameSite=Strict") && value.contains("Secure")));
         assertEquals(Map.of("id", "profile-test"),
                 login.getBody().data().get("user"));
         var refresh = controller.refreshToken(
-                Map.of("refresh_token", "fixture-refresh")).block();
+                "fixture-refresh").block();
         assertEquals(login.getBody().data(), refresh.getBody().data());
         assertEquals(List.of("POST /token", "GET /api/v1/users/me",
                 "POST /token", "GET /api/v1/users/me"), calls);
@@ -126,7 +130,7 @@ class AuthOrchestrationTest {
         var login = controller.login(Map.of("email", "buyer@example.test",
                 "password", "test-only-password")).block();
         var refresh = controller.refreshToken(
-                Map.of("refreshToken", "fixture-refresh")).block();
+                "fixture-refresh").block();
         assertFalse(login.getBody().success());
         assertFalse(refresh.getBody().success());
         assertNull(login.getBody().data());

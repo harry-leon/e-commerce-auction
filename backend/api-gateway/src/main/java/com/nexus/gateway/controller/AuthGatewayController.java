@@ -9,6 +9,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.ResponseCookie;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -45,6 +48,9 @@ public class AuthGatewayController {
     /** Timeout hiện có cho mỗi request IAM/profile, giữ nguyên 15 giây. */
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
 
+    /** Hạn dự phòng khi IAM không trả refresh_expires_in, tính bằng giây. */
+    private static final int DEFAULT_REFRESH_SECONDS = 1800;
+
     /** Client reactive dùng chung cho IAM và profile. */
     private final WebClient webClient;
 
@@ -75,6 +81,10 @@ public class AuthGatewayController {
     /** URL service lưu hồ sơ nghiệp vụ, không lưu password IAM. */
     @Value("${app.keycloak.user-service-url:http://localhost:8081}")
     private String userServiceUrl;
+
+    /** Production bật Secure; localhost HTTP đặt AUTH_COOKIE_SECURE=false. */
+    @Value("${app.auth.cookie-secure:true}")
+    private boolean cookieSecure = true;
 
     /**
      * Dùng builder đã cấu hình connector/timeout của Gateway.
@@ -130,17 +140,13 @@ public class AuthGatewayController {
 
     /**
      * Cấp lại token qua IAM rồi nạp profile như luồng login.
-     * @param body refreshToken hoặc refresh_token
+     * @param refreshToken cookie HttpOnly, không nhận token từ JSON
      * @return token/profile mới hoặc lỗi hết phiên
      */
-    @PostMapping(value = {"/refresh-token", "/refresh"}, consumes =
-        MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = {"/refresh-token", "/refresh"})
     public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>>
-        refreshToken(@RequestBody final Map<String, String> body) {
-        String refreshToken = body.get("refreshToken");
-        if (refreshToken == null) {
-            refreshToken = body.get("refresh_token");
-        }
+        refreshToken(@CookieValue(name = "nexus_refresh", required = false)
+            final String refreshToken) {
 
         if (refreshToken == null) {
             return Mono.just(ResponseEntity.badRequest().body(
@@ -160,7 +166,10 @@ public class AuthGatewayController {
             .timeout(REQUEST_TIMEOUT)
             .flatMap(this::withProfile)
             .onErrorResume(WebClientResponseException.class, ex -> Mono.just(
-                ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .header(HttpHeaders.SET_COOKIE,
+                        cookie("nexus_access", "", "/", 0),
+                        cookie("nexus_refresh", "", "/api/v1/auth", 0)).body(
                     ApiResponse.error("AUTH_REFRESH_TOKEN_EXPIRED",
                         "Refresh token không hợp lệ hoặc đã hết hạn")
                 )
@@ -248,7 +257,8 @@ public class AuthGatewayController {
      * Đọc profile bằng JWT mới và bọc contract frontend.
      * Hỗ trợ DTO thô hoặc envelope; không tự tạo profile giả.
      * @param tokens phản hồi token của Keycloak
-     * @return envelope token cùng user, lỗi profile được truyền lên
+     * Token chỉ đặt trong cookie HttpOnly sau khi đọc profile thành công.
+     * @return envelope hồ sơ và hạn token; lỗi profile được truyền lên
      */
     private Mono<ResponseEntity<ApiResponse<Map<String, Object>>>>
         withProfile(final Map tokens) {
@@ -258,14 +268,49 @@ public class AuthGatewayController {
             .retrieve().bodyToMono(Map.class).timeout(REQUEST_TIMEOUT)
             .map(profile -> {
                 Map<String, Object> result = new HashMap<>();
-                result.put("accessToken", accessToken);
-                result.put("refreshToken", tokens.get("refresh_token"));
                 result.put("expiresIn", tokens.get("expires_in"));
                 result.put("tokenType", "Bearer");
                 result.put("user", profile.containsKey("data")
                     ? profile.get("data") : profile);
-                return ResponseEntity.ok(ApiResponse.ok(result));
+                return ResponseEntity.ok()
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header(HttpHeaders.SET_COOKIE,
+                        cookie("nexus_access", accessToken, "/",
+                            ((Number) tokens.get("expires_in")).longValue()),
+                        cookie("nexus_refresh",
+                            (String) tokens.get("refresh_token"),
+                            "/api/v1/auth", ((Number) tokens.getOrDefault(
+                                "refresh_expires_in", DEFAULT_REFRESH_SECONDS))
+                                .longValue()))
+                    .body(ApiResponse.ok(result));
             });
+    }
+
+    /**
+     * Xóa cookie đúng path; chưa thu hồi IAM session/JWT đã cấp.
+     * @return HTTP 204 kèm cookie hết hạn
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout() {
+        return ResponseEntity.noContent()
+            .header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .header(HttpHeaders.SET_COOKIE, cookie("nexus_access", "", "/", 0),
+                cookie("nexus_refresh", "", "/api/v1/auth", 0)).build();
+    }
+
+    /**
+     * Cookie host-only chặn JS đọc; Strict hạn chế gửi từ site khác.
+     * @param name tên cookie xác thực
+     * @param value token hoặc rỗng khi xóa
+     * @param path phạm vi đường dẫn
+     * @param seconds hạn IAM tính bằng giây, 0 để xóa
+     * @return giá trị Set-Cookie có HttpOnly và cờ Secure theo môi trường
+     */
+    private String cookie(final String name, final String value,
+            final String path, final long seconds) {
+        return ResponseCookie.from(name, value).httpOnly(true)
+            .secure(cookieSecure).sameSite("Strict").path(path)
+            .maxAge(seconds).build().toString();
     }
 
     /**
