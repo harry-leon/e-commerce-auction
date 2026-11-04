@@ -326,7 +326,7 @@ describe('IAM forms', () => {
         await ui.click(screen.getByRole('button', { name: 'Next' }))
         await ui.click(screen.getByRole('button', { name: 'Next' }))
         await ui.type(screen.getByLabelText('Full Name'), 'New Buyer')
-        await ui.type(screen.getByLabelText('ID Number'), '123456789012')
+        await ui.type(screen.getByLabelText('Citizen ID number (CCCD)'), '123456789012')
         fireEvent.change(screen.getByLabelText('Date of Birth'), {
             target: { value: '2000-01-01' },
         })
