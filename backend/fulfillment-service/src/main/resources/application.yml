@@ -49,6 +49,10 @@ app:
     reservation-timeout-minutes: ${INVENTORY_RESERVATION_TIMEOUT_MINUTES:30}
     allow-oversell: ${ALLOW_OVERSELL:false}
     reservation-sweep-interval-ms: ${INVENTORY_RESERVATION_SWEEP_INTERVAL_MS:60000}
+    anti-sniping-extension-minutes: ${ANTI_SNIPING_EXTENSION_MINUTES:5}
+    auction-payment-deadline-minutes: ${AUCTION_PAYMENT_DEADLINE_MINUTES:1440}
+    auction-min-duration-minutes: ${AUCTION_MIN_DURATION_MINUTES:60}
+    auction-max-duration-hours: ${AUCTION_MAX_DURATION_HOURS:168}
     shipping:
       default-delivery-days: ${FULFILLMENT_DEFAULT_DELIVERY_DAYS:3}
       max-retry-attempts: ${FULFILLMENT_MAX_RETRY_ATTEMPTS:3}

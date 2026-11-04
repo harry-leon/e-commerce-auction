@@ -2,12 +2,15 @@ package com.nexus.fulfillment.controller;
 
 import com.nexus.common.response.ApiResponse;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
+import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
 import com.nexus.fulfillment.dto.request.OrderFailureEventRequest;
 import com.nexus.fulfillment.dto.request.OrderPaidEventRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
+import com.nexus.fulfillment.dto.request.ReserveAuctionInventoryRequest;
 import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
 import com.nexus.fulfillment.dto.request.StockAdjustmentRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
+import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
@@ -34,12 +37,17 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST API Controller phục vụ quản lý tồn kho cấp SKU và khóa giữ hàng khi Checkout (SRS §3.6.1).
+ * REST API Controller phục vụ quản lý tồn kho cấp SKU và khóa giữ hàng khi Checkout / Đấu giá (SRS §3.6.1).
  *
  * Chức năng:
  * - Cung cấp API tra cứu tồn kho, kiểm tra tính khả dụng của SKU cho giỏ hàng.
  * - Nhận yêu cầu giữ kho nguyên tử (Atomic Reservation) từ Commerce Service khi người dùng checkout.
- * - Cung cấp API xác nhận xuất kho (Confirm/Commit theo reservation hoặc orderId), giải phóng hoàn kho (Release),
+ * - Quản lý toàn bộ vòng đời tồn kho của phiên đấu giá (Auction Inventory Lifecycle):
+ *   + Khóa giữ kho khi Seller tạo phiên (Auction Reservation).
+ *   + Gia hạn thời gian giữ kho khi có Anti-sniping (+5 phút hoặc mốc mới).
+ *   + Hủy phiên & Giải phóng tồn kho tức thời (Idempotent).
+ *   + Chuyển tiếp trạng thái giữ kho sang Đơn hàng của người thắng cuộc mà không bị Reserve kép.
+ * - Cung cấp API xác nhận xuất kho (Commit/Confirm), giải phóng hoàn kho (Release),
  *   và tiếp nhận các sự kiện thanh toán OrderPaid, OrderPaymentFailed, OrderCancelled.
  * - Cung cấp API tra cứu Sổ cái tồn kho bất biến (Immutable Inventory Ledger).
  *
@@ -49,7 +57,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/inventory")
-@Tag(name = "Inventory Management", description = "Quản lý tồn kho cấp SKU và giữ hàng Checkout với kiểm soát đồng thời")
+@Tag(name = "Inventory Management", description = "Quản lý tồn kho cấp SKU và giữ hàng Checkout / Đấu giá với kiểm soát đồng thời")
 public class InventoryController {
 
     private final InventoryService inventoryService;
@@ -92,6 +100,53 @@ public class InventoryController {
     ) {
         ReservationResponse response = inventoryService.reserveStock(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(response));
+    }
+
+    @PostMapping("/auctions/{auctionId}/reserve")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Khóa giữ hàng khi tạo phiên đấu giá (Auction Reservation)", description = "Khóa 1 đơn vị tồn kho khả dụng cho phiên đấu giá với TTL bao quát toàn bộ phiên (SRS §3.6.1)")
+    public ResponseEntity<ApiResponse<ReservationResponse>> reserveAuctionStock(
+            @PathVariable UUID auctionId,
+            @Valid @RequestBody ReserveAuctionInventoryRequest request
+    ) {
+        ReservationResponse response = inventoryService.reserveAuctionStock(auctionId, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(response));
+    }
+
+    @PostMapping("/auctions/{auctionId}/extend")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Gia hạn thời gian giữ kho (Anti-sniping Extension)", description = "Kéo dài thời hạn hết hạn (expires_at) của phiếu giữ kho thêm 5 phút hoặc mốc mới khi có Anti-sniping (SRS §2.6 & §3.6.1)")
+    public ApiResponse<ReservationResponse> extendAuctionReservation(
+            @PathVariable UUID auctionId,
+            @Valid @RequestBody(required = false) ExtendAuctionReservationRequest request
+    ) {
+        ExtendAuctionReservationRequest effectiveRequest = (request != null)
+                ? request
+                : new ExtendAuctionReservationRequest(null, null);
+        ReservationResponse response = inventoryService.extendAuctionReservation(auctionId, effectiveRequest);
+        return ApiResponse.ok(response);
+    }
+
+    @PostMapping("/auctions/{auctionId}/release")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Hủy phiên & Giải phóng tồn kho đấu giá", description = "Hoàn trả hàng đã giữ về tồn khả dụng khi phiên bị hủy hoặc không có người đặt giá (Idempotent - SRS §3.6.1)")
+    public ApiResponse<Void> releaseByAuction(
+            @PathVariable UUID auctionId,
+            @RequestParam(required = false, defaultValue = "AUCTION_CANCELLED") String reason
+    ) {
+        inventoryService.releaseByAuction(auctionId, reason);
+        return ApiResponse.ok();
+    }
+
+    @PostMapping("/auctions/{auctionId}/transition-to-order")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Chuyển tiếp trạng thái giữ kho sang Đơn hàng (Transition to Order)", description = "Chuyển đổi mã tham chiếu từ auction_id sang order_id của người thắng cuộc mà không bị Reserve kép (SRS §3.6.1)")
+    public ApiResponse<ReservationResponse> transitionAuctionToOrder(
+            @PathVariable UUID auctionId,
+            @Valid @RequestBody TransitionAuctionToOrderRequest request
+    ) {
+        ReservationResponse response = inventoryService.transitionAuctionToOrder(auctionId, request);
+        return ApiResponse.ok(response);
     }
 
     @PostMapping("/reservations/{reservationId}/confirm")
@@ -181,7 +236,7 @@ public class InventoryController {
 
     @PostMapping("/reservations/expire-sweeper")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPPORT') or hasAuthority('INVENTORY.MANAGE')")
-    @Operation(summary = "Kích hoạt quét hoàn kho quá hạn thủ công", description = "Quét ngay lập tức các phiếu giữ hàng PENDING đã quá 30 phút để hoàn trả tồn kho")
+    @Operation(summary = "Kích hoạt quét hoàn kho quá hạn thủ công", description = "Quét ngay lập tức các phiếu giữ hàng PENDING đã quá hạn để hoàn trả tồn kho")
     public ApiResponse<Map<String, Object>> sweepExpiredReservations() {
         int count = inventoryService.autoReleaseExpiredReservations();
         return ApiResponse.ok(Map.of("releasedCount", count, "message", "Đã quét và hoàn kho thành công"));

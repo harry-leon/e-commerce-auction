@@ -14,9 +14,10 @@ import org.springframework.validation.annotation.Validated;
  * Chức năng:
  * - Ánh xạ type-safe các tham số cấu hình từ prefix 'app.fulfillment' nạp từ Spring Cloud Config Server.
  * - Hỗ trợ cập nhật tham số tại runtime thông qua @RefreshScope và actuator refresh endpoint.
+ * - Quản lý các cấu hình liên quan đến vòng đời giữ hàng đấu giá (SRS §2.6, §3.6.1).
  *
  * Quy tắc và lý do:
- * - Quản lý tập trung các thông số giao vận (ngày giao ước tính, số lần thử lại, thời gian auto-confirm).
+ * - Quản lý tập trung các thông số giao vận và giữ kho (bán vượt, timeout giữ kho, anti-sniping extension).
  * - Sử dụng getter/setter thuần theo chuẩn thiết kế không Lombok của fulfillment-service.
  * - Có sẵn giá trị mặc định để ứng dụng và các unit test vẫn chạy độc lập an toàn khi Config Server chưa bật.
  * - Dùng Bean Validation (@Validated, @NotNull, @Min) ngăn chặn cấu hình sai giá trị âm hoặc không hợp lệ.
@@ -53,6 +54,34 @@ public class FulfillmentProperties {
     @Min(value = 1000, message = "Chu kỳ quét tối thiểu 1000ms")
     private Long reservationSweepIntervalMs = 60000L;
 
+    /**
+     * Thời gian gia hạn mặc định cho Anti-sniping tính theo phút (SRS §2.6: ANTI_SNIPING_EXTENSION_MINUTES = 5).
+     */
+    @NotNull
+    @Min(value = 1, message = "Thời gian gia hạn chống sniping tối thiểu là 1 phút")
+    private Integer antiSnipingExtensionMinutes = 5;
+
+    /**
+     * Thời hạn thanh toán mặc định cho đơn hàng đấu giá của Winner tính theo phút (SRS §3.6.1: 24 giờ = 1440 phút).
+     */
+    @NotNull
+    @Min(value = 1, message = "Thời hạn thanh toán đơn đấu giá tối thiểu là 1 phút")
+    private Integer auctionPaymentDeadlineMinutes = 1440;
+
+    /**
+     * Thời lượng tối thiểu của một phiên đấu giá tính theo phút (SRS §2.6: AUCTION_MIN_DURATION_MINUTES = 60).
+     */
+    @NotNull
+    @Min(value = 1, message = "Thời lượng tối thiểu của phiên đấu giá phải từ 1 phút")
+    private Integer auctionMinDurationMinutes = 60;
+
+    /**
+     * Thời lượng tối đa của một phiên đấu giá tính theo giờ (SRS §2.6: AUCTION_MAX_DURATION_HOURS = 168).
+     */
+    @NotNull
+    @Min(value = 1, message = "Thời lượng tối đa của phiên đấu giá phải từ 1 giờ")
+    private Integer auctionMaxDurationHours = 168;
+
     @Valid
     @NotNull
     private Shipping shipping = new Shipping();
@@ -87,6 +116,38 @@ public class FulfillmentProperties {
 
     public void setReservationSweepIntervalMs(Long reservationSweepIntervalMs) {
         this.reservationSweepIntervalMs = reservationSweepIntervalMs;
+    }
+
+    public Integer getAntiSnipingExtensionMinutes() {
+        return antiSnipingExtensionMinutes;
+    }
+
+    public void setAntiSnipingExtensionMinutes(Integer antiSnipingExtensionMinutes) {
+        this.antiSnipingExtensionMinutes = antiSnipingExtensionMinutes;
+    }
+
+    public Integer getAuctionPaymentDeadlineMinutes() {
+        return auctionPaymentDeadlineMinutes;
+    }
+
+    public void setAuctionPaymentDeadlineMinutes(Integer auctionPaymentDeadlineMinutes) {
+        this.auctionPaymentDeadlineMinutes = auctionPaymentDeadlineMinutes;
+    }
+
+    public Integer getAuctionMinDurationMinutes() {
+        return auctionMinDurationMinutes;
+    }
+
+    public void setAuctionMinDurationMinutes(Integer auctionMinDurationMinutes) {
+        this.auctionMinDurationMinutes = auctionMinDurationMinutes;
+    }
+
+    public Integer getAuctionMaxDurationHours() {
+        return auctionMaxDurationHours;
+    }
+
+    public void setAuctionMaxDurationHours(Integer auctionMaxDurationHours) {
+        this.auctionMaxDurationHours = auctionMaxDurationHours;
     }
 
     public Shipping getShipping() {

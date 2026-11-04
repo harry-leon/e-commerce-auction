@@ -15,11 +15,14 @@ import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.fulfillment.config.FulfillmentProperties;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
+import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
+import com.nexus.fulfillment.dto.request.ReserveAuctionInventoryRequest;
 import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
 import com.nexus.fulfillment.dto.request.StockAdjustmentRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
+import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
@@ -61,18 +64,18 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
 /**
- * Kiểm thử nghiệp vụ lõi Quản lý tồn kho và Khóa giữ hàng Checkout (InventoryService).
+ * Kiểm thử nghiệp vụ lõi Quản lý tồn kho, Khóa giữ hàng Checkout và Vòng đời giữ kho Đấu giá (InventoryService) (SRS §3.6.1).
  *
  * Tình huống kiểm thử và lỗi bảo vệ:
- * 1. Khóa giữ hàng thành công (Reserve): tăng reserved_qty, giảm available_qty, tạo phiếu PENDING, ghi sổ cái RESERVE, bắn sự kiện InventoryReserved.
- * 2. Chặn bán vượt tồn (ALLOW_OVERSELL = false): từ chối giữ kho và ném INVENTORY_INSUFFICIENT khi available_qty < số lượng mua.
- * 3. Báo lỗi khi không tìm thấy SKU: ném INVENTORY_NOT_FOUND.
+ * 1. Khóa giữ hàng Checkout & Đấu giá: tăng reserved_qty, giảm available_qty, tạo phiếu PENDING, ghi sổ cái RESERVE, bắn sự kiện InventoryReserved.
+ * 2. Chặn bán vượt tồn (ALLOW_OVERSELL = false): từ chối giữ kho và ném INVENTORY_INSUFFICIENT khi available_qty < số lượng yêu cầu.
+ * 3. Vòng đời giữ hàng Đấu giá (Auction Inventory Lifecycle):
+ *    - Khóa giữ kho khi tạo phiên (reserveAuctionStock): TTL bao quát toàn bộ phiên, quantity = 1, chống bán vượt.
+ *    - Gia hạn chống sniping (extendAuctionReservation): kéo dài TTL thêm 5 phút hoặc mốc mới, ngăn sweep nhầm.
+ *    - Hủy phiên & Thất bại (releaseByAuction): hoàn trả available_qty, ghi sổ cái RELEASE, Idempotent không tăng kho thừa.
+ *    - Chuyển tiếp sang Đơn hàng (transitionAuctionToOrder): đổi AUCTION sang ORDER mà không nhả kho rồi giữ lại (chống Reserve kép).
  * 4. Xác nhận đơn hàng thành công (Confirm): trừ cả total_qty và reserved_qty, ghi sổ cái OUTBOUND, bắn sự kiện InventoryCommitted.
- * 5. Chặn xác nhận lại đơn đã xuất: ném INVENTORY_RESERVATION_ALREADY_COMMITTED.
- * 6. Giải phóng giữ hàng chủ động (Release): hoàn trả reserved_qty về available_qty, chuyển trạng thái RELEASED, ghi sổ cái RELEASE, bắn sự kiện InventoryReleased.
- * 7. Tự động hoàn kho phiếu quá hạn 30 phút (Auto-release): quét các phiếu PENDING hết hạn, chuyển trạng thái EXPIRED, hoàn kho và bắn InventoryReservationExpired.
- * 8. Nhập kho (Inbound) và Điều chỉnh (Adjust): ghi sổ cái tương ứng, kiểm tra ràng buộc không được điều chỉnh tổng tồn xuống dưới mức đang giữ.
- * 9. Sổ cái tồn kho bất biến (Immutable Inventory Ledger): bảo đảm không có thao tác sửa/xóa bản ghi sổ cái.
+ * 5. Tự động hoàn kho phiếu quá hạn (Auto-release): quét các phiếu PENDING hết hạn, chuyển trạng thái EXPIRED, hoàn kho và bắn InventoryReservationExpired.
  */
 @ExtendWith(MockitoExtension.class)
 class InventoryServiceTest {
@@ -104,6 +107,10 @@ class InventoryServiceTest {
         properties.setDefaultWarehouseCode("WH_001");
         properties.setReservationTimeoutMinutes(30);
         properties.setAllowOversell(false);
+        properties.setAntiSnipingExtensionMinutes(5);
+        properties.setAuctionPaymentDeadlineMinutes(1440);
+        properties.setAuctionMinDurationMinutes(60);
+        properties.setAuctionMaxDurationHours(168);
 
         inventoryService = new InventoryServiceImpl(
                 inventoryRepository,
@@ -237,6 +244,446 @@ class InventoryServiceTest {
         verify(ledgerRepository, never()).save(any());
         verify(eventPublisher, never()).publishEvent(any(InventoryReservedEvent.class));
     }
+
+    // ==========================================
+    // Kiểm thử Vòng đời giữ tồn kho Đấu giá (KH-S2-1)
+    // ==========================================
+
+    @Test
+    @DisplayName("Khóa giữ kho Đấu giá: Khóa thành công 1 sản phẩm với TTL bao quát đến endTime")
+    void testReserveAuctionStock_Success() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Instant now = Instant.now();
+        Instant startTime = now.plus(1, ChronoUnit.HOURS);
+        Instant endTime = startTime.plus(24, ChronoUnit.HOURS);
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 0, 0); // available = 5
+        when(reservationRepository.findByRefTypeAndRefId(ReservationRefType.AUCTION, auctionId))
+                .thenReturn(List.of());
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId()))
+                .thenReturn(Optional.of(inventory));
+
+        ReserveAuctionInventoryRequest req = new ReserveAuctionInventoryRequest(
+                skuId, null, startTime, endTime, 1
+        );
+
+        // When
+        ReservationResponse res = inventoryService.reserveAuctionStock(auctionId, req);
+
+        // Then
+        assertNotNull(res);
+        assertEquals(ReservationRefType.AUCTION, res.refType());
+        assertEquals(auctionId, res.refId());
+        assertEquals(ReservationStatus.PENDING, res.status());
+        assertEquals(endTime, res.expiresAt());
+        assertEquals(1, res.items().size());
+        assertEquals(1, res.items().get(0).quantity());
+
+        // Kiểm tra tăng reserved_qty lên 1
+        assertEquals(1, inventory.getReservedQty());
+        assertEquals(4, inventory.getAvailableQty()); // 5 - 1 = 4
+        verify(inventoryRepository, times(1)).save(inventory);
+
+        // Kiểm tra lưu phiếu giữ kho
+        ArgumentCaptor<InventoryReservation> resCaptor = ArgumentCaptor.forClass(InventoryReservation.class);
+        verify(reservationRepository, times(1)).save(resCaptor.capture());
+        assertEquals(ReservationRefType.AUCTION, resCaptor.getValue().getRefType());
+        assertEquals(auctionId, resCaptor.getValue().getRefId());
+        assertEquals(endTime, resCaptor.getValue().getExpiresAt());
+
+        // Kiểm tra ghi sổ cái RESERVE
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.RESERVE, ledgerCaptor.getValue().getMovementType());
+        assertEquals(1, ledgerCaptor.getValue().getQuantity());
+        assertEquals("AUCTION", ledgerCaptor.getValue().getRefType());
+        assertEquals(auctionId, ledgerCaptor.getValue().getRefId());
+
+        // Kiểm tra phát sự kiện InventoryReservedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReservedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Khóa giữ kho Đấu giá: Từ chối khi hết hàng khả dụng (chống bán vượt tồn ALLOW_OVERSELL = false)")
+    void testReserveAuctionStock_InsufficientStock_ThrowsException() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Instant now = Instant.now();
+        Instant startTime = now.plus(1, ChronoUnit.HOURS);
+        Instant endTime = startTime.plus(2, ChronoUnit.HOURS);
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 2, 2, 0); // available = 0
+        when(reservationRepository.findByRefTypeAndRefId(ReservationRefType.AUCTION, auctionId))
+                .thenReturn(List.of());
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId()))
+                .thenReturn(Optional.of(inventory));
+
+        ReserveAuctionInventoryRequest req = new ReserveAuctionInventoryRequest(
+                skuId, null, startTime, endTime, 1
+        );
+
+        // When & Then
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.reserveAuctionStock(auctionId, req));
+        assertEquals(ErrorCode.INVENTORY_INSUFFICIENT.name(), ex.getCode());
+
+        verify(inventoryRepository, never()).save(any());
+        verify(reservationRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Khóa giữ kho Đấu giá: Từ chối khi thời lượng phiên nhỏ hơn 60 phút")
+    void testReserveAuctionStock_DurationTooShort_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Instant now = Instant.now();
+        Instant startTime = now.plus(10, ChronoUnit.MINUTES);
+        Instant endTime = startTime.plus(30, ChronoUnit.MINUTES); // 30 phút < 60 phút
+
+        ReserveAuctionInventoryRequest req = new ReserveAuctionInventoryRequest(
+                skuId, null, startTime, endTime, 1
+        );
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.reserveAuctionStock(auctionId, req));
+        assertEquals(ErrorCode.INVALID_PARAM_VALUE.name(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("Khóa giữ kho Đấu giá: Từ chối khi thời lượng phiên vượt quá 168 giờ (7 ngày)")
+    void testReserveAuctionStock_DurationTooLong_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        Instant now = Instant.now();
+        Instant startTime = now.plus(10, ChronoUnit.MINUTES);
+        Instant endTime = startTime.plus(180, ChronoUnit.HOURS); // 180 giờ > 168 giờ
+
+        ReserveAuctionInventoryRequest req = new ReserveAuctionInventoryRequest(
+                skuId, null, startTime, endTime, 1
+        );
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.reserveAuctionStock(auctionId, req));
+        assertEquals(ErrorCode.INVALID_PARAM_VALUE.name(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("Khóa giữ kho Đấu giá Idempotent: Nếu đã giữ kho PENDING cho auctionId thì trả về kết quả hiện tại")
+    void testReserveAuctionStock_Idempotent() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Instant now = Instant.now();
+        Instant startTime = now.plus(1, ChronoUnit.HOURS);
+        Instant endTime = startTime.plus(24, ChronoUnit.HOURS);
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 1, 0);
+        InventoryReservation existingRes = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                endTime
+        );
+
+        when(reservationRepository.findByRefTypeAndRefId(ReservationRefType.AUCTION, auctionId))
+                .thenReturn(List.of(existingRes));
+
+        ReserveAuctionInventoryRequest req = new ReserveAuctionInventoryRequest(
+                skuId, null, startTime, endTime, 1
+        );
+
+        // When
+        ReservationResponse res = inventoryService.reserveAuctionStock(auctionId, req);
+
+        // Then
+        assertEquals(ReservationRefType.AUCTION, res.refType());
+        assertEquals(auctionId, res.refId());
+        assertEquals(ReservationStatus.PENDING, res.status());
+
+        // Đảm bảo không khóa thêm dòng tồn kho và không lưu thêm bản ghi
+        verify(inventoryRepository, never()).findBySkuIdAndWarehouseIdForUpdate(any(), any());
+        verify(inventoryRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Gia hạn thời gian giữ kho (Anti-sniping): Tự động cộng thêm 5 phút khi kích hoạt Anti-sniping")
+    void testExtendAuctionReservation_Success_WithMinutes() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Instant originalExpiresAt = Instant.now().plus(1, ChronoUnit.HOURS);
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 1, 0);
+        InventoryReservation reservation = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                originalExpiresAt
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        )).thenReturn(List.of(reservation));
+
+        ExtendAuctionReservationRequest req = new ExtendAuctionReservationRequest(5, null);
+
+        // When
+        ReservationResponse res = inventoryService.extendAuctionReservation(auctionId, req);
+
+        // Then
+        Instant expectedExpiresAt = originalExpiresAt.plus(5, ChronoUnit.MINUTES);
+        assertEquals(expectedExpiresAt, reservation.getExpiresAt());
+        assertEquals(expectedExpiresAt, res.expiresAt());
+        verify(reservationRepository, times(1)).save(reservation);
+    }
+
+    @Test
+    @DisplayName("Gia hạn thời gian giữ kho (Anti-sniping): Gia hạn theo mốc newEndTime cụ thể")
+    void testExtendAuctionReservation_Success_WithNewEndTime() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Instant originalExpiresAt = Instant.now().plus(1, ChronoUnit.HOURS);
+        Instant newEndTime = originalExpiresAt.plus(15, ChronoUnit.MINUTES);
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 1, 0);
+        InventoryReservation reservation = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                originalExpiresAt
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        )).thenReturn(List.of(reservation));
+
+        ExtendAuctionReservationRequest req = new ExtendAuctionReservationRequest(null, newEndTime);
+
+        // When
+        ReservationResponse res = inventoryService.extendAuctionReservation(auctionId, req);
+
+        // Then
+        assertEquals(newEndTime, reservation.getExpiresAt());
+        assertEquals(newEndTime, res.expiresAt());
+        verify(reservationRepository, times(1)).save(reservation);
+    }
+
+    @Test
+    @DisplayName("Gia hạn thời gian giữ kho: Báo lỗi khi phiếu không ở trạng thái PENDING")
+    void testExtendAuctionReservation_NonPending_ThrowsException() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 0, 0);
+        InventoryReservation releasedRes = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.RELEASED,
+                Instant.now()
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        )).thenReturn(List.of());
+
+        when(reservationRepository.findByRefTypeAndRefId(ReservationRefType.AUCTION, auctionId))
+                .thenReturn(List.of(releasedRes));
+
+        ExtendAuctionReservationRequest req = new ExtendAuctionReservationRequest(5, null);
+
+        // When & Then
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.extendAuctionReservation(auctionId, req));
+        assertEquals(ErrorCode.AUCTION_NOT_ACTIVE.name(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("Hủy phiên & Giải phóng kho (Release by Auction): Tức thời giải phóng, hoàn trả available_qty, ghi sổ cái RELEASE")
+    void testReleaseByAuction_Success() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 1, 0); // available = 9
+        InventoryReservation reservation = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(2, ChronoUnit.HOURS)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.AUCTION, auctionId))
+                .thenReturn(List.of(reservation));
+        when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
+
+        // When
+        inventoryService.releaseByAuction(auctionId, "AUCTION_CANCELLED");
+
+        // Then
+        assertEquals(ReservationStatus.RELEASED, reservation.getStatus());
+        assertEquals(0, inventory.getReservedQty()); // 1 - 1 = 0
+        assertEquals(10, inventory.getAvailableQty()); // 10 - 0 = 10
+
+        // Ghi sổ cái RELEASE
+        ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
+        verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
+        assertEquals(LedgerMovementType.RELEASE, ledgerCaptor.getValue().getMovementType());
+        assertEquals("AUCTION", ledgerCaptor.getValue().getRefType());
+        assertEquals(auctionId, ledgerCaptor.getValue().getRefId());
+
+        // Bắn sự kiện InventoryReleasedEvent
+        verify(eventPublisher, times(1)).publishEvent(any(InventoryReleasedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Hủy phiên & Giải phóng kho Idempotent: Phiếu đã RELEASED không bị hoàn trả thêm lần nữa (retry release không tăng kho thừa)")
+    void testReleaseByAuction_Idempotent() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 0, 0);
+        InventoryReservation alreadyReleased = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.RELEASED,
+                Instant.now().plus(2, ChronoUnit.HOURS)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.AUCTION, auctionId))
+                .thenReturn(List.of(alreadyReleased));
+
+        // When
+        inventoryService.releaseByAuction(auctionId, "AUCTION_CANCELLED");
+
+        // Then
+        verify(inventoryRepository, never()).findByIdForUpdate(any());
+        verify(inventoryRepository, never()).save(any());
+        verify(ledgerRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any(InventoryReleasedEvent.class));
+    }
+
+    @Test
+    @DisplayName("Chuyển tiếp giữ kho sang Đơn hàng (Transition to Order): Chuyển đổi mã tham chiếu, không nhả kho, không Reserve kép")
+    void testTransitionAuctionToOrder_Success() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 1, 0);
+        InventoryReservation reservation = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(2, ChronoUnit.HOURS)
+        );
+
+        // Chưa có phiếu ORDER nào cho orderId
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of());
+        // Phiếu AUCTION đang PENDING
+        when(reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        )).thenReturn(List.of(reservation));
+
+        TransitionAuctionToOrderRequest req = new TransitionAuctionToOrderRequest(orderId, 1440, null);
+
+        // When
+        ReservationResponse res = inventoryService.transitionAuctionToOrder(auctionId, req);
+
+        // Then
+        assertEquals(ReservationRefType.ORDER, res.refType());
+        assertEquals(orderId, res.refId());
+        assertEquals(ReservationStatus.PENDING, res.status());
+
+        // Kiểm tra phiếu được cập nhật trực tiếp
+        assertEquals(ReservationRefType.ORDER, reservation.getRefType());
+        assertEquals(orderId, reservation.getRefId());
+        verify(reservationRepository, times(1)).save(reservation);
+
+        // Số lượng tồn kho tuyệt đối không bị thay đổi (không nhả kho và không trừ gấp đôi)
+        assertEquals(1, inventory.getReservedQty());
+        assertEquals(4, inventory.getAvailableQty());
+        verify(inventoryRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Chuyển tiếp giữ kho sang Đơn hàng Idempotent: Đã chuyển tiếp trước đó thì trả về ngay kết quả")
+    void testTransitionAuctionToOrder_Idempotent() {
+        // Given
+        UUID auctionId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+
+        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 5, 1, 0);
+        InventoryReservation transitionedRes = new InventoryReservation(
+                UUID.randomUUID(),
+                inventory,
+                1,
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                Instant.now().plus(24, ChronoUnit.HOURS)
+        );
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of(transitionedRes));
+
+        TransitionAuctionToOrderRequest req = new TransitionAuctionToOrderRequest(orderId, 1440, null);
+
+        // When
+        ReservationResponse res = inventoryService.transitionAuctionToOrder(auctionId, req);
+
+        // Then
+        assertEquals(ReservationRefType.ORDER, res.refType());
+        assertEquals(orderId, res.refId());
+        assertEquals(ReservationStatus.PENDING, res.status());
+        verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Chuyển tiếp giữ kho sang Đơn hàng: Báo lỗi khi không tìm thấy phiếu AUCTION PENDING")
+    void testTransitionAuctionToOrder_NoPendingAuctionReservation_ThrowsException() {
+        UUID auctionId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+
+        when(reservationRepository.findByRefTypeAndRefIdForUpdate(ReservationRefType.ORDER, orderId))
+                .thenReturn(List.of());
+        when(reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        )).thenReturn(List.of());
+
+        TransitionAuctionToOrderRequest req = new TransitionAuctionToOrderRequest(orderId, 1440, null);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> inventoryService.transitionAuctionToOrder(auctionId, req));
+        assertEquals(ErrorCode.INVENTORY_RESERVATION_NOT_FOUND.name(), ex.getCode());
+    }
+
+    // ==========================================
+    // Các ca kiểm thử xác nhận xuất kho và quản trị
+    // ==========================================
 
     @Test
     @DisplayName("Xác nhận xuất kho (Confirm): Giảm total_qty và reserved_qty, ghi sổ cái OUTBOUND, bắn InventoryCommittedEvent")

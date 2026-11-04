@@ -18,5 +18,9 @@ app:
     default-warehouse-code: WH_001
     reservation-timeout-minutes: 30
     allow-oversell: false
+    anti-sniping-extension-minutes: 5
+    auction-payment-deadline-minutes: 1440
+    auction-min-duration-minutes: 60
+    auction-max-duration-hours: 168
     reservation-scheduler:
       enabled: false

@@ -16,11 +16,14 @@ import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.exception.GlobalExceptionHandler;
 import com.nexus.fulfillment.config.SecurityConfig;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
+import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
 import com.nexus.fulfillment.dto.request.OrderFailureEventRequest;
 import com.nexus.fulfillment.dto.request.OrderPaidEventRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
+import com.nexus.fulfillment.dto.request.ReserveAuctionInventoryRequest;
 import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
+import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
@@ -31,6 +34,7 @@ import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
 import com.nexus.fulfillment.service.InventoryService;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -48,7 +52,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Kiểm thử tầng Web REST Controller cho Quản lý tồn kho và Khóa giữ hàng Checkout (InventoryController).
+ * Kiểm thử tầng Web REST Controller cho Quản lý tồn kho và Khóa giữ hàng Checkout/Đấu giá (InventoryController).
  *
  * Tình huống kiểm thử:
  * 1. GET /api/v1/inventory/sku/{skuId}: Công khai không cần token, trả về đúng phong bì ApiResponse chuẩn.
@@ -59,6 +63,10 @@ import org.springframework.test.web.servlet.MockMvc;
  * 6. POST /api/v1/inventory/reservations/{id}/release: Hoàn trả giữ kho.
  * 7. POST /api/v1/inventory/inbound: Nhập kho (yêu cầu quyền ADMIN hoặc SELLER).
  * 8. GET /api/v1/inventory/ledger: Đọc sổ cái bất biến (yêu cầu quyền ADMIN hoặc SUPPORT).
+ * 9. POST /api/v1/inventory/auctions/{id}/reserve: Khóa giữ kho cho phiên đấu giá (HTTP 201 Created).
+ * 10. POST /api/v1/inventory/auctions/{id}/extend: Gia hạn giữ kho khi có Anti-sniping (+5 phút).
+ * 11. POST /api/v1/inventory/auctions/{id}/release: Giải phóng tồn kho đấu giá khi phiên bị hủy/thất bại.
+ * 12. POST /api/v1/inventory/auctions/{id}/transition-to-order: Chuyển tiếp giữ kho sang Đơn hàng của người thắng.
  */
 @WebMvcTest(InventoryController.class)
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
@@ -399,5 +407,145 @@ class InventoryControllerTest {
                 .andExpect(jsonPath("$.data[0].movementType").value("INBOUND"))
                 .andExpect(jsonPath("$.data[0].quantity").value(100))
                 .andExpect(jsonPath("$.meta.pagination.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/auctions/{id}/reserve - Khóa giữ kho cho phiên đấu giá thành công (HTTP 201 Created)")
+    void testReserveAuctionStock_Success() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant startTime = Instant.now().plus(1, ChronoUnit.HOURS);
+        Instant endTime = startTime.plus(24, ChronoUnit.HOURS);
+
+        ReservationItemResponse item = new ReservationItemResponse(
+                UUID.randomUUID(),
+                skuId,
+                warehouseId,
+                1,
+                ReservationStatus.PENDING,
+                endTime
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                List.of(item),
+                endTime
+        );
+
+        when(inventoryService.reserveAuctionStock(eq(auctionId), any(ReserveAuctionInventoryRequest.class)))
+                .thenReturn(res);
+
+        ReserveAuctionInventoryRequest req = new ReserveAuctionInventoryRequest(
+                skuId,
+                warehouseId,
+                startTime,
+                endTime,
+                1
+        );
+
+        mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/reserve")
+                        .with(jwt().jwt(j -> j.subject("seller-123")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.refType").value("AUCTION"))
+                .andExpect(jsonPath("$.data.refId").value(auctionId.toString()))
+                .andExpect(jsonPath("$.data.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.items[0].quantity").value(1));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/auctions/{id}/extend - Gia hạn giữ kho khi có Anti-sniping thành công (HTTP 200 OK)")
+    void testExtendAuctionReservation_Success() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant newEndTime = Instant.now().plus(2, ChronoUnit.HOURS);
+
+        ReservationItemResponse item = new ReservationItemResponse(
+                UUID.randomUUID(),
+                skuId,
+                warehouseId,
+                1,
+                ReservationStatus.PENDING,
+                newEndTime
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                List.of(item),
+                newEndTime
+        );
+
+        when(inventoryService.extendAuctionReservation(eq(auctionId), any(ExtendAuctionReservationRequest.class)))
+                .thenReturn(res);
+
+        ExtendAuctionReservationRequest req = new ExtendAuctionReservationRequest(5, newEndTime);
+
+        mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/extend")
+                        .with(jwt().jwt(j -> j.subject("system-timer")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.refType").value("AUCTION"))
+                .andExpect(jsonPath("$.data.refId").value(auctionId.toString()));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/auctions/{id}/release - Giải phóng kho đấu giá thành công (HTTP 200 OK)")
+    void testReleaseByAuction_Success() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        doNothing().when(inventoryService).releaseByAuction(eq(auctionId), any());
+
+        mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/release")
+                        .with(jwt().jwt(j -> j.subject("auction-service")))
+                        .param("reason", "AUCTION_CANCELLED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/auctions/{id}/transition-to-order - Chuyển tiếp giữ kho sang Đơn hàng thành công (HTTP 200 OK)")
+    void testTransitionAuctionToOrder_Success() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant deadline = Instant.now().plus(24, ChronoUnit.HOURS);
+
+        ReservationItemResponse item = new ReservationItemResponse(
+                UUID.randomUUID(),
+                skuId,
+                warehouseId,
+                1,
+                ReservationStatus.PENDING,
+                deadline
+        );
+        ReservationResponse res = new ReservationResponse(
+                ReservationRefType.ORDER,
+                orderId,
+                ReservationStatus.PENDING,
+                List.of(item),
+                deadline
+        );
+
+        when(inventoryService.transitionAuctionToOrder(eq(auctionId), any(TransitionAuctionToOrderRequest.class)))
+                .thenReturn(res);
+
+        TransitionAuctionToOrderRequest req = new TransitionAuctionToOrderRequest(orderId, 1440, null);
+
+        mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/transition-to-order")
+                        .with(jwt().jwt(j -> j.subject("auction-settlement")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.refType").value("ORDER"))
+                .andExpect(jsonPath("$.data.refId").value(orderId.toString()));
     }
 }
