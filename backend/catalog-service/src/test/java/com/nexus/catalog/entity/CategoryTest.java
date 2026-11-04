@@ -36,6 +36,7 @@ class CategoryTest {
         Category category = new Category();
         category.setId(UUID.randomUUID());
         category.setName("Electronics");
+        category.setNameVi("Điện tử");
         return category;
     }
 
@@ -58,12 +59,14 @@ class CategoryTest {
         category.setId(id);
         category.setParent(parent);
         category.setName("Phones");
+        category.setNameVi("Điện thoại");
         category.setLevel(2);
         category.setStatus(CategoryStatus.INACTIVE);
 
         assertEquals(id, category.getId());
         assertEquals(parent, category.getParent());
         assertEquals("Phones", category.getName());
+        assertEquals("Điện thoại", category.getNameVi());
         assertEquals(2, category.getLevel());
         assertEquals(CategoryStatus.INACTIVE, category.getStatus());
     }

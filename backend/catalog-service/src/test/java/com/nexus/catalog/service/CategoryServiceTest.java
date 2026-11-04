@@ -29,6 +29,7 @@ class CategoryServiceTest {
         Category result = new Category();
         result.setId(UUID.randomUUID());
         result.setName("Category");
+        result.setNameVi("Danh mục");
         result.setParent(parent);
         result.setLevel(parent == null ? 1 : parent.getLevel() + 1);
         if (parent != null) {
@@ -40,7 +41,7 @@ class CategoryServiceTest {
     }
 
     private CategoryRequest request(Category parent) {
-        return new CategoryRequest("Updated", parent == null ? null : parent.getId(), CategoryStatus.ACTIVE);
+        return new CategoryRequest("Updated", "Đã cập nhật", parent == null ? null : parent.getId(), CategoryStatus.ACTIVE);
     }
 
     @Test
@@ -48,10 +49,13 @@ class CategoryServiceTest {
         Category root = category(null);
         Category child = category(root);
         when(categories.findAll()).thenReturn(List.of(root, child));
+        when(products.countByCategoryId(root.getId())).thenReturn(2L);
         when(products.countByCategoryId(child.getId())).thenReturn(3L);
         var tree = service.tree();
         assertEquals(1, tree.size());
         assertEquals(3, tree.getFirst().children().getFirst().productCount());
+        // Category gốc phải cộng sản phẩm ở nhánh con để trang chủ không hiển thị 0 sai lệch.
+        assertEquals(5, tree.getFirst().productCount());
         assertEquals(root.getId(), service.get(root.getId()).id());
     }
 
@@ -61,7 +65,7 @@ class CategoryServiceTest {
         var created = service.create(request(root));
         assertEquals(2, created.level());
         // ERD chỉ có name: alias UI phải phản ánh đúng tên đã lưu.
-        assertEquals("Updated", created.nameVi());
+        assertEquals("Đã cập nhật", created.nameVi());
     }
 
     @Test

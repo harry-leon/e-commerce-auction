@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { AppState, Page } from '../types'
 import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER } from '../mockData'
 import { AppRouter } from '../routes/AppRouter'
+import { PublicHeader } from '../components/Layout'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -51,6 +52,27 @@ it('requires a login for private routes and denies a wrong staff role', () => {
     }
 })
 
+/**
+ * Đăng xuất từ menu PublicHeader: xóa tài khoản (setUser(null)) và đóng menu,
+ * giữ nguyên trang hiện tại thay vì ép chuyển hướng về trang login (theo trải nghiệm e-commerce Shopee).
+ */
+it('clears user session on header logout without navigating away from current page', async () => {
+    holder.current.user = DEMO_BUYER
+    holder.current.page = 'product-detail'
+    render(<PublicHeader />)
+
+    // Mở dropdown user menu
+    const userMenuButton = screen.getByRole('button', { name: new RegExp(DEMO_BUYER.fullName, 'i') })
+    fireEvent.click(userMenuButton)
+
+    // Bấm nút Đăng xuất (Log Out)
+    const logoutButton = screen.getByRole('button', { name: /logout/i })
+    fireEvent.click(logoutButton)
+
+    expect(holder.current.setUser).toHaveBeenCalledWith(null)
+    expect(holder.current.navigate).not.toHaveBeenCalledWith('login')
+})
+
 it('opens a dashboard directly in the frontend demo without creating a real login session', async () => {
     holder.current.user = null
     holder.current.page = 'seller-dashboard'
@@ -59,10 +81,26 @@ it('opens a dashboard directly in the frontend demo without creating a real logi
     await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_SELLER))
 })
 
-it('opens Buyer Home directly with the buyer mock user in frontend demo mode', async () => {
+/**
+ * Đảm bảo trang Home khi mới vào giữ vai trò khách (guest) chưa đăng nhập,
+ * không tự động gán tài khoản ảo để khách có thể duyệt hàng hoặc đăng nhập tài khoản thật.
+ */
+it('opens Buyer Home directly as guest without auto-logging into mock account', async () => {
     holder.current.user = null
     holder.current.page = 'home'
     holder.current.pageParams = {}
+    render(<AppRouter />)
+    expect(holder.current.user).toBeNull()
+    expect(holder.current.setUser).not.toHaveBeenCalled()
+})
+
+/**
+ * Khi cần xem thử giao diện Buyer lúc dev, truyền tham số demo=buyer qua URL để nạp mock buyer.
+ */
+it('opens Buyer Home with buyer mock user when demo=buyer is requested', async () => {
+    holder.current.user = null
+    holder.current.page = 'home'
+    holder.current.pageParams = { demo: 'buyer' }
     render(<AppRouter />)
     await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_BUYER))
 })

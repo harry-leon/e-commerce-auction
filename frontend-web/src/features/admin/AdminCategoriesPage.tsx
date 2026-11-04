@@ -5,13 +5,16 @@ import { Button, Input } from '../../components/UI'
 import { LoadState } from '../../components/LoadState'
 import { useLoad } from '../../hooks/useLoad'
 import { flatten } from '../catalog/catalog'
+import { useApp } from '../../context'
+import { tr } from '../../i18n'
 
 /**
  * Quản trị danh mục: GET cây → chọn tạo/sửa → POST/PUT → tải lại cây từ DB.
- * ERD chỉ có name: form gửi một tên danh mục, không thu bản dịch riêng nameVi.
+ * Form lưu đồng thời tên EN/VI để khách có thể chuyển ngôn ngữ mà không dùng category mock hoặc alias.
  * Xóa cần xác nhận rồi DELETE; backend là nơi chặn vượt cấp, vòng lặp và danh mục còn sản phẩm.
  */
 export function AdminCategoriesPage() {
+    const { lang } = useApp()
     // Tăng revision để useLoad lấy lại cây sau thao tác ghi; không tự giả định server đã lưu vào state cục bộ.
     const [revision, setRevision] = useState(0)
     const { data, error, loading } = useLoad<Envelope<ApiCategory[]>>(
@@ -67,10 +70,16 @@ export function AdminCategoriesPage() {
                 <h2 className="font-bold">{editing ? 'Sửa danh mục' : 'Thêm danh mục'}</h2>
                 <Input
                     name="name"
-                    label="Tên danh mục"
+                    label={tr(lang, 'categoryNameEnglish')}
                     defaultValue={editing?.name}
                     maxLength={255}
                     required
+                />
+                <Input
+                    name="nameVi"
+                    label={tr(lang, 'categoryNameVietnamese')}
+                    defaultValue={editing?.nameVi}
+                    maxLength={255}
                 />
                 <label>
                     Danh mục cha

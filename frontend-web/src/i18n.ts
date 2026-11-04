@@ -23,7 +23,8 @@ const en = {
     newPassword: 'New Password',
     passwordReset: 'Password reset successfully!',
     fullName: 'Full Name',
-    idNumber: 'ID Number',
+    idNumber: 'Citizen ID number (CCCD)',
+    cccdFormat: 'Citizen ID number must contain exactly 12 digits.',
     gender: 'Gender',
     dateOfBirth: 'Date of Birth',
     address: 'Address',
@@ -193,6 +194,8 @@ const en = {
     name: 'Name',
     price: 'Price',
     category: 'Category',
+    categoryNameEnglish: 'Category name (English)',
+    categoryNameVietnamese: 'Category name (Vietnamese)',
     all: 'All',
     active: 'Active',
     inactive: 'Inactive',
@@ -288,6 +291,8 @@ const en = {
 }
 
 const vi: typeof en = {
+    categoryNameEnglish: 'Tên danh mục (tiếng Anh)',
+    categoryNameVietnamese: 'Tên danh mục (tiếng Việt)',
     login: 'Đăng nhập',
     logout: 'Đăng xuất',
     register: 'Đăng ký',
@@ -308,7 +313,8 @@ const vi: typeof en = {
     newPassword: 'Mật khẩu mới',
     passwordReset: 'Đặt lại mật khẩu thành công!',
     fullName: 'Họ và tên',
-    idNumber: 'Số CMND/CCCD',
+    idNumber: 'Số CCCD',
+    cccdFormat: 'Số CCCD phải gồm đúng 12 chữ số.',
     gender: 'Giới tính',
     dateOfBirth: 'Ngày sinh',
     address: 'Địa chỉ',

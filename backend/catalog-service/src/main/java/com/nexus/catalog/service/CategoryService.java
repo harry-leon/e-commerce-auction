@@ -83,8 +83,19 @@ public class CategoryService {
         }
         category.setParent(parent);
         category.setName(request.name().trim());
+        // Client cũ chỉ gửi name; giữ tên Việt hiện có khi sửa, hoặc dùng name khi tạo mới/chưa có bản dịch.
+        category.setNameVi(resolveVietnameseName(category, request));
         category.setStatus(request.status());
         setLevels(category, level);
+    }
+
+    /** Chuẩn hóa tên Việt để không lưu chuỗi rỗng và vẫn tương thích request phiên bản cũ. */
+    private String resolveVietnameseName(Category category, CategoryRequest request) {
+        if (request.nameVi() != null && !request.nameVi().isBlank()) {
+            return request.nameVi().trim();
+        }
+        return category.getNameVi() == null || category.getNameVi().isBlank()
+                ? request.name().trim() : category.getNameVi();
     }
 
     /** Chiều cao nhánh tính cả node hiện tại, phục vụ kiểm tra khi chuyển cả cây con sang cha mới. */
@@ -103,12 +114,16 @@ public class CategoryService {
         return categories.findById(id).orElseThrow(() -> new ResourceNotFoundException("Category not found: " + id));
     }
 
-    /** nameVi là alias của name để tương thích UI, không có cột bản dịch riêng trong ERD.
-     * productCount chỉ đếm sản phẩm gắn trực tiếp với node, không cộng dồn sản phẩm của các node con. */
+    /**
+     * Trả cả hai tên đã lưu để UI chuyển EN/VI không phải đoán từ dữ liệu sản phẩm.
+     * Tổng số lượng gồm các nhánh con vì sản phẩm thường gắn vào category lá, còn trang chủ hiển thị category gốc.
+     */
     private CategoryResponse response(Category category) {
-        return new CategoryResponse(category.getId(), category.getName(), category.getName(),
+        List<CategoryResponse> children = category.getChildren().stream().map(this::response).toList();
+        long productCount = products.countByCategoryId(category.getId())
+                + children.stream().mapToLong(CategoryResponse::productCount).sum();
+        return new CategoryResponse(category.getId(), category.getName(), category.getNameVi(),
                 category.getParent() == null ? null : category.getParent().getId(),
-                category.getLevel(), category.getStatus(), products.countByCategoryId(category.getId()),
-                category.getChildren().stream().map(this::response).toList());
+                category.getLevel(), category.getStatus(), productCount, children);
     }
 }

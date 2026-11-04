@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.UUID;
 import org.hibernate.annotations.UuidGenerator;
 
-/** Danh mục theo ERD: chỉ lưu một tên name; cấp và quan hệ cha–con do CategoryService kiểm soát. */
+/** Danh mục lưu tên tiếng Anh và tiếng Việt; cấp và quan hệ cha–con do CategoryService kiểm soát. */
 @Entity
 @Table(name = "categories")
 public class Category {
@@ -42,6 +42,12 @@ public class Category {
     @Column(nullable = false, length = 255)
     private String name;
 
+    /** Tên tiếng Việt dùng cho giao diện khi người dùng chọn ngôn ngữ VI. */
+    @NotBlank
+    @Size(max = 255)
+    @Column(name = "name_vi", nullable = false, length = 255)
+    private String nameVi;
+
     @Min(1)
     @Max(3)
     @Column(nullable = false)
@@ -61,6 +67,8 @@ public class Category {
     public void setChildren(List<Category> children) { this.children = children; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public String getNameVi() { return nameVi; }
+    public void setNameVi(String nameVi) { this.nameVi = nameVi; }
     public Integer getLevel() { return level; }
     public void setLevel(Integer level) { this.level = level; }
     public CategoryStatus getStatus() { return status; }

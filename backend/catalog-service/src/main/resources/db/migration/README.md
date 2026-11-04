@@ -10,6 +10,12 @@ Flyway chỉ thực thi các migration SQL đúng quy tắc tên; file này gi�
 - **Không thay đổi:** UUID, quan hệ cha–con, sản phẩm đang tham chiếu danh mục.
 - **Lưu ý:** migration này đã được chạy trong lần kiểm chứng local. Không sửa cả comment trong file SQL đã áp dụng vì Flyway lưu checksum; nếu cần thay đổi schema, tạo migration phiên bản tiếp theo. Phần giải thích được đặt tại đây để giữ checksum hiện tại.
 
+## V5__restore_category_translations_and_merge_roots.sql
+
+- **Chức năng:** khôi phục `categories.name_vi` để API trả tên EN/VI độc lập cho giao diện.
+- **Luồng:** chuẩn hóa sáu root chuẩn, chuyển các nhánh con có sản phẩm sang root tương ứng rồi chỉ xóa root trùng khi không còn nhánh hoặc sản phẩm tham chiếu.
+- **An toàn dữ liệu:** không cập nhật `products.category_id`; category ngoài bộ UUID dữ liệu mẫu chỉ được đặt bản dịch dự phòng bằng `name`.
+
 ## V4__align_categories_with_final_erd.sql
 
 ERD đã chốt chỉ có `name`. V4 bỏ `name_vi`; API chỉ nhận `name` và trả `nameVi = name` như alias tương thích UI. Sao lưu bản dịch riêng trước khi nâng cấp; không sửa V3 đã chạy.
