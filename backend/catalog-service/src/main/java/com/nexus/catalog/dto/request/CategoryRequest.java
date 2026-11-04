@@ -6,9 +6,13 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
-/** Chỉ nhận một tên name theo ERD. DTO tạo/sửa danh mục: parentId null là gốc; cấp được server tính từ cha, không nhận từ client. */
+/**
+ * DTO tạo/sửa danh mục song ngữ. nameVi có thể bỏ trống để tương thích client cũ;
+ * CategoryService dùng name làm dự phòng, còn cấp luôn do server tính từ cha.
+ */
 public record CategoryRequest(
         @NotBlank @Size(max = 255) String name,
+        @Size(max = 255) String nameVi,
         UUID parentId,
         @NotNull CategoryStatus status) {
 }

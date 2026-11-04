@@ -86,16 +86,14 @@ function demoUserFor(role: unknown): User | null {
 }
 
 /**
- * Chức năng: Khởi tạo vai trò demo khi dev màn hình Buyer và Dashboard không qua Keycloak IAM.
- * Đầu vào và kết quả: Nhận `page` hiện tại; trả về đối tượng `User` (DEMO_BUYER/ADMIN/SELLER/SUPPORT) hoặc null.
- * Luồng xử lý: Kiểm tra biến môi trường dev; nếu đúng, gán quyền demo tương ứng cho route.
- * Quy tắc và lý do: Màn home, cart, checkout, payment-result dùng DEMO_BUYER; production tắt hoàn toàn để bảo vệ bảo mật.
+ * Chức năng: Khởi tạo vai trò demo khi dev các màn hình Dashboard riêng biệt không qua Keycloak IAM.
+ * Đầu vào và kết quả: Nhận `page` hiện tại; trả về đối tượng `User` (DEMO_ADMIN/SELLER/SUPPORT) hoặc null.
+ * Luồng xử lý: Kiểm tra biến môi trường dev; nếu đúng, gán quyền demo tương ứng cho route dashboard.
+ * Quy tắc và lý do: Trang chủ 'home' và các trang công khai giữ trạng thái khách (guest) khi chưa đăng nhập, không tự động gán tài khoản ảo; muốn giả lập Buyer khi dev có thể truyền query ?demo=buyer. Dashboard nội bộ (admin, seller, support) tự nạp mock user khi dev.
  * Lỗi và giới hạn: Dữ liệu demo chỉ lưu trong React state, không có JWT thật trên server backend.
  */
 function demoUserForDashboard(page: string): User | null {
     if (!import.meta.env.DEV) return null
-    if (page === 'home' || page === 'cart' || page === 'checkout' || page === 'payment-result')
-        return DEMO_BUYER
     if (page.startsWith('admin-')) return DEMO_ADMIN
     if (page.startsWith('seller-')) return DEMO_SELLER
     if (page.startsWith('support-')) return DEMO_SUPPORT

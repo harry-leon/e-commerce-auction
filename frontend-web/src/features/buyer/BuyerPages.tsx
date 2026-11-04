@@ -64,6 +64,11 @@ function getAuctionCurrentBid(auction: unknown) {
     return typeof value === 'number' ? value : 0
 }
 
+/** Dẹt cây category từ API để sản phẩm gắn ở node lá vẫn tìm được đúng tên song ngữ. */
+function flattenLiveCategories(categories: ApiCategory[]): ApiCategory[] {
+    return categories.flatMap((category) => [category, ...flattenLiveCategories(category.children || [])])
+}
+
 // ─── Home Page ─────────────────────────────────────────────────────────────────
 export function HomePage() {
     const { lang, navigate, createdAuctions, auctionReviews } = useApp()
@@ -83,15 +88,17 @@ export function HomePage() {
     const heroAuction =
         activeAuctions.length > 0 ? activeAuctions[heroIndex % activeAuctions.length] : null
 
-    // Tải danh mục thật từ Catalog Service backend (/api/v1/categories)
-    const { data: catData } = useLoad<Envelope<ApiCategory[]>>('/categories')
-    // Tải danh sách sản phẩm thật từ Catalog Service backend (/api/v1/products)
-    const { data: prodData } = useLoad<Envelope<ApiProduct[]>>('/products')
+    // Tải danh mục thật từ Catalog Service backend (/api/v1/categories) với SWR cache
+    const { data: catData, loading: catLoading } = useLoad<Envelope<ApiCategory[]>>('/categories')
+    // Tải danh sách sản phẩm thật từ Catalog Service backend (/api/v1/products) với SWR cache
+    const { data: prodData, loading: prodLoading } = useLoad<Envelope<ApiProduct[]>>('/products')
 
     /**
      * Chức năng: Ánh xạ danh mục trực tiếp từ Catalog backend kết nối Supabase; không dùng CATEGORIES mockData.
      */
-    const liveCategories = (catData?.data || []).map((c) => ({
+    const categoryTree = catData?.data || []
+    const allLiveCategories = flattenLiveCategories(categoryTree)
+    const liveCategories = categoryTree.map((c) => ({
         id: c.id,
         name: c.name,
         nameVi: c.nameVi || c.name,
@@ -105,10 +112,14 @@ export function HomePage() {
      */
     const liveProducts: Product[] = (prodData?.data || []).map((p) => {
         const sku = p.skus?.[0]
-        const categoryObj = catData?.data?.find((c) => c.id === p.categoryId)
+        const categoryObj = allLiveCategories.find((c) => c.id === p.categoryId)
         const categoryName = categoryObj
-            ? categoryObj.nameVi || categoryObj.name
-            : 'Thiết bị điện tử'
+            ? lang === 'vi'
+                ? categoryObj.nameVi || categoryObj.name
+                : categoryObj.name
+            : lang === 'vi'
+              ? 'Chưa phân loại'
+              : 'Uncategorized'
         return {
             id: p.id,
             name: p.name,
@@ -178,9 +189,12 @@ export function HomePage() {
                     <div className="max-w-2xl">
                         <div className="inline-flex items-center gap-2 border border-white/30 rounded-full px-4 py-1.5 text-sm font-semibold mb-5 bg-white/10 backdrop-blur-sm">
                             <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                            {lang === 'en'
-                                ? `${liveProducts.length} verified products in database`
-                                : `${liveProducts.length} sản phẩm thực tế từ Database`}
+                            {/* Hiển thị số lượng sản phẩm thực tế; khi chưa cache thì badge ẩn, skeleton card bên dưới đảm nhận trạng thái loading */}
+                            {liveProducts.length > 0 && (
+                                lang === 'en'
+                                    ? `${liveProducts.length} verified products in database`
+                                    : `${liveProducts.length} sản phẩm thực tế từ Database`
+                            )}
                         </div>
                         <h1 className="text-5xl font-black leading-tight mb-5">
                             {lang === 'en' ? (
@@ -276,8 +290,22 @@ export function HomePage() {
                             {lang === 'en' ? 'Shop by Category' : 'Mua theo danh mục'}
                         </h2>
                     </div>
-                    <div className="grid grid-cols-6 gap-4">
-                        {liveCategories.map((cat) => {
+                    {catLoading && liveCategories.length === 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+                            {[1, 2, 3, 4, 5, 6].map((i) => (
+                                <div
+                                    key={i}
+                                    className="nexus-card p-5 flex flex-col items-center gap-3 animate-pulse"
+                                >
+                                    <div className="w-14 h-14 rounded-2xl bg-orange-50/60" />
+                                    <div className="h-4 w-20 bg-gray-200 rounded" />
+                                    <div className="h-3 w-12 bg-gray-100 rounded" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+                            {liveCategories.map((cat) => {
                             const Icon = CATEGORY_ICONS[cat.id]
                             return (
                                 <button
@@ -299,7 +327,8 @@ export function HomePage() {
                                 </button>
                             )
                         })}
-                    </div>
+                        </div>
+                    )}
                 </section>
 
                 {/* Live Auctions */}
@@ -340,7 +369,21 @@ export function HomePage() {
                             {tr(lang, 'viewAll')} →
                         </Button>
                     </div>
-                    {liveProducts.length > 0 ? (
+                    {prodLoading && liveProducts.length === 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                            {[1, 2, 3, 4].map((i) => (
+                                <div
+                                    key={i}
+                                    className="nexus-card p-4 flex flex-col gap-3 animate-pulse"
+                                >
+                                    <div className="w-full h-48 bg-gray-100 rounded-xl" />
+                                    <div className="h-4 w-3/4 bg-gray-200 rounded" />
+                                    <div className="h-4 w-1/2 bg-gray-100 rounded" />
+                                    <div className="h-6 w-1/3 bg-gray-200 rounded mt-2" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : liveProducts.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
                             {liveProducts.map((p) => (
                                 <ProductCard key={p.id} product={p} />

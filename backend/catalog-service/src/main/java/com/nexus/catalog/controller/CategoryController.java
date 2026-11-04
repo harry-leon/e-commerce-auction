@@ -54,7 +54,7 @@ public class CategoryController {
         return ApiResponse.ok(service.create(request));
     }
 
-    /** Sửa tên/trạng thái/cha; quy tắc chặn vòng lặp và giới hạn cấp nằm trong service. */
+    /** Sửa tên EN/VI, trạng thái hoặc cha; quy tắc chặn vòng lặp và giới hạn cấp nằm trong service. */
     @PutMapping("/{id}")
     @PreAuthorize("hasAuthority('CATEGORY.UPDATE')")
     public ApiResponse<CategoryResponse> update(@PathVariable UUID id, @Valid @RequestBody CategoryRequest request) {

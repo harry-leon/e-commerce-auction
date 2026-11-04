@@ -208,7 +208,10 @@ function PasswordStrength({ password }: { password: string }) {
     )
 }
 
-/** Form đăng ký ba bước; validate UI để hướng dẫn nhập, backend vẫn kiểm tra dữ liệu trước khi tạo tài khoản. */
+/**
+ * Form đăng ký ba bước; CCCD là chuỗi 12 chữ số để giữ số 0 đầu.
+ * UI hướng dẫn sớm, còn backend vẫn là nơi kiểm tra và tạo tài khoản cuối cùng.
+ */
 export function RegisterPage() {
     const { lang, navigate, showToast } = useApp()
     const [step, setStep] = useState(1)
@@ -241,6 +244,7 @@ export function RegisterPage() {
         const e: Partial<typeof form> = {}
         if (!form.fullName) e.fullName = tr(lang, 'required')
         if (!form.idNumber) e.idNumber = tr(lang, 'required')
+        else if (!/^\d{12}$/.test(form.idNumber)) e.idNumber = tr(lang, 'cccdFormat')
         if (!form.dateOfBirth) e.dateOfBirth = tr(lang, 'required')
         setErrors(e)
         return Object.keys(e).length === 0
@@ -288,14 +292,19 @@ export function RegisterPage() {
             // Khi BE trả 422, đọc error.details[], dùng field và message để hiển thị từng lỗi
             const fieldErrors = extractFieldErrors(error)
             if (Object.keys(fieldErrors).length > 0) {
-                setErrors((prev) => ({ ...prev, ...fieldErrors }))
+                // API dùng identifyNumber, còn state của form dùng idNumber; đổi key để lỗi nằm cạnh ô CCCD.
+                const normalizedFieldErrors = {
+                    ...fieldErrors,
+                    ...(fieldErrors.identifyNumber ? { idNumber: fieldErrors.identifyNumber } : {}),
+                }
+                setErrors((prev) => ({ ...prev, ...normalizedFieldErrors }))
                 // Tự động chuyển về đúng bước chứa trường bị lỗi để người dùng dễ theo dõi
                 if (fieldErrors.password) {
                     setStep(3)
                 } else if (
                     fieldErrors.fullName ||
                     fieldErrors.identifyNumber ||
-                    fieldErrors.idNumber ||
+                    normalizedFieldErrors.idNumber ||
                     fieldErrors.gender ||
                     fieldErrors.dateOfBirth ||
                     fieldErrors.address
@@ -394,7 +403,11 @@ export function RegisterPage() {
                         label={tr(lang, 'idNumber')}
                         value={form.idNumber}
                         onChange={set('idNumber')}
-                        placeholder="079xxxxxxxxx"
+                        placeholder="079203001234"
+                        inputMode="numeric"
+                        pattern="[0-9]{12}"
+                        maxLength={12}
+                        autoComplete="off"
                         error={errors.idNumber}
                     />
                     <div className="grid grid-cols-2 gap-4">

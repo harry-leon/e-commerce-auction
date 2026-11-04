@@ -119,6 +119,9 @@ services:
       DB_URL: ${USER_DB_URL:-jdbc:postgresql://postgres:5432/nexus_user}
       DB_USERNAME: ${USER_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
       DB_PASSWORD: ${USER_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
+      # Giới hạn pool kết nối DB tương tự các domain service khác để tránh cạn kiệt connection pool của Supabase.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${SERVICE_DB_POOL_MAX_SIZE:-3}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
     ports:
       - "8081:8080"
 

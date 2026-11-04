@@ -194,6 +194,24 @@ describe('Form Đăng ký (RegisterPage)', () => {
     })
     afterEach(() => vi.unstubAllGlobals())
 
+    it('chặn CCCD không đủ 12 chữ số ngay tại bước thông tin cá nhân', async () => {
+        const ui = userEvent.setup()
+        render(<RegisterPage />)
+
+        await ui.type(screen.getByLabelText(/Email/i), 'buyer@test.vn')
+        await ui.type(screen.getByLabelText(/Phone|Số điện thoại/i), '0901234567')
+        await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
+        await ui.type(screen.getByLabelText(/Full Name|Họ và tên/i), 'Nguyễn Văn A')
+        await ui.type(screen.getByLabelText(/Citizen ID|Số CCCD/i), '07920300123')
+        await ui.type(screen.getByLabelText(/Date of Birth|Ngày sinh/i), '2000-01-01')
+
+        await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
+
+        // Bảo vệ số CCCD 11 chữ số không đi tới bước mật khẩu hoặc gọi API đăng ký.
+        expect(screen.getByText(/exactly 12 digits|đúng 12 chữ số/i)).toBeInTheDocument()
+        expect(fetch).not.toHaveBeenCalled()
+    })
+
     it('chặn submit bước 3 nếu mật khẩu không đạt policy và hiển thị lỗi', async () => {
         const ui = userEvent.setup()
         render(<RegisterPage />)
@@ -205,7 +223,7 @@ describe('Form Đăng ký (RegisterPage)', () => {
 
         // Bước 2
         await ui.type(screen.getByLabelText(/Full Name|Họ và tên/i), 'Nguyễn Văn A')
-        await ui.type(screen.getByLabelText(/ID Number|Số CMND/i), '079203001234')
+        await ui.type(screen.getByLabelText(/Citizen ID|Số CCCD/i), '079203001234')
         await ui.type(screen.getByLabelText(/Date of Birth|Ngày sinh/i), '2000-01-01')
         await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
 
@@ -261,7 +279,7 @@ describe('Form Đăng ký (RegisterPage)', () => {
 
         // Bước 2
         await ui.type(screen.getByLabelText(/Full Name|Họ và tên/i), 'Nguyễn Văn A')
-        await ui.type(screen.getByLabelText(/ID Number|Số CMND/i), '079203001234')
+        await ui.type(screen.getByLabelText(/Citizen ID|Số CCCD/i), '079203001234')
         await ui.type(screen.getByLabelText(/Date of Birth|Ngày sinh/i), '2000-01-01')
         await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
 

@@ -4,7 +4,7 @@ import com.nexus.catalog.enums.CategoryStatus;
 import java.util.List;
 import java.util.UUID;
 
-/** nameVi là alias hiển thị của name, không được lưu thành cột riêng. DTO cây danh mục; children chứa nhánh con và productCount là số sản phẩm trực tiếp tại node này. */
+/** DTO cây danh mục song ngữ; productCount gồm node hiện tại và các nhánh con để category gốc phản ánh đúng catalog. */
 public record CategoryResponse(UUID id, String name, String nameVi, UUID parentId,
         int level, CategoryStatus status, long productCount, List<CategoryResponse> children) {
 }
