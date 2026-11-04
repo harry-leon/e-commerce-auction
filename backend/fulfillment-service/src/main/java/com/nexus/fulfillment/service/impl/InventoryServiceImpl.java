@@ -4,11 +4,14 @@ import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.fulfillment.config.FulfillmentProperties;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
+import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
+import com.nexus.fulfillment.dto.request.ReserveAuctionInventoryRequest;
 import com.nexus.fulfillment.dto.request.SkuAvailabilityCheckRequest;
 import com.nexus.fulfillment.dto.request.StockAdjustmentRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
+import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
@@ -46,18 +49,24 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cài đặt nghiệp vụ quản trị tồn kho và giữ hàng Checkout với Concurrency Control (SRS §3.6.1).
+ * Cài đặt nghiệp vụ quản trị tồn kho và vòng đời giữ hàng Checkout / Đấu giá (SRS §3.6.1).
  *
  * Chức năng:
  * - Quản lý 4 trạng thái tồn kho chính xác theo SKU và kho hàng (total_qty, available_qty, reserved_qty, unavailable_qty).
- * - Khóa giữ hàng nguyên tử (Atomic Reservation) với Pessimistic Locking để chống Overselling (ALLOW_OVERSELL = false).
- * - Tự động giải phóng các phiếu giữ hàng quá 30 phút (INVENTORY_RESERVATION_TIMEOUT_MINUTES = 30).
- * - Ghi lại mọi biến động vào Sổ cái tồn kho bất biến (Immutable Inventory Ledger).
- * - Bắn các sự kiện miền (InventoryChecked, InventoryReserved, InventoryReleased, InventoryReservationExpired, InventoryCommitted).
+ * - Khóa giữ hàng nguyên tử (Atomic Reservation) với Pessimistic Write Lock để chống Overselling (ALLOW_OVERSELL = false).
+ * - Quản lý toàn vẹn vòng đời giữ tồn kho cho phiên đấu giá (Auction Inventory Lifecycle):
+ *   + Khóa giữ kho khi tạo phiên (TTL = endTime, bao quát toàn bộ phiên).
+ *   + Gia hạn thời hạn giữ kho khi có Anti-sniping (+5 phút hoặc mốc mới).
+ *   + Hủy phiên & giải phóng hoàn kho tức thời khi phiên bị hủy hoặc không có người đặt giá (Idempotent).
+ *   + Chuyển tiếp trạng thái giữ kho sang Đơn hàng của Winner (Transition to Order) mà không bị Reserve kép.
+ * - Tự động giải phóng các phiếu giữ hàng quá hạn.
+ * - Ghi nhận mọi biến động vào Sổ cái tồn kho bất biến (Immutable Inventory Ledger).
+ * - Phát các sự kiện miền InventoryChecked, InventoryReserved, InventoryReleased, InventoryReservationExpired, InventoryCommitted.
  *
  * Quy tắc và lý do:
- * - Khi giữ hàng nhiều SKU cùng lúc, danh sách được sắp xếp tăng dần theo skuId trước khi khóa dòng dữ liệu để tránh deadlock.
+ * - Khi giữ hàng nhiều SKU cùng lúc, sắp xếp tăng dần theo skuId trước khi khóa dòng DB để triệt tiêu Deadlock.
  * - Sổ cái tồn kho chỉ thêm mới (INSERT) và đọc (SELECT), tuyệt đối cấm sửa đổi hoặc xóa.
+ * - Chuyển tiếp AUCTION sang ORDER giữ nguyên reserved_qty, không tạo khoảng trống cho khách mua ngay cướp kho.
  */
 @Service
 public class InventoryServiceImpl implements InventoryService {
@@ -100,17 +109,8 @@ public class InventoryServiceImpl implements InventoryService {
                 .orElse(null);
 
         if (inventory == null) {
-            return new InventoryStockResponse(
-                    skuId,
-                    warehouse.getId(),
-                    warehouse.getCode(),
-                    0,
-                    0,
-                    0,
-                    0
-            );
+            return new InventoryStockResponse(skuId, warehouse.getId(), warehouse.getCode(), 0, 0, 0, 0);
         }
-
         return toStockResponse(inventory);
     }
 
@@ -121,16 +121,14 @@ public class InventoryServiceImpl implements InventoryService {
     @Transactional(readOnly = true)
     public List<InventoryStockResponse> getAllStockBySku(UUID skuId) {
         List<Inventory> list = inventoryRepository.findBySkuId(skuId);
-        List<InventoryStockResponse> result = new ArrayList<>();
-        for (Inventory inv : list) {
-            result.add(toStockResponse(inv));
-        }
-        return result;
+        return list.stream().map(this::toStockResponse).toList();
     }
 
     /**
      * Kiểm tra nhanh số lượng tồn khả dụng cho danh sách SKU (dùng cho Cart và Checkout validation).
-     * Bắn sự kiện InventoryCheckedEvent cho từng SKU được kiểm tra.
+     *
+     * Luồng xử lý: Với mỗi item trong danh sách, tìm kho và bản ghi tồn kho, kiểm tra available_qty >= quantity.
+     * Bắn sự kiện InventoryCheckedEvent theo SRS §2.8.
      */
     @Override
     @Transactional(readOnly = true)
@@ -139,12 +137,26 @@ public class InventoryServiceImpl implements InventoryService {
         List<SkuAvailabilityResponse> result = new ArrayList<>();
 
         for (UUID skuId : request.skuIds()) {
-            Inventory inv = inventoryRepository.findBySkuIdAndWarehouseId(skuId, warehouse.getId()).orElse(null);
-            int available = (inv != null) ? inv.getAvailableQty() : 0;
-            result.add(new SkuAvailabilityResponse(skuId, warehouse.getId(), available, available > 0));
+            Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseId(skuId, warehouse.getId())
+                    .orElse(null);
 
-            // Bắn sự kiện InventoryCheckedEvent theo SRS §2.8
-            eventPublisher.publishEvent(InventoryCheckedEvent.of(skuId, warehouse.getId(), available));
+            int available = (inventory != null) ? inventory.getAvailableQty() : 0;
+            boolean isAvailable = available > 0;
+
+            // Khởi tạo DTO phản hồi tình trạng tồn kho SKU
+            result.add(new SkuAvailabilityResponse(
+                    skuId,
+                    warehouse.getId(),
+                    available,
+                    isAvailable
+            ));
+
+            // Bắn sự kiện InventoryCheckedEvent theo SRS §2.8 thông báo số lượng tồn kho khả dụng
+            eventPublisher.publishEvent(InventoryCheckedEvent.of(
+                    skuId,
+                    warehouse.getId(),
+                    available
+            ));
         }
 
         return result;
@@ -153,25 +165,60 @@ public class InventoryServiceImpl implements InventoryService {
     /**
      * Khóa giữ hàng tồn kho khi người dùng Checkout (Atomic Reservation).
      *
-     * Đầu vào: CreateReservationRequest chứa refType (ORDER/AUCTION), refId (order_id), danh sách SKU + số lượng.
+     * Đầu vào: CreateReservationRequest chứa refType (ORDER/AUCTION), refId, danh sách SKU + số lượng, timeoutMinutes/expiresAt.
      * Kết quả: ReservationResponse chứa danh sách phiếu giữ hàng PENDING cùng thời điểm hết hạn.
      *
      * Luồng xử lý:
-     * 1. Sắp xếp danh sách items tăng dần theo skuId để triệt tiêu nguy cơ Deadlock khi khóa nhiều dòng DB.
-     * 2. Khóa ghi (SELECT FOR UPDATE) từng dòng tồn kho.
-     * 3. Kiểm tra available_qty: Nếu < số lượng yêu cầu và allowOversell = false → ném INVENTORY_INSUFFICIENT.
-     * 4. Tăng reserved_qty của tồn kho (làm giảm available_qty tương ứng).
-     * 5. Tạo bản ghi InventoryReservation với trạng thái PENDING và expires_at = now + 30 phút.
-     * 6. Ghi nhận biến động RESERVE vào Sổ cái tồn kho bất biến (inventory_ledger).
-     * 7. Bắn sự kiện miền InventoryReservedEvent cho từng mặt hàng được giữ.
+     * 1. Kiểm tra Idempotency cho AUCTION: nếu đã giữ kho thì trả về kết quả hiện tại.
+     * 2. Sắp xếp danh sách items tăng dần theo skuId để triệt tiêu nguy cơ Deadlock khi khóa nhiều dòng DB.
+     * 3. Khóa ghi (SELECT FOR UPDATE) từng dòng tồn kho.
+     * 4. Kiểm tra available_qty: Nếu < số lượng yêu cầu và allowOversell = false → ném INVENTORY_INSUFFICIENT.
+     * 5. Tăng reserved_qty của tồn kho (làm giảm available_qty tương ứng).
+     * 6. Tạo bản ghi InventoryReservation với trạng thái PENDING và expires_at.
+     * 7. Ghi nhận biến động RESERVE vào Sổ cái tồn kho bất biến (inventory_ledger).
+     * 8. Bắn sự kiện miền InventoryReservedEvent cho từng mặt hàng được giữ.
      */
     @Override
     @Transactional
     public ReservationResponse reserveStock(CreateReservationRequest request) {
-        int timeoutMinutes = (request.timeoutMinutes() != null && request.timeoutMinutes() > 0)
-                ? request.timeoutMinutes()
-                : properties.getReservationTimeoutMinutes();
-        Instant expiresAt = Instant.now().plus(timeoutMinutes, ChronoUnit.MINUTES);
+        // Kiểm tra tính Idempotent đối với AUCTION
+        if (request.refType() == ReservationRefType.AUCTION) {
+            List<InventoryReservation> existing = reservationRepository.findByRefTypeAndRefId(
+                    ReservationRefType.AUCTION,
+                    request.refId()
+            );
+            if (!existing.isEmpty()) {
+                InventoryReservation res = existing.get(0);
+                if (res.getStatus() == ReservationStatus.PENDING) {
+                    log.info("Phiên đấu giá {} đã được giữ kho trước đó (Idempotent), trả về phiếu hiện tại", request.refId());
+                    ReservationItemResponse item = new ReservationItemResponse(
+                            res.getId(),
+                            res.getInventory().getSkuId(),
+                            res.getInventory().getWarehouse().getId(),
+                            res.getQuantity(),
+                            res.getStatus(),
+                            res.getExpiresAt()
+                    );
+                    return new ReservationResponse(
+                            res.getRefType(),
+                            res.getRefId(),
+                            res.getStatus(),
+                            List.of(item),
+                            res.getExpiresAt()
+                    );
+                }
+            }
+        }
+
+        Instant expiresAt;
+        if (request.expiresAt() != null) {
+            expiresAt = request.expiresAt();
+        } else {
+            int timeoutMinutes = (request.timeoutMinutes() != null && request.timeoutMinutes() > 0)
+                    ? request.timeoutMinutes()
+                    : properties.getReservationTimeoutMinutes();
+            expiresAt = Instant.now().plus(timeoutMinutes, ChronoUnit.MINUTES);
+        }
 
         // Sắp xếp items theo skuId để đảm bảo thứ tự khóa dòng nhất quán, loại bỏ Deadlock giữa các luồng
         List<ReservationItemRequest> sortedItems = new ArrayList<>(request.items());
@@ -258,6 +305,255 @@ public class InventoryServiceImpl implements InventoryService {
                 ReservationStatus.PENDING,
                 itemResponses,
                 expiresAt
+        );
+    }
+
+    /**
+     * Khóa giữ hàng chuyên biệt khi Seller tạo phiên đấu giá (Auction Reservation - SRS §3.6.1).
+     *
+     * Chức năng:
+     * - Khóa giữ 1 đơn vị tồn kho khả dụng cho sản phẩm đấu giá với refType = AUCTION.
+     * - Thiết lập TTL của phiếu giữ kho bao quát toàn bộ thời gian diễn ra phiên đấu giá (expires_at = endTime).
+     * - Nghiêm cấm bán vượt số lượng tồn (ALLOW_OVERSELL = false), từ chối tạo phiên nếu tồn kho khả dụng không đủ.
+     *
+     * Quy tắc và kiểm tra nghiệp vụ:
+     * - endTime phải sau startTime và phải ở tương lai.
+     * - Thời lượng phiên phải >= AUCTION_MIN_DURATION_MINUTES (60 phút) và <= AUCTION_MAX_DURATION_HOURS (168 giờ = 7 ngày).
+     * - Idempotency: nếu cùng auctionId đã có phiếu PENDING, trả về kết quả hiện tại, không khóa kho trùng lặp.
+     */
+    @Override
+    @Transactional
+    public ReservationResponse reserveAuctionStock(UUID auctionId, ReserveAuctionInventoryRequest request) {
+        if (auctionId == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã phiên đấu giá auctionId không được để trống");
+        }
+        if (request.startTime() == null || request.endTime() == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thời gian bắt đầu và kết thúc phiên đấu giá không được để trống");
+        }
+        if (!request.endTime().isAfter(request.startTime())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thời gian kết thúc phiên đấu giá phải sau thời gian bắt đầu");
+        }
+        if (!request.endTime().isAfter(Instant.now())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thời gian kết thúc phiên đấu giá phải ở tương lai");
+        }
+
+        // Kiểm tra thời lượng tối thiểu và tối đa của phiên đấu giá (SRS §2.6)
+        long durationMinutes = ChronoUnit.MINUTES.between(request.startTime(), request.endTime());
+        if (durationMinutes < properties.getAuctionMinDurationMinutes()) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_PARAM_VALUE,
+                    "Thời lượng phiên đấu giá tối thiểu là " + properties.getAuctionMinDurationMinutes() + " phút"
+            );
+        }
+        long durationHours = ChronoUnit.HOURS.between(request.startTime(), request.endTime());
+        if (durationHours > properties.getAuctionMaxDurationHours()) {
+            throw new BusinessException(
+                    ErrorCode.INVALID_PARAM_VALUE,
+                    "Thời lượng phiên đấu giá tối đa là " + properties.getAuctionMaxDurationHours() + " giờ (7 ngày)"
+            );
+        }
+
+        // Kiểm tra tính Idempotent: nếu đã giữ kho cho phiên này rồi, trả về phiếu PENDING hiện tại
+        List<InventoryReservation> existing = reservationRepository.findByRefTypeAndRefId(
+                ReservationRefType.AUCTION,
+                auctionId
+        );
+        if (!existing.isEmpty()) {
+            InventoryReservation res = existing.get(0);
+            if (res.getStatus() == ReservationStatus.PENDING) {
+                log.info("Phiên đấu giá {} đã được giữ kho trước đó (Idempotent), trả về phiếu hiện tại", auctionId);
+                ReservationItemResponse item = new ReservationItemResponse(
+                        res.getId(),
+                        res.getInventory().getSkuId(),
+                        res.getInventory().getWarehouse().getId(),
+                        res.getQuantity(),
+                        res.getStatus(),
+                        res.getExpiresAt()
+                );
+                return new ReservationResponse(
+                        res.getRefType(),
+                        res.getRefId(),
+                        res.getStatus(),
+                        List.of(item),
+                        res.getExpiresAt()
+                );
+            }
+        }
+
+        int requestedQty = (request.quantity() != null && request.quantity() > 0) ? request.quantity() : 1;
+        Warehouse warehouse = resolveWarehouse(request.warehouseId());
+
+        // Áp dụng Pessimistic Write Lock trên bản ghi tồn kho SKU
+        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(request.skuId(), warehouse.getId())
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.INVENTORY_NOT_FOUND,
+                        "Không tìm thấy bản ghi tồn kho cho SKU " + request.skuId() + " tại kho " + warehouse.getCode()
+                ));
+
+        int available = inventory.getAvailableQty();
+
+        // Kiểm tra chống bán vượt tồn kho (ALLOW_OVERSELL = false)
+        if (available < requestedQty && !Boolean.TRUE.equals(properties.getAllowOversell())) {
+            log.warn("Từ chối tạo phiên đấu giá cho SKU {}: yêu cầu={}, khả dụng={}", request.skuId(), requestedQty, available);
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_INSUFFICIENT,
+                    "Số lượng tồn kho khả dụng không đủ để tạo phiên đấu giá: SKU "
+                            + request.skuId() + " yêu cầu " + requestedQty + ", hiện khả dụng " + available
+            );
+        }
+
+        // Tăng reserved_qty để khóa sản phẩm
+        inventory.setReservedQty(inventory.getReservedQty() + requestedQty);
+        inventoryRepository.save(inventory);
+
+        // Tạo phiếu giữ kho AUCTION với expires_at bao quát toàn bộ thời gian phiên (đến endTime)
+        UUID reservationId = UUID.randomUUID();
+        InventoryReservation reservation = new InventoryReservation(
+                reservationId,
+                inventory,
+                requestedQty,
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                request.endTime()
+        );
+        reservationRepository.save(reservation);
+
+        // Ghi nhận vào Sổ cái tồn kho bất biến (RESERVE cho AUCTION)
+        InventoryLedger ledger = new InventoryLedger(
+                UUID.randomUUID(),
+                inventory,
+                LedgerMovementType.RESERVE,
+                requestedQty,
+                "AUCTION",
+                auctionId,
+                Instant.now()
+        );
+        ledgerRepository.save(ledger);
+
+        // Phát sinh sự kiện miền InventoryReservedEvent theo SRS §2.8
+        eventPublisher.publishEvent(InventoryReservedEvent.of(
+                reservationId,
+                request.skuId(),
+                warehouse.getId(),
+                requestedQty,
+                ReservationRefType.AUCTION,
+                auctionId,
+                request.endTime()
+        ));
+
+        log.info("Giữ kho thành công cho phiên đấu giá {} với SKU {}, hết hạn lúc {}",
+                auctionId, request.skuId(), request.endTime());
+
+        ReservationItemResponse itemResponse = new ReservationItemResponse(
+                reservationId,
+                request.skuId(),
+                warehouse.getId(),
+                requestedQty,
+                ReservationStatus.PENDING,
+                request.endTime()
+        );
+
+        return new ReservationResponse(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                List.of(itemResponse),
+                request.endTime()
+        );
+    }
+
+    /**
+     * Gia hạn thời gian giữ kho khi phiên đấu giá bị kéo dài do Anti-sniping (SRS §2.6 & §3.6.1).
+     *
+     * Chức năng:
+     * - Tiếp nhận tín hiệu gia hạn khi phiên đấu giá kéo dài (mặc định ANTI_SNIPING_EXTENSION_MINUTES = 5 phút).
+     * - Tự động kéo dài expires_at của phiếu giữ kho tương ứng, ngăn chặn việc kho bị giải phóng nhầm khi phiên vẫn đang mở.
+     *
+     * Quy tắc:
+     * - Khóa bi quan phiếu giữ kho AUCTION (PENDING).
+     * - Thời hạn mới phải lớn hơn thời hạn hiện tại.
+     */
+    @Override
+    @Transactional
+    public ReservationResponse extendAuctionReservation(UUID auctionId, ExtendAuctionReservationRequest request) {
+        if (auctionId == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã phiên đấu giá auctionId không được để trống");
+        }
+
+        // Khóa phiếu giữ kho của phiên đấu giá đang ở trạng thái PENDING
+        List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        );
+
+        if (reservations.isEmpty()) {
+            List<InventoryReservation> anyRes = reservationRepository.findByRefTypeAndRefId(
+                    ReservationRefType.AUCTION,
+                    auctionId
+            );
+            if (anyRes.isEmpty()) {
+                throw new BusinessException(
+                        ErrorCode.INVENTORY_RESERVATION_NOT_FOUND,
+                        "Không tìm thấy phiếu giữ kho cho phiên đấu giá " + auctionId
+                );
+            } else {
+                throw new BusinessException(
+                        ErrorCode.AUCTION_NOT_ACTIVE,
+                        "Phiếu giữ kho của phiên đấu giá " + auctionId + " không ở trạng thái PENDING để gia hạn: "
+                                + anyRes.get(0).getStatus()
+                );
+            }
+        }
+
+        List<ReservationItemResponse> items = new ArrayList<>();
+        Instant latestExpiresAt = reservations.get(0).getExpiresAt();
+
+        for (InventoryReservation res : reservations) {
+            Instant newExpiresAt;
+            if (request != null && request.newEndTime() != null) {
+                newExpiresAt = request.newEndTime();
+            } else {
+                int extMin = (request != null && request.extensionMinutes() != null && request.extensionMinutes() > 0)
+                        ? request.extensionMinutes()
+                        : properties.getAntiSnipingExtensionMinutes();
+                newExpiresAt = res.getExpiresAt().plus(extMin, ChronoUnit.MINUTES);
+            }
+
+            if (!newExpiresAt.isAfter(res.getExpiresAt())) {
+                throw new BusinessException(
+                        ErrorCode.INVALID_PARAM_VALUE,
+                        "Thời hạn gia hạn mới (" + newExpiresAt + ") phải lớn hơn thời hạn hiện tại ("
+                                + res.getExpiresAt() + ") của phiếu giữ kho"
+                );
+            }
+
+            res.setExpiresAt(newExpiresAt);
+            reservationRepository.save(res);
+
+            log.info("Gia hạn phiếu giữ kho {} của phiên đấu giá {} đến {} (Anti-sniping)",
+                    res.getId(), auctionId, newExpiresAt);
+
+            items.add(new ReservationItemResponse(
+                    res.getId(),
+                    res.getInventory().getSkuId(),
+                    res.getInventory().getWarehouse().getId(),
+                    res.getQuantity(),
+                    res.getStatus(),
+                    newExpiresAt
+            ));
+            if (newExpiresAt.isAfter(latestExpiresAt)) {
+                latestExpiresAt = newExpiresAt;
+            }
+        }
+
+        return new ReservationResponse(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING,
+                items,
+                latestExpiresAt
         );
     }
 
@@ -536,6 +832,8 @@ public class InventoryServiceImpl implements InventoryService {
     public void releaseReservationsByRef(ReleaseReservationRequest request) {
         if (request.refType() == ReservationRefType.ORDER) {
             releaseByOrder(request.refId(), request.reason());
+        } else if (request.refType() == ReservationRefType.AUCTION) {
+            releaseByAuction(request.refId(), request.reason());
         } else {
             List<InventoryReservation> list = reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
                     request.refType(),
@@ -593,7 +891,154 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     /**
-     * Quét và tự động hoàn kho các phiếu giữ hàng PENDING đã quá thời hạn 30 phút.
+     * Hủy phiên & Giải phóng tồn kho phiên đấu giá (Release Inventory for Auction) (SRS §3.6.1).
+     *
+     * Chức năng:
+     * - Khi phiên bị Seller/Admin hủy (AuctionCancelled) hoặc kết thúc mà không có người đặt giá (AuctionFailed):
+     *   Tức thời giải phóng số lượng giữ trước, hoàn trả về available_qty trong kho.
+     * - Ghi bản ghi biến động vào sổ cái (inventory_ledger) với loại giao dịch RELEASE.
+     *
+     * Quy tắc Idempotency:
+     * - Khóa danh sách phiếu của auctionId theo thứ tự ID ASC để tránh Deadlock.
+     * - Nếu các phiếu đã ở trạng thái RELEASED hoặc EXPIRED: bỏ qua không hoàn kho lần hai (retry release không tăng kho thừa).
+     * - Chỉ hoàn kho các phiếu còn ở trạng thái PENDING.
+     */
+    @Override
+    @Transactional
+    public void releaseByAuction(UUID auctionId, String reason) {
+        List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefIdForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId
+        );
+
+        if (reservations.isEmpty()) {
+            log.warn("Không tìm thấy phiếu giữ kho nào cho phiên đấu giá {} khi giải phóng kho", auctionId);
+            return;
+        }
+
+        String effectiveReason = (reason != null && !reason.isBlank()) ? reason : "AUCTION_RELEASE";
+        int releasedCount = 0;
+
+        for (InventoryReservation res : reservations) {
+            if (res.getStatus() == ReservationStatus.PENDING) {
+                releaseSingleReservation(res, ReservationStatus.RELEASED, effectiveReason);
+                releasedCount++;
+            } else {
+                log.info("Phiếu giữ kho {} của phiên {} đã ở trạng thái {} (Idempotent), bỏ qua giải phóng",
+                        res.getId(), auctionId, res.getStatus());
+            }
+        }
+
+        log.info("Đã giải phóng {} phiếu giữ hàng cho phiên đấu giá {} với lý do: {}", releasedCount, auctionId, effectiveReason);
+    }
+
+    /**
+     * Chuyển tiếp trạng thái giữ kho sang Đơn hàng (Transition to Order) (SRS §3.6.1).
+     *
+     * Chức năng:
+     * - Đảm bảo không xảy ra hiện tượng "Reserve kép" (Double Reservation): Khi chốt người thắng cuộc,
+     *   chuyển đổi mã tham chiếu từ auction_id sang order_id mà không cần nhả kho rồi giữ lại từ đầu.
+     * - Cập nhật hạn thanh toán mới cho đơn hàng (mặc định 24 giờ kể từ thời điểm chốt).
+     *
+     * Quy tắc Idempotency và an toàn dữ liệu:
+     * - Nếu đơn hàng orderId đã có phiếu giữ kho loại ORDER, trả về kết quả thành công ngay lập tức (Idempotent).
+     * - Khóa bi quan các phiếu AUCTION đang PENDING.
+     * - Chuyển đổi trực tiếp refType thành ORDER, refId thành orderId, cập nhật expiresAt = paymentDeadline.
+     * - Tuyệt đối KHÔNG thay đổi total_qty hoặc reserved_qty trong kho, hàng hóa được giữ liên tục không gián đoạn.
+     */
+    @Override
+    @Transactional
+    public ReservationResponse transitionAuctionToOrder(UUID auctionId, TransitionAuctionToOrderRequest request) {
+        if (auctionId == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã phiên đấu giá auctionId không được để trống");
+        }
+        if (request.orderId() == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã đơn hàng orderId không được để trống");
+        }
+
+        // Bước 1: Kiểm tra tính Idempotent: nếu đơn hàng đã được chuyển tiếp trước đó, trả về luôn
+        List<InventoryReservation> existingOrderRes = reservationRepository.findByRefTypeAndRefIdForUpdate(
+                ReservationRefType.ORDER,
+                request.orderId()
+        );
+        if (!existingOrderRes.isEmpty()) {
+            log.info("Đơn hàng {} đã được chuyển tiếp giữ kho trước đó (Idempotent), bỏ qua chuyển tiếp lặp", request.orderId());
+            List<ReservationItemResponse> items = existingOrderRes.stream()
+                    .map(r -> new ReservationItemResponse(
+                            r.getId(),
+                            r.getInventory().getSkuId(),
+                            r.getInventory().getWarehouse().getId(),
+                            r.getQuantity(),
+                            r.getStatus(),
+                            r.getExpiresAt()
+                    ))
+                    .toList();
+            return new ReservationResponse(
+                    ReservationRefType.ORDER,
+                    request.orderId(),
+                    existingOrderRes.get(0).getStatus(),
+                    items,
+                    existingOrderRes.get(0).getExpiresAt()
+            );
+        }
+
+        // Bước 2: Khóa các phiếu giữ kho AUCTION đang ở trạng thái PENDING
+        List<InventoryReservation> auctionReservations = reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
+                ReservationRefType.AUCTION,
+                auctionId,
+                ReservationStatus.PENDING
+        );
+
+        if (auctionReservations.isEmpty()) {
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_RESERVATION_NOT_FOUND,
+                    "Không tìm thấy phiếu giữ kho PENDING nào cho phiên đấu giá " + auctionId + " để chuyển tiếp sang đơn hàng"
+            );
+        }
+
+        // Bước 3: Xác định thời hạn thanh toán đơn hàng (SRS §3.6.1: mặc định now + 24 giờ)
+        Instant orderExpiresAt;
+        if (request.paymentDeadline() != null) {
+            orderExpiresAt = request.paymentDeadline();
+        } else {
+            int timeoutMinutes = (request.paymentDeadlineMinutes() != null && request.paymentDeadlineMinutes() > 0)
+                    ? request.paymentDeadlineMinutes()
+                    : properties.getAuctionPaymentDeadlineMinutes();
+            orderExpiresAt = Instant.now().plus(timeoutMinutes, ChronoUnit.MINUTES);
+        }
+
+        // Bước 4: Chuyển đổi mã tham chiếu mà không nhả kho rồi giữ lại (chống Double Reservation và chống cướp kho)
+        List<ReservationItemResponse> items = new ArrayList<>();
+        for (InventoryReservation res : auctionReservations) {
+            res.setRefType(ReservationRefType.ORDER);
+            res.setRefId(request.orderId());
+            res.setExpiresAt(orderExpiresAt);
+            reservationRepository.save(res);
+
+            items.add(new ReservationItemResponse(
+                    res.getId(),
+                    res.getInventory().getSkuId(),
+                    res.getInventory().getWarehouse().getId(),
+                    res.getQuantity(),
+                    res.getStatus(),
+                    orderExpiresAt
+            ));
+        }
+
+        log.info("Chuyển tiếp thành công phiếu giữ kho từ phiên đấu giá {} sang đơn hàng {} với hạn thanh toán {}",
+                auctionId, request.orderId(), orderExpiresAt);
+
+        return new ReservationResponse(
+                ReservationRefType.ORDER,
+                request.orderId(),
+                ReservationStatus.PENDING,
+                items,
+                orderExpiresAt
+        );
+    }
+
+    /**
+     * Quét và tự động hoàn kho các phiếu giữ hàng PENDING đã quá thời hạn.
      *
      * Luồng xử lý:
      * 1. Tìm tất cả các phiếu PENDING có expires_at <= current_time.
@@ -614,7 +1059,7 @@ public class InventoryServiceImpl implements InventoryService {
             return 0;
         }
 
-        log.info("Phát hiện {} phiếu giữ hàng quá hạn 30 phút, tiến hành tự động hoàn kho...", expiredList.size());
+        log.info("Phát hiện {} phiếu giữ hàng quá hạn, tiến hành tự động hoàn kho...", expiredList.size());
         int count = 0;
 
         for (InventoryReservation reservation : expiredList) {
