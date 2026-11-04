@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Interface định nghĩa các nghiệp vụ cốt lõi quản lý vòng đời đơn hàng (Issue HG-S1-4 / SRS §3.4.3).
@@ -61,6 +62,8 @@ public interface OrderService {
      * @param pageable  Thông tin phân trang và sắp xếp
      * @return Trang danh sách tóm tắt đơn hàng Page
      */
+    // Default overload gọi nội bộ bản Instant, không đi qua proxy lần nữa; cần mở transaction ngay tại đây để mapper đọc items lazy.
+    @Transactional(readOnly = true)
     default Page<OrderSummaryResponse> getBuyerOrders(
             UUID buyerId,
             OrderStatus status,
@@ -96,6 +99,8 @@ public interface OrderService {
      * @param isAdmin       true nếu là Quản trị viên
      * @return Thông tin chi tiết đơn hàng OrderDetailResponse
      */
+    // Giữ transaction cho cả overload boolean để items/history được đọc trước khi đóng Hibernate session.
+    @Transactional(readOnly = true)
     default OrderDetailResponse getOrderDetail(
             UUID orderId,
             UUID currentUserId,
@@ -135,6 +140,8 @@ public interface OrderService {
      * @param pageable  Thông tin phân trang và sắp xếp
      * @return Trang danh sách tóm tắt đơn hàng Page
      */
+    // Cùng biên giao dịch với buyer: chuyển ngày UTC rồi truy vấn/ánh xạ trong một transaction read-only.
+    @Transactional(readOnly = true)
     default Page<OrderSummaryResponse> getSellerOrders(
             UUID sellerId,
             OrderStatus status,
@@ -172,6 +179,8 @@ public interface OrderService {
      * @param pageable  Thông tin phân trang và sắp xếp
      * @return Trang danh sách tóm tắt đơn hàng Page
      */
+    // Overload mặc định cũng phải có transaction; annotation trên implementation không bao phủ lời gọi nội bộ này.
+    @Transactional(readOnly = true)
     default Page<OrderSummaryResponse> getAdminOrders(
             OrderStatus status,
             LocalDateTime startDate,
