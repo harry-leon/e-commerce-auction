@@ -48,6 +48,16 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
     @Query("select distinct o from Order o left join fetch o.items where o.id = :id")
     Optional<Order> findForPaymentWithItems(UUID id);
 
+    /**
+     * Chức năng: Truy vấn chi tiết đơn hàng cùng danh sách sản phẩm snapshot (items).
+     * Đầu vào và kết quả: Nhận UUID đơn hàng, trả về Optional<Order> đã nạp sẵn danh sách items.
+     * Luồng xử lý: Thực hiện LEFT JOIN FETCH o.items để nạp dữ liệu trong 1 query duy nhất, không khóa bản ghi.
+     * Quy tắc và lý do: Dùng cho màn hình xem chi tiết đơn hàng (getOrderDetail), tránh LazyInitializationException
+     * khi session JPA đã đóng (spring.jpa.open-in-view=false).
+     */
+    @Query("select distinct o from Order o left join fetch o.items where o.id = :id")
+ Optional<Order> findWithItemsById(UUID id);
+
 
     /** Đếm đơn theo ngày Việt Nam; buyer lock bảo vệ hạn mức khi checkout đồng thời. */
     long countByBuyerIdAndCreatedAtGreaterThanEqual(UUID buyer, Instant start);

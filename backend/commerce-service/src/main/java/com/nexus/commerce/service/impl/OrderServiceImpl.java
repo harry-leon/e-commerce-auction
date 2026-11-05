@@ -433,9 +433,15 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND));
     }
 
-    /** Đọc đơn phục vụ truy vấn, không khóa ghi hoặc thay đổi trạng thái. */
+    /**
+     * Chức năng: Đọc đơn hàng cùng danh sách sản phẩm snapshot (items) phục vụ truy vấn chi tiết.
+     * Đầu vào và kết quả: Nhận UUID orderId, trả về entity Order có sẵn items.
+     * Luồng xử lý: Gọi orderRepository.findWithItemsById(orderId) để nạp trước items.
+     * Quy tắc và lý do: Không khóa bản ghi; tránh LazyInitializationException khi session JPA đã đóng.
+     * Lỗi và giới hạn: Ném BusinessException ORDER_NOT_FOUND nếu không tìm thấy đơn.
+     */
     private Order findOrderById(UUID orderId) {
-        return orderRepository.findById(orderId)
+        return orderRepository.findWithItemsById(orderId)
                 .orElseThrow(() -> new BusinessException(
                         ErrorCode.ORDER_NOT_FOUND,
                         "Không tìm thấy đơn hàng với mã định danh: " + orderId

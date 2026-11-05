@@ -18,29 +18,43 @@ import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
 /**
- * Component chuyển đổi dữ liệu (Mapper) giữa các thực thể Order và các DTO phản hồi API.
+ * Component chuyển đổi dữ liệu (Mapper) giữa các thực thể Order và các DTO phản
+ * hồi API.
  *
- * <p>Chức năng:
+ * <p>
+ * Chức năng:
  * <ul>
- *   <li>Chuyển đổi thực thể Order sang OrderSummaryResponse phục vụ danh sách tóm tắt có phân trang.</li>
- *   <li>Chuyển đổi thực thể Order sang OrderDetailResponse kèm snapshot mặt hàng và dòng thời gian lịch sử trạng thái.</li>
- *   <li>Trích xuất hoặc suy luận tác nhân thực hiện (actor) từ nội dung cột reason trong order_status_history.</li>
+ * <li>Chuyển đổi thực thể Order sang OrderSummaryResponse phục vụ danh sách tóm
+ * tắt có phân trang.</li>
+ * <li>Chuyển đổi thực thể Order sang OrderDetailResponse kèm snapshot mặt hàng
+ * và dòng thời gian lịch sử trạng thái.</li>
+ * <li>Trích xuất hoặc suy luận tác nhân thực hiện (actor) từ nội dung cột
+ * reason trong order_status_history.</li>
  * </ul>
  *
- * <p>Đầu vào và kết quả:
+ * <p>
+ * Đầu vào và kết quả:
  * <ul>
- *   <li>Đầu vào: Thực thể Order, OrderItem, OrderStatusHistory từ tầng cơ sở dữ liệu.</li>
- *   <li>Kết quả: Các DTO bất biến (record) tương ứng, định dạng chuẩn tiền tệ và thời gian UTC.</li>
+ * <li>Đầu vào: Thực thể Order, OrderItem, OrderStatusHistory từ tầng cơ sở dữ
+ * liệu.</li>
+ * <li>Kết quả: Các DTO bất biến (record) tương ứng, định dạng chuẩn tiền tệ và
+ * thời gian UTC.</li>
  * </ul>
  *
- * <p>Luồng xử lý:
- * Nhận entity từ Service -> kiểm tra null an toàn -> chuẩn hóa BigDecimal scale 2, RoundingMode.HALF_UP ->
+ * <p>
+ * Luồng xử lý:
+ * Nhận entity từ Service -> kiểm tra null an toàn -> chuẩn hóa BigDecimal scale
+ * 2, RoundingMode.HALF_UP ->
  * ánh xạ danh sách con -> giải mã actor -> khởi tạo DTO record.
  *
- * <p>Quy tắc và lý do:
- * Đặt trong package com.nexus.commerce.dto.mapper đồng bộ với CartMapper và chuẩn kiến trúc Nexus.
- * Sử dụng Spring @Component thuần Java 21 tương thích hoàn hảo với Java record. Đảm bảo an toàn null tuyệt đối
- * trên mọi phương thức để tránh NullPointerException khi quan hệ Lazy chưa được nạp.
+ * <p>
+ * Quy tắc và lý do:
+ * Đặt trong package com.nexus.commerce.dto.mapper đồng bộ với CartMapper và
+ * chuẩn kiến trúc Nexus.
+ * Sử dụng Spring @Component thuần Java 21 tương thích hoàn hảo với Java record.
+ * Đảm bảo an toàn null tuyệt đối
+ * trên mọi phương thức để tránh NullPointerException khi quan hệ Lazy chưa được
+ * nạp.
  */
 @Component
 public class OrderMapper {
@@ -48,10 +62,12 @@ public class OrderMapper {
     private static final Pattern ACTOR_TAG_PATTERN = Pattern.compile("^\\[([A-Za-z0-9_]+)\\]");
 
     /**
-     * Chuyển đổi thực thể Order thành OrderSummaryResponse DTO.
-     *
-     * @param order Thực thể đơn hàng từ cơ sở dữ liệu
-     * @return OrderSummaryResponse tóm tắt thông tin đơn hàng, hoặc null nếu order là null
+     * Chức năng: Chuyển đổi thực thể Order thành OrderSummaryResponse DTO cho danh sách đơn hàng.
+     * Đầu vào và kết quả: Nhận Order entity từ DB, trả về OrderSummaryResponse tóm tắt (hoặc null nếu order null).
+     * Luồng xử lý: Kiểm tra null an toàn -> kiểm tra proxy Hibernate đã nạp trước khi đếm số item -> làm tròn tiền tệ scale 2 -> tạo record DTO.
+     * Quy tắc và lý do: Dùng try-catch kết hợp Hibernate.isInitialized() để tuyệt đối không gây LazyInitializationException
+     * khi danh sách đơn hàng được truy vấn mà không join fetch bảng items.
+     * Lỗi và giới hạn: Nếu proxy items chưa nạp, itemCount mặc định là 0.
      */
     public OrderSummaryResponse toSummaryResponse(Order order) {
         if (order == null) {
@@ -81,12 +97,12 @@ public class OrderMapper {
                 total,
                 itemCount,
                 order.getShippingAddress(),
-                order.getCreatedAt()
-        );
+                order.getCreatedAt());
     }
 
     /**
-     * Chuyển đổi thực thể Order thành OrderDetailResponse DTO chi tiết sử dụng lịch sử trạng thái sẵn có trong entity.
+     * Chuyển đổi thực thể Order thành OrderDetailResponse DTO chi tiết sử dụng lịch
+     * sử trạng thái sẵn có trong entity.
      *
      * @param order Thực thể đơn hàng từ cơ sở dữ liệu
      * @return OrderDetailResponse đầy đủ thông tin hoặc null nếu order là null
@@ -99,11 +115,14 @@ public class OrderMapper {
     }
 
     /**
-     * Chuyển đổi thực thể Order và danh sách lịch sử trạng thái chỉ định thành OrderDetailResponse DTO chi tiết.
+     * Chuyển đổi thực thể Order và danh sách lịch sử trạng thái chỉ định thành
+     * OrderDetailResponse DTO chi tiết.
      *
-     * @param order Thực thể đơn hàng từ cơ sở dữ liệu
-     * @param history Danh sách bản ghi lịch sử trạng thái (có thể null, nếu null sẽ dùng từ order.getStatusHistory())
-     * @return OrderDetailResponse đầy đủ thông tin đơn hàng, snapshot mặt hàng và lịch sử trạng thái
+     * @param order   Thực thể đơn hàng từ cơ sở dữ liệu
+     * @param history Danh sách bản ghi lịch sử trạng thái (có thể null, nếu null sẽ
+     *                dùng từ order.getStatusHistory())
+     * @return OrderDetailResponse đầy đủ thông tin đơn hàng, snapshot mặt hàng và
+     *         lịch sử trạng thái
      */
     public OrderDetailResponse toDetailResponse(Order order, List<OrderStatusHistory> history) {
         if (order == null) {
@@ -146,8 +165,7 @@ public class OrderMapper {
                 order.getShippingAddress(),
                 order.getCreatedAt(),
                 itemResponses,
-                historyResponses
-        );
+                historyResponses);
     }
 
     /**
@@ -178,18 +196,18 @@ public class OrderMapper {
                 item.getSkuCode(),
                 unitPrice,
                 quantity,
-                subtotal
-        );
+                subtotal);
     }
 
     /**
      * Chuyển đổi danh sách OrderItem entity thành danh sách OrderItemResponse DTO.
      *
      * @param items Danh sách dòng sản phẩm
-     * @return Danh sách OrderItemResponse (không bao giờ null, trả về danh sách rỗng nếu null/empty)
+     * @return Danh sách OrderItemResponse (không bao giờ null, trả về danh sách
+     *         rỗng nếu null/empty)
      */
     public List<OrderItemResponse> toItemResponseList(List<OrderItem> items) {
-        if (items == null || items.isEmpty()) {
+        if (items == null || !org.hibernate.Hibernate.isInitialized(items) || items.isEmpty()) {
             return Collections.emptyList();
         }
         return items.stream()
@@ -216,18 +234,19 @@ public class OrderMapper {
                 history.getToStatus(),
                 history.getReason(),
                 history.getChangedAt(),
-                actor
-        );
+                actor);
     }
 
     /**
-     * Chuyển đổi danh sách OrderStatusHistory entity thành danh sách OrderStatusHistoryResponse DTO.
+     * Chuyển đổi danh sách OrderStatusHistory entity thành danh sách
+     * OrderStatusHistoryResponse DTO.
      *
      * @param historyList Danh sách bản ghi lịch sử trạng thái
-     * @return Danh sách OrderStatusHistoryResponse (không bao giờ null, trả về danh sách rỗng nếu null/empty)
+     * @return Danh sách OrderStatusHistoryResponse (không bao giờ null, trả về danh
+     *         sách rỗng nếu null/empty)
      */
     public List<OrderStatusHistoryResponse> toStatusHistoryResponseList(List<OrderStatusHistory> historyList) {
-        if (historyList == null || historyList.isEmpty()) {
+        if (historyList == null || !org.hibernate.Hibernate.isInitialized(historyList) || historyList.isEmpty()) {
             return Collections.emptyList();
         }
         return historyList.stream()
@@ -236,29 +255,37 @@ public class OrderMapper {
     }
 
     /**
-     * Trích xuất hoặc suy luận tác nhân thực hiện (actor) từ bản ghi lịch sử trạng thái.
+     * Trích xuất hoặc suy luận tác nhân thực hiện (actor) từ bản ghi lịch sử trạng
+     * thái.
      *
-     * <p>Thuật toán:
+     * <p>
+     * Thuật toán:
      * <ol>
-     *   <li>Nếu cột reason bắt đầu bằng thẻ tiền tố [ROLE] (ví dụ: "[BUYER]", "[SELLER]", "[ADMIN]"),
-     *       trích xuất trực tiếp giá trị trong thẻ làm actor.</li>
-     *   <li>Nếu không có thẻ, áp dụng ma trận suy luận dựa trên trạng thái đích (toStatus) và từ khóa trong reason:
-     *     <ul>
-     *       <li>Khởi tạo ban đầu (fromStatus == null và toStatus == PENDING_PAYMENT) -> BUYER.</li>
-     *       <li>PAID -> SYSTEM.</li>
-     *       <li>PROCESSING, SHIPPED -> SELLER.</li>
-     *       <li>DELIVERED -> CARRIER.</li>
-     *       <li>COMPLETED -> BUYER.</li>
-     *       <li>REFUNDED -> ADMIN.</li>
-     *       <li>CANCELLED -> Nếu reason chứa "buyer", "khách", "customer" hoặc hủy từ PENDING_PAYMENT -> BUYER;
-     *                        nếu chứa "seller", "người bán" -> SELLER; nếu chứa "admin" -> ADMIN; mặc định -> SYSTEM.</li>
-     *     </ul>
-     *   </li>
-     *   <li>Giá trị dự phòng mặc định (fallback): "SYSTEM".</li>
+     * <li>Nếu cột reason bắt đầu bằng thẻ tiền tố [ROLE] (ví dụ: "[BUYER]",
+     * "[SELLER]", "[ADMIN]"),
+     * trích xuất trực tiếp giá trị trong thẻ làm actor.</li>
+     * <li>Nếu không có thẻ, áp dụng ma trận suy luận dựa trên trạng thái đích
+     * (toStatus) và từ khóa trong reason:
+     * <ul>
+     * <li>Khởi tạo ban đầu (fromStatus == null và toStatus == PENDING_PAYMENT) ->
+     * BUYER.</li>
+     * <li>PAID -> SYSTEM.</li>
+     * <li>PROCESSING, SHIPPED -> SELLER.</li>
+     * <li>DELIVERED -> CARRIER.</li>
+     * <li>COMPLETED -> BUYER.</li>
+     * <li>REFUNDED -> ADMIN.</li>
+     * <li>CANCELLED -> Nếu reason chứa "buyer", "khách", "customer" hoặc hủy từ
+     * PENDING_PAYMENT -> BUYER;
+     * nếu chứa "seller", "người bán" -> SELLER; nếu chứa "admin" -> ADMIN; mặc định
+     * -> SYSTEM.</li>
+     * </ul>
+     * </li>
+     * <li>Giá trị dự phòng mặc định (fallback): "SYSTEM".</li>
      * </ol>
      *
      * @param history Bản ghi lịch sử trạng thái
-     * @return Tên vai trò hoặc tác nhân thực hiện (BUYER, SELLER, ADMIN, SYSTEM, CARRIER...)
+     * @return Tên vai trò hoặc tác nhân thực hiện (BUYER, SELLER, ADMIN, SYSTEM,
+     *         CARRIER...)
      */
     public String resolveActor(OrderStatusHistory history) {
         if (history == null) {

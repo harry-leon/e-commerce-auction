@@ -41,7 +41,7 @@ import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart 
 import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import type { Order, Product } from '../../types'
-import { ordersApi, type CreateOrderRequest, type CreateOrderResponse } from '../../api/orders'
+import { ordersApi, type CreateOrderRequest, type CreateOrderResponse, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
 import { useLoad } from '../../hooks/useLoad'
 import {
     readSession,
@@ -1299,10 +1299,13 @@ export function CheckoutPage() {
                         createErr?.status === 400)
 
                 if (isVnpayUnconfigured || isCardUnsupported) {
+                    const fallbackKey = typeof crypto !== 'undefined' && crypto.randomUUID
+                        ? crypto.randomUUID()
+                        : 'c0000000-0000-4000-8000-' + String(Date.now()).padStart(12, '0')
                     try {
                         const fallbackResponse = await ordersApi.createOrder(
                             { ...orderPayload, paymentMethod: 'COD' },
-                            `${idempotencyKey}-${paymentData.method.toLowerCase()}`,
+                            fallbackKey,
                         )
                         const orderRef = fallbackResponse.id || fallbackResponse.orderNo
                         const orderTotal = fallbackResponse.total
@@ -1315,27 +1318,61 @@ export function CheckoutPage() {
                                     : undefined,
                         }
                     } catch {
-                        // Nếu backend COD cũng không thành công (ví dụ mạng offline), tạo đơn sandbox tạm
-                        const orderRef = `ORD-${Date.now()}`
+                        // Nếu backend COD cũng không thành công, tạo đơn sandbox đầy đủ để lưu vào LocalStorage
+                        const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+                        const orderRef = `ORD-${nowStr}-${String(Date.now()).slice(-4)}`
                         const total = cartItems.reduce(
                             (acc, i) => acc + i.unitPrice * i.quantity,
                             0,
                         )
+                        const shippingVal = shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+                        const currentBuyerId = session?.user?.id || 'u1'
+                        const currentBuyerName = session?.user?.fullName || shippingData.fullName || 'Minh Tran'
+
+                        const fullMockOrder: Order = {
+                            id: orderRef,
+                            orderNo: orderRef,
+                            buyerId: currentBuyerId,
+                            buyerName: currentBuyerName,
+                            sellerId: 'u2',
+                            sellerName: 'TechZone Store',
+                            items: cartItems.map((item) => ({
+                                productId: item.skuId || item.id,
+                                productName: item.productName || 'Sản phẩm',
+                                image: item.thumbnailUrl || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
+                                quantity: Number(item.quantity) || 1,
+                                unitPrice: Number(item.unitPrice) || 0,
+                                subtotal: (Number(item.unitPrice) || 0) * (Number(item.quantity) || 1),
+                            })),
+                            subtotal: total,
+                            tax: 0,
+                            discount: 0,
+                            shipping: shippingVal,
+                            total: total + shippingVal,
+                            status: 'PENDING_PAYMENT',
+                            refundStatus: 'none',
+                            paymentStatus: 'held',
+                            shippingAddress: fullAddress,
+                            paymentMethod: paymentData.method === 'CARD' ? 'Credit Card' : paymentData.method,
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                            disputeStatus: 'none',
+                            reviewed: false,
+                        }
+
+                        // Lưu vào localStorage để cả Buyer Order History lẫn Admin Orders Page đều đọc được
+                        const existingMockOrders = readLocalMockOrders()
+                        existingMockOrders.unshift(fullMockOrder)
+                        writeLocalMockOrders(existingMockOrders)
+
                         response = {
                             id: orderRef,
                             orderNo: orderRef,
                             status: 'PENDING_PAYMENT',
                             subtotal: total,
-                            shippingFee:
-                                shipping === 'GHN'
-                                    ? lang === 'vi'
-                                        ? 55000
-                                        : 3.99
-                                    : lang === 'vi'
-                                      ? 35000
-                                      : 2.49,
+                            shippingFee: shippingVal,
                             discount: 0,
-                            total,
+                            total: total + shippingVal,
                             paymentMethod: paymentData.method,
                             paymentUrl:
                                 paymentData.method === 'VNPAY'
@@ -2101,7 +2138,19 @@ export function SandboxPaymentPage() {
             try {
                 await ordersApi.updateOrderStatus(orderId, 'PAID', 'VNPAY Sandbox payment approved')
             } catch {
-                // Bỏ qua nếu đơn là ID tạm thời
+                // Cập nhật trạng thái đơn hàng mock trong localStorage
+                try {
+                    const localOrders = readLocalMockOrders()
+                    const idx = localOrders.findIndex((o) => o.id === orderId || (o as any).orderNo === orderId)
+                    if (idx !== -1) {
+                        localOrders[idx].status = 'PAID'
+                        localOrders[idx].paymentStatus = 'held'
+                        localOrders[idx].updatedAt = new Date().toISOString()
+                        writeLocalMockOrders(localOrders)
+                    }
+                } catch {
+                    // Bỏ qua
+                }
             }
             showToast({
                 type: 'success',
@@ -2726,7 +2775,7 @@ export function OrderHistoryPage() {
                                         </div>
 
                                         {/* DTO tóm tắt không có items; mở chi tiết để tải sản phẩm thật, không tạo item demo. */}
-                                        {order.items.length === 0 && (
+                                        {(!order.items || order.items.length === 0) && (
                                             <p className="text-sm text-gray-500 mb-3">
                                                 {lang === 'vi'
                                                     ? 'Mở chi tiết đơn để xem sản phẩm.'
@@ -2734,7 +2783,7 @@ export function OrderHistoryPage() {
                                             </p>
                                         )}
                                         <div className="space-y-3">
-                                            {order.items && order.items.length > 0 ? (
+                                            {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
                                                 order.items.map((item, idx) => (
                                                     <div
                                                         key={item.productId || idx}
@@ -3052,7 +3101,7 @@ export function OrderDetailPage() {
                             {lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}
                         </h3>
                         <div className="divide-y divide-border/60">
-                            {order.items.map((item) => (
+                            {(order.items || []).map((item) => (
                                 <div
                                     key={item.productId}
                                     className="flex gap-4 py-3 first:pt-0 last:pb-0"
@@ -3208,7 +3257,7 @@ export function OrderDetailPage() {
                                 </div>
                             </div>
                             <div className="space-y-3">
-                                {order.shipment.events.map((ev, i) => (
+                                {(order.shipment?.events || []).map((ev, i) => (
                                     <div key={i} className="flex gap-4">
                                         <div className="flex flex-col items-center">
                                             <div
