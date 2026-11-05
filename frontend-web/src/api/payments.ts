@@ -1,14 +1,14 @@
 import { api } from './client'
 import type { ApiResponse } from './client'
 
-/** Snapshot payment từ DB sau IPN; không dùng mã kết quả browser làm bằng chứng đã trả tiền. */
+/** Kết quả DB sau IPN; EXPIRED do backend tính theo hạn URL, chưa phải kết luận thất bại/đã thu tiền. */
 export interface PaymentResult {
     paymentId: string
     orderId: string
-    status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
+    status: 'PENDING' | 'EXPIRED' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
     amount: number
     currency: 'VND'
-    paymentUrl: string
+    paymentUrl: string | null
     expiresAt: string
 }
 

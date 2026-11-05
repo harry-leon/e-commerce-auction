@@ -6,6 +6,7 @@ import {
     errorMessage,
     extractFieldErrors,
     type ApiUser,
+    type ApiResponse,
 } from '../../api/client'
 import {
     validatePasswordPolicy,
@@ -26,9 +27,13 @@ import { useLoad } from '../../hooks/useLoad'
 export function ProfilePage() {
     const { setUser, showToast, navigate } = useApp()
     const { data, error, loading } = useLoad<ApiUser>('/users/me')
-    const history = useLoad<{
-        content: { id: string; action: string; description: string; createdAt: string }[]
-    }>('/users/me/activity-history?size=20')
+    // User Service bọc trang lịch sử trong data; đọc đúng envelope trước khi duyệt content.
+    const history = useLoad<
+        ApiResponse<{
+            content: { id: string; action: string; description: string; createdAt: string }[]
+        }>
+    >('/users/me/activity-history?size=20')
+    const activities = Array.isArray(history.data?.data?.content) ? history.data.data.content : []
     const [saving, setSaving] = useState(false)
     const [failure, setFailure] = useState('')
 
@@ -260,7 +265,7 @@ export function ProfilePage() {
                 <h2 className="font-bold">Lịch sử hoạt động gần đây</h2>
                 <LoadState error={history.error} loading={history.loading} />
                 <ul>
-                    {history.data?.content.map((item) => (
+                    {activities.map((item) => (
                         <li className="py-2 border-b" key={item.id}>
                             {new Date(item.createdAt).toLocaleString('vi-VN')} · {item.action} ·{' '}
                             {item.description}

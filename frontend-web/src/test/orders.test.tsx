@@ -12,6 +12,17 @@ vi.mock('../context', () => ({ useApp: () => contextHolder.current }))
 
 describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Seller, Admin)', () => {
     beforeEach(() => {
+        // Các ca demo chủ động mô phỏng service chưa sẵn sàng; không gọi fetch thật với URL tương đối trong Node.
+        vi.stubGlobal(
+            'fetch',
+            vi
+                .fn()
+                .mockImplementation(() =>
+                    Promise.resolve(
+                        new Response(JSON.stringify({ success: false }), { status: 503 }),
+                    ),
+                ),
+        )
         ordersApi.resetOrdersToDefault()
         contextHolder.current = {
             lang: 'vi',
@@ -35,6 +46,32 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
 
     afterEach(() => {
         vi.clearAllMocks()
+        vi.unstubAllGlobals()
+    })
+
+    /** Hồi quy crash tại order.items.map khi API thật trả summary không có danh sách sản phẩm. */
+    it('OrderHistoryPage: render được summary thật và hướng tới trang chi tiết', async () => {
+        vi.mocked(fetch).mockImplementation(() =>
+            Promise.resolve(
+                new Response(
+                    JSON.stringify({
+                        success: true,
+                        data: [
+                            {
+                                id: 'real-summary',
+                                status: 'PENDING_PAYMENT',
+                                total: 800000,
+                                itemCount: 1,
+                                createdAt: '2026-11-05T01:00:00Z',
+                            },
+                        ],
+                    }),
+                ),
+            ),
+        )
+        render(<OrderHistoryPage />)
+        expect(await screen.findByText('real-summary')).toBeInTheDocument()
+        expect(screen.getByText('Mở chi tiết đơn để xem sản phẩm.')).toBeInTheDocument()
     })
 
     it('ordersApi: Lấy danh sách đơn hàng cho Buyer, Seller, Admin và fallback mock data thành công', async () => {

@@ -28,6 +28,8 @@ export function SearchPage() {
     if (kind) query.set('auctionEnabled', kind)
     const { data, error, loading } = useLoad<Envelope<ApiProduct[]>>(`/products?${query}`)
     const categories = useLoad<Envelope<ApiCategory[]>>('/categories')
+    // Khi chưa tải được data hoặc thiếu ảnh, chỉ render collection hợp lệ để tránh lỗi map/index.
+    const products = Array.isArray(data?.data) ? data.data : []
     const total = data?.meta?.total || 0
     return (
         <BuyerLayout>
@@ -115,16 +117,16 @@ export function SearchPage() {
             <LoadState error={error || categories.error} loading={loading} />
             {!loading && !error && <p className="mb-4">{total} sản phẩm</p>}
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {data?.data.map((product) => (
+                {products.map((product) => (
                     <button
                         key={product.id}
                         className="nexus-card overflow-hidden text-left"
                         onClick={() => navigate('product-detail', { id: product.id })}
                     >
-                        {product.images[0] && (
+                        {product.images?.[0] && (
                             <img
                                 className="h-48 w-full object-cover"
-                                src={product.images[0].url}
+                                src={product.images?.[0].url}
                                 alt={product.name}
                             />
                         )}
