@@ -7,6 +7,7 @@ import { Button } from '../../components/UI'
  * VNPAY return chỉ mang TxnRef để tra cứu; bỏ qua vnp_ResponseCode/status do browser truyền.
  * Poll tối đa 10 lần, chờ 2 giây giữa các lần; unmount/đổi ID hủy timer và bỏ response cũ.
  * Chỉ hiển thị thành công khi backend đã lưu SUCCESS từ IPN; lỗi mạng/401 không bị đổi thành success giả.
+ * EXPIRED dừng poll tự động, báo link hết hạn nhưng vẫn cho kiểm tra IPN đến chậm; không tự hướng dẫn trả tiền lần hai.
  */
 export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const { lang, navigate } = useApp()
@@ -43,6 +44,7 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const current = result?.paymentId === paymentId ? result : null
     const success = current?.status === 'SUCCESS'
     const failed = current?.status === 'FAILED' || current?.status === 'CANCELLED'
+    const expired = current?.status === 'EXPIRED'
     return (
         <div className="max-w-lg mx-auto text-center py-12">
             <h1 className="text-2xl font-bold mb-4">
@@ -54,10 +56,21 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                       ? lang === 'vi'
                           ? 'Thanh toán không thành công'
                           : 'Payment failed'
-                      : lang === 'vi'
-                        ? 'Đang chờ xác nhận thanh toán'
-                        : 'Waiting for payment confirmation'}
+                      : expired
+                        ? lang === 'vi'
+                            ? 'Liên kết thanh toán đã hết hạn'
+                            : 'Payment link expired'
+                        : lang === 'vi'
+                          ? 'Đang chờ xác nhận thanh toán'
+                          : 'Waiting for payment confirmation'}
             </h1>
+            {expired && (
+                <p className="mb-4" role="status">
+                    {lang === 'vi'
+                        ? 'Chưa có kết quả thanh toán cuối cùng. Nếu đã thanh toán, hãy kiểm tra lại hoặc liên hệ hỗ trợ trước khi tạo giao dịch mới.'
+                        : 'The final payment result is not available. If you have paid, check again or contact support before starting another payment.'}
+                </p>
+            )}
             {current && (
                 <p className="mb-4">
                     {lang === 'vi' ? 'Mã đơn hàng: ' : 'Order: '}

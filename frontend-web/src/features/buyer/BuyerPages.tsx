@@ -68,7 +68,10 @@ function getAuctionCurrentBid(auction: unknown) {
 
 /** Dẹt cây category từ API để sản phẩm gắn ở node lá vẫn tìm được đúng tên song ngữ. */
 function flattenLiveCategories(categories: ApiCategory[]): ApiCategory[] {
-    return categories.flatMap((category) => [category, ...flattenLiveCategories(category.children || [])])
+    return categories.flatMap((category) => [
+        category,
+        ...flattenLiveCategories(category.children || []),
+    ])
 }
 
 // ─── Home Page ─────────────────────────────────────────────────────────────────
@@ -193,11 +196,10 @@ export function HomePage() {
                         <div className="inline-flex items-center gap-2 border border-white/30 rounded-full px-4 py-1.5 text-sm font-semibold mb-5 bg-white/10 backdrop-blur-sm">
                             <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
                             {/* Hiển thị số lượng sản phẩm thực tế; khi chưa cache thì badge ẩn, skeleton card bên dưới đảm nhận trạng thái loading */}
-                            {liveProducts.length > 0 && (
-                                lang === 'en'
+                            {liveProducts.length > 0 &&
+                                (lang === 'en'
                                     ? `${liveProducts.length} verified products in database`
-                                    : `${liveProducts.length} sản phẩm thực tế từ Database`
-                            )}
+                                    : `${liveProducts.length} sản phẩm thực tế từ Database`)}
                         </div>
                         <h1 className="text-5xl font-black leading-tight mb-5">
                             {lang === 'en' ? (
@@ -309,27 +311,29 @@ export function HomePage() {
                     ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
                             {liveCategories.map((cat) => {
-                            const Icon = CATEGORY_ICONS[cat.id]
-                            return (
-                                <button
-                                    key={cat.id}
-                                    onClick={() => navigate('search', { category: cat.id })}
-                                    className="nexus-card p-5 flex flex-col items-center gap-3 hover:border-primary hover:shadow-md transition-all group cursor-pointer"
-                                >
-                                    {/* Icon danh mục kiểu Shopee: nền cam nhạt bg-orange-50 và hover chuyển sang nền cam đậm */}
-                                    <div className="w-14 h-14 rounded-2xl bg-orange-50 text-primary flex items-center justify-center group-hover:scale-105 group-hover:bg-primary group-hover:text-white transition-all shadow-2xs">
-                                        {Icon && <Icon width="28" height="28" strokeWidth="1.4" />}
-                                    </div>
-                                    <span className="text-sm font-semibold text-gray-700 group-hover:text-primary text-center leading-tight">
-                                        {lang === 'vi' ? cat.nameVi : cat.name}
-                                    </span>
-                                    <span className="text-xs text-gray-400">
-                                        {(cat.productCount ?? 0).toLocaleString()}{' '}
-                                        {lang === 'en' ? 'items' : 'sản phẩm'}
-                                    </span>
-                                </button>
-                            )
-                        })}
+                                const Icon = CATEGORY_ICONS[cat.id]
+                                return (
+                                    <button
+                                        key={cat.id}
+                                        onClick={() => navigate('search', { category: cat.id })}
+                                        className="nexus-card p-5 flex flex-col items-center gap-3 hover:border-primary hover:shadow-md transition-all group cursor-pointer"
+                                    >
+                                        {/* Icon danh mục kiểu Shopee: nền cam nhạt bg-orange-50 và hover chuyển sang nền cam đậm */}
+                                        <div className="w-14 h-14 rounded-2xl bg-orange-50 text-primary flex items-center justify-center group-hover:scale-105 group-hover:bg-primary group-hover:text-white transition-all shadow-2xs">
+                                            {Icon && (
+                                                <Icon width="28" height="28" strokeWidth="1.4" />
+                                            )}
+                                        </div>
+                                        <span className="text-sm font-semibold text-gray-700 group-hover:text-primary text-center leading-tight">
+                                            {lang === 'vi' ? cat.nameVi : cat.name}
+                                        </span>
+                                        <span className="text-xs text-gray-400">
+                                            {(cat.productCount ?? 0).toLocaleString()}{' '}
+                                            {lang === 'en' ? 'items' : 'sản phẩm'}
+                                        </span>
+                                    </button>
+                                )
+                            })}
                         </div>
                     )}
                 </section>
@@ -2721,7 +2725,14 @@ export function OrderHistoryPage() {
                                             </div>
                                         </div>
 
-                                        {/* Danh sách sản phẩm của đơn */}
+                                        {/* DTO tóm tắt không có items; mở chi tiết để tải sản phẩm thật, không tạo item demo. */}
+                                        {order.items.length === 0 && (
+                                            <p className="text-sm text-gray-500 mb-3">
+                                                {lang === 'vi'
+                                                    ? 'Mở chi tiết đơn để xem sản phẩm.'
+                                                    : 'Open order details to view products.'}
+                                            </p>
+                                        )}
                                         <div className="space-y-3">
                                             {order.items && order.items.length > 0 ? (
                                                 order.items.map((item, idx) => (
@@ -3265,6 +3276,9 @@ export function OrderDetailPage() {
                                 status={paymentStatus}
                                 label={
                                     {
+                                        // API đơn hàng chưa cung cấp escrow nên không suy đoán đã thu tiền.
+                                        unknown:
+                                            lang === 'en' ? 'Not available' : 'Chưa có thông tin',
                                         held: lang === 'en' ? 'Held by Nexus' : 'Nexus đang giữ',
                                         protection_period:
                                             lang === 'en'

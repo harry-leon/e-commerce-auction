@@ -28,6 +28,18 @@ beforeEach(() => {
     } as unknown as AppState
 })
 
+/** Link hết hạn không đồng nghĩa đã thất bại; kiểm tra lại vẫn tiếp nhận được SUCCESS do IPN đến chậm. */
+it('shows an expired link without claiming failure and accepts a later confirmed result', async () => {
+    vi.mocked(getPayment).mockResolvedValue({ ...pending, status: 'EXPIRED', paymentUrl: null })
+    render(<PaymentResultPage />)
+    expect(await screen.findByText('Liên kết thanh toán đã hết hạn')).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent('Chưa có kết quả thanh toán cuối cùng')
+    expect(screen.queryByText('Thanh toán không thành công')).not.toBeInTheDocument()
+    vi.mocked(getPayment).mockResolvedValue({ ...pending, status: 'SUCCESS' })
+    fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra lại' }))
+    expect(await screen.findByText('Thanh toán đã được xác nhận')).toBeVisible()
+})
+
 /** Query status=success/ResponseCode=00 không được tự hiển thị đã trả tiền khi IPN chưa cập nhật DB. */
 it('waits for backend confirmation even if browser query claims success', async () => {
     vi.mocked(getPayment).mockResolvedValue(pending)

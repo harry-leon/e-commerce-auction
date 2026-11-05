@@ -2,6 +2,7 @@ import { api, ApiClientError, readSession } from './client'
 import type { ApiResponse } from './client'
 import type { Order, OrderStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
+import { normalizeOrder, type OrderPayload } from './orderData'
 
 /**
  * Khóa lưu trữ dữ liệu mock đơn hàng trong localStorage để các thao tác chuyển trạng thái
@@ -254,7 +255,8 @@ function readLocalMockOrders(): Order[] {
         if (raw) {
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed
+                // Dữ liệu demo cũ trong trình duyệt cũng phải qua cùng bộ chuẩn hóa trước khi render.
+                return parsed.map(normalizeOrder)
             }
         }
     } catch {
@@ -328,8 +330,8 @@ export function getAllowedOrderStatusTransitions(status: OrderStatus): OrderStat
  * Cổng API thống nhất cho Đơn hàng:
  * 1. Thử gọi backend REST API theo chuẩn đường dẫn `/api/v1/orders`.
  * 2. Nếu backend phản hồi thành công (dữ liệu DB thực), sử dụng dữ liệu từ server.
- * 3. Nếu backend trả lỗi (404, 503, không kết nối được) hoặc DB chưa có dữ liệu:
- *    tự động fallback sang Mock JSON data, đồng thời duy trì trạng thái cập nhật qua localStorage.
+ * 3. Các lỗi được canFallbackToMock cho phép mới dùng demo localStorage;
+ *    danh sách thật rỗng không bị thay bằng dữ liệu mẫu, VNPAY không tạo thanh toán giả.
  */
 
 export const ordersApi = {
@@ -337,10 +339,9 @@ export const ordersApi = {
      * Lấy danh sách đơn hàng theo vai trò người dùng (buyer / seller / admin), kèm bộ lọc trạng thái và tìm kiếm.
      * Đầu vào: params chứa role, status ('all' hoặc cụ thể), search từ khóa.
      * Kết quả: Mảng danh sách Order đã được lọc theo tiêu chí.
-     * Luồng: gọi GET /api/v1/orders → unwrap ApiResponse<Order[]>.data theo chuẩn V2 envelope;
+     * Luồng: gọi GET /api/v1/orders → ánh xạ DTO tóm tắt không có items sang model giao diện;
      *   nếu backend 404/502/503 thì fallback sang mock localStorage.
-     * Ghi chú: /orders backend chưa triển khai (PLANNED theo COMMERCE_SERVICE.md §4),
-     *   mock vẫn là nguồn dữ liệu chính trong giai đoạn hiện tại.
+     * Danh sách thật rỗng được giữ nguyên; không thay bằng đơn demo.
      */
     async getOrders(params?: {
         role?: 'buyer' | 'seller' | 'admin'
@@ -354,69 +355,26 @@ export const ordersApi = {
         if (params?.search) query.set('search', params.search)
 
         // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<OrderSummaryResponse[]> chuẩn V2
-        let backendOrders: Order[] = []
         try {
             const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
-            const envelope = await api<ApiResponse<any[]>>(path)
+            const envelope = await api<ApiResponse<OrderPayload[]>>(path)
+            // Chuẩn hóa tại biên API để Buyer/Seller/Admin không gọi map trên items bị thiếu.
             const list = envelope?.data
-            if (Array.isArray(list)) {
-                backendOrders = list.map((o: any) => ({
-                    id: String(o.orderNo || o.id),
-                    orderNo: String(o.orderNo || o.id),
-                    buyerId: String(o.buyerId || params?.userId || ''),
-                    buyerName: String(o.buyerName || 'Người mua'),
-                    sellerId: String(o.sellerId || ''),
-                    sellerName: String(o.sellerName || 'Nexus Official Store'),
-                    items: Array.isArray(o.items)
-                        ? o.items.map((it: any) => ({
-                              productId: String(it.productId || it.skuId || it.id || ''),
-                              productName: String(it.productName || it.name || 'Sản phẩm'),
-                              image: String(
-                                  it.image ||
-                                      it.thumbnailUrl ||
-                                      'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600',
-                              ),
-                              unitPrice: Number(it.unitPrice || 0),
-                              quantity: Number(it.quantity || 1),
-                              subtotal: Number(it.subtotal || (it.unitPrice || 0) * (it.quantity || 1)),
-                          }))
-                        : [],
-                    itemCount: Number(o.itemCount ?? (Array.isArray(o.items) ? o.items.length : 1)),
-                    subtotal: Number(o.subtotal ?? o.total ?? 0),
-                    tax: Number(o.tax ?? 0),
-                    discount: Number(o.discount ?? 0),
-                    shipping: Number(o.shippingFee ?? o.shipping ?? 0),
-                    total: Number(o.total ?? 0),
-                    status: (o.status || 'PENDING_PAYMENT') as any,
-                    refundStatus: (o.refundStatus || 'NONE') as any,
-                    paymentStatus: (o.paymentStatus || (o.status === 'PAID' ? 'PAID' : 'UNPAID')) as any,
-                    shippingAddress: String(o.shippingAddress || ''),
-                    paymentMethod: String(o.paymentMethod || 'VNPAY'),
-                    createdAt: String(o.createdAt || new Date().toISOString()),
-                    updatedAt: String(o.updatedAt || o.createdAt || new Date().toISOString()),
-                }))
-            }
+            if (!Array.isArray(list)) throw new Error('Dữ liệu danh sách đơn hàng không hợp lệ')
+            return list.map(normalizeOrder)
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             // Backend chưa có endpoint hoặc lỗi kết nối → fallback sang mock data
         }
 
-        // 2. Kết hợp với mock JSON data và đơn hàng lưu tại localStorage
-        const localMock = readLocalMockOrders()
-        const mergedOrders = [...backendOrders]
-        for (const lo of localMock) {
-            if (!mergedOrders.some((m) => m.id === lo.id || m.orderNo === lo.id)) {
-                mergedOrders.push(lo)
-            }
-        }
-
-        let orders = mergedOrders
+        // Chỉ fallback sang demo khi API lỗi; không trộn vào danh sách thật.
+        let orders = readLocalMockOrders()
         const { role, status, search } = params || {}
 
         if (role === 'buyer') {
-            orders = params?.userId ? orders.filter((o) => !o.buyerId || o.buyerId === params.userId) : orders
+            orders = params?.userId ? orders.filter((o) => o.buyerId === params.userId) : []
         } else if (role === 'seller') {
-            orders = params?.userId ? orders.filter((o) => o.sellerId === params.userId) : orders
+            orders = params?.userId ? orders.filter((o) => o.sellerId === params.userId) : []
         }
 
         if (status && status !== 'all') {
@@ -442,17 +400,19 @@ export const ordersApi = {
      * Lấy thông tin chi tiết một đơn hàng theo ID.
      * Đầu vào: id (mã đơn hàng, e.g. 'ORD-20240215-001').
      * Kết quả: Đối tượng Order tương ứng hoặc null nếu không tìm thấy.
-     * Luồng: gọi GET /api/v1/orders/{id} → unwrap ApiResponse<Order>.data theo chuẩn V2;
+     * Luồng: gọi GET /api/v1/orders/{id} → ánh xạ skuId/shippingFee và collection thiếu sang model UI;
      *   fallback mock nếu backend chưa sẵn sàng.
      */
     async getOrderById(id: string): Promise<Order | null> {
         // 1. Thử gọi backend API — unwrap theo ApiResponse<Order> chuẩn V2
         try {
-            const envelope = await api<ApiResponse<Order>>(`/orders/${id}`)
+            const envelope = await api<ApiResponse<OrderPayload>>(
+                `/orders/${encodeURIComponent(id)}`,
+            )
             // Chuẩn V2: data có giá trị khi thành công; null khi lỗi (đã bị GlobalExceptionHandler bắt)
             const order = envelope?.data
             if (order && order.id) {
-                return order
+                return normalizeOrder(order)
             }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
@@ -905,16 +865,10 @@ export const ordersApi = {
      *   không fallback mock — nếu không tìm thấy backend trả 404 RESOURCE_NOT_FOUND.
      */
     async getOrderDetailV2(orderId: string): Promise<OrderDetailResponse> {
-        try {
-            const envelope = await api<ApiResponse<OrderDetailResponse>>(`/orders/${orderId}`)
-            if (envelope?.data) {
-                return envelope.data
-            }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
+        const envelope = await api<ApiResponse<OrderDetailResponse>>(`/orders/${orderId}`)
+        if (!envelope?.data) {
+            throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
         }
-        const mock = readLocalMockOrders().find((o) => o.id === orderId)
-        if (mock) return mock as unknown as OrderDetailResponse
-        throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
+        return envelope.data
     },
 }

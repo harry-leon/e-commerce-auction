@@ -30,7 +30,14 @@ export type ShipmentStatus =
     | 'returned'
 export type RefundStatus = 'none' | 'initiated' | 'processing' | 'completed' | 'rejected'
 export type PaymentStatus =
-    'held' | 'protection_period' | 'released' | 'on_hold' | 'refunded' | 'partial_refund'
+    // DTO đơn hàng chưa cung cấp trạng thái escrow; không mặc định thành đã thu tiền.
+    | 'unknown'
+    | 'held'
+    | 'protection_period'
+    | 'released'
+    | 'on_hold'
+    | 'refunded'
+    | 'partial_refund'
 export type DisputeStatus = 'none' | 'open' | 'reviewing' | 'resolved'
 export type NotifType = 'order' | 'auction' | 'payment' | 'system' | 'promotion' | 'reputation'
 
@@ -152,6 +159,8 @@ export interface Shipment {
 }
 
 export interface Order {
+    /** Số dòng từ bản tóm tắt; items chỉ có khi API cung cấp chi tiết. */
+    itemCount?: number
     id: string
     orderNo?: string
     buyerId: string

@@ -30,7 +30,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const [lang, setLang] = useState<Lang>('en')
     const [page, setPage] = useState<Page>(() => readRoute().page)
     const [pageParams, setPageParams] = useState<Record<string, unknown>>(() => readRoute().params)
-    const { user, setUser } = useSessionStore()
+    const { user, setUser, restoreSession } = useSessionStore()
+    // VNPAY return là lần tải trang mới, có thể thiếu cache tab; lấy lại profile bằng cookie HttpOnly, không dựa query thanh toán.
+    useEffect(() => {
+        void restoreSession()
+    }, [restoreSession])
     const [cartCount, setCartCount] = useState(() => {
         try {
             if (typeof window !== 'undefined' && window.localStorage) {

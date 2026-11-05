@@ -107,15 +107,19 @@ beforeEach(() => {
             if (path.endsWith('/auth/login') || path.endsWith('/auth/register')) payload = { user }
             else if (path.includes('/auth/')) payload = { message: 'OK' }
             else if (path.includes('/activity-history'))
+                // User Service bọc trang lịch sử trong data; fixture phải giữ contract để bảo vệ luồng hiển thị sau reload.
                 payload = {
-                    content: [
-                        {
-                            id: 'log-1',
-                            action: 'LOGIN',
-                            description: 'Signed in',
-                            createdAt: '2026-10-19',
-                        },
-                    ],
+                    success: true,
+                    data: {
+                        content: [
+                            {
+                                id: 'log-1',
+                                action: 'LOGIN',
+                                description: 'Signed in',
+                                createdAt: '2026-10-19',
+                            },
+                        ],
+                    },
                 }
             else if (path.endsWith('/users/me'))
                 payload = { ...user, ...(init.body ? JSON.parse(String(init.body)) : {}) }
@@ -272,8 +276,10 @@ describe('profile and category writes', () => {
     it('persists category edits and handles cancellation and failed deletion', async () => {
         render(<AdminCategoriesPage />)
         await screen.findByText(/Điện tử ·/)
-        // ERD chỉ có name: form lưu một tên, không gửi bản dịch nameVi riêng.
-        fireEvent.change(screen.getByLabelText('Tên danh mục'), { target: { value: 'Books' } })
+        // Form hiện tại có hai nhãn theo ngôn ngữ; sửa đúng trường name khi giao diện đang dùng tiếng Anh.
+        fireEvent.change(screen.getByLabelText('Category name (English)'), {
+            target: { value: 'Books' },
+        })
         fireEvent.click(screen.getByRole('button', { name: 'Lưu' }))
         await waitFor(() =>
             expect(

@@ -293,4 +293,3 @@ describe('Auctions API Adapter', () => {
         })
     })
 })
-

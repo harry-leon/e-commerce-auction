@@ -116,6 +116,16 @@ export interface Session {
     user: User
 }
 
+// Profile là cache giao diện, cookie mới là phiên thật; thông báo thay đổi để Zustand cập nhật cả sau refresh.
+const sessionListeners = new Set<(session: Session | null) => void>()
+let sessionVersion = 0
+
+/** Theo dõi profile trong cùng tab; callback không nhận token, trả cleanup cho nơi đăng ký. */
+export function subscribeSession(listener: (session: Session | null) => void) {
+    sessionListeners.add(listener)
+    return () => sessionListeners.delete(listener)
+}
+
 /** Chỉ khôi phục profile UI; xóa phiên cũ có token để chuyển sang cookie HttpOnly. */
 export function readSession(): Session | null {
     try {
@@ -131,14 +141,23 @@ export function readSession(): Session | null {
     }
 }
 
-/** Chỉ lưu user; loại token trong payload thừa và xóa bản localStorage cũ. */
+/** Chỉ lưu profile, không token; đồng bộ người dùng đang hiển thị sau login/refresh/logout.
+ * Storage bị chặn không được biến một phiên cookie hợp lệ thành lỗi đăng nhập.
+ */
 export function saveSession(session: Session | null) {
-    localStorage.removeItem(tokenKey)
-    sessionStorage.removeItem(tokenKey)
-    if (session) sessionStorage.setItem(tokenKey, JSON.stringify({ user: session.user }))
+    sessionVersion++
+    const profile = session ? { user: session.user } : null
+    try {
+        localStorage.removeItem(tokenKey)
+        sessionStorage.removeItem(tokenKey)
+        if (profile) sessionStorage.setItem(tokenKey, JSON.stringify(profile))
+    } catch {
+        // Cookie vẫn do browser giữ; lần tải trang sau có thể nạp lại profile từ server.
+    }
+    sessionListeners.forEach((listener) => listener(profile))
 }
 
-/** Ghi nhớ email chỉ để điền sẵn form; không lưu mật khẩu/token hoặc khôi phục đăng nhập sau khi đóng tab. */
+/** Ghi nhớ email chỉ điền sẵn form; không lưu mật khẩu/token. Khôi phục phiên phụ thuộc cookie, không phụ thuộc lựa chọn này. */
 export function readRememberedEmail(): string {
     try {
         return localStorage.getItem('nexus.remembered-email') || ''
@@ -167,14 +186,14 @@ let refreshing: Promise<void> | null = null
  * RequestInit được chuyển tiếp, bao gồm AbortSignal để component có thể hủy request khi unmount.
  */
 export async function api<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
-    const session = readSession()
     const headers = new Headers(init.headers)
     if (init.body) headers.set('Content-Type', 'application/json')
     // Browser quản lý cookie; header riêng chống CSRF, JS không đọc hoặc gửi token.
     headers.set('X-Nexus-Request', '1')
     const response = await fetch(`${baseUrl}${path}`, { ...init, headers, credentials: 'include' })
-    if (response.status === 401 && session && retry && !path.startsWith('/auth/')) {
-        // retry=false giới hạn vòng lặp; refresh thất bại xóa session, finally mở lại khả năng refresh cho lần sau.
+    if (response.status === 401 && retry && !path.startsWith('/auth/')) {
+        // Cookie refresh có thể còn dù tab/origin mới không có profile; dùng chung Promise và chỉ gửi lại tối đa một lần.
+        const refreshVersion = sessionVersion
         refreshing ??= api<AuthPayload>(
             '/auth/refresh',
             {
@@ -185,10 +204,18 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
         )
             .then((payload) => {
                 const auth = (payload as any)?.data || payload
-                saveSession({ ...auth, user: mapUser(auth.user) })
+                // Login/logout mới có thể hoàn tất trong lúc refresh cũ còn chạy; không ghi đè profile mới.
+                if (refreshVersion === sessionVersion) saveSession({ user: mapUser(auth.user) })
             })
             .catch((error) => {
-                saveSession(null)
+                // Chỉ hết phiên đã được server xác nhận mới xóa profile; lỗi mạng/5xx cho phép thử lại.
+                if (
+                    error instanceof ApiClientError &&
+                    refreshVersion === sessionVersion &&
+                    (error.status === 401 || error.code === 'AUTH_REFRESH_TOKEN_EXPIRED')
+                ) {
+                    saveSession(null)
+                }
                 throw error
             })
             .finally(() => {

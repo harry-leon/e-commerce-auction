@@ -14,9 +14,9 @@ export function flatten(categories: ApiCategory[] = []): ApiCategory[] {
     ])
 }
 
-/** Giá đại diện là giá thấp nhất trong các SKU ACTIVE; không có SKU bán được thì báo chưa có giá. */
+/** Lấy giá thấp nhất trong SKU ACTIVE; thiếu danh sách SKU thì báo chưa có giá, không lỗi render. */
 export function price(product: ApiProduct) {
-    const prices = product.skus
+    const prices = (Array.isArray(product.skus) ? product.skus : [])
         .filter((sku) => sku.status === 'ACTIVE')
         .map((sku) => Number(sku.price))
     return prices.length ? `${Math.min(...prices).toLocaleString('vi-VN')} ₫` : 'Chưa có giá bán'

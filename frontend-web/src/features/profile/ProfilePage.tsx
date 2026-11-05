@@ -6,7 +6,7 @@ import {
     errorMessage,
     extractFieldErrors,
     type ApiUser,
-    type Envelope,
+    type ApiResponse,
 } from '../../api/client'
 import {
     validatePasswordPolicy,
@@ -21,25 +21,19 @@ import { useLoad } from '../../hooks/useLoad'
 
 /**
  * Tải hồ sơ và 20 hoạt động gần đây của chính tài khoản qua JWT.
- * Lưu hồ sơ bằng PUT /users/me; đổi mật khẩu dùng POST /api/v1/auth/change-password (yêu cầu Bearer token),
+ * Lưu hồ sơ bằng PUT /users/me; đổi mật khẩu dùng POST /api/v1/auth/change-password (yêu cầu cookie HttpOnly),
  * áp dụng validation mật khẩu mới và hiển thị lỗi 422 theo từng trường.
  */
 export function ProfilePage() {
     const { setUser, showToast, navigate, user, page, lang } = useApp()
-    // Chuẩn hóa nạp dữ liệu hồ sơ cá nhân: hỗ trợ cả ApiResponse envelope { data: UserResponse } và UserResponse trực tiếp
-    const { data: rawData, error, loading } = useLoad<ApiUser | Envelope<ApiUser>>('/users/me')
-    const userProfile: ApiUser | undefined = (rawData as any)?.data || rawData
-
-    // Chuẩn hóa nạp dữ liệu lịch sử hoạt động: hỗ trợ ApiResponse envelope { data: [...] }, Spring Pageable { content: [...] }
-    const history = useLoad<any>('/users/me/activity-history?size=20')
-    const rawHistory = (history.data as any)?.data ?? (history.data as any)?.content ?? history.data
-    const historyItems: { id: string; action: string; description: string; createdAt: string }[] =
-        Array.isArray(rawHistory)
-            ? rawHistory
-            : Array.isArray((rawHistory as any)?.content)
-              ? (rawHistory as any).content
-              : []
-
+    const { data: userProfile, error, loading } = useLoad<ApiUser>('/users/me')
+    // User Service bọc trang lịch sử trong data; đọc đúng envelope trước khi duyệt content.
+    const history = useLoad<
+        ApiResponse<{
+            content: { id: string; action: string; description: string; createdAt: string }[]
+        }>
+    >('/users/me/activity-history?size=20')
+    const activities = Array.isArray(history.data?.data?.content) ? history.data.data.content : []
     const [saving, setSaving] = useState(false)
     const [failure, setFailure] = useState('')
 
@@ -51,7 +45,7 @@ export function ProfilePage() {
 
     /**
      * Cập nhật thông tin cá nhân qua PUT /api/v1/users/me.
-     * Luồng: Lấy dữ liệu form -> gọi PUT /users/me -> unwrap envelope nếu có -> cập nhật store User -> báo toast thành công.
+     * Luồng: form -> PUT /users/me -> hồ sơ trực tiếp -> store User -> toast.
      */
     const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -59,12 +53,11 @@ export function ProfilePage() {
         setSaving(true)
         setFailure('')
         try {
-            const updated = await api<ApiUser | Envelope<ApiUser>>('/users/me', {
+            const updated = await api<ApiUser>('/users/me', {
                 method: 'PUT',
                 body: JSON.stringify(Object.fromEntries(form)),
             })
-            const profile = (updated as any)?.data || updated
-            setUser(mapUser(profile))
+            setUser(mapUser(updated))
             showToast({ type: 'success', message: 'Đã lưu thay đổi' })
         } catch (err) {
             setFailure(errorMessage(err))
@@ -75,7 +68,7 @@ export function ProfilePage() {
 
     /**
      * Đổi mật khẩu qua POST /api/v1/auth/change-password:
-     * - Đầu vào: currentPassword, newPassword (gửi kèm Bearer token qua client.ts).
+     * - Đầu vào: currentPassword, newPassword (gửi kèm cookie HttpOnly qua client.ts).
      * - Validation:
      *   + Mật khẩu hiện tại: chỉ kiểm tra không để trống, KHÔNG áp dụng policy mới.
      *   + Mật khẩu mới: 8–100 ký tự, ít nhất 1 chữ hoa, 1 số, 1 ký tự đặc biệt (\p{P}\p{S}); khoảng trắng không tính.
@@ -165,7 +158,12 @@ export function ProfilePage() {
                     className="nexus-card p-5 grid sm:grid-cols-2 gap-4"
                     onSubmit={(event) => submit(event)}
                 >
-                    <Input label="Họ tên" name="fullName" defaultValue={userProfile.fullName} required />
+                    <Input
+                        label="Họ tên"
+                        name="fullName"
+                        defaultValue={userProfile.fullName}
+                        required
+                    />
                     <Input label="Email" value={userProfile.email} disabled />
                     <Input label="Số điện thoại" name="phone" defaultValue={userProfile.phone} />
                     <Input
@@ -275,7 +273,7 @@ export function ProfilePage() {
                 <h2 className="font-bold">Lịch sử hoạt động gần đây</h2>
                 <LoadState error={history.error} loading={history.loading} />
                 <ul>
-                    {historyItems.map((item) => (
+                    {activities.map((item) => (
                         <li className="py-2 border-b" key={item.id}>
                             {new Date(item.createdAt).toLocaleString('vi-VN')} · {item.action} ·{' '}
                             {item.description}
@@ -283,7 +281,7 @@ export function ProfilePage() {
                     ))}
                 </ul>
             </section>
-                </div>
+        </div>
     )
 
     // Chức năng: Điều hướng layout tương ứng theo vai trò (role) và route hiện tại để không làm mất sidebar của Admin, Seller, Support.
