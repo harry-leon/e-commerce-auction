@@ -292,4 +292,252 @@ describe('Auctions API Adapter', () => {
             expect(res.bid.amount).toBe(250.0)
         })
     })
+
+    describe('auctionsApi.createAuction (Khởi tạo phiên đấu giá)', () => {
+        /**
+         * Kiểm thử validation chặt chẽ:
+         * - Giá khởi điểm > 0
+         * - Bước giá >= 1,000 VND
+         * - Thời gian bắt đầu > thời gian hiện tại
+         * - Thời gian kết thúc > thời gian bắt đầu
+         * - Thời lượng tối thiểu 1 giờ, tối đa 7 ngày
+         */
+        it('từ chối tạo phiên khi thiếu sản phẩm', async () => {
+            await expect(
+                auctionsApi.createAuction({
+                    productId: '',
+                    startingPrice: 500000,
+                    minIncrement: 10000,
+                    startTime: new Date(Date.now() + 3600000).toISOString(),
+                    endTime: new Date(Date.now() + 7200000).toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+        })
+
+        it('từ chối tạo phiên khi giá khởi điểm <= 0', async () => {
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: 0,
+                    minIncrement: 10000,
+                    startTime: new Date(Date.now() + 3600000).toISOString(),
+                    endTime: new Date(Date.now() + 7200000).toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: -1000,
+                    minIncrement: 10000,
+                    startTime: new Date(Date.now() + 3600000).toISOString(),
+                    endTime: new Date(Date.now() + 7200000).toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+        })
+
+        it('từ chối tạo phiên khi bước giá nhỏ hơn quy định 1,000 VND', async () => {
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: 500000,
+                    minIncrement: 500,
+                    startTime: new Date(Date.now() + 3600000).toISOString(),
+                    endTime: new Date(Date.now() + 7200000).toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+        })
+
+        it('từ chối tạo phiên khi thời gian bắt đầu nằm trong quá khứ', async () => {
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: 500000,
+                    minIncrement: 10000,
+                    startTime: new Date(Date.now() - 3600000).toISOString(),
+                    endTime: new Date(Date.now() + 7200000).toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+        })
+
+        it('từ chối tạo phiên khi thời gian kết thúc trước thời gian bắt đầu hoặc thời lượng < 1 giờ', async () => {
+            const start = new Date(Date.now() + 3600000)
+            const endBeforeStart = new Date(start.getTime() - 10000)
+            const endTooShort = new Date(start.getTime() + 1800000) // 30 phút
+
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: 500000,
+                    minIncrement: 10000,
+                    startTime: start.toISOString(),
+                    endTime: endBeforeStart.toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: 500000,
+                    minIncrement: 10000,
+                    startTime: start.toISOString(),
+                    endTime: endTooShort.toISOString(),
+                }),
+            ).rejects.toThrow(ApiClientError)
+        })
+
+        it('tạo thành công phiên đấu giá hợp lệ với trạng thái scheduled', async () => {
+            const start = new Date(Date.now() + 3600000)
+            const end = new Date(start.getTime() + 86400000) // 24 giờ
+
+            const created = await auctionsApi.createAuction({
+                productId: 'p1',
+                startingPrice: 1000000,
+                minIncrement: 50000,
+                startTime: start.toISOString(),
+                endTime: end.toISOString(),
+                visibility: 'public',
+            })
+
+            expect(created).toBeDefined()
+            expect(created.status).toBe('scheduled')
+            expect(created.startingPrice).toBe(1000000)
+            expect(created.minIncrement).toBe(50000)
+            expect(created.productId).toBe('p1')
+
+            // Kiểm tra phiên vừa tạo đã có trong danh sách
+            const list = await auctionsApi.getAuctions({ sellerId: created.sellerId })
+            expect(list.items.some((a) => a.id === created.id)).toBe(true)
+        })
+    })
+
+    describe('auctionsApi.updateAuction (Chỉnh sửa phiên trước giờ mở)', () => {
+        it('cập nhật thành công thông số khi phiên ở trạng thái scheduled và chưa bắt đầu', async () => {
+            const start = new Date(Date.now() + 7200000)
+            const end = new Date(start.getTime() + 86400000)
+
+            const created = await auctionsApi.createAuction({
+                productId: 'p1',
+                startingPrice: 500000,
+                minIncrement: 10000,
+                startTime: start.toISOString(),
+                endTime: end.toISOString(),
+            })
+
+            const updated = await auctionsApi.updateAuction(created.id, {
+                startingPrice: 600000,
+                minIncrement: 20000,
+            })
+
+            expect(updated.startingPrice).toBe(600000)
+            expect(updated.minIncrement).toBe(20000)
+        })
+
+        it('từ chối cập nhật khi phiên đấu giá đã ACTIVE hoặc đã qua startTime', async () => {
+            // Phiên a1 trong mockData đang ACTIVE
+            await expect(
+                auctionsApi.updateAuction('a1', {
+                    startingPrice: 999999,
+                }),
+            ).rejects.toThrow(ApiClientError)
+        })
+    })
+
+    describe('auctionsApi.cancelAuction (Hủy phiên đấu giá)', () => {
+        it('từ chối hủy phiên khi không cung cấp lý do', async () => {
+            await expect(auctionsApi.cancelAuction('a1', '', 'seller')).rejects.toThrow(
+                ApiClientError,
+            )
+            await expect(auctionsApi.cancelAuction('a1', '   ', 'admin')).rejects.toThrow(
+                ApiClientError,
+            )
+        })
+
+        it('Người bán hủy thành công phiên scheduled trước giờ mở phiên', async () => {
+            const start = new Date(Date.now() + 7200000)
+            const end = new Date(start.getTime() + 86400000)
+
+            const created = await auctionsApi.createAuction({
+                productId: 'p1',
+                startingPrice: 500000,
+                minIncrement: 10000,
+                startTime: start.toISOString(),
+                endTime: end.toISOString(),
+            })
+
+            const cancelled = await auctionsApi.cancelAuction(
+                created.id,
+                'Người bán đổi ý không muốn đấu giá nữa',
+                'seller',
+            )
+
+            expect(cancelled.status).toBe('cancelled')
+            expect(cancelled.cancelReason).toBe('Người bán đổi ý không muốn đấu giá nữa')
+        })
+
+        it('Người bán không được phép hủy phiên đang ACTIVE (403 Forbidden)', async () => {
+            // Phiên a1 đang ACTIVE
+            await expect(
+                auctionsApi.cancelAuction('a1', 'Muốn hủy ngang', 'seller'),
+            ).rejects.toThrow(ApiClientError)
+        })
+
+        it('Quản trị viên (Admin) có quyền cưỡng chế hủy phiên vi phạm kể cả khi đang ACTIVE', async () => {
+            const forceCancelled = await auctionsApi.cancelAuction(
+                'a1',
+                'Phát hiện hàng giả/vi phạm bản quyền nghiêm trọng',
+                'admin',
+            )
+
+            expect(forceCancelled.status).toBe('cancelled')
+            expect(forceCancelled.cancelReason).toBe(
+                'Phát hiện hàng giả/vi phạm bản quyền nghiêm trọng',
+            )
+        })
+    })
+
+    describe('auctionsApi.reviewAuction (Phê duyệt và từ chối phiên của Admin)', () => {
+        it('Admin phê duyệt phiên thành công chuyển sang scheduled', async () => {
+            const start = new Date(Date.now() + 7200000)
+            const end = new Date(start.getTime() + 86400000)
+
+            const created = await auctionsApi.createAuction({
+                productId: 'p1',
+                startingPrice: 800000,
+                minIncrement: 10000,
+                startTime: start.toISOString(),
+                endTime: end.toISOString(),
+            })
+
+            const approved = await auctionsApi.reviewAuction(created.id, 'scheduled')
+            expect(approved.status).toBe('scheduled')
+        })
+
+        it('Admin từ chối phiên kèm lý do chuyển trạng thái sang cancelled/rejected', async () => {
+            const start = new Date(Date.now() + 7200000)
+            const end = new Date(start.getTime() + 86400000)
+
+            const created = await auctionsApi.createAuction({
+                productId: 'p1',
+                startingPrice: 800000,
+                minIncrement: 10000,
+                startTime: start.toISOString(),
+                endTime: end.toISOString(),
+            })
+
+            const rejected = await auctionsApi.reviewAuction(
+                created.id,
+                'rejected',
+                'Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt',
+            )
+            expect(rejected.status).toBe('cancelled')
+            expect(rejected.cancelReason).toBe('Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt')
+        })
+
+        it('từ chối yêu cầu từ chối phiên nếu Admin không nhập lý do', async () => {
+            await expect(auctionsApi.reviewAuction('a1', 'rejected', '')).rejects.toThrow(
+                ApiClientError,
+            )
+        })
+    })
 })
