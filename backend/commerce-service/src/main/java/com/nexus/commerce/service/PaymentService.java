@@ -15,6 +15,7 @@ import com.nexus.common.exception.ApiException;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -74,8 +75,8 @@ public class PaymentService {
             }
             return response(payment);
         }
-        // Không cấp thêm 15 phút ở mỗi lần mở lại URL: deadline phải cùng cửa sổ giữ kho của checkout.
-        Instant expires = order.getCreatedAt().plusSeconds(15 * 60);
+        // Không gia hạn khi mở lại; VNPAY chỉ nhận chính xác đến giây nên DB cũng dùng cùng mốc, tránh lệch phần mili giây.
+        Instant expires = order.getCreatedAt().plusSeconds(15 * 60).truncatedTo(ChronoUnit.SECONDS);
         if (!expires.isAfter(Instant.now())) { throw new BusinessException(ErrorCode.PAYMENT_EXPIRED); }
         if (order.getReservationIds().isEmpty()) {
             throw new ApiException("PAYMENT_RESERVATIONS_MISSING", HttpStatus.CONFLICT, "Đơn chưa có snapshot phiếu giữ kho", null);
@@ -95,7 +96,9 @@ public class PaymentService {
         return response(payments.saveAndFlush(payment));
     }
 
-    /** Chỉ buyer sở hữu đơn được poll trạng thái từ DB; redirect URL không có quyền đánh dấu PAID. */
+    /** Buyer sở hữu đơn được tra cứu kết quả DB và hạn URL; quá hạn trả EXPIRED nhưng chưa kết luận đã/không thu tiền.
+     * Không ghi trạng thái terminal, hủy đơn hay release kho từ GET: IPN đã xác minh vẫn có thể đến chậm.
+     */
     @Transactional(readOnly = true)
     public PaymentResponse get(UUID buyer, UUID id) {
         Payment payment = payments.findById(id).orElseThrow(() -> new BusinessException(ErrorCode.PAYMENT_NOT_FOUND));
@@ -129,6 +132,8 @@ public class PaymentService {
         if (!gateway.amount(payment.getAmount()).equals(amount) || !gateway.amount(order.getTotal()).equals(amount)) {
             return reply("04", "Invalid amount");
         }
+        // EXPIRED chỉ là trạng thái hiển thị của URL, DB còn PENDING để IPN đã ký đến chậm vẫn được đối soát.
+        // Không chặn IPN theo giờ nhận: khách có thể trả trong hạn nhưng callback bị trễ mạng.
         if (!"PENDING".equals(payment.getStatus())) { return reply("02", "Order already confirmed"); }
         if (order.getStatus() != OrderStatus.PENDING_PAYMENT) { return reply("02", "Order already confirmed"); }
         String result = params.get("vnp_ResponseCode");
@@ -171,8 +176,14 @@ public class PaymentService {
                 UUID.randomUUID(), order, target, action);
     }
 
+    /** Chiếu PENDING quá hạn thành EXPIRED và bỏ link không còn dùng được; kết quả terminal từ IPN luôn được ưu tiên.
+     * Đây là trạng thái trả cho client, không thay đổi entity/DB hay tạo thêm tác vụ kho.
+     */
     private PaymentResponse response(Payment p) {
-        return new PaymentResponse(p.getId(), p.getOrderId(), p.getStatus(), p.getAmount(), "VND", p.getPaymentUrl(), p.getExpiresAt());
+        boolean expired = "PENDING".equals(p.getStatus()) && p.getExpiresAt() != null
+                && !p.getExpiresAt().isAfter(Instant.now());
+        return new PaymentResponse(p.getId(), p.getOrderId(), expired ? "EXPIRED" : p.getStatus(), p.getAmount(),
+                "VND", expired ? null : p.getPaymentUrl(), p.getExpiresAt());
     }
     private VnpayIpnResponse reply(String code, String message) { return new VnpayIpnResponse(code, message); }
 }

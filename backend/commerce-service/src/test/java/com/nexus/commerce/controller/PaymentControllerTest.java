@@ -36,6 +36,19 @@ class PaymentControllerTest {
     @Autowired private MockMvc mvc;
     @MockitoBean private PaymentService payments;
 
+    /** Contract hết hạn vẫn trả 200 để UI đọc được trạng thái và không mở lại URL đã hết hạn. */
+    @Test
+    void expiredPaymentLookupReturnsExpiredStatusAndNullUrl() throws Exception {
+        UUID buyer = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        when(payments.get(buyer, id)).thenReturn(new PaymentResponse(id, UUID.randomUUID(), "EXPIRED",
+                BigDecimal.TEN, "VND", null, Instant.now().minusSeconds(60)));
+        mvc.perform(get("/api/v1/payments/" + id).with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("EXPIRED"))
+                .andExpect(jsonPath("$.data.paymentUrl").isEmpty());
+    }
+
     @Test
     void ipnIsPublicAndUsesProviderProtocol() throws Exception {
         when(payments.ipn(any())).thenReturn(new VnpayIpnResponse("97", "Invalid signature"));
