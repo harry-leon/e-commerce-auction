@@ -59,8 +59,12 @@ public class OrderMapper {
         }
 
         int itemCount = 0;
-        if (order.getItems() != null) {
-            itemCount = order.getItems().size();
+        try {
+            if (order.getItems() != null && org.hibernate.Hibernate.isInitialized(order.getItems())) {
+                itemCount = order.getItems().size();
+            }
+        } catch (Exception ignored) {
+            itemCount = 0;
         }
 
         BigDecimal total = order.getTotal() != null

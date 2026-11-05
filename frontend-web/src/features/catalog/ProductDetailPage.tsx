@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { readSession, type ApiProduct, type Envelope } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
-import { addGuestCartItem } from '../buyer/guestCart'
+import { addGuestCartItem, clearGuestCart } from '../buyer/guestCart'
 import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import {
@@ -212,8 +212,28 @@ export function ProductDetailPage() {
     /**
      * Chức năng: Mua ngay sản phẩm đang xem, thêm vào giỏ và chuyển thẳng sang màn hình Thanh toán.
      */
-    const handleBuyNow = () => {
-        const skuId = product.skus?.[0]?.id
+    /**
+     * Chức năng: Mua ngay sản phẩm đang xem, đồng bộ vào giỏ hàng backend thật nếu đã đăng nhập và chuyển sang màn hình Checkout.
+     * Đầu vào và kết quả: skuId từ biến thể SKU sản phẩm, số lượng qty; điều hướng sang trang checkout.
+     * Luồng xử lý: Nếu đã đăng nhập -> gọi addItemToCart đồng bộ vào Database -> xóa guestCart -> chuyển sang checkout.
+     * Quy tắc: Bắt buộc tạo giỏ hàng thật trên server trước khi Checkout để tránh lỗi CART_ITEM_NOT_FOUND.
+     */
+    const handleBuyNow = async () => {
+        const skuId = product.skus?.[0]?.id || product.id
+        const session = readSession()
+        if (session && skuId) {
+            try {
+                setAddingToCart(true)
+                await addItemToCart(skuId, qty)
+                clearGuestCart()
+                navigate('checkout')
+                return
+            } catch {
+                // Fallback xuống guestCart nếu API backend lỗi tạm thời
+            } finally {
+                setAddingToCart(false)
+            }
+        }
         addGuestCartItem({
             skuId: skuId || product.id,
             skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,

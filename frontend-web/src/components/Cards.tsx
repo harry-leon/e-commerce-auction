@@ -3,6 +3,8 @@ import { useApp } from '../context'
 import { tr, formatCurrency } from '../i18n'
 import { CountdownTimer, StarRating, StatusBadge, Gavel, ShoppingCart } from './UI'
 import type { Product, Auction } from '../types'
+import { readSession } from '../api/client'
+import { addItemToCart } from '../api/cart'
 
 // ─── Product Card ──────────────────────────────────────────────────────────────
 export function ProductCard({ product }: { product: Product }) {
@@ -12,15 +14,32 @@ export function ProductCard({ product }: { product: Product }) {
         : 0
     /**
      * Chức năng: Thêm nhanh sản phẩm từ thẻ card vào giỏ hàng mà không cần mở trang chi tiết.
-     * Đầu vào và kết quả: Sự kiện click `e`; lưu sản phẩm vào guestCart/localStorage và cập nhật cartCount.
-     * Luồng xử lý: Chặn nổi bọt sự kiện -> gọi addGuestCartItem để lưu SKU/giá/ảnh -> cập nhật cartCount.
-     * Quy tắc và lý do: Giữ giỏ hàng đồng bộ cho khách vãng lai, mở trang /cart thấy ngay sản phẩm vừa chọn.
-     * Lỗi và giới hạn: Dùng SKU mặc định của sản phẩm; tự động bắt lỗi an toàn nếu storage bị chặn.
+     * Đầu vào và kết quả: Sự kiện click `e`; lưu sản phẩm vào giỏ hàng backend (nếu đã đăng nhập) hoặc guestCart (nếu chưa).
+     * Luồng xử lý: Chặn nổi bọt sự kiện -> nếu có session gọi addItemToCart -> nếu lỗi hoặc chưa đăng nhập thì lưu guestCart.
+     * Quy tắc và lý do: Giữ giỏ hàng đồng bộ cho cả người dùng đăng nhập lẫn khách vãng lai.
      */
-    const addToCart = (e: React.MouseEvent) => {
+    const addToCart = async (e: React.MouseEvent) => {
         e.stopPropagation()
+        const session = readSession()
+        const skuId = product.skuId || product.id
+        if (session && skuId) {
+            try {
+                const res = await addItemToCart(skuId, 1)
+                setCartCount(res.totalQuantity)
+                showToast({
+                    type: 'success',
+                    message:
+                        lang === 'en'
+                            ? `"${product.name}" added to cart!`
+                            : `Đã thêm "${product.nameVi || product.name}" vào giỏ hàng!`,
+                })
+                return
+            } catch {
+                // Fallback xuống giỏ hàng cục bộ nếu API backend tạm thời lỗi
+            }
+        }
         const guestCart = addGuestCartItem({
-            skuId: product.id,
+            skuId,
             skuCode: product.sku || `SKU-${product.id}`,
             productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: product.images?.[0],
@@ -33,7 +52,7 @@ export function ProductCard({ product }: { product: Product }) {
             message:
                 lang === 'en'
                     ? `"${product.name}" added to cart!`
-                    : `Đã thêm "${product.nameVi}" vào giỏ hàng!`,
+                    : `Đã thêm "${product.nameVi || product.name}" vào giỏ hàng!`,
         })
     }
     return (

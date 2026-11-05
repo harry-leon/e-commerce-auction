@@ -75,8 +75,9 @@ export function LoginPage() {
         setLoading(true)
         setError('')
         try {
+            // Chức năng: Gửi yêu cầu đăng nhập với email đã loại bỏ khoảng trắng thừa để tránh lỗi nhập liệu
             const rawResponse = await post<AuthPayload | { data: AuthPayload }>('/auth/login', {
-                email,
+                email: email.trim(),
                 password,
             })
             const payload: AuthPayload = (rawResponse as any)?.data || rawResponse
@@ -167,6 +168,25 @@ export function LoginPage() {
                     {tr(lang, 'register')}
                 </button>
             </p>
+
+            {/* Chức năng: Cung cấp nút bấm điền nhanh tài khoản mẫu Buyer cho người dùng thử nghiệm */}
+            <div className="mt-5 pt-4 border-t border-gray-100">
+                <p className="text-xs text-gray-500 mb-2 font-medium">
+                    {lang === 'vi' ? 'Tài khoản mẫu để test nhanh:' : 'Demo accounts for testing:'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setEmail('buyer@nexus.vn')
+                            setPassword('Nexus123@')
+                        }}
+                        className="text-xs bg-primary/10 hover:bg-primary/20 text-primary font-medium px-2.5 py-1.5 rounded-lg border border-primary/20 transition-colors"
+                    >
+                        Buyer: buyer@nexus.vn
+                    </button>
+                </div>
+            </div>
         </AuthCard>
     )
 }

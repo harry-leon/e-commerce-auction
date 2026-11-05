@@ -115,7 +115,7 @@ export function SearchPage() {
             <LoadState error={error || categories.error} loading={loading} />
             {!loading && !error && <p className="mb-4">{total} sản phẩm</p>}
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {data?.data.map((product) => (
+                {(data?.data || []).map((product) => (
                     <button
                         key={product.id}
                         className="nexus-card overflow-hidden text-left"

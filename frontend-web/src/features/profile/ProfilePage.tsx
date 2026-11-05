@@ -6,6 +6,7 @@ import {
     errorMessage,
     extractFieldErrors,
     type ApiUser,
+    type Envelope,
 } from '../../api/client'
 import {
     validatePasswordPolicy,
@@ -13,7 +14,7 @@ import {
     PasswordConfirmIndicator,
 } from '../auth/PasswordValidation'
 import { useApp } from '../../context'
-import { BuyerLayout } from '../../components/Layout'
+import { AdminLayout, SellerLayout, SupportLayout, BuyerLayout } from '../../components/Layout'
 import { Button, Input } from '../../components/UI'
 import { LoadState } from '../../components/LoadState'
 import { useLoad } from '../../hooks/useLoad'
@@ -24,11 +25,21 @@ import { useLoad } from '../../hooks/useLoad'
  * áp dụng validation mật khẩu mới và hiển thị lỗi 422 theo từng trường.
  */
 export function ProfilePage() {
-    const { setUser, showToast, navigate } = useApp()
-    const { data, error, loading } = useLoad<ApiUser>('/users/me')
-    const history = useLoad<{
-        content: { id: string; action: string; description: string; createdAt: string }[]
-    }>('/users/me/activity-history?size=20')
+    const { setUser, showToast, navigate, user, page, lang } = useApp()
+    // Chuẩn hóa nạp dữ liệu hồ sơ cá nhân: hỗ trợ cả ApiResponse envelope { data: UserResponse } và UserResponse trực tiếp
+    const { data: rawData, error, loading } = useLoad<ApiUser | Envelope<ApiUser>>('/users/me')
+    const userProfile: ApiUser | undefined = (rawData as any)?.data || rawData
+
+    // Chuẩn hóa nạp dữ liệu lịch sử hoạt động: hỗ trợ ApiResponse envelope { data: [...] }, Spring Pageable { content: [...] }
+    const history = useLoad<any>('/users/me/activity-history?size=20')
+    const rawHistory = (history.data as any)?.data ?? (history.data as any)?.content ?? history.data
+    const historyItems: { id: string; action: string; description: string; createdAt: string }[] =
+        Array.isArray(rawHistory)
+            ? rawHistory
+            : Array.isArray((rawHistory as any)?.content)
+              ? (rawHistory as any).content
+              : []
+
     const [saving, setSaving] = useState(false)
     const [failure, setFailure] = useState('')
 
@@ -40,6 +51,7 @@ export function ProfilePage() {
 
     /**
      * Cập nhật thông tin cá nhân qua PUT /api/v1/users/me.
+     * Luồng: Lấy dữ liệu form -> gọi PUT /users/me -> unwrap envelope nếu có -> cập nhật store User -> báo toast thành công.
      */
     const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -47,11 +59,12 @@ export function ProfilePage() {
         setSaving(true)
         setFailure('')
         try {
-            const updated = await api<ApiUser>('/users/me', {
+            const updated = await api<ApiUser | Envelope<ApiUser>>('/users/me', {
                 method: 'PUT',
                 body: JSON.stringify(Object.fromEntries(form)),
             })
-            setUser(mapUser(updated))
+            const profile = (updated as any)?.data || updated
+            setUser(mapUser(profile))
             showToast({ type: 'success', message: 'Đã lưu thay đổi' })
         } catch (err) {
             setFailure(errorMessage(err))
@@ -140,43 +153,45 @@ export function ProfilePage() {
         }
     }
 
-    return (
-        <BuyerLayout>
-            <h1 className="text-2xl font-bold mb-5">Thông tin cá nhân</h1>
+    const title = lang === 'en' ? 'Profile' : 'Thông tin cá nhân'
+
+    const profileBody = (
+        <div className="max-w-4xl">
+            <h1 className="text-2xl font-bold mb-5">{title}</h1>
             <LoadState error={failure || error} loading={loading} />
-            {data && (
+            {userProfile && (
                 <form
-                    key={data.id}
+                    key={userProfile.id}
                     className="nexus-card p-5 grid sm:grid-cols-2 gap-4"
                     onSubmit={(event) => submit(event)}
                 >
-                    <Input label="Họ tên" name="fullName" defaultValue={data.fullName} required />
-                    <Input label="Email" value={data.email} disabled />
-                    <Input label="Số điện thoại" name="phone" defaultValue={data.phone} />
+                    <Input label="Họ tên" name="fullName" defaultValue={userProfile.fullName} required />
+                    <Input label="Email" value={userProfile.email} disabled />
+                    <Input label="Số điện thoại" name="phone" defaultValue={userProfile.phone} />
                     <Input
                         label="Số giấy tờ"
                         name="identifyNumber"
-                        defaultValue={data.identifyNumber}
+                        defaultValue={userProfile.identifyNumber}
                     />
                     <Input
                         label="Ngày sinh"
                         type="date"
                         name="dateOfBirth"
-                        defaultValue={data.dateOfBirth}
+                        defaultValue={userProfile.dateOfBirth}
                     />
                     <label>
                         Giới tính
                         <select
                             className="nexus-input w-full"
                             name="gender"
-                            defaultValue={data.gender || 'OTHER'}
+                            defaultValue={userProfile.gender || 'OTHER'}
                         >
                             <option>MALE</option>
                             <option>FEMALE</option>
                             <option>OTHER</option>
                         </select>
                     </label>
-                    <Input label="Địa chỉ" name="address" defaultValue={data.address} />
+                    <Input label="Địa chỉ" name="address" defaultValue={userProfile.address} />
                     <Button type="submit" loading={saving}>
                         Lưu thông tin
                     </Button>
@@ -260,7 +275,7 @@ export function ProfilePage() {
                 <h2 className="font-bold">Lịch sử hoạt động gần đây</h2>
                 <LoadState error={history.error} loading={history.loading} />
                 <ul>
-                    {history.data?.content.map((item) => (
+                    {historyItems.map((item) => (
                         <li className="py-2 border-b" key={item.id}>
                             {new Date(item.createdAt).toLocaleString('vi-VN')} · {item.action} ·{' '}
                             {item.description}
@@ -268,6 +283,28 @@ export function ProfilePage() {
                     ))}
                 </ul>
             </section>
-        </BuyerLayout>
+                </div>
     )
+
+    // Chức năng: Điều hướng layout tương ứng theo vai trò (role) và route hiện tại để không làm mất sidebar của Admin, Seller, Support.
+    // Quy tắc: Khi ở trang hồ sơ của Admin, Seller hoặc Support, render layout tương ứng giữ nguyên sidebar; Buyer dùng BuyerLayout.
+    if (page === 'admin-profile' || (user?.role === 'admin' && page === 'profile')) {
+        return <AdminLayout title={title}>{profileBody}</AdminLayout>
+    }
+    if (page === 'seller-profile' || (user?.role === 'seller' && page === 'profile')) {
+        return <SellerLayout title={title}>{profileBody}</SellerLayout>
+    }
+    if (page === 'support-profile' || (user?.role === 'support' && page === 'profile')) {
+        return <SupportLayout title={title}>{profileBody}</SupportLayout>
+    }
+    if (user?.role === 'admin') {
+        return <AdminLayout title={title}>{profileBody}</AdminLayout>
+    }
+    if (user?.role === 'seller') {
+        return <SellerLayout title={title}>{profileBody}</SellerLayout>
+    }
+    if (user?.role === 'support') {
+        return <SupportLayout title={title}>{profileBody}</SupportLayout>
+    }
+    return <BuyerLayout>{profileBody}</BuyerLayout>
 }

@@ -75,6 +75,7 @@ export interface Product {
     categoryId: string
     location: string
     sku: string
+    skuId?: string
     stock: number
     status: ProductStatus
     sellerId: string
@@ -152,6 +153,7 @@ export interface Shipment {
 
 export interface Order {
     id: string
+    orderNo?: string
     buyerId: string
     buyerName: string
     sellerId: string

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode, type SVGProps } from 'react'
 import { useApp } from '../context'
+import type { Page } from '../types'
 import { tr } from '../i18n'
 import {
     LanguageSwitcher,
@@ -12,7 +13,6 @@ import {
     Package,
     Gavel,
     Star,
-    Home,
     BarChart2,
     Users,
     Tag,
@@ -167,8 +167,15 @@ export function PublicHeader() {
     useEffect(() => {
         const controller = new AbortController()
         // Không thay lỗi mạng bằng danh mục demo; SearchPage có hiển thị lỗi tải catalog riêng.
-        api<Envelope<ApiCategory[]>>('/categories', { signal: controller.signal })
-            .then((response) => setCategories(response.data))
+        api<Envelope<ApiCategory[]> | ApiCategory[]>('/categories', { signal: controller.signal })
+            .then((response) => {
+                const list = Array.isArray((response as any)?.data)
+                    ? (response as any).data
+                    : Array.isArray(response)
+                      ? response
+                      : []
+                setCategories(list)
+            })
             .catch(() => setCategories([]))
         return () => controller.abort()
     }, [])
@@ -352,7 +359,13 @@ export function PublicHeader() {
                                         {
                                             icon: <User2 size={14} />,
                                             label: tr(lang, 'profile'),
-                                            page: 'profile' as const,
+                                            page: (user.role === 'admin'
+                                                ? 'admin-profile'
+                                                : user.role === 'seller'
+                                                  ? 'seller-profile'
+                                                  : user.role === 'support'
+                                                    ? 'support-profile'
+                                                    : 'profile') as Page,
                                         },
                                         {
                                             icon: <Package size={14} />,
@@ -430,7 +443,7 @@ export function PublicHeader() {
             {/* Category nav */}
             <div className="border-t border-gray-100">
                 <div className="max-w-[1440px] mx-auto px-8 flex items-center gap-1 py-1">
-                    {categories.map((cat) => {
+                    {(categories || []).map((cat) => {
                         const Icon = CATEGORY_ICONS[cat.id]
                         return (
                             <button
@@ -614,7 +627,7 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         <button
                             key={item.id}
                             onClick={() => navigate(item.id as any)}
-                            className={`sidebar-link w-full ${page === item.id ? 'active' : ''}`}
+                            className={`sidebar-link w-full ${page === item.id || (item.id === 'seller-profile' && page === 'profile') ? 'active' : ''}`}
                         >
                             {item.icon}
                             <span>{lang === 'vi' ? item.labelVi : item.label}</span>
@@ -637,9 +650,10 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                             </div>
                         </div>
                     )}
-                    <button onClick={() => navigate('home')} className="sidebar-link w-full">
-                        <Home size={16} />
-                        {lang === 'en' ? 'Back to Store' : 'Về trang cửa hàng'}
+                    {/* Chức năng: Cho phép Seller chuyển nhanh sang trang mua hàng của Buyer mà không cần đăng xuất */}
+                    <button onClick={() => navigate('home')} className="sidebar-link w-full text-indigo-300 hover:text-white">
+                        <ShoppingCart size={16} />
+                        {lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}
                     </button>
                     <button
                         onClick={() => {
@@ -941,7 +955,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                                     <button
                                         key={item.id}
                                         onClick={() => navigate(item.id as any)}
-                                        className={`admin-sidebar-link w-full ${page === item.id ? 'active' : ''}`}
+                                        className={`admin-sidebar-link w-full ${page === item.id || (item.id === 'admin-profile' && page === 'profile') ? 'active' : ''}`}
                                     >
                                         {item.icon}
                                         <span>{lang === 'vi' ? item.labelVi : item.label}</span>
@@ -967,6 +981,14 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                             </div>
                         </div>
                     )}
+                    {/* Chức năng: Cho phép Admin chuyển nhanh sang xem trang mua hàng của Buyer */}
+                    <button
+                        onClick={() => navigate('home')}
+                        className="admin-sidebar-link w-full text-indigo-300 hover:text-white hover:bg-white/10 mb-1"
+                    >
+                        <ShoppingCart size={14} />
+                        <span>{lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}</span>
+                    </button>
                     <button
                         onClick={() => {
                             setUser(null)
@@ -1036,7 +1058,7 @@ export function SupportLayout({ children, title }: { children: ReactNode; title:
                         <button
                             key={item.id}
                             onClick={() => navigate(item.id as any)}
-                            className={`sidebar-link w-full ${page === item.id ? 'active' : ''}`}
+                            className={`sidebar-link w-full ${page === item.id || (item.id === 'support-profile' && page === 'profile') ? 'active' : ''}`}
                         >
                             {item.icon}
                             <span>{lang === 'vi' ? item.labelVi : item.label}</span>
@@ -1044,6 +1066,14 @@ export function SupportLayout({ children, title }: { children: ReactNode; title:
                     ))}
                 </nav>
                 <div className="p-3 border-t border-white/10">
+                    {/* Chức năng: Cho phép Support chuyển nhanh sang trang mua hàng của Buyer */}
+                    <button
+                        onClick={() => navigate('home')}
+                        className="sidebar-link w-full text-indigo-300 hover:text-white hover:bg-white/10 mb-1"
+                    >
+                        <ShoppingCart size={16} />
+                        <span>{lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}</span>
+                    </button>
                     <button
                         onClick={() => {
                             setUser(null)
