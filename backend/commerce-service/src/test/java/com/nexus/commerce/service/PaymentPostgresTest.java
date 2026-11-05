@@ -109,6 +109,25 @@ class PaymentPostgresTest {
         assertEquals(created, checkout.create(buyer, key, request, "buyer-jwt"));
     }
 
+    /** Đọc hết hạn không sửa DB/đơn; IPN tới sau vẫn commit SUCCESS và chỉ enqueue confirm đúng một lần. */
+    @Test
+    void expiredProjectionKeepsDatabasePendingUntilVerifiedLateIpn() {
+        // Schema lưu timestamp UTC không kèm zone; dùng UTC tường minh, không phụ thuộc timezone của JDBC trên máy test.
+        jdbc.update("UPDATE payments SET expires_at=(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - interval '1 minute' WHERE id=?", paymentId);
+        var result = payments.get(buyer, paymentId);
+        assertEquals("EXPIRED", result.status());
+        org.junit.jupiter.api.Assertions.assertNull(result.paymentUrl());
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+        assertEquals("PENDING_PAYMENT", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
+        var ipn = callback("00", "00", "5000000");
+        assertEquals("00", payments.ipn(ipn).code());
+        assertEquals("02", payments.ipn(ipn).code());
+        assertEquals("SUCCESS", payments.get(buyer, paymentId).status());
+        assertEquals("PAID", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='CONFIRM'", Integer.class, orderId));
+    }
+
     private Map<String, String> callback(String response, String status, String amount) {
         var params = new HashMap<>(Map.of("vnp_TmnCode", "TESTONLY", "vnp_TxnRef", paymentId.toString(), "vnp_Amount", amount,
                 "vnp_ResponseCode", response, "vnp_TransactionStatus", status,

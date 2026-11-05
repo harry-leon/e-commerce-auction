@@ -82,6 +82,7 @@ export interface Product {
     categoryId: string
     location: string
     sku: string
+    skuId?: string
     stock: number
     status: ProductStatus
     sellerId: string
@@ -161,6 +162,7 @@ export interface Order {
     /** Số dòng từ bản tóm tắt; items chỉ có khi API cung cấp chi tiết. */
     itemCount?: number
     id: string
+    orderNo?: string
     buyerId: string
     buyerName: string
     sellerId: string

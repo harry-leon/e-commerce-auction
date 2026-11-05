@@ -354,7 +354,7 @@ export const ordersApi = {
         if (params?.status && params.status !== 'all') query.set('status', params.status)
         if (params?.search) query.set('search', params.search)
 
-        // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<Order[]> chuẩn V2
+        // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<OrderSummaryResponse[]> chuẩn V2
         try {
             const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
             const envelope = await api<ApiResponse<OrderPayload[]>>(path)
@@ -367,7 +367,7 @@ export const ordersApi = {
             // Backend chưa có endpoint hoặc lỗi kết nối → fallback sang mock data
         }
 
-        // 2. Fallback sang mock JSON data
+        // Chỉ fallback sang demo khi API lỗi; không trộn vào danh sách thật.
         let orders = readLocalMockOrders()
         const { role, status, search } = params || {}
 
@@ -386,9 +386,10 @@ export const ordersApi = {
             orders = orders.filter(
                 (o) =>
                     o.id.toLowerCase().includes(q) ||
-                    o.buyerName.toLowerCase().includes(q) ||
-                    o.sellerName.toLowerCase().includes(q) ||
-                    o.items.some((item) => item.productName.toLowerCase().includes(q)),
+                    (o.orderNo && o.orderNo.toLowerCase().includes(q)) ||
+                    (o.buyerName && o.buyerName.toLowerCase().includes(q)) ||
+                    (o.sellerName && o.sellerName.toLowerCase().includes(q)) ||
+                    (o.items && o.items.some((item) => item.productName.toLowerCase().includes(q))),
             )
         }
 

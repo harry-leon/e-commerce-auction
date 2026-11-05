@@ -70,7 +70,8 @@ describe('Kiểm thử API thống nhất và Quản lý đơn hàng (Buyer, Sel
             ),
         )
         render(<OrderHistoryPage />)
-        expect(await screen.findByText('real-summary')).toBeInTheDocument()
+        // Mã đơn xuất hiện ở cả tiêu đề và summary; kiểm tra hiển thị không phụ thuộc số vị trí.
+        expect((await screen.findAllByText('real-summary')).length).toBeGreaterThan(0)
         expect(screen.getByText('Mở chi tiết đơn để xem sản phẩm.')).toBeInTheDocument()
     })
 

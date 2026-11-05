@@ -2,6 +2,7 @@ package com.nexus.commerce.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
@@ -172,6 +173,56 @@ class PaymentServiceTest {
         assertCode("PAYMENT_EXPIRED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
         payment.setStatus("SUCCESS");
         assertCode("PAYMENT_ALREADY_COMPLETED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
+    }
+
+    /** Hết hạn URL phải hiện EXPIRED/null link, nhưng GET không hủy đơn hay ghi tác vụ kho khi chưa biết đã thu tiền chưa. */
+    @Test
+    void expiredLookupDoesNotMutatePendingPaymentOrOrder() {
+        payment.setPaymentUrl("https://example.test/old-payment");
+        payment.setExpiresAt(Instant.now().minusSeconds(1));
+        var result = service.get(order.getBuyerId(), payment.getId());
+        assertEquals("EXPIRED", result.status());
+        assertNull(result.paymentUrl());
+        assertEquals(payment.getExpiresAt(), result.expiresAt());
+        assertEquals("PENDING", payment.getStatus());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
+        assertCode("PAYMENT_ACCESS_DENIED", () -> service.get(UUID.randomUUID(), payment.getId()));
+        verify(payments, never()).flush();
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    /** Hạn cũ không được ghi đè kết quả cuối đã xác nhận từ provider. */
+    @Test
+    void terminalResultsTakePriorityOverExpiredLink() {
+        payment.setExpiresAt(Instant.now().minusSeconds(1));
+        for (String terminal : List.of("SUCCESS", "FAILED", "CANCELLED")) {
+            payment.setStatus(terminal);
+            assertEquals(terminal, service.get(order.getBuyerId(), payment.getId()).status());
+        }
+    }
+
+    /** IPN hợp lệ đến sau khi client đã thấy EXPIRED vẫn ghi nhận SUCCESS, callback lặp không enqueue hai lần. */
+    @Test
+    void lateSuccessAfterExpiredLookupStillConfirmsExactlyOnce() {
+        payment.setExpiresAt(Instant.now().minusSeconds(60));
+        assertEquals("EXPIRED", service.get(order.getBuyerId(), payment.getId()).status());
+        var callback = signed("5000000", "00", "00");
+        assertEquals("00", service.ipn(callback).code());
+        assertEquals("SUCCESS", service.get(order.getBuyerId(), payment.getId()).status());
+        assertEquals(OrderStatus.PAID, order.getStatus());
+        assertEquals("02", service.ipn(callback).code());
+        verify(payments).flush();
+    }
+
+    /** IPN thất bại đến chậm mới là bằng chứng hủy đơn/release, không dùng đồng hồ client để kết luận. */
+    @Test
+    void lateFailureAfterExpiredLookupCancelsOrder() {
+        payment.setExpiresAt(Instant.now().minusSeconds(60));
+        assertEquals("EXPIRED", service.get(order.getBuyerId(), payment.getId()).status());
+        assertEquals("00", service.ipn(signed("5000000", "24", "02")).code());
+        assertEquals("FAILED", service.get(order.getBuyerId(), payment.getId()).status());
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        verify(payments).flush();
     }
 
     /** Callback đã ký nhưng reference/merchant sai không được cập nhật DB. */

@@ -14,19 +14,19 @@ import {
     PasswordConfirmIndicator,
 } from '../auth/PasswordValidation'
 import { useApp } from '../../context'
-import { BuyerLayout } from '../../components/Layout'
+import { AdminLayout, SellerLayout, SupportLayout, BuyerLayout } from '../../components/Layout'
 import { Button, Input } from '../../components/UI'
 import { LoadState } from '../../components/LoadState'
 import { useLoad } from '../../hooks/useLoad'
 
 /**
  * Tải hồ sơ và 20 hoạt động gần đây của chính tài khoản qua JWT.
- * Lưu hồ sơ bằng PUT /users/me; đổi mật khẩu dùng POST /api/v1/auth/change-password (yêu cầu Bearer token),
+ * Lưu hồ sơ bằng PUT /users/me; đổi mật khẩu dùng POST /api/v1/auth/change-password (yêu cầu cookie HttpOnly),
  * áp dụng validation mật khẩu mới và hiển thị lỗi 422 theo từng trường.
  */
 export function ProfilePage() {
-    const { setUser, showToast, navigate } = useApp()
-    const { data, error, loading } = useLoad<ApiUser>('/users/me')
+    const { setUser, showToast, navigate, user, page, lang } = useApp()
+    const { data: userProfile, error, loading } = useLoad<ApiUser>('/users/me')
     // User Service bọc trang lịch sử trong data; đọc đúng envelope trước khi duyệt content.
     const history = useLoad<
         ApiResponse<{
@@ -45,6 +45,7 @@ export function ProfilePage() {
 
     /**
      * Cập nhật thông tin cá nhân qua PUT /api/v1/users/me.
+     * Luồng: form -> PUT /users/me -> hồ sơ trực tiếp -> store User -> toast.
      */
     const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -67,7 +68,7 @@ export function ProfilePage() {
 
     /**
      * Đổi mật khẩu qua POST /api/v1/auth/change-password:
-     * - Đầu vào: currentPassword, newPassword (gửi kèm Bearer token qua client.ts).
+     * - Đầu vào: currentPassword, newPassword (gửi kèm cookie HttpOnly qua client.ts).
      * - Validation:
      *   + Mật khẩu hiện tại: chỉ kiểm tra không để trống, KHÔNG áp dụng policy mới.
      *   + Mật khẩu mới: 8–100 ký tự, ít nhất 1 chữ hoa, 1 số, 1 ký tự đặc biệt (\p{P}\p{S}); khoảng trắng không tính.
@@ -145,43 +146,50 @@ export function ProfilePage() {
         }
     }
 
-    return (
-        <BuyerLayout>
-            <h1 className="text-2xl font-bold mb-5">Thông tin cá nhân</h1>
+    const title = lang === 'en' ? 'Profile' : 'Thông tin cá nhân'
+
+    const profileBody = (
+        <div className="max-w-4xl">
+            <h1 className="text-2xl font-bold mb-5">{title}</h1>
             <LoadState error={failure || error} loading={loading} />
-            {data && (
+            {userProfile && (
                 <form
-                    key={data.id}
+                    key={userProfile.id}
                     className="nexus-card p-5 grid sm:grid-cols-2 gap-4"
                     onSubmit={(event) => submit(event)}
                 >
-                    <Input label="Họ tên" name="fullName" defaultValue={data.fullName} required />
-                    <Input label="Email" value={data.email} disabled />
-                    <Input label="Số điện thoại" name="phone" defaultValue={data.phone} />
+                    <Input
+                        label="Họ tên"
+                        name="fullName"
+                        defaultValue={userProfile.fullName}
+                        required
+                    />
+                    <Input label="Email" value={userProfile.email} disabled />
+                    <Input label="Số điện thoại" name="phone" defaultValue={userProfile.phone} />
                     <Input
                         label="Số giấy tờ"
                         name="identifyNumber"
-                        defaultValue={data.identifyNumber}
+                        defaultValue={userProfile.identifyNumber}
                     />
                     <Input
                         label="Ngày sinh"
                         type="date"
                         name="dateOfBirth"
-                        defaultValue={data.dateOfBirth}
+                        defaultValue={userProfile.dateOfBirth}
                     />
                     <label>
                         Giới tính
                         <select
                             className="nexus-input w-full"
                             name="gender"
-                            defaultValue={data.gender || 'OTHER'}
+                            defaultValue={userProfile.gender || 'OTHER'}
                         >
                             <option>MALE</option>
                             <option>FEMALE</option>
                             <option>OTHER</option>
                         </select>
                     </label>
-                    <Input label="Địa chỉ" name="address" defaultValue={data.address} />
+                    <Input label="Địa chỉ" name="address" defaultValue={userProfile.address} />
                     <Button type="submit" loading={saving}>
                         Lưu thông tin
                     </Button>
@@ -273,6 +281,28 @@ export function ProfilePage() {
                     ))}
                 </ul>
             </section>
-        </BuyerLayout>
+        </div>
     )
+
+    // Chức năng: Điều hướng layout tương ứng theo vai trò (role) và route hiện tại để không làm mất sidebar của Admin, Seller, Support.
+    // Quy tắc: Khi ở trang hồ sơ của Admin, Seller hoặc Support, render layout tương ứng giữ nguyên sidebar; Buyer dùng BuyerLayout.
+    if (page === 'admin-profile' || (user?.role === 'admin' && page === 'profile')) {
+        return <AdminLayout title={title}>{profileBody}</AdminLayout>
+    }
+    if (page === 'seller-profile' || (user?.role === 'seller' && page === 'profile')) {
+        return <SellerLayout title={title}>{profileBody}</SellerLayout>
+    }
+    if (page === 'support-profile' || (user?.role === 'support' && page === 'profile')) {
+        return <SupportLayout title={title}>{profileBody}</SupportLayout>
+    }
+    if (user?.role === 'admin') {
+        return <AdminLayout title={title}>{profileBody}</AdminLayout>
+    }
+    if (user?.role === 'seller') {
+        return <SellerLayout title={title}>{profileBody}</SellerLayout>
+    }
+    if (user?.role === 'support') {
+        return <SupportLayout title={title}>{profileBody}</SupportLayout>
+    }
+    return <BuyerLayout>{profileBody}</BuyerLayout>
 }

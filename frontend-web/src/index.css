@@ -64,6 +64,13 @@ body {
     box-shadow: none;
 }
 
+.nexus-input.has-icon-left {
+    padding-left: 2.5rem !important;
+}
+.nexus-input.has-icon-right {
+    padding-right: 2.5rem !important;
+}
+
 .nexus-input {
     border: 1.5px solid #e5e7eb;
     border-radius: 8px;

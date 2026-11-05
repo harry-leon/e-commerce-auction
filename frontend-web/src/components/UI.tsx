@@ -85,9 +85,9 @@ export function Input({
                     {label}
                 </label>
             )}
-            <div className="relative">
+            <div className="relative flex items-center">
                 {icon && (
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none flex items-center justify-center">
                         {icon}
                     </span>
                 )}
@@ -95,7 +95,7 @@ export function Input({
                     {...props}
                     id={inputId}
                     aria-invalid={!!error}
-                    className={`nexus-input ${error ? 'error' : ''} ${icon ? 'pl-9' : ''} ${rightIcon || suffix ? 'pr-10' : ''} ${className}`}
+                    className={`nexus-input ${error ? 'error' : ''} ${icon ? 'has-icon-left !pl-10' : ''} ${rightIcon || suffix ? 'has-icon-right !pr-10' : ''} ${className}`}
                 />
                 {(rightIcon || suffix) && (
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">

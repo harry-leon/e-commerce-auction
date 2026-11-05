@@ -96,7 +96,7 @@ function InboxContent({
                             </p>
                             {inbox.content.length === 0 && <p>Chưa có thông báo trên trang này.</p>}
                             <ul>
-                                {inbox.content.map((item) => (
+                                {(inbox?.content || []).map((item) => (
                                     <li key={item.id} className="border-b py-4">
                                         <h2 className={item.read ? '' : 'font-bold'}>
                                             {item.title}
