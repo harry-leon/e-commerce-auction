@@ -221,11 +221,18 @@ export function AdminUsersPage() {
     const [refreshKey, setRefreshKey] = useState(0)
 
     // Tải danh sách người dùng thật từ User Service (/api/v1/users) theo từ khóa tìm kiếm
+    // Chức năng: Đọc danh sách người dùng phân trang từ backend User Service.
+    // Luồng & Quy tắc: Chuẩn hóa bóc tách cả ApiResponse { data: [...] }, Pageable { content: [...] } và mảng trần để tránh lỗi undefined khi gọi .map.
     useEffect(() => {
         const query = search ? `?keyword=${encodeURIComponent(search)}` : ''
-        api<{ content: ApiUser[] } | ApiUser[]>('/users' + query)
+        api<any>('/users' + query)
             .then((res) => {
-                const list = Array.isArray(res) ? res : res?.content || []
+                const rawList = res?.data ?? res?.content ?? res
+                const list = Array.isArray(rawList)
+                    ? rawList
+                    : Array.isArray(rawList?.content)
+                      ? rawList.content
+                      : []
                 setApiUsers(list)
             })
             .catch(() => setApiUsers([]))
@@ -622,11 +629,15 @@ export function AdminRolesPage() {
     const [selectedRole, setSelectedRole] = useState<any>(ROLES[0])
 
     // Tải danh sách vai trò và phân quyền N-N thật từ User Service (/api/v1/roles)
+    // Chức năng: Tải danh mục vai trò hệ thống kèm quyền hạn.
+    // Luồng & Quy tắc: Chuẩn hóa bóc tách ApiResponse { data: [...] } và mảng trực tiếp trước khi duyệt .map.
     useEffect(() => {
-        api<ApiRole[]>('/roles')
+        api<Envelope<ApiRole[]> | ApiRole[]>('/roles')
             .then((data) => {
-                if (data && data.length > 0) {
-                    const mapped = data.map((r) => ({
+                const rawRoles = (data as any)?.data ?? data
+                const list = Array.isArray(rawRoles) ? rawRoles : []
+                if (list.length > 0) {
+                    const mapped = list.map((r: ApiRole) => ({
                         id: r.id,
                         code: r.code,
                         name: r.name || r.code,

@@ -353,28 +353,70 @@ export const ordersApi = {
         if (params?.status && params.status !== 'all') query.set('status', params.status)
         if (params?.search) query.set('search', params.search)
 
-        // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<Order[]> chuẩn V2
+        // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<OrderSummaryResponse[]> chuẩn V2
+        let backendOrders: Order[] = []
         try {
             const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
-            const envelope = await api<ApiResponse<Order[]>>(path)
-            // Tuân thủ chuẩn V2: đọc envelope.data, bỏ qua nếu null/rỗng để fallback mock
+            const envelope = await api<ApiResponse<any[]>>(path)
             const list = envelope?.data
-            if (Array.isArray(list) && list.length > 0) {
-                return list
+            if (Array.isArray(list)) {
+                backendOrders = list.map((o: any) => ({
+                    id: String(o.orderNo || o.id),
+                    orderNo: String(o.orderNo || o.id),
+                    buyerId: String(o.buyerId || params?.userId || ''),
+                    buyerName: String(o.buyerName || 'Người mua'),
+                    sellerId: String(o.sellerId || ''),
+                    sellerName: String(o.sellerName || 'Nexus Official Store'),
+                    items: Array.isArray(o.items)
+                        ? o.items.map((it: any) => ({
+                              productId: String(it.productId || it.skuId || it.id || ''),
+                              productName: String(it.productName || it.name || 'Sản phẩm'),
+                              image: String(
+                                  it.image ||
+                                      it.thumbnailUrl ||
+                                      'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600',
+                              ),
+                              unitPrice: Number(it.unitPrice || 0),
+                              quantity: Number(it.quantity || 1),
+                              subtotal: Number(it.subtotal || (it.unitPrice || 0) * (it.quantity || 1)),
+                          }))
+                        : [],
+                    itemCount: Number(o.itemCount ?? (Array.isArray(o.items) ? o.items.length : 1)),
+                    subtotal: Number(o.subtotal ?? o.total ?? 0),
+                    tax: Number(o.tax ?? 0),
+                    discount: Number(o.discount ?? 0),
+                    shipping: Number(o.shippingFee ?? o.shipping ?? 0),
+                    total: Number(o.total ?? 0),
+                    status: (o.status || 'PENDING_PAYMENT') as any,
+                    refundStatus: (o.refundStatus || 'NONE') as any,
+                    paymentStatus: (o.paymentStatus || (o.status === 'PAID' ? 'PAID' : 'UNPAID')) as any,
+                    shippingAddress: String(o.shippingAddress || ''),
+                    paymentMethod: String(o.paymentMethod || 'VNPAY'),
+                    createdAt: String(o.createdAt || new Date().toISOString()),
+                    updatedAt: String(o.updatedAt || o.createdAt || new Date().toISOString()),
+                }))
             }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             // Backend chưa có endpoint hoặc lỗi kết nối → fallback sang mock data
         }
 
-        // 2. Fallback sang mock JSON data
-        let orders = readLocalMockOrders()
+        // 2. Kết hợp với mock JSON data và đơn hàng lưu tại localStorage
+        const localMock = readLocalMockOrders()
+        const mergedOrders = [...backendOrders]
+        for (const lo of localMock) {
+            if (!mergedOrders.some((m) => m.id === lo.id || m.orderNo === lo.id)) {
+                mergedOrders.push(lo)
+            }
+        }
+
+        let orders = mergedOrders
         const { role, status, search } = params || {}
 
         if (role === 'buyer') {
-            orders = params?.userId ? orders.filter((o) => o.buyerId === params.userId) : []
+            orders = params?.userId ? orders.filter((o) => !o.buyerId || o.buyerId === params.userId) : orders
         } else if (role === 'seller') {
-            orders = params?.userId ? orders.filter((o) => o.sellerId === params.userId) : []
+            orders = params?.userId ? orders.filter((o) => o.sellerId === params.userId) : orders
         }
 
         if (status && status !== 'all') {
@@ -386,9 +428,10 @@ export const ordersApi = {
             orders = orders.filter(
                 (o) =>
                     o.id.toLowerCase().includes(q) ||
-                    o.buyerName.toLowerCase().includes(q) ||
-                    o.sellerName.toLowerCase().includes(q) ||
-                    o.items.some((item) => item.productName.toLowerCase().includes(q)),
+                    (o.orderNo && o.orderNo.toLowerCase().includes(q)) ||
+                    (o.buyerName && o.buyerName.toLowerCase().includes(q)) ||
+                    (o.sellerName && o.sellerName.toLowerCase().includes(q)) ||
+                    (o.items && o.items.some((item) => item.productName.toLowerCase().includes(q))),
             )
         }
 
@@ -862,10 +905,16 @@ export const ordersApi = {
      *   không fallback mock — nếu không tìm thấy backend trả 404 RESOURCE_NOT_FOUND.
      */
     async getOrderDetailV2(orderId: string): Promise<OrderDetailResponse> {
-        const envelope = await api<ApiResponse<OrderDetailResponse>>(`/orders/${orderId}`)
-        if (!envelope?.data) {
-            throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
+        try {
+            const envelope = await api<ApiResponse<OrderDetailResponse>>(`/orders/${orderId}`)
+            if (envelope?.data) {
+                return envelope.data
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
         }
-        return envelope.data
+        const mock = readLocalMockOrders().find((o) => o.id === orderId)
+        if (mock) return mock as unknown as OrderDetailResponse
+        throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
     },
 }
