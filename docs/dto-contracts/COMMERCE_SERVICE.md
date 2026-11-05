@@ -220,10 +220,12 @@ Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint;
 | Method | Path | Xác thực | Kết quả |
 |---|---|---|---|
 | POST | `/api/v1/payments` | JWT + ORDER.CREATE, đúng buyer | Envelope PaymentResponse; body chỉ nhận orderId |
-| GET | `/api/v1/payments/{paymentId}` | JWT, đúng buyer | Envelope PaymentResponse, trạng thái DB |
+| GET | `/api/v1/payments/{paymentId}` | JWT, đúng buyer | Envelope PaymentResponse, kết quả DB kèm trạng thái hết hạn URL |
 | GET | `/api/v1/payments/vnpay/ipn` | HMAC-SHA512, không JWT | JSON RspCode/Message theo protocol VNPAY |
 
-`PaymentResponse`: `paymentId`, `orderId`, `status` (PENDING/SUCCESS/FAILED/CANCELLED), `amount`, `currency: VND`, `paymentUrl`, `expiresAt`. URL dùng paymentId làm TxnRef, amount DB × 100, hạn theo cửa sổ giữ kho của Order.
+`PaymentResponse`: `paymentId`, `orderId`, `status` (PENDING/EXPIRED/SUCCESS/FAILED/CANCELLED), `amount`, `currency: VND`, `paymentUrl`, `expiresAt`. URL dùng paymentId làm TxnRef, amount DB × 100, hạn theo cửa sổ giữ kho của Order; attempt mới lưu hạn chính xác đến giây giống `vnp_ExpireDate`.
+
+Khi DB còn PENDING và `expiresAt <= now`, API trả `status: EXPIRED`, `paymentUrl: null`. Đây là trạng thái link hết hạn cần chờ kết quả/đối soát, không phải kết luận chưa thu tiền. GET không sửa DB, hủy đơn hoặc enqueue release; IPN hợp lệ đến chậm vẫn được xử lý và kết quả SUCCESS/FAILED/CANCELLED luôn được ưu tiên hơn hạn URL. Không gia hạn attempt cũ qua POST /payments. Fulfillment tự quét giải phóng reservation PENDING hết hạn bằng scheduler hiện có (mặc định mỗi 60 giây); Commerce chưa có query/đối soát chủ động với VNPAY nên không tự hủy đơn chưa rõ kết quả. Nếu SUCCESS đến sau khi reservation đã EXPIRED, outbox confirm kho cần quản trị đối soát/refund theo cơ chế retry hiện có, không tự reserve lại.
 
 IPN xác minh chữ ký/merchant rồi đối chiếu Payment→Order và amount cả hai bảng; khóa DB chặn callback trùng. Thành công cập nhật SUCCESS/PAID, thất bại xác định cập nhật FAILED/CANCELLED; terminal lặp trả 02, không tạo history/outbox lần hai. Kết quả bất thường cần đối soát.
 
