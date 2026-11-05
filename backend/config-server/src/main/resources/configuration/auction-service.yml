@@ -7,3 +7,5 @@ app:
       anti-sniping-seconds: 120    # Gia hạn thời gian nếu có bid trong những giây cuối
     rules:
       max-active-auctions-per-seller: 20 # Số phiên đấu giá đang mở tối đa của 1 seller
+      min-duration-seconds: 3600         # Thời lượng tối thiểu của phiên đấu giá (1 giờ)
+      max-duration-seconds: 604800       # Thời lượng tối đa của phiên đấu giá (7 ngày = 7 * 24 * 3600)
