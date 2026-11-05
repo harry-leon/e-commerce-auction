@@ -62,7 +62,9 @@ it('clears user session on header logout without navigating away from current pa
     render(<PublicHeader />)
 
     // Mở dropdown user menu
-    const userMenuButton = screen.getByRole('button', { name: new RegExp(DEMO_BUYER.fullName, 'i') })
+    const userMenuButton = screen.getByRole('button', {
+        name: new RegExp(DEMO_BUYER.fullName, 'i'),
+    })
     fireEvent.click(userMenuButton)
 
     // Bấm nút Đăng xuất (Log Out)
