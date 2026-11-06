@@ -8,6 +8,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -75,6 +76,9 @@ public class Auction {
     @Version
     @Column(name = "version", nullable = false)
     private Integer version = 1;
+
+    @Transient
+    private Instant createdAt = Instant.now();
 
     public Auction() {
     }
@@ -191,6 +195,14 @@ public class Auction {
         this.version = version;
     }
 
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -208,4 +220,6 @@ public class Auction {
         return Objects.hash(id);
     }
 }
+
+
 

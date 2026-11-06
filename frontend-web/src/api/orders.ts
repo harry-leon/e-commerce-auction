@@ -240,7 +240,7 @@ const SEED_ORDERS: Order[] = [
  * Migration logic: nếu MOCK_VERSION_KEY không khớp MOCK_DATA_VERSION (ví dụ data cũ dùng lowercase status)
  * thì xóa storage cũ và seed lại với dữ liệu mới (UPPERCASE_SNAKE_CASE).
  */
-function readLocalMockOrders(): Order[] {
+export function readLocalMockOrders(): Order[] {
     try {
         // Kiểm tra version — nếu không khớp thì xóa data cũ và seed lại
         const storedVersion = localStorage.getItem(MOCK_VERSION_KEY)
@@ -256,7 +256,13 @@ function readLocalMockOrders(): Order[] {
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed) && parsed.length > 0) {
                 // Dữ liệu demo cũ trong trình duyệt cũng phải qua cùng bộ chuẩn hóa trước khi render.
-                return parsed.map(normalizeOrder)
+                return parsed.map((item) => {
+                    try {
+                        return normalizeOrder(item)
+                    } catch {
+                        return item as Order
+                    }
+                })
             }
         }
     } catch {
@@ -266,10 +272,12 @@ function readLocalMockOrders(): Order[] {
     return SEED_ORDERS
 }
 
+const SEED_ORDER_IDS = new Set(SEED_ORDERS.map((o) => o.id))
+
 /**
  * Lưu danh sách đơn hàng vào localStorage để các màn hình dùng chung và phản ánh sự thay đổi.
  */
-function writeLocalMockOrders(orders: Order[]): void {
+export function writeLocalMockOrders(orders: Order[]): void {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(orders))
     } catch {
@@ -337,11 +345,23 @@ export function getAllowedOrderStatusTransitions(status: OrderStatus): OrderStat
 export const ordersApi = {
     /**
      * Lấy danh sách đơn hàng theo vai trò người dùng (buyer / seller / admin), kèm bộ lọc trạng thái và tìm kiếm.
-     * Đầu vào: params chứa role, status ('all' hoặc cụ thể), search từ khóa.
-     * Kết quả: Mảng danh sách Order đã được lọc theo tiêu chí.
-     * Luồng: gọi GET /api/v1/orders → ánh xạ DTO tóm tắt không có items sang model giao diện;
-     *   nếu backend 404/502/503 thì fallback sang mock localStorage.
-     * Danh sách thật rỗng được giữ nguyên; không thay bằng đơn demo.
+     * Chức năng:
+     * - Cung cấp danh sách đơn hàng đồng nhất cho Buyer, Seller và Admin.
+     * - Kết hợp dữ liệu đơn thực tế từ Backend và các đơn hàng thử nghiệm sandbox/mock lưu tại browser.
+     * Đầu vào và kết quả:
+     * - Đầu vào: params chứa role, userId, status ('all' hoặc cụ thể), search từ khóa.
+     * - Kết quả: Mảng Order đã chuẩn hóa và lọc theo tiêu chí, bảo đảm các trường không bị undefined.
+     * Luồng xử lý:
+     * 1. Gọi GET /api/v1/orders từ Backend Commerce Service; nếu thành công ánh xạ danh sách đơn thật.
+     * 2. Đọc kho mock/sandbox trong localStorage qua readLocalMockOrders().
+     * 3. Lọc danh sách mock theo vai trò: buyer (khớp userId), seller (khớp sellerId), admin (toàn bộ).
+     * 4. Áp dụng bộ lọc trạng thái và từ khóa tìm kiếm.
+     * 5. Hợp nhất: Thêm các đơn sandbox vào danh sách nếu chưa có trên Backend (chống trùng lặp theo ID và orderNo).
+     * Quy tắc & lý do:
+     * - Đơn thử nghiệm sandbox (ORD-...) tạo trên giao diện không bị nuốt mất khi backend trả về danh sách trống.
+     * - Chuẩn hóa toàn bộ OrderPayload qua normalizeOrder để loại bỏ lỗi crash khi truy cập items.map().
+     * Lỗi & giới hạn:
+     * - Khi backend gặp lỗi mạng (404/502/503), tự động fallback hoàn toàn sang kho mock cục bộ.
      */
     async getOrders(params?: {
         role?: 'buyer' | 'seller' | 'admin'
@@ -355,35 +375,38 @@ export const ordersApi = {
         if (params?.search) query.set('search', params.search)
 
         // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<OrderSummaryResponse[]> chuẩn V2
+        let backendOrders: Order[] = []
+        let hasBackendData = false
         try {
             const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
             const envelope = await api<ApiResponse<OrderPayload[]>>(path)
-            // Chuẩn hóa tại biên API để Buyer/Seller/Admin không gọi map trên items bị thiếu.
             const list = envelope?.data
-            if (!Array.isArray(list)) throw new Error('Dữ liệu danh sách đơn hàng không hợp lệ')
-            return list.map(normalizeOrder)
+            if (Array.isArray(list)) {
+                backendOrders = list.map(normalizeOrder)
+                hasBackendData = true
+            }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             // Backend chưa có endpoint hoặc lỗi kết nối → fallback sang mock data
         }
 
-        // Chỉ fallback sang demo khi API lỗi; không trộn vào danh sách thật.
-        let orders = readLocalMockOrders()
-        const { role, status, search } = params || {}
+        // 2. Đọc kho lưu trữ cục bộ (mock fixtures và các đơn sandbox vừa tạo)
+        let localOrders = readLocalMockOrders()
+        const { role, status, search, userId } = params || {}
 
         if (role === 'buyer') {
-            orders = params?.userId ? orders.filter((o) => o.buyerId === params.userId) : []
+            localOrders = userId ? localOrders.filter((o) => o.buyerId === userId) : []
         } else if (role === 'seller') {
-            orders = params?.userId ? orders.filter((o) => o.sellerId === params.userId) : []
+            localOrders = userId ? localOrders.filter((o) => o.sellerId === userId) : []
         }
 
         if (status && status !== 'all') {
-            orders = orders.filter((o) => o.status.toLowerCase() === status.toLowerCase())
+            localOrders = localOrders.filter((o) => o.status.toLowerCase() === status.toLowerCase())
         }
 
         if (search && search.trim()) {
             const q = search.trim().toLowerCase()
-            orders = orders.filter(
+            localOrders = localOrders.filter(
                 (o) =>
                     o.id.toLowerCase().includes(q) ||
                     (o.orderNo && o.orderNo.toLowerCase().includes(q)) ||
@@ -393,35 +416,57 @@ export const ordersApi = {
             )
         }
 
-        return orders
+        // Nếu Backend trả dữ liệu thành công: Hợp nhất đơn thật và đơn sandbox cục bộ
+        if (hasBackendData) {
+            const existingIds = new Set(backendOrders.map((o) => o.id))
+            const existingNos = new Set(backendOrders.map((o) => (o as any).orderNo).filter(Boolean))
+            const customSandboxOrders = localOrders.filter(
+                (o) =>
+                    !SEED_ORDER_IDS.has(o.id) &&
+                    !existingIds.has(o.id) &&
+                    !existingNos.has(o.id) &&
+                    (!o.orderNo || !existingNos.has(o.orderNo)),
+            )
+            return [...backendOrders, ...customSandboxOrders]
+        }
+
+        return localOrders
     },
 
     /**
-     * Lấy thông tin chi tiết một đơn hàng theo ID.
-     * Đầu vào: id (mã đơn hàng, e.g. 'ORD-20240215-001').
-     * Kết quả: Đối tượng Order tương ứng hoặc null nếu không tìm thấy.
-     * Luồng: gọi GET /api/v1/orders/{id} → ánh xạ skuId/shippingFee và collection thiếu sang model UI;
-     *   fallback mock nếu backend chưa sẵn sàng.
+     * Lấy thông tin chi tiết một đơn hàng theo ID hoặc OrderNo.
+     * Chức năng: Truy vấn chi tiết đơn hàng cho màn hình OrderDetail hoặc xác nhận thanh toán.
+     * Đầu vào: id (UUID đơn hàng hoặc mã ORD-...).
+     * Kết quả: Đối tượng Order đã chuẩn hóa hoặc null nếu không tồn tại.
+     * Luồng:
+     * - Nếu id là UUID hợp lệ: Thử gọi GET /api/v1/orders/{id} từ Backend.
+     * - Nếu id dạng mã ORD-... hoặc backend trả lỗi: Tra cứu trực tiếp trong kho local mock.
+     * Quy tắc & lý do:
+     * - Không gọi API backend với id không phải UUID để tránh lỗi 400 MethodArgumentTypeMismatchException.
+     * - Chuẩn hóa kết quả qua normalizeOrder để items luôn là mảng an toàn.
      */
     async getOrderById(id: string): Promise<Order | null> {
-        // 1. Thử gọi backend API — unwrap theo ApiResponse<Order> chuẩn V2
-        try {
-            const envelope = await api<ApiResponse<OrderPayload>>(
-                `/orders/${encodeURIComponent(id)}`,
-            )
-            // Chuẩn V2: data có giá trị khi thành công; null khi lỗi (đã bị GlobalExceptionHandler bắt)
-            const order = envelope?.data
-            if (order && order.id) {
-                return normalizeOrder(order)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+
+        // 1. Thử gọi backend API nếu là UUID — unwrap theo ApiResponse<OrderPayload> chuẩn V2
+        if (isUuid) {
+            try {
+                const envelope = await api<ApiResponse<OrderPayload>>(
+                    `/orders/${encodeURIComponent(id)}`,
+                )
+                const order = envelope?.data
+                if (order && order.id) {
+                    return normalizeOrder(order)
+                }
+            } catch (error) {
+                if (!canFallbackToMock(error)) throw error
             }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Fallback mock khi backend chưa triển khai hoặc lỗi mạng
         }
 
-        // 2. Tìm trong mock data
+        // 2. Tìm trong mock data (khớp cả id lẫn orderNo)
         const orders = readLocalMockOrders()
-        return orders.find((o) => o.id === id) || null
+        const found = orders.find((o) => o.id === id || (o as any).orderNo === id)
+        return found ? normalizeOrder(found) : null
     },
 
     /**
