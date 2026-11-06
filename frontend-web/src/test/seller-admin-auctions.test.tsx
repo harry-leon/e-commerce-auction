@@ -363,6 +363,25 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
                 )
             })
         })
+
+        // Bảo vệ state machine: Seller không được thấy thao tác hủy sau khi phiên đã ACTIVE.
+        it('Seller không được hủy phiên đang diễn ra', async () => {
+            const activeAuction: Auction = {
+                ...AUCTIONS[0],
+                id: 'seller-active-auction-no-cancel-test',
+                sellerId: DEMO_SELLER.id,
+                status: 'active',
+                startTime: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+                endTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            }
+            auctionsApi.addCreatedAuction(activeAuction)
+            contextHolder.current.createdAuctions = [activeAuction]
+
+            render(<SellerAuctionListPage />)
+
+            expect(await screen.findByRole('button', { name: 'Xem chi tiết' })).toBeInTheDocument()
+            expect(screen.queryByTitle('Hủy phiên đấu giá')).not.toBeInTheDocument()
+        })
     })
 
     // ─────────────────────────────────────────────────────────────────────────────
