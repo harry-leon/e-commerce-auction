@@ -26,6 +26,7 @@ import {
     AlertTriangle,
     CheckCircle,
     Truck,
+    Gavel,
     Package,
     ShoppingCart,
     CreditCard,
@@ -40,8 +41,9 @@ import { getEffectivePaymentStatus } from '../../payment'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
-import type { Order, Product } from '../../types'
+import type { Auction, Order, Product } from '../../types'
 import { ordersApi, type CreateOrderRequest, type CreateOrderResponse, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
+import { auctionsApi } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
 import {
     readSession,
@@ -76,22 +78,43 @@ function flattenLiveCategories(categories: ApiCategory[]): ApiCategory[] {
 
 // ─── Home Page ─────────────────────────────────────────────────────────────────
 export function HomePage() {
-    const { lang, navigate, createdAuctions, auctionReviews } = useApp()
-
-    /**
-     * Chức năng: Lấy danh sách các phiên đấu giá đang diễn ra (Live Auctions) trên trang chủ.
-     * Đầu vào: createdAuctions (các phiên do người dùng tạo trong phiên làm việc) kết hợp AUCTIONS đang hoạt động.
-     * Quy tắc: Lọc các phiên có trạng thái 'active' và có ảnh sản phẩm để hiển thị trên Carousel Hero và Section Đấu giá trực tiếp.
-     */
-    const activeAuctions = [...createdAuctions, ...AUCTIONS]
-        .map((auction) => ({
-            ...auction,
-            status: auctionReviews[auction.id]?.status || auction.status,
-        }))
-        .filter((auction) => auction?.status === 'active' && auction.product?.images?.[0])
+    const { lang, navigate, auctionReviews, createdAuctions } = useApp()
+    const [homeAuctions, setHomeAuctions] = useState<Auction[]>([])
+    const [loadingAuctions, setLoadingAuctions] = useState(true)
     const [heroIndex, setHeroIndex] = useState(0)
     const heroAuction =
-        activeAuctions.length > 0 ? activeAuctions[heroIndex % activeAuctions.length] : null
+        homeAuctions.length > 0 ? homeAuctions[heroIndex % homeAuctions.length] : null
+
+    /**
+     * Lấy danh sách từ Auction API giống trang danh sách, cộng phiên vừa tạo trong context nếu API chưa đồng bộ.
+     * Chỉ giữ phiên đang diễn ra hoặc sắp diễn ra; khi API lỗi thì hiển thị empty state, không chèn fixture.
+     */
+    useEffect(() => {
+        let mounted = true
+        setLoadingAuctions(true)
+        auctionsApi.getAuctions({
+            status: 'all',
+            sortBy: 'ending-soon',
+            limit: 8,
+            extraAuctions: createdAuctions,
+            reviews: auctionReviews,
+        })
+            .then((response) => {
+                if (!mounted) return
+                setHomeAuctions(response.items.filter((auction) =>
+                    ['active', 'scheduled'].includes(auction.status) && auction.product?.images?.[0],
+                ))
+            })
+            .catch(() => {
+                if (mounted) setHomeAuctions([])
+            })
+            .finally(() => {
+                if (mounted) setLoadingAuctions(false)
+            })
+        return () => {
+            mounted = false
+        }
+    }, [auctionReviews, createdAuctions])
 
     // Tải danh mục thật từ Catalog Service backend (/api/v1/categories) với SWR cache
     const { data: catData, loading: catLoading } = useLoad<Envelope<ApiCategory[]>>('/categories')
@@ -158,20 +181,20 @@ export function HomePage() {
     })
 
     useEffect(() => {
-        setHeroIndex((index) => (activeAuctions.length > 0 ? index % activeAuctions.length : 0))
-        if (activeAuctions.length < 2) return
+        setHeroIndex((index) => (homeAuctions.length > 0 ? index % homeAuctions.length : 0))
+        if (homeAuctions.length < 2) return
         const timer = window.setInterval(() => {
-            setHeroIndex((index) => (index + 1) % activeAuctions.length)
+            setHeroIndex((index) => (index + 1) % homeAuctions.length)
         }, 5000)
         return () => window.clearInterval(timer)
-    }, [activeAuctions.length])
+    }, [homeAuctions.length])
 
     return (
         <BuyerLayout noPad>
             {/* Hero Banner - Thể hiện dữ liệu thực tế từ Database */}
             <section className="relative min-h-[500px] overflow-hidden bg-gray-950 text-white">
-                {activeAuctions.length > 0 ? (
-                    activeAuctions.map((auction, index) => (
+                {homeAuctions.length > 0 ? (
+                    homeAuctions.map((auction, index) => (
                         <img
                             key={auction.id}
                             src={auction.product.images[0]
@@ -195,11 +218,8 @@ export function HomePage() {
                     <div className="max-w-2xl">
                         <div className="inline-flex items-center gap-2 border border-white/30 rounded-full px-4 py-1.5 text-sm font-semibold mb-5 bg-white/10 backdrop-blur-sm">
                             <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                            {/* Hiển thị số lượng sản phẩm thực tế; khi chưa cache thì badge ẩn, skeleton card bên dưới đảm nhận trạng thái loading */}
-                            {liveProducts.length > 0 &&
-                                (lang === 'en'
-                                    ? `${liveProducts.length} verified products in database`
-                                    : `${liveProducts.length} sản phẩm thực tế từ Database`)}
+                            {/* Giới thiệu ngắn giá trị của Nexus, không gắn badge hero với số lượng dữ liệu backend. */}
+                            {tr(lang, 'homeHeroTagline')}
                         </div>
                         <h1 className="text-5xl font-black leading-tight mb-5">
                             {lang === 'en' ? (
@@ -214,11 +234,7 @@ export function HomePage() {
                                 </>
                             )}
                         </h1>
-                        <p className="text-white/80 text-lg mb-8 max-w-md">
-                            {lang === 'en'
-                                ? 'Real-time verified catalog and inventory directly queried from Cloud Supabase Database.'
-                                : 'Toàn bộ danh mục và sản phẩm được truy vấn trực tiếp từ cơ sở dữ liệu Cloud Supabase.'}
-                        </p>
+                        <p className="text-white/80 text-lg mb-8 max-w-md">{tr(lang, 'homeHeroDescription')}</p>
                         <div className="flex gap-3">
                             <Button
                                 variant="primary"
@@ -226,21 +242,17 @@ export function HomePage() {
                                 className="bg-white text-gray-900 hover:bg-gray-100 font-semibold"
                                 onClick={() => navigate('search')}
                             >
-                                {lang === 'en' ? 'Shop Now' : 'Mua sắm ngay'}
+                                {tr(lang, 'shopNow')}
                             </Button>
-                            {liveProducts[0] && (
-                                <Button
-                                    variant="ghost"
-                                    size="lg"
-                                    className="border-white/40 text-white hover:bg-white/10 border"
-                                    onClick={() =>
-                                        navigate('product-detail', { id: liveProducts[0].id })
-                                    }
-                                >
-                                    <Package size={16} />
-                                    {liveProducts[0].name}
-                                </Button>
-                            )}
+                            <Button
+                                variant="ghost"
+                                size="lg"
+                                className="border-white/40 text-white hover:bg-white/10 border"
+                                onClick={() => navigate('auction-list')}
+                            >
+                                <Gavel size={16} />
+                                {tr(lang, 'auctionNow')}
+                            </Button>
                         </div>
 
                         {heroAuction && (
@@ -268,9 +280,9 @@ export function HomePage() {
                     </div>
                 </div>
 
-                {activeAuctions.length > 1 && (
+                {homeAuctions.length > 1 && (
                     <div className="absolute z-20 bottom-7 left-1/2 -translate-x-1/2 flex items-center gap-2">
-                        {activeAuctions.map((auction, index) => (
+                        {homeAuctions.map((auction, index) => (
                             <button
                                 key={auction.id}
                                 type="button"
@@ -339,32 +351,45 @@ export function HomePage() {
                 </section>
 
                 {/* Live Auctions */}
-                {activeAuctions.length > 0 && (
-                    <section>
-                        <div className="flex items-center justify-between mb-5">
-                            <div className="flex items-center gap-3">
-                                <h2 className="text-2xl font-bold text-gray-900">
-                                    {tr(lang, 'liveAuctions')}
-                                </h2>
+                <section aria-labelledby="home-live-auctions-heading">
+                    <div className="flex items-center justify-between mb-5">
+                        <div className="flex items-center gap-3">
+                            <h2 id="home-live-auctions-heading" className="text-2xl font-bold text-gray-900">
+                                {tr(lang, 'liveAuctions')}
+                            </h2>
+                            {homeAuctions.some((auction) => auction.status === 'active') && (
                                 <span className="badge badge-orange auction-live text-sm px-3 py-1">
                                     {lang === 'en' ? 'Ending Soon' : 'Sắp kết thúc'}
                                 </span>
-                            </div>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => navigate('auction-list')}
-                            >
-                                {tr(lang, 'viewAll')} →
-                            </Button>
+                            )}
                         </div>
-                        <div className="grid grid-cols-4 gap-5">
-                            {activeAuctions.map((a) => (
-                                <AuctionCard key={a.id} auction={a} />
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => navigate('auction-list')}
+                        >
+                            {tr(lang, 'viewAll')} →
+                        </Button>
+                    </div>
+                    {loadingAuctions ? (
+                        <div className="nexus-card py-10 text-center text-sm text-gray-500" role="status">
+                            <div className="flex justify-center mb-2">
+                                <Spinner size={18} color="#64748b" />
+                            </div>
+                            {tr(lang, 'loadingAuctions')}
+                        </div>
+                    ) : homeAuctions.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                            {homeAuctions.map((auction) => (
+                                <AuctionCard key={auction.id} auction={auction} />
                             ))}
                         </div>
-                    </section>
-                )}
+                    ) : (
+                        <p className="nexus-card px-5 py-8 text-center text-gray-500">
+                            {tr(lang, 'liveAuctionsEmpty')}
+                        </p>
+                    )}
+                </section>
 
                 {/* Popular Products - Danh sách sản phẩm thực tế từ Database */}
                 <section>

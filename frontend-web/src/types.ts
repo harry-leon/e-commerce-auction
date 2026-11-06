@@ -14,6 +14,7 @@ export type AuctionStatus =
     | 'pending_approval'
     | 'scheduled'
     | 'active'
+    | 'paused'
     | 'ended'
     | 'settled'
     | 'cancelled'
@@ -110,6 +111,9 @@ export interface Auction {
     product: Product
     sellerId: string
     sellerName: string
+    /** Tên tài khoản người tạo phiên, tách với tên cửa hàng khi API cung cấp. */
+    sellerAccountName?: string
+    sellerEmail?: string
     status: AuctionStatus
     startingPrice: number
     currentBid: number

@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, Auction } from '../types'
 import { DEMO_ADMIN, DEMO_SELLER, PRODUCTS, AUCTIONS } from '../mockData'
 import { auctionsApi } from '../api/auctions'
+import { formatDateTime } from '../i18n'
 import { CreateAuctionPage, SellerAuctionListPage } from '../features/seller/SellerPages'
 import { AdminAuctionsPage } from '../features/admin/AdminPages'
 
@@ -27,6 +28,7 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
         localStorage.clear()
         sessionStorage.clear()
         auctionsApi.resetMockStore()
+        AUCTIONS.forEach((auction) => auctionsApi.addCreatedAuction(auction))
 
         // Giả lập fetch offline/sandbox để kích hoạt fallback logic an toàn
         vi.stubGlobal(
@@ -182,10 +184,13 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
 
             await waitFor(() => {
                 expect(contextHolder.current.submitAuction).toHaveBeenCalled()
+                expect(contextHolder.current.submitAuction).toHaveBeenCalledWith(
+                    expect.objectContaining({ status: 'pending_approval' }),
+                )
                 expect(contextHolder.current.showToast).toHaveBeenCalledWith(
                     expect.objectContaining({
                         type: 'success',
-                        message: expect.stringMatching(/khởi tạo phiên đấu giá thành công/i),
+                        message: expect.stringMatching(/đã gửi yêu cầu đấu giá để Admin phê duyệt/i),
                     }),
                 )
                 expect(contextHolder.current.navigate).toHaveBeenCalledWith('seller-auctions')
@@ -265,7 +270,7 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             // Tạo 1 phiên scheduled tương lai cho người bán u2
             const futureStart = new Date(Date.now() + 7200000)
             const futureEnd = new Date(futureStart.getTime() + 86400000)
-            const newAuction = await auctionsApi.createAuction({
+            await auctionsApi.createAuction({
                 productId: 'p1',
                 startingPrice: 500000,
                 minIncrement: 10000,
@@ -285,6 +290,33 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
                     expect.objectContaining({ id: expect.any(String) }),
                 )
             })
+        })
+
+        it('Seller xem được chi tiết phiên và lịch sử các mức giá', async () => {
+            const auctionWithBid: Auction = {
+                ...AUCTIONS[0],
+                id: 'seller-auction-details-test',
+                sellerId: DEMO_SELLER.id,
+                bidCount: 1,
+                bids: [
+                    {
+                        id: 'seller-auction-details-bid',
+                        bidderId: 'buyer-private-id',
+                        bidderName: 'Buyer ***',
+                        amount: AUCTIONS[0].currentBid,
+                        timestamp: '2026-11-05T10:30:00Z',
+                    },
+                ],
+            }
+            auctionsApi.addCreatedAuction(auctionWithBid)
+            contextHolder.current.createdAuctions = [auctionWithBid]
+
+            render(<SellerAuctionListPage />)
+            fireEvent.click(await screen.findByRole('button', { name: 'Xem chi tiết' }))
+
+            expect(await screen.findByText('Lịch sử đặt giá')).toBeInTheDocument()
+            expect(screen.getByText('Thời gian đặt')).toBeInTheDocument()
+            expect(screen.getByText(formatDateTime('2026-11-05T10:30:00Z', 'vi'))).toBeInTheDocument()
         })
 
         it('Người bán hủy thành công phiên scheduled trước giờ mở phiên kèm lý do (AC1)', async () => {
@@ -358,6 +390,36 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             })
         })
 
+        // Bảo vệ việc tra tên/email thật từ User Service cho seller UUID chưa có trong mock users.
+        it('Admin tra cứu tên tài khoản Seller từ User API để hiển thị người gửi yêu cầu', async () => {
+            const sellerId = 'a7a2a62e-778e-4472-8760-c586f4f591ad'
+            const pendingAuction: Auction = {
+                ...AUCTIONS[1],
+                id: 'auction-user-lookup',
+                sellerId,
+                sellerName: 'Vintage Watch Store',
+                status: 'pending_approval',
+            }
+            contextHolder.current.createdAuctions = [pendingAuction]
+            auctionsApi.addCreatedAuction(pendingAuction)
+
+            vi.stubGlobal('fetch', vi.fn().mockImplementation((input: string) => {
+                if (String(input).includes(`/users/${sellerId}`)) {
+                    return Promise.resolve(new Response(JSON.stringify({
+                        success: true,
+                        data: { id: sellerId, fullName: 'Nguyen Seller', email: 'seller@example.com' },
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+                }
+                return Promise.resolve(new Response(JSON.stringify({ success: false }), { status: 503 }))
+            }))
+
+            render(<AdminAuctionsPage />)
+
+            expect(await screen.findByText('Nguyen Seller')).toBeInTheDocument()
+            expect(screen.getByText('seller@example.com')).toBeInTheDocument()
+            expect(screen.getByText('Cửa hàng: Vintage Watch Store')).toBeInTheDocument()
+        })
+
         it('Admin thực hiện phê duyệt phiên đấu giá thành công (AC2)', async () => {
             // Thêm phiên pending_approval
             const pendingAuction: Auction = {
@@ -382,6 +444,7 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             auctionsApi.addCreatedAuction(pendingAuction)
 
             render(<AdminAuctionsPage />)
+            expect((await screen.findAllByText('Anh Nguyen')).length).toBeGreaterThan(0)
 
             // Click nút Phê duyệt / Duyệt
             await waitFor(() => {
@@ -453,6 +516,8 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
         })
 
         it('Admin thực hiện cưỡng chế hủy phiên đấu giá do vi phạm chính sách (AC2)', async () => {
+            // Fixture chỉ được cấp tường minh cho test này; portal thật không tự nạp dữ liệu mẫu.
+            contextHolder.current.createdAuctions = [AUCTIONS[0], AUCTIONS[2]]
             render(<AdminAuctionsPage />)
 
             // Bấm nút Hủy vi phạm trên phiên đang active/scheduled
@@ -480,7 +545,29 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             })
         })
 
+        // Bảo vệ luồng Admin tạm dừng phiên vi phạm bằng mock, gồm yêu cầu lý do và trạng thái được lưu.
+        it('Admin tạm dừng phiên đang chạy với lý do vi phạm (AC2)', async () => {
+            // Fixture chỉ được cấp tường minh cho test này; portal thật không tự nạp dữ liệu mẫu.
+            contextHolder.current.createdAuctions = [AUCTIONS[0]]
+            render(<AdminAuctionsPage />)
+
+            const pauseButton = await screen.findAllByRole('button', { name: /tạm dừng phiên đấu giá/i })
+            fireEvent.click(pauseButton[0])
+
+            const reason = screen.getByPlaceholderText(/lý do tạm dừng phiên đấu giá/i)
+            fireEvent.change(reason, { target: { value: 'Phát hiện dấu hiệu thao túng giá' } })
+            fireEvent.click(screen.getAllByRole('button', { name: /tạm dừng phiên đấu giá/i }).at(-1)!)
+
+            await waitFor(() => {
+                expect(contextHolder.current.showToast).toHaveBeenCalledWith(
+                    expect.objectContaining({ type: 'success', message: 'Đã tạm dừng phiên đấu giá.' }),
+                )
+            })
+        })
+
         it('Admin mở xem chi tiết đầy đủ thông số và lịch sử đặt giá của phiên (AC2)', async () => {
+            // Fixture chỉ được cấp tường minh cho test này; portal thật không tự nạp dữ liệu mẫu.
+            contextHolder.current.createdAuctions = [AUCTIONS[0]]
             render(<AdminAuctionsPage />)
 
             // Click nút Xem chi tiết (Eye icon)

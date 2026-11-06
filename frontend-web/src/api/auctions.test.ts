@@ -16,12 +16,14 @@ import {
     type RawApiAuction,
 } from './auctions'
 import { ApiClientError } from './client'
+import { AUCTIONS } from '../mockData'
 
 describe('Auctions API Adapter', () => {
     beforeEach(() => {
         sessionStorage.clear()
         localStorage.clear()
         auctionsApi.resetMockStore()
+        AUCTIONS.forEach((auction) => auctionsApi.addCreatedAuction(auction))
     })
 
     afterEach(() => {
@@ -30,6 +32,9 @@ describe('Auctions API Adapter', () => {
 
     describe('validateAndNormalizeAuction', () => {
         it('chuẩn hóa thành công đối tượng hợp lệ từ Backend với snake_case', () => {
+            // Giữ fixture trong khoảng thời gian đang diễn ra để kiểm thử không hết hạn theo ngày chạy.
+            const activeStart = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+            const activeEnd = new Date(Date.now() + 60 * 60 * 1000).toISOString()
             const raw: RawApiAuction = {
                 id: 'auc-001',
                 product_id: 'prod-001',
@@ -39,8 +44,8 @@ describe('Auctions API Adapter', () => {
                 bid_increment: 50000,
                 current_price: 650000,
                 status: 'ACTIVE',
-                start_time: '2026-11-01T08:00:00Z',
-                end_time: '2026-11-05T20:00:00Z',
+                start_time: activeStart,
+                end_time: activeEnd,
                 visibility: 'PUBLIC',
                 bid_count: 3,
                 product_name: 'Đồng hồ Thụy Sĩ cổ',
@@ -74,6 +79,20 @@ describe('Auctions API Adapter', () => {
             expect(validateAndNormalizeAuction('invalid string')).toBeNull()
             expect(validateAndNormalizeAuction({ product_id: 'p1' })).toBeNull()
             expect(validateAndNormalizeAuction({ id: '   ' })).toBeNull()
+        })
+
+        // Bảo vệ việc chuẩn hóa tên và email người gửi duyệt từ các alias phổ biến của Auction API.
+        it('chuẩn hóa thông tin tài khoản Seller riêng với tên cửa hàng', () => {
+            const normalized = validateAndNormalizeAuction({
+                id: 'auc-requester',
+                seller_name: 'TechZone Store',
+                seller_full_name: 'Seller Nexus',
+                seller_email: 'seller@nexus.vn',
+            })
+
+            expect(normalized?.sellerName).toBe('TechZone Store')
+            expect(normalized?.sellerAccountName).toBe('Seller Nexus')
+            expect(normalized?.sellerEmail).toBe('seller@nexus.vn')
         })
 
         it('bảo vệ và làm sạch khi giá trị số bị NaN hoặc âm', () => {
@@ -172,6 +191,77 @@ describe('Auctions API Adapter', () => {
             expect(res.items).toHaveLength(1)
             expect(res.items[0].id).toBe('auc-live-1')
             expect(res.items[0].currentBid).toBe(450000)
+        })
+
+        // Bảo vệ Seller/Admin khỏi fixture cũ; khi API chưa sẵn sàng danh sách bắt đầu rỗng.
+        it('không trả fixture mặc định trong chế độ portal Seller/Admin khi API lỗi', async () => {
+            vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+
+            const result = await auctionsApi.getAuctions({ includePending: true, excludeDemoData: true })
+
+            expect(result.items).toEqual([])
+            expect(result.total).toBe(0)
+
+            // Một backend demo có thể trả lại chính fixture cũ; portal vẫn phải ẩn chúng.
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: AUCTIONS }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            })))
+            const demoApiResult = await auctionsApi.getAuctions({ includePending: true, excludeDemoData: true })
+            expect(demoApiResult.items).toEqual([])
+        })
+
+        // Bảo vệ phiên vừa tạo khỏi bị mất khỏi Seller/Admin khi GET thành công nhưng backend chưa phản ánh bản ghi mới.
+        it('giữ phiên mới tạo trong danh sách Seller và Admin khi API list trả mảng rỗng', async () => {
+            const created = {
+                ...AUCTIONS[1],
+                id: 'auc-new-vintage-watch',
+                sellerId: 'u-seller',
+                sellerName: 'Seller Nexus',
+                product: { ...AUCTIONS[1].product, name: 'Vintage Mechanical Watch' },
+                currentBid: 2005,
+                status: 'pending_approval' as const,
+            }
+            auctionsApi.addCreatedAuction(created)
+
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockImplementation(() =>
+                    Promise.resolve(new Response(JSON.stringify({ success: true, data: [] }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    })),
+                ),
+            )
+
+            const sellerList = await auctionsApi.getAuctions({ sellerId: 'seller-current', sellerName: 'Seller Nexus' })
+            const adminList = await auctionsApi.getAuctions({ includePending: true })
+
+            expect(sellerList.items.some((auction) => auction.id === created.id)).toBe(true)
+            expect(adminList.items.some((auction) => auction.id === created.id)).toBe(true)
+            expect(sellerList.items.find((auction) => auction.id === created.id)?.currentBid).toBe(2005)
+            expect(adminList.items.find((auction) => auction.id === created.id)?.product.name).toBe('Vintage Mechanical Watch')
+            expect(sellerList.items.find((auction) => auction.id === created.id)?.sellerId).toBe('seller-current')
+
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+                    success: true,
+                    data: [{
+                        id: created.id,
+                        product_id: created.productId,
+                        product_name: 'Vintage Mechanical Watch',
+                        start_price: 2005,
+                        current_price: 2005,
+                        bid_increment: 1000,
+                        status: 'DRAFT',
+                        start_time: created.startTime,
+                        end_time: created.endTime,
+                    }],
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } }))),
+            )
+            const serverList = await auctionsApi.getAuctions({ sellerId: 'seller-current', sellerName: 'Seller Nexus' })
+            expect(serverList.items.find((auction) => auction.id === created.id)?.sellerId).toBe('seller-current')
         })
 
         it('tự động fallback sang kho mock khi backend trả về 404 (chưa triển khai)', async () => {
@@ -386,7 +476,7 @@ describe('Auctions API Adapter', () => {
             ).rejects.toThrow(ApiClientError)
         })
 
-        it('tạo thành công phiên đấu giá hợp lệ với trạng thái scheduled', async () => {
+        it('tạo thành công phiên đấu giá hợp lệ với trạng thái chờ Admin phê duyệt', async () => {
             const start = new Date(Date.now() + 3600000)
             const end = new Date(start.getTime() + 86400000) // 24 giờ
 
@@ -400,7 +490,7 @@ describe('Auctions API Adapter', () => {
             })
 
             expect(created).toBeDefined()
-            expect(created.status).toBe('scheduled')
+            expect(created.status).toBe('pending_approval')
             expect(created.startingPrice).toBe(1000000)
             expect(created.minIncrement).toBe(50000)
             expect(created.productId).toBe('p1')
@@ -510,7 +600,43 @@ describe('Auctions API Adapter', () => {
             })
 
             const approved = await auctionsApi.reviewAuction(created.id, 'scheduled')
-            expect(approved.status).toBe('scheduled')
+            expect(approved?.status).toBe('scheduled')
+        })
+
+        // Bảo vệ quyết định duyệt khi API list vẫn trả DRAFT cũ sau thao tác Admin.
+        it('giữ trạng thái đã duyệt sau khi API trả lại DRAFT cũ', async () => {
+            const seededAuction = { ...AUCTIONS[4], status: 'pending_approval' as const }
+            const staleDraft = {
+                id: seededAuction.id,
+                product_id: seededAuction.productId,
+                product_name: seededAuction.product.name,
+                start_price: seededAuction.startingPrice,
+                current_price: seededAuction.currentBid,
+                bid_increment: seededAuction.minIncrement,
+                status: 'DRAFT',
+                start_time: seededAuction.startTime,
+                end_time: seededAuction.endTime,
+            }
+
+            vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
+                const url = String(input)
+                if (url.includes('/review')) {
+                    return Promise.resolve(new Response('{}', { status: 404 }))
+                }
+                return Promise.resolve(new Response(JSON.stringify({ success: true, data: [staleDraft] }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }))
+            }))
+
+            await auctionsApi.reviewAuction(seededAuction.id, 'scheduled')
+            const approvedList = await auctionsApi.getAuctions({ status: 'scheduled', includePending: true })
+            const pendingList = await auctionsApi.getAuctions({ status: 'pending_approval', includePending: true })
+
+            expect(approvedList.items.some((auction) => auction.id === seededAuction.id)).toBe(true)
+            expect(pendingList.items.some((auction) => auction.id === seededAuction.id)).toBe(false)
+            expect(JSON.parse(localStorage.getItem('nexus.auction-reviews-store') || '{}')[seededAuction.id].status)
+                .toBe('scheduled')
         })
 
         it('Admin từ chối phiên kèm lý do chuyển trạng thái sang cancelled/rejected', async () => {
@@ -530,8 +656,8 @@ describe('Auctions API Adapter', () => {
                 'rejected',
                 'Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt',
             )
-            expect(rejected.status).toBe('cancelled')
-            expect(rejected.cancelReason).toBe('Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt')
+            expect(rejected?.status).toBe('rejected')
+            expect(rejected?.cancelReason).toBe('Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt')
         })
 
         it('từ chối yêu cầu từ chối phiên nếu Admin không nhập lý do', async () => {

@@ -150,6 +150,7 @@ export function AuctionCard({ auction }: { auction: Auction }) {
                                       auction.status.slice(1)
                                     : {
                                           active: 'Live',
+                                          paused: 'Paused',
                                           pending_approval: 'Pending approval',
                                           rejected: 'Rejected',
                                           ended: 'Đã kết thúc',

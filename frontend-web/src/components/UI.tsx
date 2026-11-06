@@ -281,6 +281,7 @@ const STATUS_BADGE: Record<string, string> = {
     pending_approval: 'badge-yellow',
     scheduled: 'badge-blue',
     active: 'badge-orange',
+    paused: 'badge-yellow',
     ended: 'badge-gray',
     settled: 'badge-green',
     failed: 'badge-red',

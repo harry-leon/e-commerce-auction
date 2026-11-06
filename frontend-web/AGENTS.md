@@ -8,10 +8,9 @@ React + Vite + Tailwind CSS project running inside Figma Make.
 
 ## Development Server
 
-A Vite development server is **already running** on `$PORT` (default 8443). You don't need to start it manually.
+Run `npm run dev` from `frontend-web/` to serve the current source. `vite.config.ts` uses `$PORT` when set and otherwise binds port 3000 with `strictPort: true`; Docker Compose also publishes the built web app on port 3000, so stop the `web` container or pass `--port 3001` when developing beside Docker. Vite proxies `/api` to the gateway at `localhost:8080` by default.
 
-- Preview URL: The user can access the running app through the preview panel
-- Hot reload: Changes to source files are reflected immediately
+- Open the URL printed by Vite; hot reload applies to that source tree.
 
 ## Project Structure
 

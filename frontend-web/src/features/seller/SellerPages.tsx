@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useApp } from '../../context'
-import { tr, formatCurrency, formatDate } from '../../i18n'
+import { tr, formatCurrency, formatDate, formatDateTime } from '../../i18n'
 import { SellerLayout } from '../../components/Layout'
 import {
     Button,
@@ -20,6 +20,7 @@ import {
     Breadcrumb,
     Plus,
     Pencil,
+    Eye,
     Trash2,
     TrendingUp,
     Package,
@@ -30,12 +31,12 @@ import {
     Camera,
     Bell,
 } from '../../components/UI'
-import { PRODUCTS, AUCTIONS, ORDERS, NOTIFICATIONS } from '../../mockData'
+import { PRODUCTS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi } from '../../api/auctions'
-import { api, ApiClientError, extractFieldErrors, type ApiCategory, type ApiProduct, type Envelope } from '../../api/client'
+import { api, ApiClientError, type ApiCategory, type ApiProduct, type Envelope } from '../../api/client'
 import { useLoad } from '../../hooks/useLoad'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
@@ -1024,6 +1025,9 @@ export function SellerAuctionListPage() {
     const [cancelReasonError, setCancelReasonError] = useState('')
     const [cancelling, setCancelling] = useState(false)
     const [reviewedAuction, setReviewedAuction] = useState<Auction | null>(null)
+    const [detailAuction, setDetailAuction] = useState<Auction | null>(null)
+    const [detailLoading, setDetailLoading] = useState(false)
+    const detailRequestId = useRef(0)
     const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
 
     // Tải danh sách phiên đấu giá từ API Adapter (có tự động fallback sang localStorage/mock)
@@ -1033,15 +1037,17 @@ export function SellerAuctionListPage() {
         try {
             const res = await auctionsApi.getAuctions({
                 sellerId: currentSellerId,
+                sellerName: user?.fullName,
+                excludeDemoData: true,
                 extraAuctions: createdAuctions,
                 reviews: auctionReviews,
                 limit: 100,
             })
             setLiveAuctions(res.items)
         } catch {
-            // Fallback sang createdAuctions + AUCTIONS
-            const fallback = [...createdAuctions, ...AUCTIONS]
-                .filter((a) => a.sellerId === currentSellerId || a.sellerId === 'u2')
+            // Khi API lỗi ngoài nhóm fallback, chỉ giữ dữ liệu người dùng vừa tạo trong Context; không dựng fixture mặc định.
+            const fallback = createdAuctions
+                .filter((a) => a.sellerId === currentSellerId)
                 .map((a) => ({
                     ...a,
                     status: (auctionReviews[a.id]?.status as any) || a.status,
@@ -1061,11 +1067,28 @@ export function SellerAuctionListPage() {
 
     const filtered = tab === 'all' ? sellerAuctions : sellerAuctions.filter((a) => a.status === tab)
 
+    /** Tải snapshot mới nhất để Seller xem thông số và lịch sử bid nếu Auction Service có trả dữ liệu đó. */
+    const openAuctionDetails = async (auction: Auction) => {
+        const requestId = ++detailRequestId.current
+        setDetailAuction(auction)
+        setDetailLoading(true)
+        try {
+            const details = await auctionsApi.getAuctionById(auction.id, createdAuctions, auctionReviews)
+            if (requestId === detailRequestId.current) setDetailAuction(details)
+        } catch {
+            // Giữ dữ liệu hàng hiện tại nếu endpoint chi tiết tạm lỗi; không thay bằng dữ liệu giả.
+            if (requestId === detailRequestId.current) setDetailAuction(auction)
+        } finally {
+            if (requestId === detailRequestId.current) setDetailLoading(false)
+        }
+    }
+
     const statusLabel = (s: string) =>
         ({
             pending_approval: lang === 'en' ? 'Pending approval' : 'Chờ Admin duyệt',
             scheduled: tr(lang, 'statusScheduled'),
             active: tr(lang, 'statusActive'),
+            paused: lang === 'en' ? 'Paused by Admin' : 'Được Admin tạm dừng',
             ended: tr(lang, 'statusEnded'),
             settled: tr(lang, 'statusSettled'),
             cancelled: tr(lang, 'statusCancelled'),
@@ -1193,7 +1216,7 @@ export function SellerAuctionListPage() {
                             label: tr(lang, 'startTime'),
                             render: (r: any) => (
                                 <span className="text-xs text-gray-500">
-                                    {formatDate(r.startTime, lang)}
+                                    {formatDateTime(r.startTime, lang)}
                                 </span>
                             ),
                         },
@@ -1202,7 +1225,7 @@ export function SellerAuctionListPage() {
                             label: tr(lang, 'endTime'),
                             render: (r: any) => (
                                 <span className="text-xs text-gray-500">
-                                    {formatDate(r.endTime, lang)}
+                                    {formatDateTime(r.endTime, lang)}
                                 </span>
                             ),
                         },
@@ -1223,6 +1246,18 @@ export function SellerAuctionListPage() {
 
                                 return (
                                     <div className="flex gap-1 items-center">
+                                        <button
+                                            type="button"
+                                            title={tr(lang, 'viewAuctionDetails')}
+                                            aria-label={tr(lang, 'viewAuctionDetails')}
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                void openAuctionDetails(r)
+                                            }}
+                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                                        >
+                                            <Eye size={14} />
+                                        </button>
                                         {isEditable && (
                                             <button
                                                 title={lang === 'en' ? 'Edit auction' : 'Chỉnh sửa phiên'}
@@ -1271,6 +1306,104 @@ export function SellerAuctionListPage() {
                     rowKey={(r) => r.id}
                 />
             </div>
+
+            {/* Modal Seller xem thông số và các mức giá đã nhận; lịch sử phụ thuộc dữ liệu do API chi tiết trả về. */}
+            <Modal
+                open={!!detailAuction}
+                onClose={() => {
+                    detailRequestId.current += 1
+                    setDetailAuction(null)
+                    setDetailLoading(false)
+                }}
+                title={tr(lang, 'auctionDetails')}
+                size="lg"
+            >
+                {detailAuction && (
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3 rounded-xl bg-gray-50 p-4">
+                            <img
+                                src={detailAuction.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'}
+                                alt=""
+                                className="h-16 w-16 rounded-lg border object-cover"
+                            />
+                            <div className="min-w-0">
+                                <h3 className="font-semibold text-gray-900">
+                                    {lang === 'vi' ? detailAuction.product?.nameVi || detailAuction.product?.name : detailAuction.product?.name}
+                                </h3>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    SKU: {detailAuction.product?.sku || 'N/A'} · ID: {detailAuction.id}
+                                </p>
+                                <div className="mt-2">
+                                    <StatusBadge status={detailAuction.status} label={statusLabel(detailAuction.status)} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'startingPrice')}</span>
+                                <span className="font-semibold">{formatCurrency(detailAuction.startingPrice, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'currentBid')}</span>
+                                <span className="font-bold text-auction">{formatCurrency(detailAuction.currentBid, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'minIncrement')}</span>
+                                <span className="font-semibold">{formatCurrency(detailAuction.minIncrement, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'totalBidCount')}</span>
+                                <span className="font-semibold">{detailAuction.bidCount}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'auctionVisibility')}</span>
+                                <span className="font-semibold capitalize">{detailAuction.visibility}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'startTime')}</span>
+                                <span className="font-medium">{formatDateTime(detailAuction.startTime, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'endTime')}</span>
+                                <span className="font-medium">{formatDateTime(detailAuction.endTime, lang)}</span>
+                            </div>
+                        </div>
+
+                        <section>
+                            <h4 className="mb-2 font-semibold">{tr(lang, 'bidHistory')}</h4>
+                            {detailLoading ? (
+                                <p className="text-sm text-gray-500" role="status">{tr(lang, 'loadingAuctionDetails')}</p>
+                            ) : detailAuction.bids?.length ? (
+                                <div className="max-h-56 overflow-y-auto rounded-lg border">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-gray-50 text-gray-600">
+                                            <tr>
+                                                <th className="p-3 text-left">{tr(lang, 'bidAmount')}</th>
+                                                <th className="p-3 text-right">{tr(lang, 'bidTime')}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {[...detailAuction.bids]
+                                                .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                                                .map((bid) => (
+                                                    <tr key={bid.id}>
+                                                        <td className="p-3 font-semibold text-auction">{formatCurrency(bid.amount, lang)}</td>
+                                                        <td className="p-3 text-right text-gray-500">{formatDateTime(bid.timestamp, lang)}</td>
+                                                    </tr>
+                                                ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-500">
+                                    {tr(lang, 'bidHistoryUnavailable')}
+                                </p>
+                            )}
+                        </section>
+                    </div>
+                )}
+            </Modal>
 
             {/* Modal Hủy phiên đấu giá của Người bán */}
             <Modal
@@ -1433,7 +1566,7 @@ export function SellerAuctionListPage() {
  * Lỗi & giới hạn: Hiển thị lỗi đỏ chi tiết ngay dưới từng ô nhập liệu (inline error) và toast thông báo chung.
  */
 export function CreateAuctionPage() {
-    const { lang, navigate, showToast, user, submitAuction, pageParams, createdAuctions } = useApp()
+    const { lang, navigate, showToast, submitAuction, pageParams, createdAuctions } = useApp()
     const editAuctionId = (pageParams?.id as string) || undefined
     const isEdit = Boolean(editAuctionId)
 
@@ -1467,7 +1600,7 @@ export function CreateAuctionPage() {
                 try {
                     auction = await auctionsApi.getAuctionById(editAuctionId, createdAuctions)
                 } catch {
-                    auction = [...createdAuctions, ...AUCTIONS].find((a) => a.id === editAuctionId) || null
+                    auction = createdAuctions.find((a) => a.id === editAuctionId) || null
                 }
 
                 if (!mounted) return
@@ -1671,10 +1804,7 @@ export function CreateAuctionPage() {
 
                 showToast({
                     type: 'success',
-                    message:
-                        lang === 'en'
-                            ? 'Auction created successfully and scheduled.'
-                            : 'Khởi tạo phiên đấu giá thành công và đã lên lịch.',
+                    message: tr(lang, 'auctionSubmittedForApproval'),
                 })
             }
 
