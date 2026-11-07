@@ -23,6 +23,12 @@ import java.time.ZoneId;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,6 +36,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -319,6 +326,135 @@ class BiddingServiceTest {
         assertThatThrownBy(() -> biddingService.placeBid(auctionId, buyerId, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("code", ErrorCode.BID_CONCURRENT_OUTBID.name());
+    }
+
+    /**
+     * Kiểm thử đa luồng đồng thời (Multi-threaded Concurrency Test) cho placeBid.
+     * Tình huống nghiệp vụ: Hai người mua (buyer1, buyer2) cùng gửi bid đồng thời cho cùng một phiên đấu giá.
+     * Luồng:
+     * - Dùng CountDownLatch để kích hoạt 2 thread cùng lúc.
+     * - Transaction đầu tiên lưu thành công (save auction).
+     * - Transaction thứ hai gặp ObjectOptimisticLockingFailureException do phiên bản (version) đã bị thay đổi.
+     * Kết quả mong đợi:
+     * - 1 luồng thành công nhận PlaceBidResult.
+     * - 1 luồng thất bại và được chuyển hóa thành BusinessException với mã lỗi BID_CONCURRENT_OUTBID (HTTP 409).
+     */
+    @Test
+    @DisplayName("Concurrency Control: Nhiều luồng tranh chấp đồng thời -> 1 luồng thành công, luồng kia nhận BID_CONCURRENT_OUTBID")
+    void placeBid_ConcurrentThreads_OneSucceedsAndOneThrowsConcurrentConflict() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        UUID sellerId = UUID.randomUUID();
+        UUID buyer1 = UUID.randomUUID();
+        UUID buyer2 = UUID.randomUUID();
+        Auction auction = createStandardAuction(auctionId, sellerId);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        AtomicBoolean firstSave = new AtomicBoolean(true);
+        when(auctionRepository.save(any(Auction.class))).thenAnswer(invocation -> {
+            if (firstSave.compareAndSet(true, false)) {
+                return invocation.getArgument(0);
+            }
+            throw new ObjectOptimisticLockingFailureException(Auction.class, auctionId);
+        });
+
+        int threadCount = 2;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threadCount);
+
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger conflictCount = new AtomicInteger(0);
+
+        Runnable task1 = () -> {
+            try {
+                startLatch.await();
+                PlaceBidRequest req1 = new PlaceBidRequest(new BigDecimal("5500000.00"), "key-thread-1");
+                biddingService.placeBid(auctionId, buyer1, req1);
+                successCount.incrementAndGet();
+            } catch (BusinessException ex) {
+                if (ErrorCode.BID_CONCURRENT_OUTBID.name().equals(ex.getCode())) {
+                    conflictCount.incrementAndGet();
+                }
+            } catch (Exception ignored) {
+            } finally {
+                doneLatch.countDown();
+            }
+        };
+
+        Runnable task2 = () -> {
+            try {
+                startLatch.await();
+                PlaceBidRequest req2 = new PlaceBidRequest(new BigDecimal("5600000.00"), "key-thread-2");
+                biddingService.placeBid(auctionId, buyer2, req2);
+                successCount.incrementAndGet();
+            } catch (BusinessException ex) {
+                if (ErrorCode.BID_CONCURRENT_OUTBID.name().equals(ex.getCode())) {
+                    conflictCount.incrementAndGet();
+                }
+            } catch (Exception ignored) {
+            } finally {
+                doneLatch.countDown();
+            }
+        };
+
+        executor.submit(task1);
+        executor.submit(task2);
+
+        startLatch.countDown();
+        boolean completed = doneLatch.await(5, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        assertThat(completed).isTrue();
+        assertThat(successCount.get()).isEqualTo(1);
+        assertThat(conflictCount.get()).isEqualTo(1);
+    }
+
+    /**
+     * Kiểm thử xử lý xung đột trùng lặp khóa Idempotency Key dưới tải đồng thời (Race Condition Idempotency).
+     * Tình huống nghiệp vụ: Hai request gửi cùng idempotencyKey qua mặt bước kiểm tra ban đầu (cùng check findByIdempotencyKey rỗng),
+     * sau đó insert vào database thì 1 request gặp DataIntegrityViolationException (trùng unique constraint idempotency_key).
+     * Luồng:
+     * - Khi bidRepository.save ném DataIntegrityViolationException có chứa "idempotency_key",
+     * - Service tự động tra cứu lại bản ghi Bid đã được commit thành công và trả về PlaceBidResult của lượt bid đó (Idempotent fallback).
+     * Kết quả: Trả về kết quả hợp lệ mà không ném lỗi ra ngoài.
+     */
+    @Test
+    @DisplayName("Idempotency Concurrency: Xung đột DataIntegrityViolationException trên idempotency_key -> Fallback trả về kết quả ban đầu")
+    void placeBid_ConcurrentDuplicateKey_DataIntegrityViolation_FallsBackToExistingBid() {
+        UUID auctionId = UUID.randomUUID();
+        UUID sellerId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        String idempotencyKey = "key-duplicate-race";
+        Auction auction = createStandardAuction(auctionId, sellerId);
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+
+        Bid committedBid = new Bid();
+        committedBid.setId(UUID.randomUUID());
+        committedBid.setAuctionId(auctionId);
+        committedBid.setBidderId(buyerId);
+        committedBid.setAmount(new BigDecimal("5500000.00"));
+        committedBid.setIdempotencyKey(idempotencyKey);
+        committedBid.setPlacedAt(fixedInstant);
+
+        // Bước 1: findByIdempotencyKey ban đầu trả về rỗng (chưa tồn tại)
+        // Bước fallback trong catch block: trả về committedBid đã được insert bởi thread khác
+        when(bidRepository.findByIdempotencyKey(idempotencyKey))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(committedBid));
+
+        when(bidRepository.save(any(Bid.class))).thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint bids_idempotency_key_key"));
+        when(bidRepository.countByAuctionId(auctionId)).thenReturn(1L);
+
+        PlaceBidRequest request = new PlaceBidRequest(new BigDecimal("5500000.00"), idempotencyKey);
+        PlaceBidResult result = biddingService.placeBid(auctionId, buyerId, request);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getBid().getId()).isEqualTo(committedBid.getId());
+        assertThat(result.getBid().getAmount()).isEqualByComparingTo("5500000.00");
     }
 
     @Test
