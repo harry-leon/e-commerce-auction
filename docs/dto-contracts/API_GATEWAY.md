@@ -26,7 +26,7 @@ Login/register dùng Content-Type: application/json. Refresh không cần body.
 
 Login/refresh đặt cookie host-only nexus_access (Path=/) và nexus_refresh (Path=/api/v1/auth), HttpOnly, SameSite=Strict, Secure. JSON chỉ trả user, expiresIn, tokenType; không trả token. Hạn cookie theo expires_in/refresh_expires_in của IAM.
 
-FE gọi cùng origin qua proxy /api/v1 với credentials: include và X-Nexus-Request: 1. Gateway yêu cầu header này cho request thay đổi dữ liệu dùng cookie và POST auth; CORS không mở cho origin khác. Gateway đổi access cookie thành Bearer, xác minh JWT rồi chuyển tiếp service.
+FE gọi cùng origin qua proxy /api/v1 với credentials: include và X-Nexus-Request: 1. Gateway yêu cầu header này cho request thay đổi dữ liệu dùng cookie và POST auth; TT-S2-2 chỉ mở CORS cho các origin cụ thể trong `WEB_ALLOWED_ORIGINS`, không dùng wildcard. Gateway đổi access cookie thành Bearer, xác minh JWT rồi chuyển tiếp service. WebSocket `/ws/auctions` xác thực thêm CONNECT và quyền destination tại Auction; xem [hợp đồng STOMP/service identity](../TT-S2-2_GATEWAY_STOMP_SECURITY.md).
 
 POST /auth/logout trả 204 và xóa cả hai cookie đúng path, không cần access token còn hạn. Logout hiện chưa thu hồi session IAM; JWT bị sao chép vẫn có hiệu lực tới hạn.
 
