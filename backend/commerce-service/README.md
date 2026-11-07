@@ -19,7 +19,8 @@ Chạy Catalog mới có `sellerId` trước Commerce; cấu hình `CATALOG_SERV
 
 TT-S1-3 bổ sung VNPAY sandbox: checkout `paymentMethod=VNPAY` trả URL đã ký, IPN xác minh chữ ký rồi cập nhật
 Order/Payment và outbox confirm/release kho. Cần Flyway V5, merchant VNPAY và service account Keycloak.
-Thiếu cấu hình thì VNPAY trả 503, COD vẫn chạy. Hướng dẫn setup, API, retry/đối soát và review:
+Thiếu merchant thì VNPAY trả 503; COD không cần merchant nhưng vẫn cần service account kho theo TT-S2-2.
+Xem [Gateway/STOMP/service identity](../../docs/TT-S2-2_GATEWAY_STOMP_SECURITY.md). Hướng dẫn setup, API, retry/đối soát và review:
 `docs/PAYMENT_SANDBOX_INTEGRATION.md`. Trang sandbox demo cũ và query browser không chứng minh đã thanh toán.
 
 Test transaction/đồng thời cần PostgreSQL **tạm, riêng cho test**, user `postgres`, trust authentication;

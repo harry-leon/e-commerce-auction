@@ -124,7 +124,7 @@ Các biến sau chỉ đặt trong môi trường/.env không commit:
 | PAYMENT_INVENTORY_CLIENT_ID | Confidential client cho Commerce payment worker |
 | PAYMENT_INVENTORY_CLIENT_SECRET | Secret client service account |
 
-1. Tạo client confidential trong realm Nexus, bật service accounts và cấp quyền gọi confirm/release theo policy Fulfillment. Endpoint kho hiện yêu cầu authenticated; không cấp quyền admin không cần thiết.
+1. Dùng client confidential `nexus-commerce-service`, bật service accounts và cấp `INVENTORY.ORDER` trong role scope. TT-S2-2 yêu cầu đồng thời `azp=nexus-commerce-service` và privilege này ở endpoint mutation kho; JWT người dùng hoặc account admin không thay thế được. Checkout COD cũng cần service account kho. Xem [hướng dẫn service identity](TT-S2-2_GATEWAY_STOMP_SECURITY.md).
 2. Điền credential thật qua môi trường. Không đưa secret vào FE/VITE_*, tài liệu, callback query hoặc ảnh review.
 3. Đăng ký IPN URL public HTTPS tại merchant: `https://<gateway>/api/v1/payments/vnpay/ipn`. Return URL không thay thế IPN URL.
 4. Chạy Catalog có sellerId, Fulfillment có tồn kho/kho mặc định, Commerce V5, Gateway và FE mới.

@@ -26,7 +26,7 @@ server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
 
-# Credential merchant và service account chỉ lấy từ môi trường; thiếu cấu hình thì COD vẫn hoạt động.
+# Credential merchant và service account chỉ lấy từ môi trường; COD không cần VNPAY nhưng vẫn cần identity gọi kho.
 # Return URL là trang hiển thị; IPN URL /api/v1/payments/vnpay/ipn phải đăng ký riêng trên merchant VNPAY.
 app:
   notification:
@@ -41,10 +41,10 @@ app:
       hash-secret: ${VNPAY_HASH_SECRET:}
       return-url: ${VNPAY_RETURN_URL:}
     inventory:
-      # Worker dùng client_credentials để gọi kho sau IPN không có JWT buyer, không lưu JWT vào outbox.
-      token-url: ${PAYMENT_INVENTORY_TOKEN_URL:}
-      client-id: ${PAYMENT_INVENTORY_CLIENT_ID:}
-      client-secret: ${PAYMENT_INVENTORY_CLIENT_SECRET:}
+      # Checkout và worker đều dùng client_credentials gọi kho; không chuyển tiếp hay lưu JWT buyer.
+      token-url: ${PAYMENT_INVENTORY_TOKEN_URL:${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/token}
+      client-id: ${PAYMENT_INVENTORY_CLIENT_ID:nexus-commerce-service}
+      client-secret: ${PAYMENT_INVENTORY_CLIENT_SECRET:${COMMERCE_CLIENT_SECRET:}}
 
 management:
   endpoints:

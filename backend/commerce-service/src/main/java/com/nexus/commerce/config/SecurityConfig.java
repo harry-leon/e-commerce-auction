@@ -21,6 +21,11 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * Xác minh JWT stateless trước khi controller chạy; public IPN vẫn được Commerce kiểm tra chữ ký HMAC.
+     * Namespace nội bộ bắt buộc token do nexus-auction-service xin cùng COMMERCE.AUCTION, không nhận role admin thay thế.
+     * Đây là hàng rào cho contract nội bộ, chưa tạo endpoint/đơn Auction; các API người dùng giữ policy hiện có.
+     */
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -29,6 +34,11 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                // Namespace nội bộ dành cho contract tạo order từ Auction; endpoint nghiệp vụ chưa có tại đây.
+                .requestMatchers("/api/v1/internal/commerce/**").access((auth, context) ->
+                    new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-auction-service", "COMMERCE.AUCTION")))
                 // Chỉ IPN GET công khai: VNPAY không gửi JWT; chữ ký HMAC được kiểm tra trước mọi cập nhật DB.
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/payments/vnpay/ipn").permitAll()
                 .anyRequest().authenticated())
