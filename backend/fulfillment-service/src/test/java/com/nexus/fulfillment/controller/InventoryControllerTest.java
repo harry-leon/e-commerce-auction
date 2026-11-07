@@ -159,7 +159,7 @@ class InventoryControllerTest {
         );
 
         mockMvc.perform(post("/api/v1/inventory/reserve")
-                        .with(jwt().jwt(j -> j.subject("buyer-123")))
+                        .with(commerceIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isCreated())
@@ -187,7 +187,7 @@ class InventoryControllerTest {
         );
 
         mockMvc.perform(post("/api/v1/inventory/reserve")
-                        .with(jwt().jwt(j -> j.subject("buyer-123")))
+                        .with(commerceIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isConflict())
@@ -224,7 +224,7 @@ class InventoryControllerTest {
         when(inventoryService.confirmReservation(reservationId)).thenReturn(res);
 
         mockMvc.perform(post("/api/v1/inventory/reservations/" + reservationId + "/confirm")
-                        .with(jwt().jwt(j -> j.subject("service-caller"))))
+                        .with(commerceIdentity()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
@@ -258,7 +258,7 @@ class InventoryControllerTest {
         when(inventoryService.commitByOrder(orderId)).thenReturn(res);
 
         mockMvc.perform(post("/api/v1/inventory/orders/" + orderId + "/commit")
-                        .with(jwt().jwt(j -> j.subject("service-caller"))))
+                        .with(commerceIdentity()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
@@ -272,7 +272,7 @@ class InventoryControllerTest {
         doNothing().when(inventoryService).releaseByOrder(eq(orderId), any());
 
         mockMvc.perform(post("/api/v1/inventory/orders/" + orderId + "/release")
-                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .with(commerceIdentity())
                         .param("reason", "ORDER_CANCELLED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -308,7 +308,7 @@ class InventoryControllerTest {
         OrderPaidEventRequest req = new OrderPaidEventRequest(orderId, null, UUID.randomUUID());
 
         mockMvc.perform(post("/api/v1/inventory/events/order-paid")
-                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .with(commerceIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
@@ -325,7 +325,7 @@ class InventoryControllerTest {
         OrderFailureEventRequest req = new OrderFailureEventRequest(orderId, null, "INSUFFICIENT_FUNDS");
 
         mockMvc.perform(post("/api/v1/inventory/events/order-payment-failed")
-                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .with(commerceIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
@@ -341,7 +341,7 @@ class InventoryControllerTest {
         OrderFailureEventRequest req = new OrderFailureEventRequest(orderId, null, "BUYER_REQUESTED");
 
         mockMvc.perform(post("/api/v1/inventory/events/order-cancelled")
-                        .with(jwt().jwt(j -> j.subject("service-caller")))
+                        .with(commerceIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
@@ -355,7 +355,7 @@ class InventoryControllerTest {
         doNothing().when(inventoryService).releaseReservation(eq(reservationId), any());
 
         mockMvc.perform(post("/api/v1/inventory/reservations/" + reservationId + "/release")
-                        .with(jwt().jwt(j -> j.subject("buyer-123")))
+                        .with(commerceIdentity())
                         .param("reason", "CANCELLED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -446,7 +446,7 @@ class InventoryControllerTest {
         );
 
         mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/reserve")
-                        .with(jwt().jwt(j -> j.subject("seller-123")))
+                        .with(auctionIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isCreated())
@@ -487,7 +487,7 @@ class InventoryControllerTest {
         ExtendAuctionReservationRequest req = new ExtendAuctionReservationRequest(5, newEndTime);
 
         mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/extend")
-                        .with(jwt().jwt(j -> j.subject("system-timer")))
+                        .with(auctionIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
@@ -503,7 +503,7 @@ class InventoryControllerTest {
         doNothing().when(inventoryService).releaseByAuction(eq(auctionId), any());
 
         mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/release")
-                        .with(jwt().jwt(j -> j.subject("auction-service")))
+                        .with(auctionIdentity())
                         .param("reason", "AUCTION_CANCELLED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
@@ -540,12 +540,39 @@ class InventoryControllerTest {
         TransitionAuctionToOrderRequest req = new TransitionAuctionToOrderRequest(orderId, 1440, null);
 
         mockMvc.perform(post("/api/v1/inventory/auctions/" + auctionId + "/transition-to-order")
-                        .with(jwt().jwt(j -> j.subject("auction-settlement")))
+                        .with(auctionIdentity())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.refType").value("ORDER"))
                 .andExpect(jsonPath("$.data.refId").value(orderId.toString()));
+    }
+    /** Buyer/admin và token sai service bị chặn trước khi service kho thay đổi dữ liệu. */
+    @Test
+    void rejectsUserAndWrongServiceForInternalMutations() throws Exception {
+        String auction = "/api/v1/inventory/auctions/" + UUID.randomUUID() + "/release";
+        String order = "/api/v1/inventory/orders/" + UUID.randomUUID() + "/release";
+        mockMvc.perform(post(auction).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post(auction).with(commerceIdentity())).andExpect(status().isForbidden());
+        mockMvc.perform(post(order).with(auctionIdentity())).andExpect(status().isForbidden());
+        mockMvc.perform(post(auction).with(jwt().jwt(j -> j.claim("azp", "nexus-web"))
+                .authorities(new SimpleGrantedAuthority("INVENTORY.AUCTION"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post(order)).andExpect(status().isUnauthorized());
+        org.mockito.Mockito.verifyNoInteractions(inventoryService);
+    }
+
+    /** Fixture quyền service: token người dùng không được gọi mutation giữ kho nội bộ. */
+    private org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor commerceIdentity() {
+        return jwt().jwt(j -> j.subject("commerce-service-account").claim("azp", "nexus-commerce-service"))
+                .authorities(new SimpleGrantedAuthority("INVENTORY.ORDER"));
+    }
+
+    /** Auction chỉ có quyền vòng đời giữ kho đấu giá, không có quyền trừ kho đơn hàng. */
+    private org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor auctionIdentity() {
+        return jwt().jwt(j -> j.subject("auction-service-account").claim("azp", "nexus-auction-service"))
+                .authorities(new SimpleGrantedAuthority("INVENTORY.AUCTION"));
     }
 }

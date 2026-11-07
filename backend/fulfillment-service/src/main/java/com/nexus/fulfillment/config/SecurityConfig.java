@@ -21,6 +21,12 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * Kiểm tra JWT rồi phân tách caller theo tác vụ: Auction quản lý giữ kho phiên, Commerce quản lý kho đơn hàng.
+     * Kiểm tra đồng thời azp/privilege ngay tại filter, trước cả validation body hoặc gọi InventoryService.
+     * GET stock/check availability tiếp tục public; quyền inbound/adjust/ledger được kiểm tra tại Controller.
+     * User/admin hoặc service khác bị 403, request chưa xác thực bị 401; không tin header định danh từ Gateway.
+     */
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -31,6 +37,17 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/ping").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/inventory/sku/**").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/inventory/check").permitAll()
+                // API thay đổi giữ kho chỉ nhận service token đúng azp + privilege; JWT buyer/seller không đủ quyền.
+                .requestMatchers("/api/v1/inventory/auctions/**").access((auth, context) ->
+                    new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-auction-service", "INVENTORY.AUCTION")))
+                .requestMatchers("/api/v1/inventory/reserve", "/api/v1/inventory/release",
+                    "/api/v1/inventory/reservations/*/confirm", "/api/v1/inventory/reservations/*/release",
+                    "/api/v1/inventory/orders/**", "/api/v1/inventory/events/**").access((auth, context) ->
+                    new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-commerce-service", "INVENTORY.ORDER")))
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();
