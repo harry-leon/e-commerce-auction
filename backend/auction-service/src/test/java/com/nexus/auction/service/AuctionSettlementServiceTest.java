@@ -28,7 +28,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -784,5 +786,51 @@ class AuctionSettlementServiceTest {
         } finally {
             impl.setSelf(null);
         }
+
+    }
+
+    @Test
+    @DisplayName("Settle thành công: Phát AuctionClosedEvent mang đầy đủ thông tin settlement handoff")
+    void testSettleAuction_WithEventPublisher_PublishesAuctionClosedEvent() {
+        UUID auctionId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        BigDecimal winningAmount = new BigDecimal("150000.00");
+
+        Auction auction = createSampleAuction(auctionId, AuctionStatus.ACTIVE, now.minus(5, ChronoUnit.MINUTES));
+
+        Bid highestBid = new Bid();
+        highestBid.setId(UUID.randomUUID());
+        highestBid.setAuctionId(auctionId);
+        highestBid.setBidderId(buyerId);
+        highestBid.setAmount(winningAmount);
+        highestBid.setPlacedAt(now.minus(10, ChronoUnit.MINUTES));
+
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+        when(auctionRepository.findByIdForUpdate(auctionId)).thenReturn(Optional.of(auction));
+        when(bidRepository.findFirstByAuctionIdOrderByAmountDescPlacedAtAsc(auctionId))
+                .thenReturn(Optional.of(highestBid));
+        when(auctionSettlementRepository.save(any(AuctionSettlement.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ApplicationEventPublisher mockPublisher = org.mockito.Mockito.mock(ApplicationEventPublisher.class);
+        AuctionSettlementService serviceWithPublisher = new AuctionSettlementServiceImpl(
+                auctionRepository,
+                bidRepository,
+                auctionSettlementRepository,
+                fixedClock,
+                mockPublisher
+        );
+
+        serviceWithPublisher.settleAuction(auctionId);
+
+        ArgumentCaptor<com.nexus.auction.event.AuctionClosedEvent> captor =
+                ArgumentCaptor.forClass(com.nexus.auction.event.AuctionClosedEvent.class);
+        verify(mockPublisher).publishEvent(captor.capture());
+        com.nexus.auction.event.AuctionClosedEvent closedEvent = captor.getValue();
+        assertThat(closedEvent.auctionId()).isEqualTo(auctionId);
+        assertThat(closedEvent.settlementResult()).isEqualTo(SettlementResult.SUCCESS);
+        assertThat(closedEvent.winnerId()).isEqualTo(buyerId);
+        assertThat(closedEvent.finalPrice()).isEqualByComparingTo(winningAmount);
+
     }
 }
