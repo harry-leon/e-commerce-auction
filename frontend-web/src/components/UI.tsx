@@ -144,11 +144,19 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
     options: { value: string; label: string }[]
 }
 export function Select({ label, error, options, className = '', ...props }: SelectProps) {
+    const generatedId = useId()
+    const selectId = props.id || generatedId
     return (
         <div className="flex flex-col gap-1.5">
-            {label && <label className="text-sm font-semibold text-gray-700">{label}</label>}
+            {label && (
+                <label htmlFor={selectId} className="text-sm font-semibold text-gray-700">
+                    {label}
+                </label>
+            )}
             <select
                 {...props}
+                id={selectId}
+                aria-invalid={!!error}
                 className={`nexus-input appearance-none ${error ? 'error' : ''} ${className}`}
                 style={{
                     backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
@@ -273,6 +281,7 @@ const STATUS_BADGE: Record<string, string> = {
     pending_approval: 'badge-yellow',
     scheduled: 'badge-blue',
     active: 'badge-orange',
+    paused: 'badge-yellow',
     ended: 'badge-gray',
     settled: 'badge-green',
     failed: 'badge-red',
@@ -329,12 +338,17 @@ export function Modal({
     const sizeW = { sm: 400, md: 520, lg: 680, xl: 860 }[size]
     if (!open) return null
     return (
+        // Overlay toàn màn hình; click vùng ngoài modal sẽ đóng (onClose)
         <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             onClick={(e) => e.target === e.currentTarget && onClose()}
         >
             <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+            {/* role="dialog" + aria-modal="true" đảm bảo screen reader nhận ra đây là dialog, hỗ trợ getByRole('dialog') trong test */}
             <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={title}
                 className="relative bg-white rounded-xl shadow-xl flex flex-col max-h-[90vh] fade-in"
                 style={{ width: '100%', maxWidth: sizeW }}
             >

@@ -27,10 +27,38 @@ export interface AuctionQueryParams {
     sortBy?: 'ending-soon' | 'most-bids' | 'newest' | 'price-asc' | 'price-desc' | string
     minPrice?: number
     maxPrice?: number
+    sellerId?: string
+    /** Chỉ dùng để đối chiếu bản ghi local mới tạo khi API chưa cung cấp sellerId; không gửi lên backend. */
+    sellerName?: string
+    /** Ẩn các phiên fixture AUCTIONS chỉ ở portal Seller/Admin; không gửi tham số này lên API. */
+    excludeDemoData?: boolean
+    includePending?: boolean
     page?: number
     limit?: number
     extraAuctions?: Auction[]
     reviews?: Partial<Record<string, { status: string; reason?: string }>>
+}
+
+/** DTO yêu cầu khởi tạo phiên đấu giá mới từ Người bán */
+export interface CreateAuctionPayload {
+    productId: string
+    skuId?: string | null
+    startingPrice: number
+    minIncrement: number
+    startTime: string
+    endTime: string
+    visibility?: 'public' | 'restricted'
+}
+
+/** DTO yêu cầu cập nhật phiên đấu giá trước giờ mở */
+export interface UpdateAuctionPayload {
+    productId?: string
+    skuId?: string | null
+    startingPrice?: number
+    minIncrement?: number
+    startTime?: string
+    endTime?: string
+    visibility?: 'public' | 'restricted'
 }
 
 /** Kết quả trả về cho danh sách đấu giá có phân trang */
@@ -64,6 +92,12 @@ export interface RawApiAuction {
     seller_id?: string
     sellerName?: string
     seller_name?: string
+    sellerFullName?: string
+    seller_full_name?: string
+    sellerAccountName?: string
+    seller_account_name?: string
+    sellerEmail?: string
+    seller_email?: string
     startPrice?: number
     start_price?: number
     startingPrice?: number
@@ -122,8 +156,89 @@ export interface RawApiBid {
     timestamp?: string
 }
 
-/** Kho dữ liệu đấu giá in-memory lưu các lượt bid và phiên mới tạo trong phiên làm việc */
-let localAuctionsStore: Auction[] = [...AUCTIONS]
+/** Khóa lưu trữ danh sách phiên đấu giá trong localStorage để giữ vết dữ liệu khi reload/test */
+const AUCTIONS_STORAGE_KEY = 'nexus.auction-portal-store.v2'
+const LEGACY_AUCTIONS_STORAGE_KEY = 'nexus.mock-auctions-store'
+const AUCTION_REVIEWS_STORAGE_KEY = 'nexus.auction-reviews-store'
+
+type StoredAuctionReview = { status: 'scheduled' | 'rejected'; reason?: string; reviewedAt: string }
+
+/** Khôi phục quyết định Admin để API list trả DRAFT cũ không làm phiên đã duyệt quay lại hàng chờ sau reload. */
+function loadStoredAuctionReviews(): Record<string, StoredAuctionReview> {
+    try {
+        const raw = localStorage.getItem(AUCTION_REVIEWS_STORAGE_KEY)
+        const parsed = raw ? JSON.parse(raw) : null
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+        return {}
+    }
+}
+
+function persistAuctionReviews(reviews: Record<string, StoredAuctionReview>) {
+    try {
+        localStorage.setItem(AUCTION_REVIEWS_STORAGE_KEY, JSON.stringify(reviews))
+    } catch {
+        // API vẫn có thể hoạt động nếu trình duyệt chặn localStorage.
+    }
+}
+
+/**
+ * Chức năng: Tải mock do người dùng tạo từ localStorage; loại fixture cũ để chúng không quay lại sau reload.
+ * Đầu vào: Đọc từ localStorage qua khóa AUCTIONS_STORAGE_KEY.
+ * Kết quả: Mảng Auction danh sách phiên đấu giá.
+ */
+function loadStoredAuctions(): Auction[] {
+    try {
+        // Đọc kho mới trước; nếu chỉ còn kho cũ thì di trú phiên người dùng tạo và bỏ fixture mặc định.
+        const raw = localStorage.getItem(AUCTIONS_STORAGE_KEY) || localStorage.getItem(LEGACY_AUCTIONS_STORAGE_KEY)
+        if (raw) {
+            const parsed = JSON.parse(raw)
+            if (Array.isArray(parsed)) {
+                const demoIds = new Set(AUCTIONS.map((auction) => auction.id))
+                const storedAuctions = parsed.filter((auction): auction is Auction =>
+                    Boolean(auction && typeof auction.id === 'string' && !demoIds.has(auction.id)),
+                )
+                localStorage.setItem(AUCTIONS_STORAGE_KEY, JSON.stringify(storedAuctions))
+                localStorage.removeItem(LEGACY_AUCTIONS_STORAGE_KEY)
+                return storedAuctions
+            }
+        }
+    } catch {
+        // Bỏ qua lỗi parse và dùng dữ liệu mặc định
+    }
+    return []
+}
+
+/**
+ * Chức năng: Lưu trữ danh sách phiên đấu giá vào localStorage.
+ * Đầu vào: Danh sách auctions cần lưu.
+ * Kết quả: Đồng bộ trạng thái vào localStorage.
+ */
+function persistStoredAuctions(auctions: Auction[]) {
+    try {
+        localStorage.setItem(AUCTIONS_STORAGE_KEY, JSON.stringify(auctions))
+    } catch {
+        // Bỏ qua lỗi vượt hạn mức lưu trữ
+    }
+}
+
+/** Kho dữ liệu đấu giá lưu các lượt bid và phiên mới tạo, tự động đồng bộ localStorage */
+let localAuctionsStore: Auction[] = loadStoredAuctions()
+let localAuctionReviews = loadStoredAuctionReviews()
+
+/** Dùng trạng thái API trừ khi phiên vẫn DRAFT nhưng frontend đã lưu quyết định duyệt gần nhất. */
+function resolveAuctionStatus(
+    auctionId: string,
+    apiStatus: AuctionStatus,
+    reviews: Partial<Record<string, { status: string }>> = {},
+): AuctionStatus {
+    const currentReview = reviews[auctionId]?.status as AuctionStatus | undefined
+    if (currentReview) return currentReview
+    if (apiStatus === 'pending_approval' && localAuctionReviews[auctionId]) {
+        return localAuctionReviews[auctionId].status
+    }
+    return apiStatus
+}
 
 /**
  * Kiểm tra xem lỗi API có thể an toàn fallback sang dữ liệu mock hay không.
@@ -137,7 +252,18 @@ function canFallbackToMock(error: unknown): boolean {
         }
         return [404, 500, 502, 503, 504].includes(error.status)
     }
-    return error instanceof TypeError || error instanceof ReferenceError
+    const err = error as Error | undefined
+    return (
+        error instanceof TypeError ||
+        error instanceof ReferenceError ||
+        err?.name === 'TypeError' ||
+        err?.name === 'ReferenceError' ||
+        (typeof err?.message === 'string' &&
+            (err.message.includes('fetch') ||
+                err.message.includes('URL') ||
+                err.message.includes('network') ||
+                err.message.includes('Failed to parse')))
+    )
 }
 
 /**
@@ -200,6 +326,8 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
     let status: AuctionStatus = 'scheduled'
     if (['ACTIVE', 'LIVE'].includes(rawStatus)) {
         status = 'active'
+    } else if (['PAUSED', 'SUSPENDED'].includes(rawStatus)) {
+        status = 'paused'
     } else if (['SCHEDULED'].includes(rawStatus)) {
         status = 'scheduled'
     } else if (['ENDED'].includes(rawStatus)) {
@@ -208,6 +336,8 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
         status = 'settled'
     } else if (['CANCELLED'].includes(rawStatus)) {
         status = 'cancelled'
+    } else if (['REJECTED'].includes(rawStatus)) {
+        status = 'rejected'
     } else if (['FAILED'].includes(rawStatus)) {
         status = 'failed'
     } else if (['DRAFT'].includes(rawStatus)) {
@@ -352,6 +482,9 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
             item.seller_name ||
             product.sellerName ||
             'Nexus Seller',
+        sellerAccountName:
+            item.sellerFullName || item.seller_full_name || item.sellerAccountName || item.seller_account_name,
+        sellerEmail: item.sellerEmail || item.seller_email,
         status,
         startingPrice,
         currentBid,
@@ -424,6 +557,10 @@ export const auctionsApi = {
             sortBy = 'ending-soon',
             minPrice,
             maxPrice,
+            sellerId,
+            sellerName,
+            excludeDemoData = false,
+            includePending = false,
             page = 1,
             limit = 9,
             extraAuctions = [],
@@ -436,6 +573,8 @@ export const auctionsApi = {
         if (sortBy) queryParts.push(`sort=${encodeURIComponent(sortBy)}`)
         if (minPrice !== undefined) queryParts.push(`minPrice=${minPrice}`)
         if (maxPrice !== undefined) queryParts.push(`maxPrice=${maxPrice}`)
+        if (sellerId) queryParts.push(`sellerId=${encodeURIComponent(sellerId)}`)
+        if (includePending) queryParts.push('includePending=true')
         queryParts.push(`page=${page}`)
         queryParts.push(`limit=${limit}`)
         const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
@@ -451,12 +590,76 @@ export const auctionsApi = {
 
             // Nếu Backend trả về dữ liệu hợp lệ
             if (validatedItems.length > 0 || Array.isArray(rawData)) {
+                // Giữ các phiên vừa tạo ở trình duyệt khi API list chưa phản ánh kịp; dữ liệu server thắng nếu trùng ID.
+                const serverIds = new Set(validatedItems.map((auction) => auction.id))
+                const seededIds = new Set(AUCTIONS.map((auction) => auction.id))
+                const submittedIds = new Set(extraAuctions.map((auction) => auction.id))
+                const matchesCurrentSeller = (auction: Auction) =>
+                    auction.sellerId === sellerId ||
+                    Boolean(sellerName && [auction.sellerName, auction.sellerAccountName]
+                        .some((name) => name?.trim().toLowerCase() === sellerName.trim().toLowerCase()))
+                const localCreated = [...extraAuctions, ...localAuctionsStore].filter((auction, index, source) => {
+                    if (excludeDemoData && seededIds.has(auction.id) && !submittedIds.has(auction.id)) return false
+                    if ((seededIds.has(auction.id) && !submittedIds.has(auction.id)) || serverIds.has(auction.id)) return false
+                    if (source.findIndex((candidate) => candidate.id === auction.id) !== index) return false
+                    // Ưu tiên ID Seller; tên chỉ đối chiếu bản ghi local mới tạo bị thiếu/sai sellerId sau khi reload.
+                    if (sellerId && !matchesCurrentSeller(auction) && !submittedIds.has(auction.id)) return false
+                    const effectiveStatus = resolveAuctionStatus(auction.id, auction.status, reviews)
+                    if (status !== 'all' && effectiveStatus !== status) return false
+                    if (!sellerId && !includePending && ['pending_approval', 'rejected', 'paused'].includes(effectiveStatus)) {
+                        return false
+                    }
+                    if (search.trim()) {
+                        const query = search.trim().toLowerCase()
+                        if (!auction.product.name.toLowerCase().includes(query) &&
+                            !auction.product.nameVi.toLowerCase().includes(query) &&
+                            !auction.sellerName.toLowerCase().includes(query)) return false
+                    }
+                    if (minPrice !== undefined && auction.currentBid < minPrice) return false
+                    if (maxPrice !== undefined && auction.currentBid > maxPrice) return false
+                    return true
+                }).map((auction) => ({
+                    ...auction,
+                    sellerId: sellerId && (submittedIds.has(auction.id) || matchesCurrentSeller(auction))
+                        ? sellerId
+                        : auction.sellerId,
+                    status: resolveAuctionStatus(auction.id, auction.status, reviews),
+                }))
+                const serverItems = validatedItems
+                    .filter((auction) => !excludeDemoData || !seededIds.has(auction.id) || submittedIds.has(auction.id))
+                    .map((auction) => {
+                    const localCreatedAuction = [...extraAuctions, ...localAuctionsStore].find(
+                        (candidate) => candidate.id === auction.id && !seededIds.has(candidate.id),
+                    )
+                    if (!localCreatedAuction || (sellerId && !matchesCurrentSeller(localCreatedAuction))) return auction
+
+                    // API list có thể thiếu seller_id; dùng owner đã cache cho phiên này nếu khớp Seller hiện tại.
+                    const resolvedSellerId = sellerId || localCreatedAuction.sellerId
+                    const resolvedSellerName = localCreatedAuction.sellerName || auction.sellerName
+                    return {
+                        ...auction,
+                        sellerId: resolvedSellerId,
+                        sellerName: resolvedSellerName,
+                        sellerAccountName: auction.sellerAccountName || localCreatedAuction.sellerAccountName,
+                        sellerEmail: auction.sellerEmail || localCreatedAuction.sellerEmail,
+                        status: resolveAuctionStatus(auction.id, auction.status, reviews),
+                        product: { ...auction.product, sellerId: resolvedSellerId, sellerName: resolvedSellerName },
+                    }
+                    })
+                const items = [...localCreated, ...serverItems].filter((auction) => {
+                    const effectiveStatus = resolveAuctionStatus(auction.id, auction.status, reviews)
+                    return (!status || status === 'all' || effectiveStatus === status) &&
+                        (sellerId ? auction.sellerId === sellerId : includePending || !['pending_approval', 'rejected', 'paused'].includes(effectiveStatus))
+                }).map((auction) => ({
+                    ...auction,
+                    status: resolveAuctionStatus(auction.id, auction.status, reviews),
+                }))
                 return {
-                    items: validatedItems,
-                    total: validatedItems.length,
+                    items,
+                    total: items.length,
                     page,
                     limit,
-                    totalPages: Math.max(1, Math.ceil(validatedItems.length / limit)),
+                    totalPages: Math.max(1, Math.ceil(items.length / limit)),
                 }
             }
         } catch (error) {
@@ -468,21 +671,36 @@ export const auctionsApi = {
         // Luồng fallback sang dữ liệu in-memory/mock khi backend chưa sẵn sàng hoặc offline
         const combined = [...extraAuctions, ...localAuctionsStore]
         const seen = new Set<string>()
+        const submittedIds = new Set(extraAuctions.map((auction) => auction.id))
+        const seededIds = new Set(AUCTIONS.map((auction) => auction.id))
         let filtered = combined
             .filter((a) => {
+                if (excludeDemoData && AUCTIONS.some((demo) => demo.id === a.id) && !submittedIds.has(a.id)) return false
                 if (seen.has(a.id)) return false
                 seen.add(a.id)
                 return true
             })
             .map((a) => ({
                 ...a,
-                status: (reviews[a.id]?.status as AuctionStatus) || a.status,
+                status: resolveAuctionStatus(a.id, a.status, reviews),
             }))
-            .filter((a) => !['pending_approval', 'rejected'].includes(a.status))
 
-        // Lọc trạng thái
+        // Phiên chờ duyệt, bị từ chối hoặc tạm dừng không xuất hiện trong danh sách Buyer.
         if (status && status !== 'all') {
             filtered = filtered.filter((a) => a.status === status)
+        }
+        if (!sellerId && !includePending) {
+            filtered = filtered.filter((a) => !['pending_approval', 'rejected', 'paused'].includes(a.status))
+        }
+
+        // Lọc theo người bán nếu có yêu cầu (phía Seller Portal)
+        if (sellerId) {
+            filtered = filtered.filter((auction) =>
+                auction.sellerId === sellerId ||
+                (!seededIds.has(auction.id) && Boolean(sellerName &&
+                    [auction.sellerName, auction.sellerAccountName]
+                        .some((name) => name?.trim().toLowerCase() === sellerName.trim().toLowerCase()))),
+            ).map((auction) => ({ ...auction, sellerId }))
         }
 
         // Lọc tìm kiếm từ khóa
@@ -564,7 +782,7 @@ export const auctionsApi = {
             if (validated) {
                 return {
                     ...validated,
-                    status: (reviews[validated.id]?.status as AuctionStatus) || validated.status,
+                    status: resolveAuctionStatus(validated.id, validated.status, reviews),
                 }
             }
         } catch (error) {
@@ -578,7 +796,7 @@ export const auctionsApi = {
         if (found) {
             return {
                 ...found,
-                status: (reviews[found.id]?.status as AuctionStatus) || found.status,
+                    status: resolveAuctionStatus(found.id, found.status, reviews),
             }
         }
 
@@ -649,6 +867,7 @@ export const auctionsApi = {
                 winnerName: bidderName,
             }
             localAuctionsStore[targetIndex] = updatedAuction
+            persistStoredAuctions(localAuctionsStore)
         }
 
         return {
@@ -659,16 +878,520 @@ export const auctionsApi = {
     },
 
     /**
+     * Chức năng: Người bán khởi tạo phiên đấu giá mới cho sản phẩm/SKU.
+     * Đầu vào: CreateAuctionPayload (productId, skuId, startingPrice, minIncrement, startTime, endTime, visibility).
+     * Kết quả: Đối tượng Auction vừa được khởi tạo với trạng thái 'scheduled' (hoặc 'pending_approval').
+     * Luồng xử lý:
+     *   1. Kiểm tra validation nghiêm ngặt theo SRS §3.5 và AC của SPRINT2:
+     *      - Giá khởi điểm > 0.
+     *      - Bước giá >= 1,000 VND (hoặc cấu hình tối thiểu).
+     *      - Thời gian bắt đầu phải lớn hơn thời gian hiện tại.
+     *      - Thời gian kết thúc phải lớn hơn thời gian bắt đầu.
+     *      - Thời lượng phiên tối thiểu 1 giờ (60 phút) và tối đa 7 ngày (168 giờ).
+     *   2. Gọi POST /api/v1/auctions qua API Gateway.
+     *   3. Nếu Backend trả về thành công, chuẩn hóa và lưu trữ cục bộ.
+     *   4. Nếu Backend offline hoặc 404/503, tự động tạo bản ghi mock và lưu vào localStorage.
+     * Quy tắc & lý do: Đảm bảo dữ liệu phiên đấu giá đáp ứng đầy đủ nghiệp vụ trước khi mở bán;
+     *                  không cho phép các mốc thời gian sai lệch hay giá khởi điểm âm/bằng 0.
+     * Lỗi & giới hạn: Trả về lỗi 422 kèm danh sách chi tiết lỗi trường dữ liệu khi validation thất bại.
+     */
+    async createAuction(payload: CreateAuctionPayload): Promise<Auction> {
+        // Validation phía client chặt chẽ
+        if (!payload.productId) {
+            throw new ApiClientError(
+                'Vui lòng chọn sản phẩm cho phiên đấu giá',
+                'PRODUCT_REQUIRED',
+                422,
+                [{ field: 'productId', message: 'Vui lòng chọn sản phẩm cho phiên đấu giá' }],
+            )
+        }
+
+        const startPrice = Number(payload.startingPrice)
+        if (!Number.isFinite(startPrice) || startPrice <= 0) {
+            throw new ApiClientError(
+                'Giá khởi điểm phải lớn hơn 0',
+                'INVALID_START_PRICE',
+                422,
+                [{ field: 'startingPrice', message: 'Giá khởi điểm phải lớn hơn 0' }],
+            )
+        }
+
+        const minIncrement = Number(payload.minIncrement)
+        if (!Number.isFinite(minIncrement) || minIncrement <= 0) {
+            throw new ApiClientError(
+                'Bước giá phải lớn hơn 0',
+                'INVALID_BID_INCREMENT',
+                422,
+                [{ field: 'minIncrement', message: 'Bước giá phải lớn hơn 0' }],
+            )
+        }
+        if (minIncrement < 1000) {
+            throw new ApiClientError(
+                'Bước giá tối thiểu phải từ 1,000 đ',
+                'MIN_INCREMENT_TOO_LOW',
+                422,
+                [{ field: 'minIncrement', message: 'Bước giá tối thiểu phải từ 1,000 đ' }],
+            )
+        }
+
+        const parsedStart = new Date(payload.startTime)
+        if (isNaN(parsedStart.getTime()) || parsedStart.getTime() <= Date.now()) {
+            throw new ApiClientError(
+                'Thời gian bắt đầu phải lớn hơn thời gian hiện tại',
+                'INVALID_START_TIME',
+                422,
+                [{ field: 'startTime', message: 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại' }],
+            )
+        }
+
+        const parsedEnd = new Date(payload.endTime)
+        if (isNaN(parsedEnd.getTime()) || parsedEnd.getTime() <= parsedStart.getTime()) {
+            throw new ApiClientError(
+                'Thời gian kết thúc phải sau thời gian bắt đầu',
+                'INVALID_END_TIME',
+                422,
+                [{ field: 'endTime', message: 'Thời gian kết thúc phải sau thời gian bắt đầu' }],
+            )
+        }
+
+        const durationMs = parsedEnd.getTime() - parsedStart.getTime()
+        if (durationMs < 3600000) {
+            throw new ApiClientError(
+                'Thời lượng phiên tối thiểu là 1 giờ',
+                'DURATION_TOO_SHORT',
+                422,
+                [{ field: 'endTime', message: 'Thời lượng phiên tối thiểu là 1 giờ' }],
+            )
+        }
+        if (durationMs > 7 * 86400000) {
+            throw new ApiClientError(
+                'Thời lượng phiên tối đa là 7 ngày',
+                'DURATION_TOO_LONG',
+                422,
+                [{ field: 'endTime', message: 'Thời lượng phiên tối đa là 7 ngày' }],
+            )
+        }
+
+        const session = readSession()
+
+        try {
+            const apiPayload = {
+                productId: payload.productId,
+                skuId: payload.skuId || null,
+                startPrice,
+                bidIncrement: minIncrement,
+                startTime: parsedStart.toISOString(),
+                endTime: parsedEnd.toISOString(),
+                visibility: payload.visibility === 'restricted' ? 'PRIVATE' : 'PUBLIC',
+            }
+            const envelope = await post<ApiResponse<RawApiAuction>>('/auctions', apiPayload)
+            if (envelope?.data) {
+                const normalized = validateAndNormalizeAuction(envelope.data)
+                if (normalized) {
+                    // Bổ sung chủ phiên từ session khi response create không trả sellerId/sellerName để Seller filter nhận đúng phiên.
+                    const rawSellerId = envelope.data.sellerId || envelope.data.seller_id
+                    const sellerId = rawSellerId || session?.user?.id || normalized.sellerId
+                    const sellerName =
+                        envelope.data.sellerName ||
+                        envelope.data.seller_name ||
+                        (sellerId === session?.user?.id ? session?.user?.fullName : normalized.sellerName)
+                    const createdAuction: Auction = {
+                        ...normalized,
+                        sellerId,
+                        sellerName,
+                        sellerAccountName:
+                            envelope.data.sellerFullName ||
+                            envelope.data.seller_full_name ||
+                            envelope.data.sellerAccountName ||
+                            envelope.data.seller_account_name ||
+                            (sellerId === session?.user?.id ? session?.user?.fullName : undefined),
+                        sellerEmail: envelope.data.sellerEmail || envelope.data.seller_email || session?.user?.email,
+                        product: { ...normalized.product, sellerId, sellerName },
+                    }
+                    localAuctionsStore = [createdAuction, ...localAuctionsStore]
+                    persistStoredAuctions(localAuctionsStore)
+                    return createdAuction
+                }
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) {
+                throw error
+            }
+        }
+
+        // Tạo bản ghi mock an toàn khi offline/sandbox
+        const foundProduct =
+            PRODUCTS.find((p) => p.id === payload.productId) || {
+                id: payload.productId,
+                name: 'Sản phẩm đấu giá mới',
+                nameVi: 'Sản phẩm đấu giá mới',
+                description: 'Sản phẩm mới được người bán đưa vào phiên đấu giá.',
+                descriptionVi: 'Sản phẩm mới được người bán đưa vào phiên đấu giá.',
+                price: startPrice,
+                originalPrice: startPrice,
+                rating: 5,
+                reviewCount: 0,
+                images: ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'],
+                category: 'Collectibles',
+                categoryId: 'c6',
+                location: 'ho-chi-minh',
+                sku: payload.skuId || 'AUC-SKU-NEW',
+                status: 'active' as const,
+                sellerId: session?.user?.id || 'u2',
+                sellerName: session?.user?.fullName || 'TechZone Store',
+                sellerTrust: 'gold' as const,
+                sellerRating: 5,
+                weight: 1,
+                enableAuction: true,
+                stock: 1,
+                createdAt: new Date().toISOString(),
+            }
+
+        const newAuction: Auction = {
+            id: `auc-${Date.now()}`,
+            productId: payload.productId,
+            product: foundProduct,
+            sellerId: session?.user?.id || foundProduct.sellerId || 'u2',
+            sellerName: session?.user?.fullName || foundProduct.sellerName || 'TechZone Store',
+            sellerAccountName: session?.user?.fullName,
+            sellerEmail: session?.user?.email,
+            // Bản ghi fallback mô phỏng đúng luồng Seller gửi yêu cầu và chờ Admin duyệt.
+            status: 'pending_approval',
+            startingPrice: startPrice,
+            currentBid: startPrice,
+            minIncrement,
+            startTime: parsedStart.toISOString(),
+            endTime: parsedEnd.toISOString(),
+            bidCount: 0,
+            bids: [],
+            visibility: payload.visibility || 'public',
+        }
+
+        localAuctionsStore = [newAuction, ...localAuctionsStore]
+        persistStoredAuctions(localAuctionsStore)
+        return newAuction
+    },
+
+    /**
+     * Chức năng: Người bán chỉnh sửa thông số phiên đấu giá trước giờ mở.
+     * Đầu vào: ID phiên và UpdateAuctionPayload chứa giá, bước giá, thời gian mới.
+     * Kết quả: Đối tượng Auction đã cập nhật thông số.
+     * Luồng xử lý:
+     *   1. Kiểm tra điều kiện chỉnh sửa: Chỉ cho phép sửa khi trạng thái là 'scheduled', 'draft' hoặc 'pending_approval',
+     *      và thời gian bắt đầu của phiên phải lớn hơn thời gian hiện tại (chưa mở phiên).
+     *   2. Validate các trường giá, bước giá và thời lượng cập nhật (nếu có).
+     *   3. Gửi PUT /api/v1/auctions/{id} lên backend.
+     *   4. Nếu offline, cập nhật vào kho local và lưu bền vững vào localStorage.
+     * Quy tắc & lý do: Nghiêm cấm chỉnh sửa khi phiên đã ACTIVE, ENDED, SETTLED hoặc CANCELLED để bảo vệ tính minh bạch.
+     * Lỗi & giới hạn: Ném lỗi 400 nếu phiên không trong điều kiện cho phép chỉnh sửa.
+     */
+    async updateAuction(id: string, payload: UpdateAuctionPayload): Promise<Auction> {
+        if (!id) {
+            throw new ApiClientError('Mã phiên đấu giá không hợp lệ', 'INVALID_AUCTION_ID', 400)
+        }
+
+        const targetIndex = localAuctionsStore.findIndex((a) => a.id === id)
+        const currentAuction = targetIndex >= 0 ? localAuctionsStore[targetIndex] : null
+
+        if (currentAuction) {
+            if (!['scheduled', 'draft', 'pending_approval'].includes(currentAuction.status)) {
+                throw new ApiClientError(
+                    'Chỉ có thể chỉnh sửa phiên đấu giá trước khi bắt đầu',
+                    'AUCTION_NOT_EDITABLE',
+                    400,
+                )
+            }
+            if (new Date(currentAuction.startTime).getTime() <= Date.now()) {
+                throw new ApiClientError(
+                    'Phiên đấu giá đã đến giờ mở hoặc đang diễn ra, không thể chỉnh sửa',
+                    'AUCTION_ALREADY_STARTED',
+                    400,
+                )
+            }
+        }
+
+        // Validate các trường được cập nhật
+        let newStartPrice = currentAuction?.startingPrice
+        if (payload.startingPrice !== undefined) {
+            const p = Number(payload.startingPrice)
+            if (!Number.isFinite(p) || p <= 0) {
+                throw new ApiClientError('Giá khởi điểm phải lớn hơn 0', 'INVALID_START_PRICE', 422, [
+                    { field: 'startingPrice', message: 'Giá khởi điểm phải lớn hơn 0' },
+                ])
+            }
+            newStartPrice = p
+        }
+
+        let newMinIncrement = currentAuction?.minIncrement
+        if (payload.minIncrement !== undefined) {
+            const inc = Number(payload.minIncrement)
+            if (!Number.isFinite(inc) || inc <= 0) {
+                throw new ApiClientError('Bước giá phải lớn hơn 0', 'INVALID_BID_INCREMENT', 422, [
+                    { field: 'minIncrement', message: 'Bước giá phải lớn hơn 0' },
+                ])
+            }
+            if (inc < 1000) {
+                throw new ApiClientError('Bước giá tối thiểu phải từ 1,000 đ', 'MIN_INCREMENT_TOO_LOW', 422, [
+                    { field: 'minIncrement', message: 'Bước giá tối thiểu phải từ 1,000 đ' },
+                ])
+            }
+            newMinIncrement = inc
+        }
+
+        let newStartTime = currentAuction ? currentAuction.startTime : new Date().toISOString()
+        if (payload.startTime) {
+            const s = new Date(payload.startTime)
+            if (isNaN(s.getTime()) || s.getTime() <= Date.now()) {
+                throw new ApiClientError('Thời gian bắt đầu phải lớn hơn thời gian hiện tại', 'INVALID_START_TIME', 422, [
+                    { field: 'startTime', message: 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại' },
+                ])
+            }
+            newStartTime = s.toISOString()
+        }
+
+        let newEndTime = currentAuction ? currentAuction.endTime : new Date(Date.now() + 86400000).toISOString()
+        if (payload.endTime) {
+            const e = new Date(payload.endTime)
+            const s = new Date(newStartTime)
+            if (isNaN(e.getTime()) || e.getTime() <= s.getTime()) {
+                throw new ApiClientError('Thời gian kết thúc phải sau thời gian bắt đầu', 'INVALID_END_TIME', 422, [
+                    { field: 'endTime', message: 'Thời gian kết thúc phải sau thời gian bắt đầu' },
+                ])
+            }
+            const durationMs = e.getTime() - s.getTime()
+            if (durationMs < 3600000) {
+                throw new ApiClientError('Thời lượng phiên tối thiểu là 1 giờ', 'DURATION_TOO_SHORT', 422, [
+                    { field: 'endTime', message: 'Thời lượng phiên tối thiểu là 1 giờ' },
+                ])
+            }
+            if (durationMs > 7 * 86400000) {
+                throw new ApiClientError('Thời lượng phiên tối đa là 7 ngày', 'DURATION_TOO_LONG', 422, [
+                    { field: 'endTime', message: 'Thời lượng phiên tối đa là 7 ngày' },
+                ])
+            }
+            newEndTime = e.toISOString()
+        }
+
+        try {
+            const envelope = await api<ApiResponse<RawApiAuction>>(`/auctions/${id}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    startPrice: newStartPrice,
+                    bidIncrement: newMinIncrement,
+                    startTime: newStartTime,
+                    endTime: newEndTime,
+                    visibility: payload.visibility === 'restricted' ? 'PRIVATE' : 'PUBLIC',
+                }),
+            })
+            if (envelope?.data) {
+                const normalized = validateAndNormalizeAuction(envelope.data)
+                if (normalized && targetIndex >= 0) {
+                    localAuctionsStore[targetIndex] = normalized
+                    persistStoredAuctions(localAuctionsStore)
+                    return normalized
+                }
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) {
+                throw error
+            }
+        }
+
+        if (targetIndex >= 0 && currentAuction) {
+            const updatedAuction: Auction = {
+                ...currentAuction,
+                startingPrice: newStartPrice ?? currentAuction.startingPrice,
+                currentBid: newStartPrice ?? currentAuction.currentBid,
+                minIncrement: newMinIncrement ?? currentAuction.minIncrement,
+                startTime: newStartTime,
+                endTime: newEndTime,
+                visibility: payload.visibility || currentAuction.visibility,
+            }
+            localAuctionsStore[targetIndex] = updatedAuction
+            persistStoredAuctions(localAuctionsStore)
+            return updatedAuction
+        }
+
+        throw new ApiClientError(`Không tìm thấy phiên đấu giá với ID ${id}`, 'AUCTION_NOT_FOUND', 404)
+    },
+
+    /**
+     * Chức năng: Hủy phiên đấu giá phía Người bán (trước giờ mở) hoặc Admin can thiệp cưỡng chế.
+     * Đầu vào: auctionId, lý do hủy (reason), quyền thực hiện (actor: 'seller' | 'admin').
+     * Kết quả: Đối tượng Auction được chuyển sang trạng thái 'cancelled' kèm lý do hủy.
+     * Luồng xử lý:
+     *   1. Kiểm tra bắt buộc có lý do hủy.
+     *   2. Với Người bán: chỉ cho phép hủy khi phiên chưa mở (startTime > now) và chưa kết thúc.
+     *   3. Với Admin: có quyền cưỡng chế hủy ngay lập tức kể cả khi phiên đang ACTIVE (do vi phạm chính sách).
+     *   4. Gửi POST /api/v1/auctions/{id}/cancel lên API Gateway.
+     *   5. Cập nhật trạng thái 'cancelled' và lưu lý do vào localStorage.
+     * Quy tắc & lý do: Đảm bảo kiểm soát quyền chặt chẽ; người bán không được tự ý hủy khi đang có người đấu giá sôi nổi.
+     * Lỗi & giới hạn: Ném 403 Forbidden nếu Người bán cố tình hủy phiên đang ACTIVE.
+     */
+    async cancelAuction(
+        id: string,
+        reason: string,
+        actor: 'seller' | 'admin' = 'seller',
+    ): Promise<Auction> {
+        if (!reason || !reason.trim()) {
+            throw new ApiClientError(
+                'Vui lòng nhập lý do hủy phiên đấu giá',
+                'REASON_REQUIRED',
+                422,
+                [{ field: 'reason', message: 'Vui lòng nhập lý do hủy phiên đấu giá' }],
+            )
+        }
+
+        const targetIndex = localAuctionsStore.findIndex((a) => a.id === id)
+        const currentAuction = targetIndex >= 0 ? localAuctionsStore[targetIndex] : null
+
+        if (currentAuction && actor === 'seller') {
+            if (['active', 'ended', 'settled'].includes(currentAuction.status) || new Date(currentAuction.startTime).getTime() <= Date.now()) {
+                throw new ApiClientError(
+                    'Người bán chỉ có thể hủy phiên đấu giá trước giờ mở phiên',
+                    'SELLER_CANNOT_CANCEL_ACTIVE_AUCTION',
+                    403,
+                )
+            }
+        }
+
+        try {
+            const envelope = await post<ApiResponse<RawApiAuction>>(`/auctions/${id}/cancel`, {
+                reason: reason.trim(),
+            })
+            if (envelope?.data) {
+                const normalized = validateAndNormalizeAuction(envelope.data)
+                if (normalized && targetIndex >= 0) {
+                    localAuctionsStore[targetIndex] = normalized
+                    persistStoredAuctions(localAuctionsStore)
+                    return normalized
+                }
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) {
+                throw error
+            }
+        }
+
+        if (targetIndex >= 0 && currentAuction) {
+            const cancelledAuction: Auction = {
+                ...currentAuction,
+                status: 'cancelled',
+                cancelReason: reason.trim(),
+            }
+            localAuctionsStore[targetIndex] = cancelledAuction
+            persistStoredAuctions(localAuctionsStore)
+            return cancelledAuction
+        }
+
+        throw new ApiClientError(`Không tìm thấy phiên đấu giá với ID ${id}`, 'AUCTION_NOT_FOUND', 404)
+    },
+
+    /**
+     * Chức năng: Admin phê duyệt hoặc từ chối phiên đấu giá từ Người bán.
+     * Đầu vào: auctionId, status ('scheduled' | 'rejected'), reason (nếu từ chối).
+     * Kết quả: Phiên đấu giá được cập nhật trạng thái đã phê duyệt hoặc từ chối.
+     * Luồng xử lý:
+     *   1. Nếu từ chối, bắt buộc phải có lý do từ chối.
+     *   2. Gửi POST /api/v1/auctions/{id}/review lên backend.
+     *   3. Cập nhật trạng thái trong kho local và lưu trữ vào localStorage.
+     * Lỗi & giới hạn: Ném 422 nếu thiếu lý do từ chối.
+     */
+    async reviewAuction(
+        id: string,
+        status: 'scheduled' | 'rejected',
+        reason?: string,
+    ): Promise<Auction | null> {
+        if (status === 'rejected' && (!reason || !reason.trim())) {
+            throw new ApiClientError(
+                'Vui lòng nhập lý do từ chối phiên đấu giá',
+                'REASON_REQUIRED',
+                422,
+                [{ field: 'reason', message: 'Vui lòng nhập lý do từ chối phiên đấu giá' }],
+            )
+        }
+
+        const targetIndex = localAuctionsStore.findIndex((a) => a.id === id)
+        const currentAuction = targetIndex >= 0 ? localAuctionsStore[targetIndex] : null
+
+        try {
+            await post<ApiResponse<unknown>>(`/auctions/${id}/review`, {
+                status: status === 'scheduled' ? 'SCHEDULED' : 'REJECTED',
+                reason: reason?.trim(),
+            })
+        } catch (error) {
+            if (!canFallbackToMock(error)) {
+                throw error
+            }
+        }
+
+        // Lưu quyết định kể cả khi API list chưa có bản ghi tương ứng trong kho local.
+        localAuctionReviews = {
+            ...localAuctionReviews,
+            [id]: { status, reason: reason?.trim(), reviewedAt: new Date().toISOString() },
+        }
+        persistAuctionReviews(localAuctionReviews)
+
+        if (targetIndex >= 0 && currentAuction) {
+            const reviewedAuction: Auction = {
+                ...currentAuction,
+                status,
+                cancelReason: status === 'rejected' ? reason?.trim() : undefined,
+            }
+            localAuctionsStore[targetIndex] = reviewedAuction
+            persistStoredAuctions(localAuctionsStore)
+            return reviewedAuction
+        }
+
+        // Bản ghi API có thể chưa có trong cache; marker local vẫn giữ quyết định qua reload.
+        return null
+    },
+
+    /**
+     * Tạm dừng hoặc tiếp tục phiên đấu giá trong cổng Admin.
+     * Gửi yêu cầu lên Auction API; khi endpoint chưa sẵn sàng, cập nhật kho mock và localStorage.
+     */
+    async setAuctionPaused(id: string, paused: boolean, reason: string): Promise<Auction> {
+        if (!reason.trim()) {
+            throw new ApiClientError('Vui lòng nhập lý do thao tác', 'REASON_REQUIRED', 422)
+        }
+        const index = localAuctionsStore.findIndex((auction) => auction.id === id)
+        const auction = index >= 0 ? localAuctionsStore[index] : null
+        if (!auction) throw new ApiClientError(`Không tìm thấy phiên đấu giá với ID ${id}`, 'AUCTION_NOT_FOUND', 404)
+
+        try {
+            await post<ApiResponse<unknown>>(`/auctions/${id}/${paused ? 'pause' : 'resume'}`, { reason: reason.trim() })
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+        }
+
+        const resumedStatus = new Date(auction.endTime).getTime() <= Date.now() ? 'ended' : 'active'
+        const updated: Auction = { ...auction, status: paused ? 'paused' : resumedStatus }
+        localAuctionsStore[index] = updated
+        persistStoredAuctions(localAuctionsStore)
+        return updated
+    },
+
+    /**
      * Chức năng: Thêm một phiên đấu giá do người bán tạo vào kho local.
      */
     addCreatedAuction(auction: Auction) {
         localAuctionsStore = [auction, ...localAuctionsStore]
+        persistStoredAuctions(localAuctionsStore)
     },
 
     /**
-     * Chức năng: Đặt lại kho mock về trạng thái ban đầu (dùng cho test/reset).
+     * Chức năng: Xóa kho mock cục bộ và quyết định duyệt về trạng thái rỗng (dùng cho test/reset).
      */
     resetMockStore() {
-        localAuctionsStore = [...AUCTIONS]
+        // Reset luôn rỗng; test cần fixture phải thêm tường minh qua addCreatedAuction.
+        localAuctionsStore = []
+        persistStoredAuctions(localAuctionsStore)
+        localAuctionReviews = {}
+        try {
+            localStorage.removeItem(AUCTION_REVIEWS_STORAGE_KEY)
+        } catch {
+            // Test/reset vẫn có thể tiếp tục nếu storage không khả dụng.
+        }
     },
 }

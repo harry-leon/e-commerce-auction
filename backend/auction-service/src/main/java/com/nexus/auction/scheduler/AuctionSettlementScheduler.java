@@ -3,20 +3,14 @@ package com.nexus.auction.scheduler;
 import com.nexus.auction.service.AuctionSettlementService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
 
 /**
  * Worker chạy nền tự động kiểm tra và chốt kết quả các phiên đấu giá đã quá hạn.
  *
- * Chức năng:
- * - Định kỳ quét các phiên có status = 'ACTIVE' và endTime <= now().
- * - Gọi AuctionSettlementService để khóa phiên và xác định người chiến thắng.
- * - Cho phép bật/tắt linh hoạt qua biến cấu hình 'app.auction.scheduler.enabled'.
+ * @deprecated Từ HG-S2-4, các tác vụ đóng phiên và quyết toán được quản lý bởi {@link AuctionClosingScheduler}.
+ *             Lớp này được giữ lại để đảm bảo tương thích mã nguồn và các bài test đơn vị cũ.
  */
-@Component
-@ConditionalOnProperty(name = "app.auction.scheduler.enabled", havingValue = "true", matchIfMissing = true)
+@Deprecated
 public class AuctionSettlementScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(AuctionSettlementScheduler.class);
@@ -28,9 +22,8 @@ public class AuctionSettlementScheduler {
     }
 
     /**
-     * Tự động quét và quyết toán định kỳ mỗi 10 giây (initialDelay = 5 giây sau khi khởi động service).
+     * Tự động quét và quyết toán định kỳ (giữ lại phục vụ tương thích unit test).
      */
-    @Scheduled(fixedDelayString = "${app.auction.scheduler.settlement-interval-ms:10000}", initialDelay = 5000)
     public void runSettlementJob() {
         try {
             int count = auctionSettlementService.settleExpiredAuctions();
@@ -42,4 +35,3 @@ public class AuctionSettlementScheduler {
         }
     }
 }
-

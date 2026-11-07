@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, User } from '../types'
 import { AUCTIONS, PRODUCTS, DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER, DEMO_SUPPORT } from '../mockData'
 import { ORDERS, USERS } from '../mockData'
+import { auctionsApi } from '../api/auctions'
 import { AuctionCard, ProductCard } from '../components/Cards'
 import { NumberStepper, PasswordInput, Pagination, Toggle, ConfirmModal } from '../components/UI'
 import * as Admin from '../features/admin/AdminPages'
@@ -45,6 +46,7 @@ beforeEach(() => {
 })
 afterEach(() => {
     cleanup()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
 })
 
@@ -75,6 +77,47 @@ for (const [area, pages, user] of groups) {
         }
     })
 }
+
+// Bảo vệ empty state để trang chủ không tự hiển thị auction fixture khi API không có dữ liệu.
+it('shows a clear empty state instead of default live auction fixtures', async () => {
+    render(<Buyer.HomePage />)
+
+    expect(await screen.findByText('No live or upcoming auctions right now. Please check back soon.')).toBeInTheDocument()
+    expect(screen.queryByText(AUCTIONS[0].product.name)).not.toBeInTheDocument()
+    expect(screen.queryByText(AUCTIONS[1].product.name)).not.toBeInTheDocument()
+})
+
+// Bảo vệ việc đưa phiên scheduled đã có trong dữ liệu Buyer lên trang chủ cùng phiên đang diễn ra.
+it('shows upcoming scheduled auctions on the home page', async () => {
+    const getAuctions = vi.spyOn(auctionsApi, 'getAuctions').mockResolvedValue({
+        items: [{ ...AUCTIONS[2], id: 'upcoming-home-test', status: 'scheduled' }],
+        total: 1,
+        page: 1,
+        limit: 8,
+        totalPages: 1,
+    })
+    render(<Buyer.HomePage />)
+
+    expect(await screen.findAllByText(AUCTIONS[2].product.name)).not.toHaveLength(0)
+    expect(screen.queryByText('No live or upcoming auctions right now. Please check back soon.')).not.toBeInTheDocument()
+    expect(getAuctions).toHaveBeenCalledWith(expect.objectContaining({ status: 'all' }))
+})
+
+// Đảm bảo CTA phụ trên hero luôn đưa Buyer tới danh sách đấu giá thay vì một sản phẩm mẫu.
+it('navigates from the home hero to the auction list', () => {
+    vi.spyOn(auctionsApi, 'getAuctions').mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 8,
+        totalPages: 1,
+    })
+    render(<Buyer.HomePage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bid Now' }))
+
+    expect(holder.current.navigate).toHaveBeenCalledWith('auction-list')
+})
 
 it('adds a product to the cart without opening its detail page, then opens detail on card click', () => {
     const product = { ...PRODUCTS[0], stock: 2 }

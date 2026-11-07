@@ -336,6 +336,7 @@ services:
         condition: service_healthy
     build: ./frontend-web   # cần frontend-web/package-lock.json (chạy `npm install` một lần)
     ports:
+      # Bản Docker là giao diện dùng chung ở cổng 3000; Vite dev cần cổng khác khi chạy đồng thời.
       - "3000:8080"
 
   # ---- Hạ tầng dùng khi service cần (profile "full") ----

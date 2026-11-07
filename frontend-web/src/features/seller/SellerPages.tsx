@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useApp } from '../../context'
-import { tr, formatCurrency, formatDate } from '../../i18n'
+import { tr, formatCurrency, formatDate, formatDateTime } from '../../i18n'
 import { SellerLayout } from '../../components/Layout'
 import {
     Button,
@@ -20,6 +20,7 @@ import {
     Breadcrumb,
     Plus,
     Pencil,
+    Eye,
     Trash2,
     TrendingUp,
     Package,
@@ -30,11 +31,12 @@ import {
     Camera,
     Bell,
 } from '../../components/UI'
-import { PRODUCTS, AUCTIONS, ORDERS, NOTIFICATIONS } from '../../mockData'
+import { PRODUCTS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
-import { api, type ApiCategory, type ApiProduct, type Envelope } from '../../api/client'
+import { auctionsApi } from '../../api/auctions'
+import { api, ApiClientError, type ApiCategory, type ApiProduct, type Envelope } from '../../api/client'
 import { useLoad } from '../../hooks/useLoad'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
@@ -998,31 +1000,136 @@ export function CreateProductPage() {
 }
 
 // ─── Seller Auction List ───────────────────────────────────────────────────────
-/** Review có thể chưa tồn tại trong state; khi hiển thị kết quả dùng optional access và giữ trạng thái gốc nếu chưa duyệt. */
+/**
+ * Chức năng: Màn hình danh sách phiên đấu giá của Người bán (Seller Auction List).
+ *            Hiển thị các phiên đấu giá do chính người bán quản lý kèm trạng thái vòng đời
+ *            (Chờ duyệt, Đã lên lịch, Đang diễn ra, Đã kết thúc, Đã hủy).
+ *            Cung cấp thao tác chỉnh sửa thông số phiên trước giờ mở và hủy phiên theo quyền.
+ * Đầu vào: user context, createdAuctions, auctionReviews, query parameters.
+ * Kết quả: Bảng dữ liệu phiên đấu giá chuẩn hóa; cho phép chuyển trang chỉnh sửa hoặc mở modal hủy phiên.
+ * Luồng xử lý:
+ *   1. Tải danh sách các phiên đấu giá của người bán hiện tại (sellerId).
+ *   2. Hợp nhất dữ liệu mới từ createdAuctions và trạng thái xét duyệt auctionReviews.
+ *   3. Lọc theo tab trạng thái được chọn (Tất cả, Chờ duyệt, Đang diễn ra, Lên lịch, Đã kết thúc, Đã hủy).
+ *   4. Khi người bán bấm nút sửa (Pencil): chỉ cho phép nếu phiên chưa mở (startTime > now), điều hướng tới màn hình seller-create-auction kèm ID phiên.
+ *   5. Khi người bán bấm nút hủy (Trash2): mở modal xác nhận yêu cầu nhập lý do hủy, sau đó gọi auctionsApi.cancelAuction.
+ * Quy tắc & lý do: Người bán chỉ có quyền hủy/sửa phiên trước khi phiên bắt đầu; khi phiên đã ACTIVE thì chỉ có Quản trị viên mới được can thiệp cưỡng chế.
+ * Lỗi & giới hạn: Hiển thị thông báo toast lỗi khi thao tác hủy không thành công hoặc người bán vi phạm thời gian mở phiên.
+ */
 export function SellerAuctionListPage() {
-    const { lang, navigate, showToast, auctionReviews, createdAuctions } = useApp()
+    const { lang, navigate, showToast, auctionReviews, createdAuctions, user } = useApp()
     const [tab, setTab] = useState('all')
     const [cancelOpen, setCancelOpen] = useState(false)
+    const [cancellingAuctionId, setCancellingAuctionId] = useState<string | null>(null)
+    const [cancelReason, setCancelReason] = useState('')
+    const [cancelReasonError, setCancelReasonError] = useState('')
+    const [cancelling, setCancelling] = useState(false)
     const [reviewedAuction, setReviewedAuction] = useState<Auction | null>(null)
+    const [detailAuction, setDetailAuction] = useState<Auction | null>(null)
+    const [detailLoading, setDetailLoading] = useState(false)
+    const detailRequestId = useRef(0)
+    const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
 
-    const sellerAuctions = [...createdAuctions, ...AUCTIONS]
-        .filter((auction) => auction.sellerId === 'u2')
-        .map((auction) => ({
-            ...auction,
-            status: auctionReviews[auction.id]?.status || auction.status,
-        }))
+    // Tải danh sách phiên đấu giá từ API Adapter (có tự động fallback sang localStorage/mock)
+    const currentSellerId = user?.id || 'u2'
+
+    const refreshAuctions = async () => {
+        try {
+            const res = await auctionsApi.getAuctions({
+                sellerId: currentSellerId,
+                sellerName: user?.fullName,
+                excludeDemoData: true,
+                extraAuctions: createdAuctions,
+                reviews: auctionReviews,
+                limit: 100,
+            })
+            setLiveAuctions(res.items)
+        } catch {
+            // Khi API lỗi ngoài nhóm fallback, chỉ giữ dữ liệu người dùng vừa tạo trong Context; không dựng fixture mặc định.
+            const fallback = createdAuctions
+                .filter((a) => a.sellerId === currentSellerId)
+                .map((a) => ({
+                    ...a,
+                    status: (auctionReviews[a.id]?.status as any) || a.status,
+                }))
+            setLiveAuctions(fallback)
+        }
+    }
+
+    useEffect(() => {
+        refreshAuctions()
+    }, [currentSellerId, createdAuctions, auctionReviews])
+
+    const sellerAuctions = liveAuctions.map((auction) => ({
+        ...auction,
+        status: (auctionReviews[auction.id]?.status as any) || auction.status,
+    }))
+
     const filtered = tab === 'all' ? sellerAuctions : sellerAuctions.filter((a) => a.status === tab)
+
+    /** Tải snapshot mới nhất để Seller xem thông số và lịch sử bid nếu Auction Service có trả dữ liệu đó. */
+    const openAuctionDetails = async (auction: Auction) => {
+        const requestId = ++detailRequestId.current
+        setDetailAuction(auction)
+        setDetailLoading(true)
+        try {
+            const details = await auctionsApi.getAuctionById(auction.id, createdAuctions, auctionReviews)
+            if (requestId === detailRequestId.current) setDetailAuction(details)
+        } catch {
+            // Giữ dữ liệu hàng hiện tại nếu endpoint chi tiết tạm lỗi; không thay bằng dữ liệu giả.
+            if (requestId === detailRequestId.current) setDetailAuction(auction)
+        } finally {
+            if (requestId === detailRequestId.current) setDetailLoading(false)
+        }
+    }
+
     const statusLabel = (s: string) =>
         ({
             pending_approval: lang === 'en' ? 'Pending approval' : 'Chờ Admin duyệt',
             scheduled: tr(lang, 'statusScheduled'),
             active: tr(lang, 'statusActive'),
+            paused: lang === 'en' ? 'Paused by Admin' : 'Được Admin tạm dừng',
             ended: tr(lang, 'statusEnded'),
             settled: tr(lang, 'statusSettled'),
             cancelled: tr(lang, 'statusCancelled'),
             failed: tr(lang, 'statusFailed'),
             rejected: lang === 'en' ? 'Rejected' : 'Bị từ chối',
         })[s] || s
+
+    // Xử lý xác nhận hủy phiên đấu giá từ người bán
+    const handleConfirmCancel = async () => {
+        if (!cancellingAuctionId) return
+        if (!cancelReason.trim()) {
+            setCancelReasonError(
+                lang === 'en' ? 'Cancellation reason is required' : 'Vui lòng nhập lý do hủy phiên',
+            )
+            return
+        }
+
+        setCancelling(true)
+        try {
+            await auctionsApi.cancelAuction(cancellingAuctionId, cancelReason.trim(), 'seller')
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Auction cancelled successfully.'
+                        : 'Đã hủy phiên đấu giá thành công.',
+            })
+            setCancelOpen(false)
+            setCancellingAuctionId(null)
+            setCancelReason('')
+            setCancelReasonError('')
+            await refreshAuctions()
+        } catch (err: any) {
+            showToast({
+                type: 'error',
+                message: err?.message || (lang === 'en' ? 'Failed to cancel auction' : 'Không thể hủy phiên đấu giá'),
+            })
+        } finally {
+            setCancelling(false)
+        }
+    }
 
     return (
         <SellerLayout title={tr(lang, 'auctions')}>
@@ -1033,16 +1140,20 @@ export function SellerAuctionListPage() {
                         {
                             id: 'pending_approval',
                             label: lang === 'en' ? 'Pending approval' : 'Chờ duyệt',
-                            count: sellerAuctions.filter((a) => a.status === 'pending_approval')
-                                .length,
+                            count: sellerAuctions.filter((a) => a.status === 'pending_approval').length,
+                        },
+                        {
+                            id: 'scheduled',
+                            label: tr(lang, 'statusScheduled'),
+                            count: sellerAuctions.filter((a) => a.status === 'scheduled').length,
                         },
                         {
                             id: 'active',
                             label: tr(lang, 'statusActive'),
                             count: sellerAuctions.filter((a) => a.status === 'active').length,
                         },
-                        { id: 'scheduled', label: tr(lang, 'statusScheduled') },
                         { id: 'ended', label: tr(lang, 'statusEnded') },
+                        { id: 'cancelled', label: tr(lang, 'statusCancelled') },
                     ]}
                     active={tab}
                     onChange={setTab}
@@ -1064,14 +1175,26 @@ export function SellerAuctionListPage() {
                             render: (r: any) => (
                                 <div className="flex items-center gap-3">
                                     <img
-                                        src={r.product.images[0]}
+                                        src={r.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
                                         alt=""
                                         className="w-10 h-10 object-cover rounded-lg"
                                     />
-                                    <p className="text-sm font-semibold line-clamp-1">
-                                        {lang === 'vi' ? r.product.nameVi : r.product.name}
-                                    </p>
+                                    <div>
+                                        <p className="text-sm font-semibold line-clamp-1">
+                                            {lang === 'vi' ? r.product?.nameVi || r.product?.name : r.product?.name}
+                                        </p>
+                                        <p className="text-xs text-gray-400">SKU: {r.product?.sku || 'N/A'}</p>
+                                    </div>
                                 </div>
+                            ),
+                        },
+                        {
+                            key: 'startingPrice',
+                            label: tr(lang, 'startingPrice'),
+                            render: (r: any) => (
+                                <span className="text-sm font-medium text-gray-700">
+                                    {formatCurrency(r.startingPrice, lang)}
+                                </span>
                             ),
                         },
                         {
@@ -1089,11 +1212,20 @@ export function SellerAuctionListPage() {
                             render: (r: any) => <span className="font-semibold">{r.bidCount}</span>,
                         },
                         {
-                            key: 'endTime',
-                            label: lang === 'en' ? 'End Time' : 'Kết thúc',
+                            key: 'startTime',
+                            label: tr(lang, 'startTime'),
                             render: (r: any) => (
                                 <span className="text-xs text-gray-500">
-                                    {formatDate(r.endTime, lang)}
+                                    {formatDateTime(r.startTime, lang)}
+                                </span>
+                            ),
+                        },
+                        {
+                            key: 'endTime',
+                            label: tr(lang, 'endTime'),
+                            render: (r: any) => (
+                                <span className="text-xs text-gray-500">
+                                    {formatDateTime(r.endTime, lang)}
                                 </span>
                             ),
                         },
@@ -1107,82 +1239,229 @@ export function SellerAuctionListPage() {
                         {
                             key: 'actions',
                             label: tr(lang, 'actions'),
-                            render: (r: any) => (
-                                <div className="flex gap-1">
-                                    {['pending_approval', 'scheduled'].includes(r.status) && (
-                                        <button className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5">
-                                            <Pencil size={14} />
-                                        </button>
-                                    )}
-                                    {['pending_approval', 'scheduled', 'active'].includes(
-                                        r.status,
-                                    ) && (
+                            render: (r: any) => {
+                                const isBeforeStart = new Date(r.startTime).getTime() > Date.now()
+                                const isEditable = ['pending_approval', 'scheduled', 'draft'].includes(r.status) && isBeforeStart
+                                const isCancellable = ['pending_approval', 'scheduled', 'draft'].includes(r.status) && isBeforeStart
+
+                                return (
+                                    <div className="flex gap-1 items-center">
                                         <button
+                                            type="button"
+                                            title={tr(lang, 'viewAuctionDetails')}
+                                            aria-label={tr(lang, 'viewAuctionDetails')}
                                             onClick={(e) => {
                                                 e.stopPropagation()
-                                                setCancelOpen(true)
+                                                void openAuctionDetails(r)
                                             }}
-                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
+                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-600 hover:bg-gray-100 rounded"
                                         >
-                                            <Trash2 size={14} />
+                                            <Eye size={14} />
                                         </button>
-                                    )}
-                                    {auctionReviews[r.id] && (
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                setReviewedAuction(r)
-                                            }}
-                                        >
-                                            {lang === 'en' ? 'View Result' : 'Xem kết quả'}
-                                        </Button>
-                                    )}
-                                </div>
-                            ),
+                                        {isEditable && (
+                                            <button
+                                                title={lang === 'en' ? 'Edit auction' : 'Chỉnh sửa phiên'}
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    navigate('seller-create-auction', { id: r.id })
+                                                }}
+                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:bg-primary/10 rounded"
+                                            >
+                                                <Pencil size={14} />
+                                            </button>
+                                        )}
+                                        {isCancellable && (
+                                            <button
+                                                title={lang === 'en' ? 'Cancel auction' : 'Hủy phiên đấu giá'}
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setCancellingAuctionId(r.id)
+                                                    setCancelReason('')
+                                                    setCancelReasonError('')
+                                                    setCancelOpen(true)
+                                                }}
+                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:bg-red-50 rounded"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        )}
+                                        {auctionReviews[r.id] && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setReviewedAuction(r)
+                                                }}
+                                            >
+                                                {lang === 'en' ? 'View Result' : 'Xem kết quả'}
+                                            </Button>
+                                        )}
+                                    </div>
+                                )
+                            },
                         },
                     ]}
                     data={filtered}
                     rowKey={(r) => r.id}
                 />
             </div>
+
+            {/* Modal Seller xem thông số và các mức giá đã nhận; lịch sử phụ thuộc dữ liệu do API chi tiết trả về. */}
+            <Modal
+                open={!!detailAuction}
+                onClose={() => {
+                    detailRequestId.current += 1
+                    setDetailAuction(null)
+                    setDetailLoading(false)
+                }}
+                title={tr(lang, 'auctionDetails')}
+                size="lg"
+            >
+                {detailAuction && (
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3 rounded-xl bg-gray-50 p-4">
+                            <img
+                                src={detailAuction.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'}
+                                alt=""
+                                className="h-16 w-16 rounded-lg border object-cover"
+                            />
+                            <div className="min-w-0">
+                                <h3 className="font-semibold text-gray-900">
+                                    {lang === 'vi' ? detailAuction.product?.nameVi || detailAuction.product?.name : detailAuction.product?.name}
+                                </h3>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    SKU: {detailAuction.product?.sku || 'N/A'} · ID: {detailAuction.id}
+                                </p>
+                                <div className="mt-2">
+                                    <StatusBadge status={detailAuction.status} label={statusLabel(detailAuction.status)} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'startingPrice')}</span>
+                                <span className="font-semibold">{formatCurrency(detailAuction.startingPrice, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'currentBid')}</span>
+                                <span className="font-bold text-auction">{formatCurrency(detailAuction.currentBid, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'minIncrement')}</span>
+                                <span className="font-semibold">{formatCurrency(detailAuction.minIncrement, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'totalBidCount')}</span>
+                                <span className="font-semibold">{detailAuction.bidCount}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'auctionVisibility')}</span>
+                                <span className="font-semibold capitalize">{detailAuction.visibility}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'startTime')}</span>
+                                <span className="font-medium">{formatDateTime(detailAuction.startTime, lang)}</span>
+                            </div>
+                            <div className="rounded-lg bg-gray-50 p-3">
+                                <span className="block text-xs text-gray-500">{tr(lang, 'endTime')}</span>
+                                <span className="font-medium">{formatDateTime(detailAuction.endTime, lang)}</span>
+                            </div>
+                        </div>
+
+                        <section>
+                            <h4 className="mb-2 font-semibold">{tr(lang, 'bidHistory')}</h4>
+                            {detailLoading ? (
+                                <p className="text-sm text-gray-500" role="status">{tr(lang, 'loadingAuctionDetails')}</p>
+                            ) : detailAuction.bids?.length ? (
+                                <div className="max-h-56 overflow-y-auto rounded-lg border">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-gray-50 text-gray-600">
+                                            <tr>
+                                                <th className="p-3 text-left">{tr(lang, 'bidAmount')}</th>
+                                                <th className="p-3 text-right">{tr(lang, 'bidTime')}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {[...detailAuction.bids]
+                                                .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                                                .map((bid) => (
+                                                    <tr key={bid.id}>
+                                                        <td className="p-3 font-semibold text-auction">{formatCurrency(bid.amount, lang)}</td>
+                                                        <td className="p-3 text-right text-gray-500">{formatDateTime(bid.timestamp, lang)}</td>
+                                                    </tr>
+                                                ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-500">
+                                    {tr(lang, 'bidHistoryUnavailable')}
+                                </p>
+                            )}
+                        </section>
+                    </div>
+                )}
+            </Modal>
+
+            {/* Modal Hủy phiên đấu giá của Người bán */}
             <Modal
                 open={cancelOpen}
-                onClose={() => setCancelOpen(false)}
+                onClose={() => {
+                    setCancelOpen(false)
+                    setCancellingAuctionId(null)
+                    setCancelReason('')
+                    setCancelReasonError('')
+                }}
                 title={tr(lang, 'cancelAuction')}
                 size="sm"
                 footer={
                     <>
-                        <Button variant="outline" onClick={() => setCancelOpen(false)}>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setCancelOpen(false)
+                                setCancellingAuctionId(null)
+                                setCancelReason('')
+                                setCancelReasonError('')
+                            }}
+                        >
                             {tr(lang, 'cancel')}
                         </Button>
                         <Button
                             variant="danger"
-                            onClick={() => {
-                                setCancelOpen(false)
-                                showToast({
-                                    type: 'success',
-                                    message:
-                                        lang === 'en'
-                                            ? 'Auction cancelled.'
-                                            : 'Đã hủy phiên đấu giá.',
-                                })
-                            }}
+                            loading={cancelling}
+                            onClick={handleConfirmCancel}
                         >
                             {tr(lang, 'confirm')}
                         </Button>
                     </>
                 }
             >
-                <Textarea
-                    label={tr(lang, 'cancelReason')}
-                    rows={3}
-                    placeholder={
-                        lang === 'en' ? 'Reason for cancellation...' : 'Lý do hủy phiên đấu giá...'
-                    }
-                />
+                <div className="space-y-3">
+                    <p className="text-sm text-gray-600">
+                        {lang === 'en'
+                            ? 'Are you sure you want to cancel this auction? It can only be cancelled before it officially opens.'
+                            : 'Bạn có chắc chắn muốn hủy phiên đấu giá này không? Phiên chỉ có thể hủy trước giờ mở chính thức.'}
+                    </p>
+                    <Textarea
+                        label={`${tr(lang, 'cancelReason')} *`}
+                        rows={3}
+                        value={cancelReason}
+                        onChange={(e) => {
+                            setCancelReason(e.target.value)
+                            if (e.target.value.trim()) setCancelReasonError('')
+                        }}
+                        error={cancelReasonError}
+                        placeholder={
+                            lang === 'en' ? 'Reason for cancellation...' : 'Lý do hủy phiên đấu giá...'
+                        }
+                    />
+                </div>
             </Modal>
+
+            {/* Modal Xem kết quả phê duyệt của Admin */}
             <Modal
                 open={!!reviewedAuction}
                 onClose={() => setReviewedAuction(null)}
@@ -1264,82 +1543,321 @@ export function SellerAuctionListPage() {
     )
 }
 
-// ─── Create Auction ────────────────────────────────────────────────────────────
+// ─── Create & Edit Auction ────────────────────────────────────────────────────────────
+/**
+ * Chức năng: Màn hình khởi tạo hoặc chỉnh sửa phiên đấu giá dành cho Người bán.
+ *            Cung cấp biểu mẫu thiết lập sản phẩm, giá khởi điểm, bước giá, khung thời gian bắt đầu/kết thúc
+ *            và chế độ hiển thị (công khai / hạn chế).
+ * Đầu vào: pageParams.id (nếu chỉnh sửa phiên có sẵn), danh sách sản phẩm của người bán.
+ * Kết quả: Gọi API tạo mới (auctionsApi.createAuction) hoặc cập nhật (auctionsApi.updateAuction).
+ * Luồng xử lý:
+ *   1. Kiểm tra tham số pageParams.id để xác định chế độ Tạo mới hoặc Chỉnh sửa.
+ *   2. Nếu là Chỉnh sửa: Tải dữ liệu phiên hiện tại, điền trước vào form.
+ *      - Kiểm tra điều kiện có thể sửa: Nếu phiên đã ACTIVE hoặc đã qua startTime, chặn chỉnh sửa và báo lỗi.
+ *   3. Kiểm tra validation toàn diện trước khi gửi:
+ *      - Sản phẩm: bắt buộc phải chọn sản phẩm hợp lệ có enableAuction.
+ *      - Giá khởi điểm: số dương > 0.
+ *      - Bước giá: số dương >= 1,000 VND (hoặc cấu hình tối thiểu).
+ *      - Thời gian bắt đầu: định dạng hợp lệ và phải lớn hơn thời gian hiện tại (startTime > now).
+ *      - Thời gian kết thúc: phải sau thời gian bắt đầu (endTime > startTime).
+ *      - Thời lượng phiên: tối thiểu 60 phút (1 giờ) và tối đa 168 giờ (7 ngày).
+ *   4. Gửi request qua API Adapter, lưu trữ dữ liệu bền vững và điều hướng về seller-auctions.
+ * Quy tắc & lý do: Đảm bảo giao diện tuân thủ chặt chẽ API Contract và Accept Criteria của LD-S2-2.
+ * Lỗi & giới hạn: Hiển thị lỗi đỏ chi tiết ngay dưới từng ô nhập liệu (inline error) và toast thông báo chung.
+ */
 export function CreateAuctionPage() {
-    const { lang, navigate, showToast, user, submitAuction } = useApp()
+    const { lang, navigate, showToast, submitAuction, pageParams, createdAuctions } = useApp()
+    const editAuctionId = (pageParams?.id as string) || undefined
+    const isEdit = Boolean(editAuctionId)
+
     const [saving, setSaving] = useState(false)
+    const [loadingData, setLoadingData] = useState(false)
+    const [notEditableError, setNotEditableError] = useState('')
     const [repError, setRepError] = useState(false)
     const [overLimit, setOverLimit] = useState(false)
+
+    // Dữ liệu form
     const [productId, setProductId] = useState('')
     const [startingPrice, setStartingPrice] = useState('')
-    const [minIncrement, setMinIncrement] = useState('')
+    const [minIncrement, setMinIncrement] = useState('1000')
     const [startTime, setStartTime] = useState('')
     const [endTime, setEndTime] = useState('')
     const [visibility, setVisibility] = useState<'public' | 'restricted'>('public')
 
+    // Bảng lỗi validation từng trường
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+
+    // Nạp dữ liệu khi ở chế độ chỉnh sửa phiên có sẵn
+    useEffect(() => {
+        if (!editAuctionId) return
+
+        let mounted = true
+        setLoadingData(true)
+
+        const loadTargetAuction = async () => {
+            try {
+                let auction: Auction | null = null
+                try {
+                    auction = await auctionsApi.getAuctionById(editAuctionId, createdAuctions)
+                } catch {
+                    auction = createdAuctions.find((a) => a.id === editAuctionId) || null
+                }
+
+                if (!mounted) return
+
+                if (!auction) {
+                    showToast({
+                        type: 'error',
+                        message: lang === 'en' ? 'Auction not found' : 'Không tìm thấy phiên đấu giá',
+                    })
+                    navigate('seller-auctions')
+                    return
+                }
+
+                // Kiểm tra điều kiện chỉnh sửa: chỉ cho phép khi chưa mở (startTime > now) và trạng thái scheduled/draft/pending
+                const isPastStart = new Date(auction.startTime).getTime() <= Date.now()
+                if (['active', 'ended', 'settled', 'cancelled'].includes(auction.status) || isPastStart) {
+                    setNotEditableError(
+                        lang === 'en'
+                            ? 'This auction has already started or ended and cannot be edited.'
+                            : 'Phiên đấu giá đã mở hoặc đã kết thúc, không thể chỉnh sửa.',
+                    )
+                }
+
+                setProductId(auction.productId)
+                setStartingPrice(String(auction.startingPrice))
+                setMinIncrement(String(auction.minIncrement))
+
+                // Định dạng Date string cho thẻ input datetime-local (YYYY-MM-DDTHH:mm)
+                const formatForInput = (isoStr: string) => {
+                    const d = new Date(isoStr)
+                    if (isNaN(d.getTime())) return ''
+                    const pad = (n: number) => String(n).padStart(2, '0')
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+                }
+
+                setStartTime(formatForInput(auction.startTime))
+                setEndTime(formatForInput(auction.endTime))
+                setVisibility(auction.visibility || 'public')
+            } finally {
+                if (mounted) setLoadingData(false)
+            }
+        }
+
+        loadTargetAuction()
+
+        return () => {
+            mounted = false
+        }
+    }, [editAuctionId, createdAuctions])
+
+    // Xóa lỗi validation khi người dùng chỉnh sửa giá trị trường
+    const handleFieldChange = (field: string, value: string, setter: (v: any) => void) => {
+        setter(value)
+        if (fieldErrors[field]) {
+            setFieldErrors((prev) => {
+                const updated = { ...prev }
+                delete updated[field]
+                return updated
+            })
+        }
+    }
+
+    // Kiểm tra tính hợp lệ toàn bộ form
+    const validateForm = (): boolean => {
+        const errors: Record<string, string> = {}
+
+        if (!productId) {
+            errors.productId =
+                lang === 'en'
+                    ? 'Please select a product for the auction'
+                    : 'Vui lòng chọn sản phẩm cho phiên đấu giá'
+        }
+
+        const startPriceNum = Number(startingPrice)
+        if (!startingPrice || isNaN(startPriceNum) || startPriceNum <= 0) {
+            errors.startingPrice =
+                lang === 'en'
+                    ? 'Starting price must be greater than 0'
+                    : 'Giá khởi điểm phải lớn hơn 0'
+        }
+
+        const minIncNum = Number(minIncrement)
+        if (!minIncrement || isNaN(minIncNum) || minIncNum <= 0) {
+            errors.minIncrement =
+                lang === 'en'
+                    ? 'Bid increment must be greater than 0'
+                    : 'Bước giá phải lớn hơn 0'
+        } else if (minIncNum < 1000) {
+            errors.minIncrement =
+                lang === 'en'
+                    ? 'Minimum bid increment is 1,000 đ'
+                    : 'Bước giá tối thiểu phải từ 1,000 đ'
+        }
+
+        if (!startTime) {
+            errors.startTime =
+                lang === 'en'
+                    ? 'Please specify start time'
+                    : 'Vui lòng chọn thời gian bắt đầu'
+        } else {
+            const startDate = new Date(startTime)
+            if (isNaN(startDate.getTime())) {
+                errors.startTime =
+                    lang === 'en' ? 'Invalid start time' : 'Thời gian bắt đầu không hợp lệ'
+            } else if (startDate.getTime() <= Date.now()) {
+                errors.startTime =
+                    lang === 'en'
+                        ? 'Start time must be greater than the current time'
+                        : 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại'
+            }
+        }
+
+        if (!endTime) {
+            errors.endTime =
+                lang === 'en'
+                    ? 'Please specify end time'
+                    : 'Vui lòng chọn thời gian kết thúc'
+        } else if (startTime) {
+            const startDate = new Date(startTime)
+            const endDate = new Date(endTime)
+            if (isNaN(endDate.getTime())) {
+                errors.endTime =
+                    lang === 'en' ? 'Invalid end time' : 'Thời gian kết thúc không hợp lệ'
+            } else if (endDate.getTime() <= startDate.getTime()) {
+                errors.endTime =
+                    lang === 'en'
+                        ? 'End time must be after start time'
+                        : 'Thời gian kết thúc phải sau thời gian bắt đầu'
+            } else {
+                const duration = endDate.getTime() - startDate.getTime()
+                if (duration < 3600000) {
+                    errors.endTime =
+                        lang === 'en'
+                            ? 'Auction duration must be at least 1 hour'
+                            : 'Thời lượng phiên tối thiểu là 1 giờ'
+                } else if (duration > 7 * 86400000) {
+                    errors.endTime =
+                        lang === 'en'
+                            ? 'Auction duration cannot exceed 7 days'
+                            : 'Thời lượng phiên tối đa là 7 ngày'
+                }
+            }
+        }
+
+        setFieldErrors(errors)
+        return Object.keys(errors).length === 0
+    }
+
     const save = async () => {
-        const product = PRODUCTS.find((item) => item.id === productId)
-        if (!product || !startingPrice || !minIncrement) {
+        if (notEditableError) {
+            showToast({
+                type: 'error',
+                message: notEditableError,
+            })
+            return
+        }
+
+        if (!validateForm()) {
             showToast({
                 type: 'error',
                 message:
                     lang === 'en'
-                        ? 'Select a product and enter the auction prices.'
-                        : 'Vui lòng chọn sản phẩm và nhập giá đấu giá.',
+                        ? 'Please correct the errors in the form'
+                        : 'Vui lòng kiểm tra lại các trường thông tin lỗi',
             })
             return
         }
+
         setSaving(true)
-        await new Promise((r) => setTimeout(r, 800))
-        submitAuction({
-            id: `auction-${Date.now()}`,
-            productId: product.id,
-            product,
-            sellerId: user?.id || product.sellerId,
-            sellerName: user?.fullName || product.sellerName,
-            status: 'pending_approval',
-            startingPrice: Number(startingPrice),
-            currentBid: Number(startingPrice),
-            minIncrement: Number(minIncrement),
-            startTime: startTime
-                ? new Date(startTime).toISOString()
-                : new Date(Date.now() + 86400000).toISOString(),
-            endTime: endTime
-                ? new Date(endTime).toISOString()
-                : new Date(Date.now() + 3 * 86400000).toISOString(),
-            bidCount: 0,
-            bids: [],
-            visibility,
-        })
-        setSaving(false)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en'
-                    ? 'Auction submitted for Admin approval.'
-                    : 'Đã gửi phiên đấu giá để Admin phê duyệt.',
-        })
-        navigate('seller-auctions')
+        try {
+            if (isEdit && editAuctionId) {
+                // Luồng cập nhật phiên đấu giá
+                await auctionsApi.updateAuction(editAuctionId, {
+                    startingPrice: Number(startingPrice),
+                    minIncrement: Number(minIncrement),
+                    startTime: new Date(startTime).toISOString(),
+                    endTime: new Date(endTime).toISOString(),
+                    visibility,
+                })
+
+                showToast({
+                    type: 'success',
+                    message:
+                        lang === 'en'
+                            ? 'Auction updated successfully.'
+                            : 'Cập nhật phiên đấu giá thành công.',
+                })
+            } else {
+                // Luồng tạo mới phiên đấu giá
+                const created = await auctionsApi.createAuction({
+                    productId,
+                    startingPrice: Number(startingPrice),
+                    minIncrement: Number(minIncrement),
+                    startTime: new Date(startTime).toISOString(),
+                    endTime: new Date(endTime).toISOString(),
+                    visibility,
+                })
+
+                // Đồng bộ context state
+                submitAuction(created)
+
+                showToast({
+                    type: 'success',
+                    message: tr(lang, 'auctionSubmittedForApproval'),
+                })
+            }
+
+            navigate('seller-auctions')
+        } catch (err: any) {
+            if (err instanceof ApiClientError) {
+                const apiFieldErrors = err.getFieldErrors()
+                if (Object.keys(apiFieldErrors).length > 0) {
+                    setFieldErrors(apiFieldErrors)
+                }
+                showToast({
+                    type: 'error',
+                    message: err.message,
+                })
+            } else {
+                showToast({
+                    type: 'error',
+                    message:
+                        err?.message ||
+                        (lang === 'en'
+                            ? 'An error occurred while saving auction.'
+                            : 'Đã xảy ra lỗi khi lưu phiên đấu giá.'),
+                })
+            }
+        } finally {
+            setSaving(false)
+        }
     }
 
+    const availableProducts = PRODUCTS.filter((p) => p.enableAuction)
+
     return (
-        <SellerLayout title={tr(lang, 'createAuction')}>
+        <SellerLayout title={isEdit ? tr(lang, 'editAuction') : tr(lang, 'createAuction')}>
             <Breadcrumb
                 items={[
                     { label: tr(lang, 'auctions'), page: 'seller-auctions' },
-                    { label: tr(lang, 'createAuction') },
+                    { label: isEdit ? tr(lang, 'editAuction') : tr(lang, 'createAuction') },
                 ]}
             />
             <div className="mt-5 max-w-2xl">
                 <div className="space-y-5">
-                    <AlertBanner
-                        type="info"
-                        message={
-                            lang === 'en'
-                                ? 'New auctions must be approved by Admin before they are scheduled or visible to buyers.'
-                                : 'Phiên đấu giá mới phải được Admin phê duyệt trước khi được lên lịch hoặc hiển thị cho Buyer.'
-                        }
-                    />
+                    {notEditableError ? (
+                        <AlertBanner type="error" message={notEditableError} />
+                    ) : (
+                        <AlertBanner
+                            type="info"
+                            message={
+                                lang === 'en'
+                                    ? 'Auctions can only be modified or cancelled before their scheduled opening time.'
+                                    : 'Phiên đấu giá chỉ có thể chỉnh sửa thông số hoặc hủy bỏ trước giờ mở phiên chính thức.'
+                            }
+                        />
+                    )}
                     {repError && (
                         <AlertBanner
                             type="error"
@@ -1360,6 +1878,8 @@ export function CreateAuctionPage() {
                             }
                         />
                     )}
+
+                    {/* Khối chọn sản phẩm */}
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">
                             {lang === 'en' ? 'Select Product' : 'Chọn sản phẩm'}
@@ -1367,63 +1887,86 @@ export function CreateAuctionPage() {
                         <Select
                             label={lang === 'en' ? 'Product' : 'Sản phẩm'}
                             value={productId}
-                            onChange={(e) => setProductId(e.target.value)}
+                            disabled={isEdit || Boolean(notEditableError)}
+                            error={fieldErrors.productId}
+                            onChange={(e) => handleFieldChange('productId', e.target.value, setProductId)}
                             options={[
                                 {
                                     value: '',
                                     label: lang === 'en' ? 'Select a product' : 'Chọn sản phẩm',
                                 },
-                                ...PRODUCTS.filter((p) => p.enableAuction).map((p) => ({
+                                ...availableProducts.map((p) => ({
                                     value: p.id,
-                                    label: lang === 'vi' ? p.nameVi : p.name,
+                                    label: `${lang === 'vi' ? p.nameVi : p.name} (SKU: ${p.sku})`,
                                 })),
                             ]}
                         />
+                        {isEdit && (
+                            <p className="text-xs text-gray-400 mt-2">
+                                {lang === 'en' ? 'Product cannot be changed during edit.' : 'Không thể thay đổi sản phẩm khi đang chỉnh sửa phiên.'}
+                            </p>
+                        )}
                     </div>
+
+                    {/* Khối thiết lập thông số đấu giá */}
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">
                             {lang === 'en' ? 'Auction Settings' : 'Cài đặt đấu giá'}
                         </h3>
                         <div className="grid grid-cols-2 gap-4">
                             <Input
-                                label={`${tr(lang, 'startingPrice')} ($)`}
+                                label={tr(lang, 'startingPrice')}
                                 type="number"
+                                disabled={Boolean(notEditableError)}
                                 value={startingPrice}
-                                onChange={(e) => setStartingPrice(e.target.value)}
-                                placeholder="100.00"
+                                error={fieldErrors.startingPrice}
+                                onChange={(e) => handleFieldChange('startingPrice', e.target.value, setStartingPrice)}
+                                placeholder="100000"
+                                helper={lang === 'en' ? 'Must be greater than 0' : 'Giá khởi điểm phải lớn hơn 0'}
                             />
                             <Input
-                                label={`${tr(lang, 'minIncrement')} ($)`}
+                                label={tr(lang, 'minIncrement')}
                                 type="number"
+                                disabled={Boolean(notEditableError)}
                                 value={minIncrement}
-                                onChange={(e) => setMinIncrement(e.target.value)}
-                                placeholder="5.00"
-                                helper={lang === 'en' ? 'Min $1.00' : 'Tối thiểu $1.00'}
+                                error={fieldErrors.minIncrement}
+                                onChange={(e) => handleFieldChange('minIncrement', e.target.value, setMinIncrement)}
+                                placeholder="1000"
+                                helper={lang === 'en' ? 'Min 1,000 đ' : 'Bước giá tối thiểu 1,000 đ'}
                             />
                             <Input
                                 label={tr(lang, 'startTime')}
                                 type="datetime-local"
+                                disabled={Boolean(notEditableError)}
                                 value={startTime}
-                                onChange={(e) => setStartTime(e.target.value)}
+                                error={fieldErrors.startTime}
+                                onChange={(e) => handleFieldChange('startTime', e.target.value, setStartTime)}
+                                helper={lang === 'en' ? 'Must be greater than current time' : 'Lớn hơn thời gian hiện tại'}
                             />
                             <Input
                                 label={tr(lang, 'endTime')}
                                 type="datetime-local"
+                                disabled={Boolean(notEditableError)}
                                 value={endTime}
-                                onChange={(e) => setEndTime(e.target.value)}
+                                error={fieldErrors.endTime}
+                                onChange={(e) => handleFieldChange('endTime', e.target.value, setEndTime)}
+                                helper={lang === 'en' ? 'Duration: 1 hour to 7 days' : 'Thời lượng: 1 giờ đến 7 ngày'}
                             />
                         </div>
                         <p className="text-xs text-gray-400 mt-2">{tr(lang, 'auctionDuration')}</p>
                     </div>
+
+                    {/* Chế độ hiển thị */}
                     <div className="nexus-card p-5">
                         <Select
-                            label={lang === 'en' ? 'Visibility' : 'Hiển thị'}
+                            label={lang === 'en' ? 'Visibility' : 'Chế độ hiển thị'}
                             value={visibility}
+                            disabled={Boolean(notEditableError)}
                             onChange={(e) =>
                                 setVisibility(e.target.value as 'public' | 'restricted')
                             }
                             options={[
-                                { value: 'public', label: lang === 'en' ? 'Public' : 'Công khai' },
+                                { value: 'public', label: lang === 'en' ? 'Public (All buyers)' : 'Công khai (Tất cả người mua)' },
                                 {
                                     value: 'restricted',
                                     label: lang === 'en' ? 'Restricted' : 'Hạn chế',
@@ -1431,6 +1974,7 @@ export function CreateAuctionPage() {
                             ]}
                         />
                     </div>
+
                     <div className="flex gap-3">
                         <Button
                             variant="outline"
@@ -1439,10 +1983,23 @@ export function CreateAuctionPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button variant="primary" size="lg" loading={saving} onClick={save}>
-                            {lang === 'en' ? 'Submit for Approval' : 'Gửi phê duyệt'}
+                        <Button
+                            variant="primary"
+                            size="lg"
+                            loading={saving}
+                            disabled={Boolean(notEditableError) || loadingData}
+                            onClick={save}
+                        >
+                            {isEdit
+                                ? lang === 'en'
+                                    ? 'Save Changes'
+                                    : 'Lưu thay đổi'
+                                : lang === 'en'
+                                  ? 'Create Auction'
+                                  : 'Khởi tạo phiên'}
                         </Button>
                     </div>
+
                     {/* Demo error toggles */}
                     <div className="mt-4 p-3 bg-gray-50 rounded-xl text-xs text-gray-400 space-y-1">
                         <p>Demo: trigger error states</p>
