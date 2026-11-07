@@ -43,6 +43,14 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  # Secret riêng của Auction, không dùng admin account hay role SELLER cho request nội bộ.
+  service-auth:
+    token-url: ${AUCTION_TOKEN_URL:${KEYCLOAK_URL:http://localhost:8180}/realms/nexus-realm/protocol/openid-connect/token}
+    client-id: ${AUCTION_CLIENT_ID:nexus-auction-service}
+    client-secret: ${AUCTION_CLIENT_SECRET:}
+  # Phải khớp Gateway và origin trình duyệt; không cho wildcard khi handshake có cookie.
+  web:
+    allowed-origins: ${WEB_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
   # Cấu hình dự phòng cục bộ cho auction-service khi chưa kết nối Config Server
   auction:
     scheduler:
