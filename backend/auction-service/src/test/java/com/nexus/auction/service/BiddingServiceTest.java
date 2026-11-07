@@ -7,7 +7,9 @@ import com.nexus.auction.dto.response.PlaceBidResult;
 import com.nexus.auction.entity.Auction;
 import com.nexus.auction.entity.Bid;
 import com.nexus.auction.enums.AuctionStatus;
+import com.nexus.auction.event.AuctionExtendedEvent;
 import com.nexus.auction.event.BidPlacedEvent;
+import org.mockito.ArgumentCaptor;
 import com.nexus.auction.repository.AuctionRepository;
 import com.nexus.auction.repository.AuctionSettlementRepository;
 import com.nexus.auction.repository.BidRepository;
@@ -480,6 +482,13 @@ class BiddingServiceTest {
         assertThat(auction.getExtensionCount()).isEqualTo(1);
         assertThat(auction.getEndTime()).isEqualTo(originalEndTime.plusSeconds(120));
         assertThat(result.getEndTime()).isEqualTo(auction.getEndTime());
+
+        ArgumentCaptor<AuctionExtendedEvent> extendedCaptor = ArgumentCaptor.forClass(AuctionExtendedEvent.class);
+        verify(eventPublisher).publishEvent(extendedCaptor.capture());
+        AuctionExtendedEvent extEvent = extendedCaptor.getValue();
+        assertThat(extEvent.auctionId()).isEqualTo(auctionId);
+        assertThat(extEvent.newEndTime()).isEqualTo(auction.getEndTime());
+        assertThat(extEvent.extensionCount()).isEqualTo(1);
     }
 
     @Test
@@ -502,7 +511,52 @@ class BiddingServiceTest {
 
         assertThat(result.isExtended()).isFalse();
         assertThat(auction.getExtensionCount()).isEqualTo(10);
-        assertThat(auction.getEndTime()).isEqualTo(originalEndTime); // Không đổi
+        assertThat(auction.getEndTime()).isEqualTo(originalEndTime);
+    }
+
+    @Test
+    @DisplayName("DoD: Lượt bid hợp lệ trong thời gian gia hạn (Extended Time) được chấp nhận thành công")
+    void placeBid_DuringExtendedTime_BidAcceptedSuccessfully() {
+        UUID auctionId = UUID.randomUUID();
+        UUID sellerId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        Auction auction = createStandardAuction(auctionId, sellerId);
+        // Ban đầu kết thúc lúc 09:59:00, đã được gia hạn đến 10:02:00 (vượt qua original endTime)
+        // Mốc thời gian hiện tại fixedInstant là 10:00:00 (nằm trong thời gian gia hạn)
+        auction.setEndTime(fixedInstant.plusSeconds(120));
+        auction.setExtensionCount(1);
+        auction.setCurrentPrice(new BigDecimal("5000000.00"));
+        auction.setHighestBidderId(UUID.randomUUID());
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+        when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
+        when(bidRepository.countByAuctionId(auctionId)).thenReturn(2L);
+
+        PlaceBidRequest request = new PlaceBidRequest(new BigDecimal("5200000.00"), "key-during-extended");
+        PlaceBidResult result = biddingService.placeBid(auctionId, buyerId, request);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getBid().getAmount()).isEqualByComparingTo("5200000.00");
+        assertThat(auction.getCurrentPrice()).isEqualByComparingTo("5200000.00");
+        assertThat(auction.getHighestBidderId()).isEqualTo(buyerId);
+    }
+
+    @Test
+    @DisplayName("DoD: Chặn đặt giá mới sau thời điểm đóng phiên chính thức (After Final Closing Time)")
+    void placeBid_AfterFinalClosingTime_ThrowsAuctionNotActive() {
+        UUID auctionId = UUID.randomUUID();
+        UUID sellerId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        Auction auction = createStandardAuction(auctionId, sellerId);
+        // Phiên đã kết thúc 10 giây trước mốc fixedInstant
+        auction.setEndTime(fixedInstant.minusSeconds(10));
+
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+
+        PlaceBidRequest request = new PlaceBidRequest(new BigDecimal("5500000.00"), "key-after-closing");
+        assertThatThrownBy(() -> biddingService.placeBid(auctionId, buyerId, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.AUCTION_NOT_ACTIVE.name());
     }
 
     @Test

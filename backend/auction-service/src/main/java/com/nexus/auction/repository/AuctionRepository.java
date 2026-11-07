@@ -41,6 +41,12 @@ public interface AuctionRepository extends JpaRepository<Auction, UUID>, JpaSpec
     List<Auction> findByStatusAndEndTimeLessThanEqual(AuctionStatus status, Instant cutoffTime);
 
     /**
+     * Tìm danh sách các phiên đấu giá theo trạng thái có thời gian bắt đầu trước hoặc bằng mốc cutoff.
+     * Phục vụ scheduler tự động mở phiên khi startTime <= now.
+     */
+    List<Auction> findByStatusAndStartTimeLessThanEqual(AuctionStatus status, Instant cutoffTime);
+
+    /**
      * Đếm số lượng phiên đấu giá của người bán đang ở các trạng thái chỉ định (ví dụ SCHEDULED, ACTIVE).
      */
     long countBySellerIdAndStatusIn(UUID sellerId, Collection<AuctionStatus> statuses);

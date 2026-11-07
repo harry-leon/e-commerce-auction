@@ -8,6 +8,7 @@ import com.nexus.auction.dto.response.PlaceBidResult;
 import com.nexus.auction.entity.Auction;
 import com.nexus.auction.entity.Bid;
 import com.nexus.auction.enums.AuctionStatus;
+import com.nexus.auction.event.AuctionExtendedEvent;
 import com.nexus.auction.event.BidPlacedEvent;
 import com.nexus.auction.repository.AuctionRepository;
 import com.nexus.auction.repository.AuctionSettlementRepository;
@@ -237,6 +238,13 @@ public class BiddingServiceImpl implements BiddingService {
                 extended
         );
 
+        final AuctionExtendedEvent extendedEvent = extended ? new AuctionExtendedEvent(
+                auctionId,
+                auction.getEndTime(),
+                auction.getExtensionCount() != null ? auction.getExtensionCount() : 0,
+                "Phiên đấu giá được gia hạn thêm do có lượt trả giá giờ chót!"
+        ) : null;
+
         if (TransactionSynchronizationManager.isSynchronizationActive()
                 && TransactionSynchronizationManager.isActualTransactionActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -244,10 +252,17 @@ public class BiddingServiceImpl implements BiddingService {
                 public void afterCommit() {
                     log.info("Giao dịch đặt giá phiên [{}] đã commit thành công, phát BidPlacedEvent", auctionId);
                     eventPublisher.publishEvent(event);
+                    if (extendedEvent != null) {
+                        log.info("Phát sự kiện AuctionExtendedEvent cho phiên [{}]", auctionId);
+                        eventPublisher.publishEvent(extendedEvent);
+                    }
                 }
             });
         } else {
             eventPublisher.publishEvent(event);
+            if (extendedEvent != null) {
+                eventPublisher.publishEvent(extendedEvent);
+            }
         }
 
         return result;

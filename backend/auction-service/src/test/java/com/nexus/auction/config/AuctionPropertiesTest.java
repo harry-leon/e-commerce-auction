@@ -32,6 +32,9 @@ class AuctionPropertiesTest {
         assertEquals(1000L, properties.getBidding().getMinIncrement());
         assertEquals(120, properties.getBidding().getAntiSnipingSeconds());
         assertEquals(20, properties.getRules().getMaxActiveAuctionsPerSeller());
+        assertTrue(properties.getScheduler().isEnabled());
+        assertEquals(5000L, properties.getScheduler().getOpeningIntervalMs());
+        assertEquals(10000L, properties.getScheduler().getClosingIntervalMs());
 
         var violations = validator.validate(properties);
         assertTrue(violations.isEmpty(), "Cấu hình mặc định của auction-service phải hợp lệ");
@@ -44,5 +47,14 @@ class AuctionPropertiesTest {
 
         var violations = validator.validate(properties);
         assertFalse(violations.isEmpty(), "Bước giá tối thiểu = 0 phải bị chặn bởi @Min(1)");
+    }
+
+    @Test
+    void invalidSchedulerInterval_shouldFailValidation() {
+        AuctionProperties properties = new AuctionProperties();
+        properties.getScheduler().setOpeningIntervalMs(100L);
+
+        var violations = validator.validate(properties);
+        assertFalse(violations.isEmpty(), "Interval nhỏ hơn 500ms phải bị chặn bởi @Min(500)");
     }
 }

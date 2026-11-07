@@ -7,6 +7,10 @@ import com.nexus.auction.entity.AuctionSettlement;
 import com.nexus.auction.entity.Bid;
 import com.nexus.auction.enums.AuctionStatus;
 import com.nexus.auction.enums.SettlementResult;
+import com.nexus.auction.event.AuctionClosedEvent;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.nexus.auction.repository.AuctionRepository;
 import com.nexus.auction.repository.AuctionSettlementRepository;
 import com.nexus.auction.repository.BidRepository;
@@ -53,6 +57,7 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
     private final BidRepository bidRepository;
     private final AuctionSettlementRepository auctionSettlementRepository;
     private final Clock clock;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Autowired
     @Lazy
@@ -63,10 +68,24 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
             BidRepository bidRepository,
             AuctionSettlementRepository auctionSettlementRepository,
             Clock clock) {
+
+
+
+        this(auctionRepository, bidRepository, auctionSettlementRepository, clock, null);
+    }
+
+    @Autowired
+    public AuctionSettlementServiceImpl(
+            AuctionRepository auctionRepository,
+            BidRepository bidRepository,
+            AuctionSettlementRepository auctionSettlementRepository,
+            Clock clock,
+            @Autowired(required = false) ApplicationEventPublisher eventPublisher) {
         this.auctionRepository = auctionRepository;
         this.bidRepository = bidRepository;
         this.auctionSettlementRepository = auctionSettlementRepository;
         this.clock = clock;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -183,6 +202,28 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
 
         try {
             AuctionSettlement savedSettlement = auctionSettlementRepository.save(settlement);
+            if (eventPublisher != null) {
+                AuctionClosedEvent closedEvent = new AuctionClosedEvent(
+                        auctionId,
+                        auction.getStatus(),
+                        savedSettlement.getResult(),
+                        savedSettlement.getWinnerId(),
+                        savedSettlement.getFinalPrice(),
+                        savedSettlement.getSettledAt()
+                );
+                if (TransactionSynchronizationManager.isSynchronizationActive()
+                        && TransactionSynchronizationManager.isActualTransactionActive()) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            log.info("Giao dịch quyết toán phiên [{}] đã commit thành công, phát AuctionClosedEvent", auctionId);
+                            eventPublisher.publishEvent(closedEvent);
+                        }
+                    });
+                } else {
+                    eventPublisher.publishEvent(closedEvent);
+                }
+            }
             return AuctionSettlementMapper.toResponse(savedSettlement);
         } catch (DataIntegrityViolationException e) {
             // Đề phòng trường hợp hiếm gặp khi có 2 giao dịch lọt qua lock, bản ghi thứ 2 sẽ chạm UNIQUE uq_settlement_auction

@@ -35,6 +35,18 @@ public class AuctionProperties {
     @NotNull
     private Rules rules = new Rules();
 
+    @Valid
+    @NotNull
+    private Scheduler scheduler = new Scheduler();
+
+    public Scheduler getScheduler() {
+        return scheduler;
+    }
+
+    public void setScheduler(Scheduler scheduler) {
+        this.scheduler = scheduler;
+    }
+
     public Bidding getBidding() {
         return bidding;
     }
@@ -124,6 +136,54 @@ public class AuctionProperties {
 
         public void setMaxDurationSeconds(Long maxDurationSeconds) {
             this.maxDurationSeconds = maxDurationSeconds;
+        }
+    }
+
+    public static class Scheduler {
+        private boolean enabled = true;
+
+        @NotNull
+        @Min(value = 500, message = "Khoảng thời gian quét mở phiên phải từ 500ms trở lên")
+        private Long openingIntervalMs = 5000L;
+
+        @NotNull
+        @Min(value = 500, message = "Khoảng thời gian quét đóng phiên phải từ 500ms trở lên")
+        private Long closingIntervalMs = 10000L;
+
+        @NotNull
+        @Min(value = 500, message = "Khoảng thời gian quét quyết toán phải từ 500ms trở lên")
+        private Long settlementIntervalMs = 10000L;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public Long getOpeningIntervalMs() {
+            return openingIntervalMs;
+        }
+
+        public void setOpeningIntervalMs(Long openingIntervalMs) {
+            this.openingIntervalMs = openingIntervalMs;
+        }
+
+        public Long getClosingIntervalMs() {
+            return closingIntervalMs;
+        }
+
+        public void setClosingIntervalMs(Long closingIntervalMs) {
+            this.closingIntervalMs = closingIntervalMs;
+        }
+
+        public Long getSettlementIntervalMs() {
+            return settlementIntervalMs;
+        }
+
+        public void setSettlementIntervalMs(Long settlementIntervalMs) {
+            this.settlementIntervalMs = settlementIntervalMs;
         }
     }
 }
