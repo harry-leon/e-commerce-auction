@@ -13,6 +13,12 @@ spring:
   cloud:
     gateway:
       routes:
+        # WebSocket dùng scheme ws riêng; CONNECT được xác thực tại Auction, không đặt JWT trong URL.
+        - id: auction-websocket
+          uri: ${AUCTION_WS_URL:ws://localhost:8084}
+          predicates:
+            - Path=/ws/auctions
+            - Method=GET
         - id: user-service
           uri: ${USER_SERVICE_URL:http://localhost:8081}
           predicates:
@@ -28,7 +34,7 @@ spring:
         - id: auction-service
           uri: ${AUCTION_SERVICE_URL:http://localhost:8084}
           predicates:
-            - Path=/api/v1/auctions/**,/api/v1/bids/**,/ws/auctions/**
+            - Path=/api/v1/auctions/**,/api/v1/bids/**
         - id: fulfillment-service
           uri: ${FULFILLMENT_SERVICE_URL:http://localhost:8085}
           predicates:
@@ -43,6 +49,9 @@ spring:
             - Path=/api/v1/reputations/**
 
 app:
+  # Danh sách origin chính xác dùng cho HTTP CORS và WebSocket; không dùng wildcard với cookie.
+  web:
+    allowed-origins: ${WEB_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
   auth:
     # Mặc định HTTPS; chạy localhost HTTP phải đặt AUTH_COOKIE_SECURE=false.
     cookie-secure: ${AUTH_COOKIE_SECURE:true}

@@ -12,7 +12,7 @@ import reactor.core.publisher.Mono;
 /**
  * Đổi cookie access thành Bearer trước Spring Security để xác minh JWT.
  * Request ghi bằng cookie và mọi POST auth phải có header chống CSRF;
- * CORS đang tắt nên trình duyệt khác origin không được phép gửi header này.
+ * CORS chỉ mở origin tin cậy; request cookie vẫn phải có header chống CSRF.
  */
 @Component
 @Order(CookieAuthenticationFilter.BEFORE_SECURITY)
