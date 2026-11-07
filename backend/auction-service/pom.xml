@@ -28,6 +28,11 @@
   <dependencyManagement><dependencies><dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-dependencies</artifactId><version>${spring-cloud.version}</version><type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement>
 
   <dependencies>
+    <!-- STOMP trên WebSocket thật; broker cục bộ chỉ phù hợp một Auction instance. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
     <!-- Eureka client đăng ký/tra cứu service; Config client nạp cấu hình chung. Phiên bản do Spring Cloud BOM quản lý. -->
     <!-- Module dùng chung Project Nexus: chuẩn hóa Envelope API Response v2 và Global Exception Handling -->
     <dependency>

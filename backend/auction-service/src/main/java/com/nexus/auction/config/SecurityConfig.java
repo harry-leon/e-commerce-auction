@@ -21,6 +21,11 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableMethodSecurity
 public class SecurityConfig {
 
+    /**
+     * REST stateless xác minh bearer bằng JWKS; route công khai không bỏ qua kiểm tra JWT nếu client đã gửi token.
+     * Handshake WebSocket GET mở để browser gửi native bearer ở CONNECT; interceptor vẫn chặn frame ẩn danh.
+     * Các API đấu giá phân quyền ở Controller, các route khác mặc định cần xác thực.
+     */
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
@@ -29,6 +34,8 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                // Transport công khai; interceptor STOMP xác thực CONNECT, không tin handshake ẩn danh.
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/ws/auctions").permitAll()
                 // Cho phép truy cập endpoint đấu giá tại tầng filter; kiểm tra phân quyền chi tiết được xử lý bằng @PreAuthorize tại Controller
                 .requestMatchers("/api/v1/auctions/**").permitAll()
                 .anyRequest().authenticated())
