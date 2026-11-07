@@ -1,0 +1,151 @@
+{
+  "executedAt": "2026-11-06T11:07:15.080Z",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "fixture": "Local JWKS/RS256 and AuctionRepository; no production DB/realm",
+  "results": [
+    {
+      "group": "cors",
+      "name": "Origin tin cậy: browser đọc được API",
+      "pass": true,
+      "detail": "Origin http://127.0.0.1:18461 · OPTIONS 200 · GET 200 · health=UP"
+    },
+    {
+      "group": "cors",
+      "name": "CORS credential dùng origin cụ thể",
+      "pass": true,
+      "detail": "Access-Control-Allow-Origin: http://127.0.0.1:18461; Allow-Credentials: true"
+    },
+    {
+      "group": "cors",
+      "name": "Origin lạ: browser bị chặn đọc API",
+      "pass": true,
+      "detail": "Origin http://127.0.0.1:18462 · OPTIONS 403 · browser fetch=blocked"
+    },
+    {
+      "group": "auth",
+      "name": "HTTP nghiệp vụ vẫn bắt JWT",
+      "pass": true,
+      "detail": "GET /api/v1/orders không token → 401"
+    },
+    {
+      "group": "stomp",
+      "name": "Thiếu JWT bị từ chối sau upgrade",
+      "pass": true,
+      "detail": "Frames=ERROR · close=1002"
+    },
+    {
+      "group": "stomp",
+      "name": "Upgrade qua Gateway và CONNECT JWT",
+      "pass": true,
+      "detail": "Browser → Gateway :18460 → Auction :18464 · CONNECTED"
+    },
+    {
+      "group": "stomp",
+      "name": "Cookie HttpOnly qua Gateway",
+      "pass": true,
+      "detail": "CONNECT không mang native bearer · CONNECTED · cookie HttpOnly=true"
+    },
+    {
+      "group": "stomp",
+      "name": "JWT sai chữ ký bị từ chối",
+      "pass": true,
+      "detail": "Frames=ERROR · close=1002"
+    },
+    {
+      "group": "stomp",
+      "name": "JWT hết hạn bị từ chối",
+      "pass": true,
+      "detail": "Frames=ERROR · close=1002"
+    },
+    {
+      "group": "stomp",
+      "name": "SUBSCRIBE PUBLIC nhận server broadcast",
+      "pass": true,
+      "detail": "CONNECTED → MESSAGE · type=SECURITY_TEST_FIXTURE · không ghi bid DB"
+    },
+    {
+      "group": "stomp",
+      "name": "Chặn SEND giả vào topic",
+      "pass": true,
+      "detail": "Frames=CONNECTED → ERROR · close=1002"
+    },
+    {
+      "group": "stomp",
+      "name": "Chặn SUBSCRIBE phiên PRIVATE",
+      "pass": true,
+      "detail": "Frames=CONNECTED → ERROR · close=1002"
+    },
+    {
+      "group": "stomp",
+      "name": "Chặn SEND thiếu AUCTION.BID",
+      "pass": true,
+      "detail": "Frames=CONNECTED → ERROR · close=1002"
+    },
+    {
+      "group": "cors",
+      "name": "WebSocket từ Origin lạ bị chặn",
+      "pass": true,
+      "detail": "Browser Origin http://127.0.0.1:18462 · CONNECTED=false · close=1006"
+    },
+    {
+      "group": "stomp",
+      "name": "Socket nhàn rỗi bị đóng khi JWT hết hạn",
+      "pass": true,
+      "detail": "CONNECT hợp lệ → không gửi thêm frame → close=1008"
+    },
+    {
+      "group": "service",
+      "name": "ServiceIdentity: bắt buộc azp + privilege",
+      "pass": true,
+      "detail": "JUnit common: 1 tests · failures=0 · errors=0 · skipped=0"
+    },
+    {
+      "group": "service",
+      "name": "Commerce: chặn user/sai service ở API nội bộ",
+      "pass": true,
+      "detail": "JUnit commerce-service: 1 tests · failures=0 · errors=0 · skipped=0"
+    },
+    {
+      "group": "service",
+      "name": "Commerce → Inventory: dùng service token",
+      "pass": true,
+      "detail": "JUnit commerce-service: 4 tests · failures=0 · errors=0 · skipped=0"
+    },
+    {
+      "group": "service",
+      "name": "Inventory: service đúng quyền được phép, user token bị chặn",
+      "pass": true,
+      "detail": "JUnit fulfillment-service: 18 tests · failures=0 · errors=0 · skipped=0"
+    },
+    {
+      "group": "automation",
+      "name": "common",
+      "pass": true,
+      "detail": "16 passed · 0 skipped · failures=0 · errors=0"
+    },
+    {
+      "group": "automation",
+      "name": "api-gateway",
+      "pass": true,
+      "detail": "21 passed · 0 skipped · failures=0 · errors=0"
+    },
+    {
+      "group": "automation",
+      "name": "auction-service",
+      "pass": true,
+      "detail": "81 passed · 0 skipped · failures=0 · errors=0"
+    },
+    {
+      "group": "automation",
+      "name": "commerce-service",
+      "pass": true,
+      "detail": "299 passed · 17 skipped · failures=0 · errors=0"
+    },
+    {
+      "group": "automation",
+      "name": "fulfillment-service",
+      "pass": true,
+      "detail": "73 passed · 0 skipped · failures=0 · errors=0"
+    }
+  ]
+}

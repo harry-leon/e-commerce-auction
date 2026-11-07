@@ -83,6 +83,9 @@ services:
       # Realm import đọc secret từ biến môi trường; hostname cố định giữ issuer giống nhau qua Gateway/local.
       KC_HOSTNAME_URL: http://localhost:8180
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:?Set KEYCLOAK_ADMIN_CLIENT_SECRET in .env}
+      # Realm import nhận secret riêng từng service; không dùng admin client cho Auction/Commerce.
+      AUCTION_CLIENT_SECRET: ${AUCTION_CLIENT_SECRET:?Set AUCTION_CLIENT_SECRET in .env}
+      COMMERCE_CLIENT_SECRET: ${COMMERCE_CLIENT_SECRET:?Set COMMERCE_CLIENT_SECRET in .env}
       KC_DB: postgres
       # Có thể dùng Supabase qua KEYCLOAK_DB_*; schema riêng tách bảng IAM khỏi dữ liệu nghiệp vụ.
       # Khi chưa cấu hình remote, giữ database local cũ; URL Supabase cần TLS và session pooler cổng 5432.
@@ -159,7 +162,7 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
       FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
-      # Merchant VNPAY và service account outbox được cấp ngoài repo; để trống thì chỉ dùng được COD.
+      # Merchant VNPAY cấp ngoài repo; COD không cần merchant nhưng vẫn cần service account gọi kho.
       # OAuth thông báo riêng; thiếu config giữ backlog, không chặn checkout hoặc IPN.
       NOTIFICATION_TOKEN_URL: ${NOTIFICATION_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
       NOTIFICATION_CLIENT_ID: ${NOTIFICATION_CLIENT_ID:-}
@@ -168,8 +171,9 @@ services:
       VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-}
       VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-}
       PAYMENT_INVENTORY_TOKEN_URL: ${PAYMENT_INVENTORY_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
-      PAYMENT_INVENTORY_CLIENT_ID: ${PAYMENT_INVENTORY_CLIENT_ID:-}
-      PAYMENT_INVENTORY_CLIENT_SECRET: ${PAYMENT_INVENTORY_CLIENT_SECRET:-}
+      # Cả checkout COD và worker thanh toán đều dùng service identity để gọi mutation kho.
+      PAYMENT_INVENTORY_CLIENT_ID: nexus-commerce-service
+      PAYMENT_INVENTORY_CLIENT_SECRET: ${COMMERCE_CLIENT_SECRET:?Set COMMERCE_CLIENT_SECRET in .env}
       # Dùng Supabase khi cấu hình COMMERCE_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${COMMERCE_DB_URL:-jdbc:postgresql://postgres:5432/nexus_commerce}
       DB_USERNAME: ${COMMERCE_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
@@ -191,6 +195,12 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: auction-service
+      # REST nội bộ dùng HTTP trực tiếp, WebSocket public vẫn đi qua Gateway.
+      FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
+      COMMERCE_SERVICE_URL: http://commerce-service:8080
+      AUCTION_TOKEN_URL: http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token
+      AUCTION_CLIENT_SECRET: ${AUCTION_CLIENT_SECRET:?Set AUCTION_CLIENT_SECRET in .env}
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
       # Dùng Supabase khi cấu hình AUCTION_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${AUCTION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_auction}
       DB_USERNAME: ${AUCTION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
@@ -286,6 +296,9 @@ services:
       CATALOG_SERVICE_URL: lb://catalog-service
       COMMERCE_SERVICE_URL: lb://commerce-service
       AUCTION_SERVICE_URL: lb://auction-service
+      # Scheme lb:ws kích hoạt WebSocket routing sau khi Eureka phân giải instance.
+      AUCTION_WS_URL: lb:ws://auction-service
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
       FULFILLMENT_SERVICE_URL: lb://fulfillment-service
       NOTIFICATION_SERVICE_URL: lb://notification-service
       REPUTATION_SERVICE_URL: lb://reputation-service

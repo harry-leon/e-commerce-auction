@@ -304,6 +304,18 @@
       {
         "name": "ROLE_NOTIFICATION_WRITER",
         "description": "Commerce service account notification ingestion only"
+      },
+      {
+        "name": "INVENTORY.AUCTION",
+        "description": "Internal service privilege; require matching azp"
+      },
+      {
+        "name": "INVENTORY.ORDER",
+        "description": "Internal service privilege; require matching azp"
+      },
+      {
+        "name": "COMMERCE.AUCTION",
+        "description": "Internal service privilege; require matching azp"
       }
     ]
   },
@@ -346,6 +358,36 @@
       "standardFlowEnabled": false,
       "serviceAccountsEnabled": true,
       "protocol": "openid-connect"
+    },
+    {
+      "clientId": "nexus-auction-service",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${AUCTION_CLIENT_SECRET}",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "roles"
+      ]
+    },
+    {
+      "clientId": "nexus-commerce-service",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${COMMERCE_CLIENT_SECRET}",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": [
+        "roles"
+      ]
     }
   ],
   "users": [
@@ -364,6 +406,23 @@
           "manage-realm"
         ]
       }
+    },
+    {
+      "username": "service-account-nexus-auction-service",
+      "enabled": true,
+      "serviceAccountClientId": "nexus-auction-service",
+      "realmRoles": [
+        "INVENTORY.AUCTION",
+        "COMMERCE.AUCTION"
+      ]
+    },
+    {
+      "username": "service-account-nexus-commerce-service",
+      "enabled": true,
+      "serviceAccountClientId": "nexus-commerce-service",
+      "realmRoles": [
+        "INVENTORY.ORDER"
+      ]
     }
   ],
   "smtpServer": {
@@ -373,5 +432,20 @@
     "auth": "false",
     "starttls": "false"
   },
-  "passwordPolicy": "length(8) and maxLength(100) and upperCase(1) and digits(1) and specialChars(1) and regexPattern((?s)^(?=.*\\p{Lu})(?=.*\\p{Nd})(?=.*[\\p{P}\\p{S}]).*$)"
+  "passwordPolicy": "length(8) and maxLength(100) and upperCase(1) and digits(1) and specialChars(1) and regexPattern((?s)^(?=.*\\p{Lu})(?=.*\\p{Nd})(?=.*[\\p{P}\\p{S}]).*$)",
+  "scopeMappings": [
+    {
+      "client": "nexus-auction-service",
+      "roles": [
+        "INVENTORY.AUCTION",
+        "COMMERCE.AUCTION"
+      ]
+    },
+    {
+      "client": "nexus-commerce-service",
+      "roles": [
+        "INVENTORY.ORDER"
+      ]
+    }
+  ]
 }
