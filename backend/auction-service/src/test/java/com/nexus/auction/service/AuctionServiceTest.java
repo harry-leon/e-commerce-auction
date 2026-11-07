@@ -14,6 +14,7 @@ import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.exception.ResourceNotFoundException;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
@@ -334,13 +335,14 @@ class AuctionServiceTest {
     class CancelAuctionTests {
 
         @Test
-        @DisplayName("Seller hủy phiên đấu giá thành công")
+        @DisplayName("Seller hủy phiên đấu giá trước giờ mở thành công")
         void cancelAuction_Success_BySeller() {
             UUID auctionId = UUID.randomUUID();
             Auction auction = new Auction();
             auction.setId(auctionId);
             auction.setSellerId(sellerId);
             auction.setStatus(AuctionStatus.SCHEDULED);
+            auction.setStartTime(Instant.now().plus(Duration.ofHours(2)));
 
             when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
             when(auctionRepository.save(any(Auction.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -353,7 +355,27 @@ class AuctionServiceTest {
         }
 
         @Test
-        @DisplayName("Admin có quyền hủy phiên của bất kỳ ai")
+        @DisplayName("Seller bị từ chối hủy phiên khi phiên đang ACTIVE hoặc đã đến giờ bắt đầu")
+        void cancelAuction_ThrowsException_WhenSellerCancelsActiveAuction() {
+            UUID auctionId = UUID.randomUUID();
+            Auction auction = new Auction();
+            auction.setId(auctionId);
+            auction.setSellerId(sellerId);
+            auction.setStatus(AuctionStatus.ACTIVE);
+            auction.setStartTime(Instant.now().minus(Duration.ofMinutes(10)));
+
+            when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
+
+            CancelAuctionRequest request = new CancelAuctionRequest("Seller đổi ý muốn hủy phiên đang chạy");
+
+            assertThatThrownBy(() -> auctionService.cancelAuction(auctionId, sellerId, false, request))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("Người bán chỉ có thể hủy phiên đấu giá trước giờ mở phiên")
+                    .satisfies(ex -> assertThat(((BusinessException) ex).getCode()).isEqualTo(ErrorCode.AUCTION_ALREADY_STARTED.name()));
+        }
+
+        @Test
+        @DisplayName("Admin có quyền cưỡng chế hủy phiên vi phạm kể cả khi phiên đang ACTIVE")
         void cancelAuction_Success_ByAdmin() {
             UUID auctionId = UUID.randomUUID();
             Auction auction = new Auction();

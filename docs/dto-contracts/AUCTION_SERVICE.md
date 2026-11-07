@@ -165,7 +165,10 @@
   "reason": "Sản phẩm bị lỗi hỏng trong kho không thể giao dịch"
 }
 ```
-- **Ràng buộc:** Không thể hủy nếu phiên đã ở trạng thái `ENDED` hoặc `SETTLED`. Nếu đã `CANCELLED` thì idempotent trả về kết quả hiện tại.
+- **Ràng buộc:** 
+  - Không thể hủy nếu phiên đã ở trạng thái `ENDED` hoặc `SETTLED`. Nếu đã `CANCELLED` thì idempotent trả về kết quả hiện tại.
+  - Người bán (`ROLE_SELLER`) chỉ được phép hủy phiên trước giờ mở phiên (`now < startTime` và trạng thái `SCHEDULED`/`DRAFT`). Nếu phiên đã `ACTIVE` hoặc đã đến giờ bắt đầu, từ chối với lỗi HTTP 409 Conflict (`AUCTION_ALREADY_STARTED`).
+  - Quản trị viên (`ROLE_ADMIN`) có quyền cưỡng chế hủy (force cancel) phiên đấu giá vi phạm kể cả khi phiên đang `ACTIVE`.
 
 ---
 

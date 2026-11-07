@@ -242,8 +242,9 @@ public class AuctionServiceImpl implements AuctionService {
      * Luồng:
      *   1. Tìm kiếm phiên đấu giá.
      *   2. Kiểm tra quyền sở hữu (Seller tạo phiên hoặc ADMIN).
-     *   3. Chặn hủy nếu phiên đã kết thúc (ENDED) hoặc đã quyết toán (SETTLED) hoặc đã bị hủy (CANCELLED).
-     *   4. Chuyển trạng thái sang CANCELLED và ghi log lý do.
+     *   3. Chặn Seller hủy nếu phiên đã ACTIVE hoặc đã đến giờ bắt đầu; Admin vẫn có quyền buộc hủy phiên vi phạm.
+     *   4. Chặn hủy nếu phiên đã kết thúc (ENDED) hoặc đã quyết toán (SETTLED) hoặc đã bị hủy (CANCELLED).
+     *   5. Chuyển trạng thái sang CANCELLED và ghi log lý do.
      */
     @Override
     @Transactional
@@ -268,6 +269,18 @@ public class AuctionServiceImpl implements AuctionService {
                     ErrorCode.BUSINESS_ERROR,
                     "Không thể hủy phiên đấu giá đã kết thúc hoặc đã quyết toán"
             );
+        }
+
+        // Chặn Seller hủy phiên khi phiên đã ACTIVE hoặc đã đến/qua giờ bắt đầu.
+        // Chỉ Admin mới có quyền cưỡng chế hủy (force cancel) các phiên vi phạm đang ACTIVE.
+        if (!isAdmin) {
+            Instant now = Instant.now();
+            if (auction.getStatus() == AuctionStatus.ACTIVE || (auction.getStartTime() != null && !now.isBefore(auction.getStartTime()))) {
+                throw new BusinessException(
+                        ErrorCode.AUCTION_ALREADY_STARTED,
+                        "Người bán chỉ có thể hủy phiên đấu giá trước giờ mở phiên"
+                );
+            }
         }
 
         String reason = (request != null && request.getReason() != null) ? request.getReason().trim() : "Người dùng yêu cầu hủy";
