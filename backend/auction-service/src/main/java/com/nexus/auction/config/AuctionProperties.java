@@ -60,6 +60,10 @@ public class AuctionProperties {
         @Min(value = 0, message = "Thời gian chống sniping không được âm")
         private Integer antiSnipingSeconds = 120;
 
+        @NotNull
+        @Min(value = 1, message = "Số lần gia hạn chống sniping tối đa phải từ 1 trở lên")
+        private Integer maxExtensionCount = 10;
+
         public Long getMinIncrement() {
             return minIncrement;
         }
@@ -74,6 +78,14 @@ public class AuctionProperties {
 
         public void setAntiSnipingSeconds(Integer antiSnipingSeconds) {
             this.antiSnipingSeconds = antiSnipingSeconds;
+        }
+
+        public Integer getMaxExtensionCount() {
+            return maxExtensionCount;
+        }
+
+        public void setMaxExtensionCount(Integer maxExtensionCount) {
+            this.maxExtensionCount = maxExtensionCount;
         }
     }
 

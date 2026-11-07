@@ -175,3 +175,95 @@
 |---|---|---|---|
 | `POST` | `/api/v1/auctions/{auctionId}/settle` | `ROLE_ADMIN`, `ROLE_SELLER` | Khóa phiên và xác định người thắng cuộc khi kết thúc |
 | `GET` | `/api/v1/auctions/{auctionId}/settlement` | Authenticated | Tra cứu kết quả quyết toán chính thức |
+
+
+---
+
+## 3. Đấu giá Trực tuyến & Kiểm soát Tranh chấp (Real-time Bidding & Concurrency Control — HG-S2-3)
+
+### 3.1. Đặt giá thầu (Place Bid)
+- **Method & Path:** `POST /api/v1/auctions/{auctionId}/bids`
+- **Quyền truy cập:** Authenticated (`ROLE_BUYER` hoặc tài khoản người dùng đã đăng nhập)
+- **Request Body (`PlaceBidRequest`):**
+```json
+{
+  "amount": 5200000.00,
+  "idempotencyKey": "uuid-bid-001"
+}
+```
+- **Ràng buộc nghiệp vụ:**
+  - Phiên đấu giá phải ở trạng thái `ACTIVE` và trong khung giờ `[startTime, endTime)`. Chưa có bản ghi settlement.
+  - Người bán (`sellerId`) không được tự đặt giá vào phiên của chính mình (Lỗi HTTP 422: `AUCTION_SELLER_CANNOT_BID`).
+  - Người đang trả giá cao nhất (`highestBidderId`) không được tự nâng giá tiếp khi chưa bị vượt (Lỗi HTTP 422: `BID_AMOUNT_TOO_LOW`).
+  - Mức giá đặt tối thiểu: $\ge \text{startPrice}$ (nếu chưa có ai bid), hoặc $\ge \text{currentPrice} + \text{bidIncrement}$ (nếu đã có bid).
+  - Khóa chống trùng lặp `idempotencyKey`: nếu gửi lại cùng key, hệ thống trả về kết quả ban đầu mà không tạo bản ghi mới (Idempotent).
+  - Kiểm soát tranh chấp (Concurrency Control): sử dụng Optimistic Locking (`@Version`). Khi xảy ra race condition, trả về HTTP 409 Conflict với mã `BID_CONCURRENT_OUTBID`.
+  - Cơ chế chống bắn tỉa (Anti-sniping Protection): khi có bid hợp lệ trong vòng `anti-sniping-seconds` cuối (mặc định 120s), tự động gia hạn `endTime` thêm 120s và tăng `extensionCount` (tối đa `maxExtensionCount` = 10 lần).
+  - Sự kiện miền (`BidPlacedEvent`): chỉ được publish sau khi database transaction commit thành công.
+- **Response (`ApiResponse<PlaceBidResult>` — HTTP 201 Created):**
+```json
+{
+  "success": true,
+  "data": {
+    "bid": {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "auctionId": "c1f7b9c2-5717-4562-b3fc-2c963f66afa6",
+      "bidderId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "bidderMask": "9b1d***cb6d",
+      "amount": 5200000.00,
+      "idempotencyKey": "uuid-bid-001",
+      "placedAt": "2026-11-07T10:15:30Z"
+    },
+    "currentBid": 5200000.00,
+    "bidCount": 5,
+    "endTime": "2026-11-07T20:02:00Z",
+    "extended": true
+  },
+  "error": null,
+  "meta": {
+    "requestId": "req-xxx",
+    "timestamp": "2026-11-07T10:15:30Z"
+  }
+}
+```
+
+---
+
+### 3.2. Lịch sử đặt giá (Get Bid History)
+- **Method & Path:** `GET /api/v1/auctions/{auctionId}/bids`
+- **Quyền truy cập:** Public
+- **Query Parameters:**
+  - `page`: int (mặc định 1)
+  - `limit`: int (mặc định 20, tối đa 100)
+  - `sortBy`: string (mặc định `placedAt`)
+  - `sortDir`: string (`ASC` / `DESC`, mặc định `DESC`)
+- **Response (`ApiResponse<List<BidResponse>>` — HTTP 200 OK):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "auctionId": "c1f7b9c2-5717-4562-b3fc-2c963f66afa6",
+      "bidderId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "bidderMask": "9b1d***cb6d",
+      "amount": 5200000.00,
+      "idempotencyKey": "uuid-bid-001",
+      "placedAt": "2026-11-07T10:15:30Z"
+    }
+  ],
+  "error": null,
+  "meta": {
+    "requestId": "req-xxx",
+    "timestamp": "2026-11-07T10:15:30Z",
+    "pagination": {
+      "page": 0,
+      "size": 20,
+      "totalElements": 1,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrevious": false
+    }
+  }
+}
+```

@@ -5,6 +5,7 @@ app:
     bidding:
       min-increment: 1000          # Bước giá tối thiểu khi đặt bid (VND)
       anti-sniping-seconds: 120    # Gia hạn thời gian nếu có bid trong những giây cuối
+      max-extension-count: 10      # Số lần gia hạn tối đa khi có bid phút chót
     rules:
       max-active-auctions-per-seller: 20 # Số phiên đấu giá đang mở tối đa của 1 seller
       min-duration-seconds: 3600         # Thời lượng tối thiểu của phiên đấu giá (1 giờ)
