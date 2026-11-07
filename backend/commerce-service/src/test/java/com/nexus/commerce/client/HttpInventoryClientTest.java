@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 class HttpInventoryClientTest {
     private HttpServer server;
     private HttpInventoryClient client;
+    private final InventoryServiceToken tokens = org.mockito.Mockito.mock(InventoryServiceToken.class);
     private int status = 200;
     private String body = "{\"success\":true,\"data\":{\"availableQty\":8,\"totalQty\":10,\"reservedQty\":2,\"warehouseCode\":\"DEFAULT\"}}";
     private String requestBody;
@@ -39,7 +40,9 @@ class HttpInventoryClientTest {
             exchange.close();
         });
         server.start();
-        client = new HttpInventoryClient("http://127.0.0.1:" + server.getAddress().getPort(), new ObjectMapper());
+        // HTTP fixture phải nhận token service, kể cả caller truyền JWT buyer.
+        org.mockito.Mockito.when(tokens.get()).thenReturn("service-token");
+        client = new HttpInventoryClient("http://127.0.0.1:" + server.getAddress().getPort(), new ObjectMapper(), tokens);
     }
 
     @AfterEach
@@ -55,7 +58,7 @@ class HttpInventoryClientTest {
                 + "\",\"skuId\":\"" + sku + "\",\"quantity\":2,\"status\":\"PENDING\"}]}}";
         client.reserve(id, List.of(new InventoryClient.Item(sku, null, 2)), "verified-jwt");
         assertEquals("/api/v1/inventory/reserve", path);
-        assertEquals("Bearer verified-jwt", authorization);
+        assertEquals("Bearer service-token", authorization);
         assertTrue(requestBody.contains(id.toString()));
         assertTrue(requestBody.contains("\"timeoutMinutes\":15"));
         body = "{\"success\":true,\"data\":null}";

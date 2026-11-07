@@ -16,14 +16,20 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
-/** HTTP kho thật, timeout hữu hạn và không retry reserve mù vì Fulfillment chưa idempotent theo refId. */
+/**
+ * HTTP kho thật, timeout hữu hạn và không retry reserve mù vì Fulfillment chưa idempotent theo refId.
+ * Tham số token trên interface giữ tương thích caller cũ; mutation luôn tự lấy identity Commerce, không dùng JWT buyer.
+ */
 @Component
 public class HttpInventoryClient implements InventoryClient {
     private final RestClient client;
     private final ObjectMapper mapper;
+    private final InventoryServiceToken serviceToken;
 
-    public HttpInventoryClient(@Value("${FULFILLMENT_SERVICE_URL:http://localhost:8085}") String url, ObjectMapper mapper) {
+    public HttpInventoryClient(@Value("${FULFILLMENT_SERVICE_URL:http://localhost:8085}") String url,
+            ObjectMapper mapper, InventoryServiceToken serviceToken) {
         this.mapper = mapper;
+        this.serviceToken = serviceToken;
         var factory = new JdkClientHttpRequestFactory(java.net.http.HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5)).build());
         factory.setReadTimeout(Duration.ofSeconds(5));
@@ -50,7 +56,7 @@ public class HttpInventoryClient implements InventoryClient {
     @Override
     public List<UUID> reserve(UUID orderId, List<Item> items, String token) {
         var receipt = post("/reserve", Map.of("refType", "ORDER", "refId", orderId, "items", items, "timeoutMinutes", 15),
-                token, new ParameterizedTypeReference<ApiResponse<Receipt>>() { });
+                new ParameterizedTypeReference<ApiResponse<Receipt>>() { });
         // Chỉ chấp nhận đủ SKU/quantity của đúng đơn; success=true với payload rỗng không chứng minh kho đã được giữ.
         if (receipt == null || !orderId.equals(receipt.refId()) || !"ORDER".equals(receipt.refType())
                 || !"PENDING".equals(receipt.status()) || receipt.items() == null || receipt.items().size() != items.size()) {
@@ -69,7 +75,7 @@ public class HttpInventoryClient implements InventoryClient {
     @Override
     public void confirm(UUID reservationId, String token) {
         try {
-            post("/reservations/" + reservationId + "/confirm", Map.of(), token,
+            post("/reservations/" + reservationId + "/confirm", Map.of(),
                     new ParameterizedTypeReference<ApiResponse<Object>>() { });
         } catch (ApiException error) {
             if (!"INVENTORY_RESERVATION_ALREADY_COMMITTED".equals(error.getCode())) { throw error; }
@@ -80,18 +86,26 @@ public class HttpInventoryClient implements InventoryClient {
     @Override
     public void release(UUID orderId, String token) {
         post("/release", Map.of("refType", "ORDER", "refId", orderId, "reason", "ORDER_OR_PAYMENT_FAILED"),
-                token, new ParameterizedTypeReference<ApiResponse<Object>>() { });
+                new ParameterizedTypeReference<ApiResponse<Object>>() { });
     }
 
-    /** Chuyển tiếp bearer token, không ghi log token và không fallback dữ liệu mock khi kho lỗi. */
-    private <T> T post(String path, Object body, String token, ParameterizedTypeReference<ApiResponse<T>> type) {
+    /**
+     * POST nghiệp vụ kho bằng token Commerce; dữ liệu nhận từ checkout/worker, không dùng JWT buyer của luồng cũ.
+     * Downstream 401 bỏ cache cho lần gọi sau, lỗi 4xx giữ mã nghiệp vụ; không retry vì reserve có thể đã commit.
+     * Thiếu cấu hình/không lấy được token trả 503; lỗi kết nối/response kho hỏng trả lỗi unavailable cho caller bù trừ.
+     */
+    private <T> T post(String path, Object body, ParameterizedTypeReference<ApiResponse<T>> type) {
         try {
-            var response = client.post().uri("/api/v1/inventory" + path).headers(h -> h.setBearerAuth(token))
+            var response = client.post().uri("/api/v1/inventory" + path).headers(h -> h.setBearerAuth(serviceToken.get()))
                     .body(body).retrieve().body(type);
             if (response == null || !response.success()) { throw unavailable(); }
             return response.data();
         } catch (RestClientResponseException error) {
+            if (error.getStatusCode().value() == 401) { serviceToken.invalidate(); }
             throw translate(error);
+        } catch (IllegalStateException error) {
+            throw new ApiException("INVENTORY_SERVICE_ACCOUNT_MISSING", HttpStatus.SERVICE_UNAVAILABLE,
+                    "Chưa cấu hình service account kho", null);
         } catch (RestClientException error) {
             throw unavailable();
         }
