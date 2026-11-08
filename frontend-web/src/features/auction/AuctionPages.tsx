@@ -24,7 +24,13 @@ import {
     X,
 } from '../../components/UI'
 import { AUCTIONS } from '../../mockData'
-import { auctionsApi } from '../../api/auctions'
+import {
+    auctionsApi,
+    getAuctionSettlement,
+    getWinnerAuctionDetails,
+    type AuctionSettlement,
+    type WinnerAuctionDetails,
+} from '../../api/auctions'
 import type { Auction } from '../../types'
 
 // ─── Auction List Page ─────────────────────────────────────────────────────────
@@ -1172,156 +1178,190 @@ export function MyBidsPage() {
 }
 
 // ─── Auction Payment Page ──────────────────────────────────────────────────────
+/**
+ * Hiển thị settlement và thông tin sản phẩm thật cho winner, nhận auctionId từ route và winnerId từ session.
+ * Giá/deadline lấy từ Auction Service; thông tin hàng lấy từ Catalog; quá hạn sẽ khóa form.
+ * Tạo order, lưu địa chỉ và chuyển Sandbox đang chờ Commerce hỗ trợ checkout AUCTION.
+ */
 export function AuctionPaymentPage() {
-    const { lang, navigate, pageParams, showToast } = useApp()
-    const auction = AUCTIONS.find((a) => a.id === pageParams?.auctionId) || AUCTIONS[3]
-    const deadline = new Date(Date.now() + 3600000 * 20).toISOString()
-    const [paying, setPaying] = useState(false)
-    const [expired, setExpired] = useState(false)
+    const { lang, pageParams, user } = useApp()
+    const auctionId = String(pageParams?.auctionId || '')
+    const [settlement, setSettlement] = useState<AuctionSettlement | null>(null)
+    const [auctionDetails, setAuctionDetails] = useState<WinnerAuctionDetails | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState(false)
+    const [now, setNow] = useState(Date.now())
+    const [recipientName, setRecipientName] = useState(user?.fullName || '')
+    const [recipientPhone, setRecipientPhone] = useState('')
+    const [shippingAddress, setShippingAddress] = useState('')
 
-    const pay = async () => {
-        setPaying(true)
-        await new Promise((r) => setTimeout(r, 1200))
-        setPaying(false)
-        showToast({
-            type: 'success',
-            message: lang === 'en' ? 'Payment successful!' : 'Thanh toán thành công!',
-        })
-        navigate('order-history')
-    }
+    // Settlement là nguồn chuẩn cho quyền winner, giá chốt và deadline; lỗi API không chuyển sang fixture.
+    useEffect(() => {
+        let active = true
+        setLoading(true)
+        setLoadError(false)
+        getAuctionSettlement(auctionId)
+            .then((result) => {
+                if (active) setSettlement(result)
+            })
+            .catch(() => {
+                if (active) setLoadError(true)
+            })
+            .finally(() => {
+                if (active) setLoading(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [auctionId])
+
+    // Tải thông tin sản phẩm riêng; nếu Catalog/Auction tạm lỗi vẫn giữ settlement chính thức và không dựng dữ liệu giả.
+    useEffect(() => {
+        let active = true
+        setAuctionDetails(null)
+        if (auctionId) {
+            getWinnerAuctionDetails(auctionId)
+                .then((details) => {
+                    if (active) setAuctionDetails(details)
+                })
+                .catch(() => undefined)
+        }
+        return () => {
+            active = false
+        }
+    }, [auctionId])
+
+    // Cập nhật mỗi giây để timeout phản ánh deadline server kể cả khi trang đang mở.
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000)
+        return () => window.clearInterval(timer)
+    }, [])
+
+    const deadline = settlement?.paymentDeadline || ''
+    const expired = !deadline || new Date(deadline).getTime() <= now
+    const isWinner = !!user?.id && settlement?.winnerId === user.id
+    const canEditShipping = !!settlement && isWinner && !expired && !settlement.orderId
 
     return (
         <BuyerLayout>
             <Breadcrumb
                 items={[
                     { label: lang === 'en' ? 'My Bids' : 'Lượt đặt giá', page: 'my-bids' },
-                    { label: lang === 'en' ? 'Complete Payment' : 'Hoàn tất thanh toán' },
+                    { label: tr(lang, 'winnerOrderTitle') },
                 ]}
             />
-            <div className="mt-5 max-w-2xl mx-auto">
-                {/* Winner banner */}
-                <div className="nexus-card p-6 bg-white border-gray-300 mb-5">
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center shrink-0">
-                            <Trophy size={22} />
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-bold text-green-900">
-                                {lang === 'en'
-                                    ? 'Congratulations! You won this auction.'
-                                    : 'Chúc mừng! Bạn đã thắng phiên đấu giá này.'}
-                            </h2>
-                            <p className="text-green-700 mt-1">
-                                {lang === 'vi' ? auction.product.nameVi : auction.product.name}
-                            </p>
-                            <p className="text-3xl font-black text-success mt-1">
-                                {formatCurrency(auction.currentBid, lang)}
-                            </p>
-                        </div>
+            <div className="mt-5 max-w-2xl mx-auto space-y-5">
+                {loading ? (
+                    <div role="status" className="nexus-card p-6 text-gray-600">
+                        {tr(lang, 'loadingSettlement')}
                     </div>
-                </div>
-
-                {/* Payment deadline */}
-                <AlertBanner
-                    type={expired ? 'error' : 'warning'}
-                    message={
-                        expired
-                            ? lang === 'en'
-                                ? 'Payment deadline passed. Your reputation score has been penalized (-10 pts).'
-                                : 'Đã quá hạn thanh toán. Điểm uy tín của bạn bị trừ (-10 điểm).'
-                            : lang === 'en'
-                              ? `Complete payment within 24 hours to avoid reputation penalty.`
-                              : `Hoàn tất thanh toán trong 24 giờ để tránh bị trừ điểm uy tín.`
-                    }
-                />
-
-                {!expired && (
-                    <div className="nexus-card p-5 mt-5 mb-5 flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-gray-500">{tr(lang, 'paymentDeadline')}</p>
-                            <p className="font-semibold text-gray-900">
-                                {new Date(deadline).toLocaleString()}
-                            </p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-xs text-gray-400 mb-1">
-                                {lang === 'en' ? 'Time remaining' : 'Thời gian còn lại'}
-                            </p>
-                            <CountdownTimer endTime={deadline} large />
-                        </div>
-                    </div>
-                )}
-
-                <div className="nexus-card p-6 mt-5">
-                    <h3 className="font-bold text-lg mb-4">
-                        {lang === 'en' ? 'Order Summary' : 'Tóm tắt đơn hàng'}
-                    </h3>
-                    <div className="flex gap-4 mb-5">
-                        <img
-                            src={auction.product.images[0]}
-                            alt=""
-                            className="w-20 h-20 object-cover rounded-xl"
-                        />
-                        <div>
-                            <p className="font-semibold">
-                                {lang === 'vi' ? auction.product.nameVi : auction.product.name}
-                            </p>
-                            <p className="text-sm text-gray-500">
-                                {lang === 'en' ? 'Sold by' : 'Bởi'} {auction.sellerName}
-                            </p>
-                        </div>
-                    </div>
-                    <div className="space-y-2 text-sm border-t border-border pt-3">
-                        {[
-                            [
-                                lang === 'en' ? 'Winning bid' : 'Giá thắng',
-                                formatCurrency(auction.currentBid, lang),
-                            ],
-                            [tr(lang, 'shipping'), '$5.99'],
-                            [tr(lang, 'tax'), formatCurrency(auction.currentBid * 0.08, lang)],
-                            [
-                                tr(lang, 'total'),
-                                formatCurrency(auction.currentBid * 1.08 + 5.99, lang),
-                            ],
-                        ].map(([k, v], i) => (
-                            <div
-                                key={String(k)}
-                                className={`flex justify-between ${i === 3 ? 'font-bold text-primary border-t border-border pt-2 mt-1' : 'text-gray-600'}`}
-                            >
-                                <span>{k}</span>
-                                <span>{v}</span>
+                ) : loadError || !settlement ? (
+                    <AlertBanner type="error" message={tr(lang, 'settlementUnavailable')} />
+                ) : settlement.result === 'FAILED' || !settlement.winnerId ? (
+                    <AlertBanner type="info" message={tr(lang, 'settlementHasNoWinner')} />
+                ) : !isWinner ? (
+                    <AlertBanner type="error" message={tr(lang, 'winnerOnly')} />
+                ) : (
+                    <>
+                        <div className="nexus-card p-6 bg-white border-gray-300">
+                            <div className="flex items-start gap-4">
+                                <div className="w-12 h-12 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center shrink-0">
+                                    <Trophy size={22} />
+                                </div>
+                                <div className="min-w-0">
+                                    <h2 className="text-xl font-bold text-green-900">
+                                        {tr(lang, 'winnerOrderHeading')}
+                                    </h2>
+                                    <p className="text-sm text-gray-500 mt-1">
+                                        {tr(lang, 'auctionLabel')} · {settlement.auctionId}
+                                    </p>
+                                    {auctionDetails && (
+                                        <div className="mt-3 flex items-center gap-3">
+                                            {auctionDetails.productImage && (
+                                                <img
+                                                    src={auctionDetails.productImage}
+                                                    alt={auctionDetails.productName}
+                                                    className="h-14 w-14 rounded-lg object-cover"
+                                                />
+                                            )}
+                                            <p className="font-semibold text-gray-900">
+                                                {auctionDetails.productName}
+                                            </p>
+                                        </div>
+                                    )}
+                                    <p className="text-3xl font-black text-success mt-2">
+                                        {settlement.finalPrice == null ? '—' : formatCurrency(settlement.finalPrice, lang)}
+                                    </p>
+                                </div>
                             </div>
-                        ))}
-                    </div>
-                </div>
-
-                {!expired && (
-                    <div className="mt-5 space-y-4">
-                        <Input
-                            label={lang === 'en' ? 'Card Number' : 'Số thẻ'}
-                            placeholder="4242 4242 4242 4242"
-                        />
-                        <div className="grid grid-cols-2 gap-4">
-                            <Input label={lang === 'en' ? 'Expiry' : 'Hạn'} placeholder="MM/YY" />
-                            <Input label="CVV" placeholder="123" type="password" />
                         </div>
-                        <Button
-                            variant="primary"
-                            size="lg"
-                            className="w-full"
-                            loading={paying}
-                            onClick={pay}
-                        >
-                            {lang === 'en' ? 'Complete Payment' : 'Hoàn tất thanh toán'} –{' '}
-                            {formatCurrency(auction.currentBid * 1.08 + 5.99, lang)}
-                        </Button>
-                        <button
-                            onClick={() => setExpired(true)}
-                            className="text-xs text-gray-400 hover:text-gray-600 w-full text-center"
-                        >
-                            Simulate expired payment (demo)
-                        </button>
-                    </div>
+
+                        {expired ? (
+                            <AlertBanner type="error" message={tr(lang, 'paymentTimedOut')} />
+                        ) : (
+                            <div className="nexus-card p-5 flex items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-sm text-gray-500">{tr(lang, 'paymentDeadline')}</p>
+                                    <p className="font-semibold text-gray-900">
+                                        {new Date(deadline).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-xs text-gray-400 mb-1">
+                                        {tr(lang, 'timeRemaining')}
+                                    </p>
+                                    <CountdownTimer endTime={deadline} large />
+                                </div>
+                            </div>
+                        )}
+
+                        {settlement.orderId && (
+                            <AlertBanner
+                                type="info"
+                                message={`${tr(lang, 'linkedSettlementOrder')} ${settlement.orderId}`}
+                            />
+                        )}
+
+                        <form className="nexus-card p-6 space-y-4" onSubmit={(event) => event.preventDefault()}>
+                            <h3 className="font-bold text-lg">{tr(lang, 'shippingDetails')}</h3>
+                            <Input
+                                label={tr(lang, 'recipientName')}
+                                autoComplete="name"
+                                value={recipientName}
+                                onChange={(event) => setRecipientName(event.target.value)}
+                                disabled={!canEditShipping}
+                                required
+                                maxLength={255}
+                            />
+                            <Input
+                                label={tr(lang, 'recipientPhone')}
+                                autoComplete="tel"
+                                type="tel"
+                                value={recipientPhone}
+                                onChange={(event) => setRecipientPhone(event.target.value)}
+                                disabled={!canEditShipping}
+                                required
+                                pattern="\\+?[0-9]{8,15}"
+                            />
+                            <label className="flex flex-col gap-1.5 text-sm font-semibold text-gray-700">
+                                {tr(lang, 'shippingAddress')}
+                                <textarea
+                                    className="nexus-input min-h-24"
+                                    autoComplete="street-address"
+                                    value={shippingAddress}
+                                    onChange={(event) => setShippingAddress(event.target.value)}
+                                    disabled={!canEditShipping}
+                                    required
+                                    maxLength={500}
+                                />
+                            </label>
+                            <AlertBanner type="info" message={tr(lang, 'checkoutIntegrationPending')} />
+                            <Button type="button" variant="primary" size="lg" className="w-full" disabled>
+                                {tr(lang, 'continueSandboxPayment')}
+                                {settlement.finalPrice != null && ` · ${formatCurrency(settlement.finalPrice, lang)}`}
+                            </Button>
+                        </form>
+                    </>
                 )}
             </div>
         </BuyerLayout>

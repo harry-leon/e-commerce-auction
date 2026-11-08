@@ -15,7 +15,7 @@
  * Lỗi & giới hạn: Dữ liệu đặt giá ở chế độ fallback được đồng bộ cục bộ trong phiên làm việc.
  */
 
-import { api, post, ApiClientError, type ApiResponse } from './client'
+import { api, post, ApiClientError, type ApiProduct, type ApiResponse, type Envelope } from './client'
 import { readSession } from './client'
 import type { Auction, AuctionBid, AuctionStatus, Product } from '../types'
 import { AUCTIONS, PRODUCTS } from '../mockData'
@@ -77,6 +77,69 @@ export interface PlaceBidResponse {
     bidCount: number
     endTime?: string
     extended?: boolean
+}
+
+/** Kết quả settlement chính thức; trang checkout dùng các mốc này thay vì giá/deadline fixture. */
+export interface AuctionSettlement {
+    id: string
+    auctionId: string
+    winnerId: string | null
+    finalPrice: number | null
+    result: 'SUCCESS' | 'FAILED'
+    orderId: string | null
+    paymentDeadline: string | null
+    settledAt: string
+}
+
+/** Đọc settlement thật qua Gateway; không fallback mock vì winner và deadline quyết định quyền thanh toán. */
+export async function getAuctionSettlement(auctionId: string): Promise<AuctionSettlement> {
+    const response = await api<ApiResponse<AuctionSettlement>>(
+        `/auctions/${encodeURIComponent(auctionId)}/settlement`,
+    )
+    const settlement = response?.data
+    if (
+        !response?.success ||
+        !settlement ||
+        settlement.auctionId !== auctionId ||
+        !settlement.id ||
+        !settlement.result
+    ) {
+        throw new ApiClientError('Settlement response is invalid', 'INVALID_SETTLEMENT_RESPONSE', 502)
+    }
+    return settlement
+}
+
+export interface WinnerAuctionDetails {
+    auctionId: string
+    productId: string
+    productName: string
+    productImage?: string
+}
+
+/** Tải tên và ảnh sản phẩm từ Auction/Catalog thật để phần đơn thắng không hiển thị thông tin fixture. */
+export async function getWinnerAuctionDetails(auctionId: string): Promise<WinnerAuctionDetails> {
+    const auctionResponse = await api<ApiResponse<{ id: string; productId: string }>>(
+        `/auctions/${encodeURIComponent(auctionId)}`,
+    )
+    const auction = auctionResponse?.data
+    if (!auctionResponse?.success || !auction || auction.id !== auctionId || !auction.productId) {
+        throw new ApiClientError('Auction response is invalid', 'INVALID_AUCTION_RESPONSE', 502)
+    }
+
+    const productResponse = await api<Envelope<ApiProduct>>(
+        `/products/${encodeURIComponent(auction.productId)}`,
+    )
+    const product = productResponse?.data
+    if (!productResponse?.success || !product || product.id !== auction.productId || !product.name) {
+        throw new ApiClientError('Catalog response is invalid', 'INVALID_CATALOG_RESPONSE', 502)
+    }
+
+    return {
+        auctionId,
+        productId: product.id,
+        productName: product.name,
+        productImage: product.images?.[0]?.url,
+    }
 }
 
 /** Payload thô của Auction từ Backend hoặc API Gateway (hỗ trợ cả camelCase và snake_case) */
