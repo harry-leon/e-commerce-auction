@@ -89,6 +89,23 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
     Optional<Order> findByIdempotencyKey(String idempotencyKey);
 
     /**
+     * Tìm đơn hàng theo mã phiên đấu giá (SRS §3.5.3).
+     * Dùng để kiểm tra tính lũy nghiệm (Idempotency) khi Auction Service bàn giao kết quả tạo đơn hàng.
+     *
+     * @param auctionId mã phiên đấu giá duy nhất
+     * @return Optional chứa Order đã tạo từ phiên đấu giá này nếu có
+     */
+    Optional<Order> findByAuctionId(UUID auctionId);
+
+    /**
+     * Kiểm tra sự tồn tại của đơn hàng gắn với phiên đấu giá.
+     *
+     * @param auctionId mã phiên đấu giá
+     * @return true nếu phiên đấu giá đã được tạo đơn hàng
+     */
+    boolean existsByAuctionId(UUID auctionId);
+
+    /**
      * Kiểm tra sự tồn tại của khóa Idempotency.
      *
      * @param idempotencyKey khóa idempotent

@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.nexus.auction.repository.AuctionRepository;
 import com.nexus.auction.repository.AuctionSettlementRepository;
 import com.nexus.auction.repository.BidRepository;
+import com.nexus.auction.service.AuctionOrderHandoverService;
 import com.nexus.auction.service.AuctionSettlementService;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
@@ -58,6 +59,7 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
     private final AuctionSettlementRepository auctionSettlementRepository;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
+    private final AuctionOrderHandoverService auctionOrderHandoverService;
 
     @Autowired
     @Lazy
@@ -68,10 +70,16 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
             BidRepository bidRepository,
             AuctionSettlementRepository auctionSettlementRepository,
             Clock clock) {
+        this(auctionRepository, bidRepository, auctionSettlementRepository, clock, null, null);
+    }
 
-
-
-        this(auctionRepository, bidRepository, auctionSettlementRepository, clock, null);
+    public AuctionSettlementServiceImpl(
+            AuctionRepository auctionRepository,
+            BidRepository bidRepository,
+            AuctionSettlementRepository auctionSettlementRepository,
+            Clock clock,
+            ApplicationEventPublisher eventPublisher) {
+        this(auctionRepository, bidRepository, auctionSettlementRepository, clock, eventPublisher, null);
     }
 
     @Autowired
@@ -80,12 +88,14 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
             BidRepository bidRepository,
             AuctionSettlementRepository auctionSettlementRepository,
             Clock clock,
-            @Autowired(required = false) ApplicationEventPublisher eventPublisher) {
+            @Autowired(required = false) ApplicationEventPublisher eventPublisher,
+            @Autowired(required = false) AuctionOrderHandoverService auctionOrderHandoverService) {
         this.auctionRepository = auctionRepository;
         this.bidRepository = bidRepository;
         this.auctionSettlementRepository = auctionSettlementRepository;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
+        this.auctionOrderHandoverService = auctionOrderHandoverService;
     }
 
     /**
@@ -218,10 +228,36 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
                         public void afterCommit() {
                             log.info("Giao dịch quyết toán phiên [{}] đã commit thành công, phát AuctionClosedEvent", auctionId);
                             eventPublisher.publishEvent(closedEvent);
+
+                            // Bàn giao kết quả chốt phiên sang Commerce Service để tạo đơn hàng (DoD KH-S2-2 / SRS §3.5.3)
+                            // Thực hiện sau khi commit để dữ liệu settlement đã chắc chắn lưu trong DB
+                            if (savedSettlement.getResult() == SettlementResult.SUCCESS && auctionOrderHandoverService != null) {
+                                try {
+                                    auctionOrderHandoverService.handoverAuctionOrder(auctionId);
+                                } catch (Exception ex) {
+                                    log.error("Lỗi khi tự động bàn giao đơn hàng sang Commerce cho phiên [{}]: {}", auctionId, ex.getMessage(), ex);
+                                }
+                            }
                         }
                     });
                 } else {
                     eventPublisher.publishEvent(closedEvent);
+
+                    // Bàn giao kết quả chốt phiên sang Commerce Service khi không có transaction synchronization
+                    if (savedSettlement.getResult() == SettlementResult.SUCCESS && auctionOrderHandoverService != null) {
+                        try {
+                            auctionOrderHandoverService.handoverAuctionOrder(auctionId);
+                        } catch (Exception ex) {
+                            log.error("Lỗi khi tự động bàn giao đơn hàng sang Commerce cho phiên [{}]: {}", auctionId, ex.getMessage(), ex);
+                        }
+                    }
+                }
+            } else if (savedSettlement.getResult() == SettlementResult.SUCCESS && auctionOrderHandoverService != null) {
+                // Trường hợp eventPublisher null (ví dụ unit test cũ), vẫn gọi handover nếu được tiêm
+                try {
+                    auctionOrderHandoverService.handoverAuctionOrder(auctionId);
+                } catch (Exception ex) {
+                    log.error("Lỗi khi tự động bàn giao đơn hàng sang Commerce cho phiên [{}]: {}", auctionId, ex.getMessage(), ex);
                 }
             }
             return AuctionSettlementMapper.toResponse(savedSettlement);

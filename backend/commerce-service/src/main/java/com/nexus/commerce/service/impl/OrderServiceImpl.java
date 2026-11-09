@@ -1,12 +1,18 @@
 package com.nexus.commerce.service.impl;
 
+import com.nexus.commerce.client.CatalogClient;
+import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.OrderMapper;
 import com.nexus.commerce.dto.request.CancelOrderRequest;
+import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
+import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
 import com.nexus.commerce.dto.response.OrderSummaryResponse;
 import com.nexus.commerce.entity.Order;
+import com.nexus.commerce.entity.OrderItem;
 import com.nexus.commerce.entity.OrderStatusHistory;
+import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.enums.OrderStatus;
 import com.nexus.commerce.repository.OrderRepository;
 import com.nexus.commerce.repository.OrderStatusHistoryRepository;
@@ -14,15 +20,18 @@ import com.nexus.commerce.service.OrderService;
 import com.nexus.commerce.statemachine.OrderStatusStateMachine;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -50,7 +59,6 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class OrderServiceImpl implements OrderService {
 
@@ -62,6 +70,32 @@ public class OrderServiceImpl implements OrderService {
     private final OrderStatusStateMachine orderStatusStateMachine;
     private final OrderMapper orderMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final CatalogClient catalogClient;
+
+    public OrderServiceImpl(
+            OrderRepository orderRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            OrderStatusStateMachine orderStatusStateMachine,
+            OrderMapper orderMapper,
+            org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this(orderRepository, orderStatusHistoryRepository, orderStatusStateMachine, orderMapper, jdbc, null);
+    }
+
+    @Autowired
+    public OrderServiceImpl(
+            OrderRepository orderRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            OrderStatusStateMachine orderStatusStateMachine,
+            OrderMapper orderMapper,
+            org.springframework.jdbc.core.JdbcTemplate jdbc,
+            @Autowired(required = false) CatalogClient catalogClient) {
+        this.orderRepository = orderRepository;
+        this.orderStatusHistoryRepository = orderStatusHistoryRepository;
+        this.orderStatusStateMachine = orderStatusStateMachine;
+        this.orderMapper = orderMapper;
+        this.jdbc = jdbc;
+        this.catalogClient = catalogClient;
+    }
 
     /**
      * Lấy danh sách lịch sử đơn hàng của người mua.
@@ -523,6 +557,184 @@ public class OrderServiceImpl implements OrderService {
             return formatted.substring(0, MAX_REASON_LENGTH);
         }
         return formatted;
+    }
+
+    /**
+     * Khởi tạo đơn hàng từ kết quả quyết toán phiên đấu giá thành công (SRS §3.5.3 & §3.4.3).
+     *
+     * <p>Chức năng:
+     * - Tiếp nhận thông tin kết quả chốt phiên đấu giá (Settlement Data) được bàn giao từ Auction Service.
+     * - Lưu trữ ảnh chụp nhanh (Snapshot) thông tin sản phẩm và giá trúng đấu giá tại thời điểm chốt phiên.
+     * - Tạo đơn hàng sourceType = AUCTION, status = PENDING_PAYMENT, hạn thanh toán theo quy định (mặc định 24h).
+     * - Đảm bảo tính lũy nghiệm (Idempotency) tuyệt đối theo auctionId (chỉ tạo duy nhất 1 order cho 1 phiên thắng).
+     *
+     * <p>Đầu vào và kết quả:
+     * - Đầu vào: CreateAuctionOrderRequest gồm auctionId, winnerId, sellerId, productId, skuId, finalPrice, paymentDeadline.
+     * - Kết quả: AuctionOrderResponse chứa orderId, orderNo, auctionId, status, total, paymentDeadline.
+     *
+     * <p>Luồng xử lý:
+     * 1. Kiểm tra tính hợp lệ cơ bản của dữ liệu đầu vào (không null, finalPrice > 0, winner != seller).
+     * 2. Kiểm tra Idempotency: Tra cứu Order theo auctionId trong DB. Nếu đã tồn tại, trả về đơn hàng hiện hữu ngay lập tức.
+     * 3. Thu thập snapshot sản phẩm và SKU: ưu tiên dữ liệu từ request hoặc truy vấn Catalog qua CatalogClient.
+     * 4. Sinh mã đơn hàng duy nhất theo định dạng "AUC-yyyyMMdd-XXXXXX".
+     * 5. Khởi tạo thực thể Order với sourceType = AUCTION, paymentMethod = "AUCTION", status = PENDING_PAYMENT.
+     * 6. Tạo dòng mặt hàng OrderItem tương ứng với số lượng = 1 và đơn giá = finalPrice.
+     * 7. Ghi nhận bước trạng thái khởi tạo vào OrderStatusHistory.
+     * 8. Lưu Order và OrderItem vào DB trong một transaction duy nhất.
+     *
+     * <p>Quy tắc và lý do:
+     * - Tuân thủ SRS §3.5.3 và nguyên tắc phân định trách nhiệm: Auction Service không tự tạo đơn trong CSDL của mình.
+     * - auctionId được dùng làm Idempotency Key tự nhiên để ngăn chặn trùng lặp khi network retry.
+     *
+     * <p>Lỗi và giới hạn:
+     * - Bắn BusinessException(ErrorCode.INVALID_PARAM_VALUE) nếu tham số bị null hoặc giá <= 0.
+     * - Bắn BusinessException(ErrorCode.CHECKOUT_BUYER_IS_SELLER) nếu người thắng là người bán.
+     */
+    @Override
+    @Transactional
+    public AuctionOrderResponse createAuctionOrder(CreateAuctionOrderRequest request) {
+        if (request == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Yêu cầu tạo đơn hàng đấu giá không được để trống");
+        }
+        if (request.auctionId() == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã phiên đấu giá không được để trống");
+        }
+        if (request.winnerId() == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã người thắng cuộc không được để trống");
+        }
+        if (request.sellerId() == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã người bán không được để trống");
+        }
+        if (request.skuId() == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã SKU không được để trống");
+        }
+        if (request.finalPrice() == null || request.finalPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Giá trúng đấu giá phải lớn hơn 0");
+        }
+        if (request.winnerId().equals(request.sellerId())) {
+            throw new BusinessException(ErrorCode.ORDER_SELLER_CANNOT_BUY_OWN_PRODUCT, "Người thắng cuộc không được trùng với người bán");
+        }
+
+        // Bước 1: Kiểm tra tính lũy nghiệm (Idempotency - SRS §3.4.3 & §2.6 ORDER_IDEMPOTENCY_ENABLED = true)
+        Optional<Order> existing = orderRepository.findByAuctionId(request.auctionId());
+        if (existing.isPresent()) {
+            Order order = existing.get();
+            log.info("Đơn hàng cho phiên đấu giá [{}] đã tồn tại với orderId [{}] (Idempotent), trả về đơn hàng hiện tại",
+                    request.auctionId(), order.getId());
+            Instant deadline = request.paymentDeadline() != null
+                    ? request.paymentDeadline()
+                    : order.getCreatedAt().plus(24, ChronoUnit.HOURS);
+            return new AuctionOrderResponse(
+                    order.getId(),
+                    order.getOrderNo(),
+                    order.getAuctionId(),
+                    order.getBuyerId(),
+                    order.getSellerId(),
+                    order.getStatus().name(),
+                    order.getTotal(),
+                    deadline,
+                    order.getCreatedAt()
+            );
+        }
+
+        // Bước 2: Chuẩn bị snapshot thông tin sản phẩm và SKU (Snapshot Capture)
+        String productName = request.productName();
+        String skuCode = request.skuCode();
+        if ((productName == null || productName.isBlank()) && catalogClient != null) {
+            try {
+                SkuInfo skuInfo = catalogClient.getSkuInfo(request.skuId());
+                if (skuInfo != null) {
+                    productName = skuInfo.productName();
+                    skuCode = skuInfo.skuCode();
+                }
+            } catch (Exception ex) {
+                log.warn("Không thể tải thông tin SKU từ Catalog cho skuId [{}], dùng giá trị fallback: {}",
+                        request.skuId(), ex.getMessage());
+            }
+        }
+        if (productName == null || productName.isBlank()) {
+            productName = (request.productId() != null)
+                    ? "Sản phẩm đấu giá #" + request.productId()
+                    : "Sản phẩm đấu giá #" + request.auctionId();
+        }
+        if (skuCode == null || skuCode.isBlank()) {
+            skuCode = "SKU-AUC-" + request.skuId().toString().substring(0, 8).toUpperCase(Locale.ROOT);
+        }
+
+        Instant now = Instant.now();
+        Instant deadline = (request.paymentDeadline() != null)
+                ? request.paymentDeadline()
+                : now.plus(24, ChronoUnit.HOURS);
+
+        // Bước 3: Sinh mã đơn hàng đấu giá duy nhất
+        String orderNo = generateAuctionOrderNo(now);
+
+        // Bước 4: Khởi tạo Order entity với sourceType = AUCTION, status = PENDING_PAYMENT
+        Order order = Order.builder()
+                .id(UUID.randomUUID())
+                .orderNo(orderNo)
+                .buyerId(request.winnerId())
+                .sellerId(request.sellerId())
+                .sourceType(OrderSourceType.AUCTION)
+                .auctionId(request.auctionId())
+                .subtotal(request.finalPrice())
+                .shippingFee(BigDecimal.ZERO)
+                .discount(BigDecimal.ZERO)
+                .total(request.finalPrice())
+                .status(OrderStatus.PENDING_PAYMENT)
+                .shippingAddress("AUCTION_PENDING_BUYER_ADDRESS")
+                .idempotencyKey(request.auctionId().toString())
+                .paymentMethod("AUCTION")
+                .createdAt(now)
+                .build();
+
+        // Bước 5: Tạo snapshot mặt hàng OrderItem (số lượng = 1 đơn vị theo quy chuẩn đấu giá)
+        OrderItem item = OrderItem.builder()
+                .id(UUID.randomUUID())
+                .skuId(request.skuId())
+                .productName(productName)
+                .skuCode(skuCode)
+                .unitPrice(request.finalPrice())
+                .quantity(1)
+                .build();
+        order.addItem(item);
+
+        // Bước 6: Ghi nhận lịch sử trạng thái ban đầu PENDING_PAYMENT
+        OrderStatusHistory history = OrderStatusHistory.builder()
+                .fromStatus(null)
+                .toStatus(OrderStatus.PENDING_PAYMENT)
+                .changedAt(now)
+                .reason(formatAuditReason("AUCTION_SERVICE", "Tạo đơn hàng từ kết quả phiên đấu giá thành công " + request.auctionId(), OrderStatus.PENDING_PAYMENT))
+                .build();
+        order.addStatusHistory(history);
+
+        // Bước 7: Lưu đơn hàng vào cơ sở dữ liệu
+        Order savedOrder = orderRepository.save(order);
+        log.info("Khởi tạo thành công đơn hàng đấu giá [{}] cho phiên [{}] với winner [{}], tổng tiền [{}]",
+                savedOrder.getOrderNo(), request.auctionId(), request.winnerId(), savedOrder.getTotal());
+
+        return new AuctionOrderResponse(
+                savedOrder.getId(),
+                savedOrder.getOrderNo(),
+                savedOrder.getAuctionId(),
+                savedOrder.getBuyerId(),
+                savedOrder.getSellerId(),
+                savedOrder.getStatus().name(),
+                savedOrder.getTotal(),
+                deadline,
+                savedOrder.getCreatedAt()
+        );
+    }
+
+    /**
+     * Sinh mã đơn hàng đấu giá thân thiện theo định dạng AUC-yyyyMMdd-XXXXXX.
+     */
+    private String generateAuctionOrderNo(Instant now) {
+        String datePart = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(now);
+        String randomPart = UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
+        return "AUC-" + datePart + "-" + randomPart;
     }
 
     /**

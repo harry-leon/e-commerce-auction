@@ -256,3 +256,53 @@ Không được dùng API status để đánh dấu VNPAY PAID; chỉ IPN hợp 
 ## 7. Thông báo TT-S1-4 và transactional email
 
 Checkout mới enqueue ORDER_CREATED; IPN terminal đầu tiên enqueue PAYMENT_SUCCESS/PAYMENT_FAILED. Snapshot buyer/orderNo/total lấy từ Order, commit cùng transaction; worker gửi HTTP sau commit với retry và event UUID cố định. Không đổi request/response checkout/payment. Xem [Notification contract](NOTIFICATION_SERVICE.md) và [demo/vận hành](../ORDER_PAYMENT_NOTIFICATIONS_DEMO.md).
+
+## 8. Khởi tạo Đơn hàng Đấu giá Nội bộ (Internal Auction Order Handover — KH-S2-2 / SRS §3.5.3)
+
+API nội bộ cho phép Auction Service bàn giao kết quả phiên đấu giá thành công sang Commerce Service một cách tin cậy và có tính lũy nghiệm (Idempotent).
+
+### 8.1. Endpoint tạo đơn đấu giá
+- **Method & Path:** `POST /api/v1/internal/commerce/orders/from-auction`
+- **Xác thực:** Service Identity (Client `nexus-auction-service` + privilege `COMMERCE.AUCTION`).
+- **Header:** `Idempotency-Key: {auctionId}`.
+- **Request Body (`CreateAuctionOrderRequest`):**
+```json
+{
+  "auctionId": "c1f7b9c2-5717-4562-b3fc-2c963f66afa6",
+  "winnerId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "sellerId": "0b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6e",
+  "productId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "skuId": "4fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "finalPrice": 5200000.00,
+  "paymentDeadline": "2026-11-08T20:00:00Z",
+  "productName": "Đồng hồ Vintage 1980",
+  "skuCode": "SKU-VINTAGE-01"
+}
+```
+- **Ràng buộc nghiệp vụ & Idempotency:**
+  - `auctionId` làm Idempotency Key duy nhất: Nếu đơn hàng đã được tạo trước đó cho `auctionId`, Commerce Service lập tức trả về đơn hàng hiện hữu mà không tạo trùng lặp.
+  - Người mua (`winnerId`) không được trùng người bán (`sellerId`) (HTTP 422: `ORDER_SELLER_CANNOT_BUY_OWN_PRODUCT`).
+  - Giá thắng cuộc `finalPrice` phải lớn hơn 0 (HTTP 400: `INVALID_PARAM_VALUE`).
+  - Đơn hàng được tạo với `source_type = AUCTION`, trạng thái `PENDING_PAYMENT`, hạn thanh toán 24h (`AUCTION_PAYMENT_DEADLINE_HOURS = 24`). Snapshot mặt hàng và mã SKU được lưu vết từ Catalog Service.
+- **Response (`ApiResponse<AuctionOrderResponse>` — HTTP 201 Created):**
+```json
+{
+  "success": true,
+  "data": {
+    "orderId": "e2a3b4c5-5717-4562-b3fc-2c963f66afa6",
+    "orderNo": "AUC-20261109-7B1A2C",
+    "auctionId": "c1f7b9c2-5717-4562-b3fc-2c963f66afa6",
+    "buyerId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "sellerId": "0b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6e",
+    "status": "PENDING_PAYMENT",
+    "total": 5200000.00,
+    "paymentDeadline": "2026-11-08T20:00:00Z",
+    "createdAt": "2026-11-07T20:00:00Z"
+  },
+  "error": null,
+  "meta": {
+    "requestId": "req-xxx",
+    "timestamp": "2026-11-07T20:00:01Z"
+  }
+}
+```
