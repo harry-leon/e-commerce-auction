@@ -4,6 +4,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -14,12 +15,13 @@ import java.util.UUID;
  * - Dùng để tạo đơn hàng chính thức cho người thắng cuộc với sourceType = AUCTION và hạn thanh toán 24h.
  *
  * Đầu vào và kết quả:
- * - Nhận: auctionId, winnerId (Buyer), sellerId, productId, skuId, finalPrice, paymentDeadline, productName, skuCode.
+ * - Nhận: auctionId, winnerId (Buyer), sellerId, productId, skuId, finalPrice, paymentDeadline, productName, skuCode, reservationIds.
  * - Kết quả: Commerce Service tạo hoặc trả về đơn hàng hiện hữu (Idempotent).
  *
  * Quy tắc và lý do:
  * - auctionId đóng vai trò là Idempotency Key tự nhiên để triệt tiêu nguy cơ sinh trùng đơn hàng khi có replay.
  * - finalPrice bắt buộc > 0 (tối thiểu 0.01 VND) tương ứng với mức giá thắng cuộc hợp lệ.
+ * - reservationIds (nếu có) được gắn trực tiếp vào order_reservations để chuẩn bị cho luồng thanh toán.
  */
 public record CreateAuctionOrderRequest(
         @NotNull(message = "Mã phiên đấu giá không được để trống")
@@ -44,7 +46,9 @@ public record CreateAuctionOrderRequest(
 
         String productName,
 
-        String skuCode
+        String skuCode,
+
+        List<UUID> reservationIds
 ) {
     /**
      * Constructor thuận tiện cho các caller nội bộ chỉ truyền các trường tối thiểu bắt buộc.
@@ -56,7 +60,23 @@ public record CreateAuctionOrderRequest(
             UUID skuId,
             BigDecimal finalPrice,
             Instant paymentDeadline) {
-        this(auctionId, winnerId, sellerId, null, skuId, finalPrice, paymentDeadline, null, null);
+        this(auctionId, winnerId, sellerId, null, skuId, finalPrice, paymentDeadline, null, null, null);
+    }
+
+    /**
+     * Constructor thuận tiện khi có đầy đủ snapshot sản phẩm nhưng chưa có reservationIds.
+     */
+    public CreateAuctionOrderRequest(
+            UUID auctionId,
+            UUID winnerId,
+            UUID sellerId,
+            UUID productId,
+            UUID skuId,
+            BigDecimal finalPrice,
+            Instant paymentDeadline,
+            String productName,
+            String skuCode) {
+        this(auctionId, winnerId, sellerId, productId, skuId, finalPrice, paymentDeadline, productName, skuCode, null);
     }
 }
 

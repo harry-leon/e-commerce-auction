@@ -1,5 +1,6 @@
 package com.nexus.commerce.controller.internal;
 
+import com.nexus.commerce.dto.request.AttachOrderReservationsRequest;
 import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
 import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.service.OrderService;
@@ -7,9 +8,11 @@ import com.nexus.common.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -55,6 +58,36 @@ public class AuctionOrderInternalController {
                 request.auctionId(), request.winnerId());
         AuctionOrderResponse response = orderService.createAuctionOrder(request);
         return ApiResponse.ok(response);
+    }
+
+    /**
+     * Gắn danh sách phiếu giữ kho (reservation IDs) vào đơn hàng sau khi chuyển tiếp kho thành công.
+     *
+     * Chức năng:
+     * - Tiếp nhận reservationIds từ Auction Service sau khi Auction Service đã gọi Fulfillment Service
+     *   chuyển tiếp phiếu giữ kho từ AUCTION sang ORDER.
+     * - Lưu các reservationIds vào order_reservations để chuẩn bị cho luồng thanh toán VNPAY.
+     *
+     * Đầu vào và kết quả:
+     * - Đầu vào: orderId (trên URL), AttachOrderReservationsRequest mang danh sách UUID phiếu kho.
+     * - Kết quả: ApiResponse.ok() với HTTP 200.
+     *
+     * Quy tắc:
+     * - Bảo vệ bởi ServiceIdentity (bắt buộc client 'nexus-auction-service' và privilege 'COMMERCE.AUCTION').
+     *
+     * @param orderId Mã đơn hàng Commerce cần gắn phiếu kho
+     * @param request Payload chứa danh sách reservationIds
+     * @return ApiResponse rỗng
+     */
+    @PostMapping("/{orderId}/reservations")
+    @Operation(summary = "Gắn phiếu giữ kho vào đơn hàng", description = "Endpoint nội bộ cho Auction Service gắn reservation IDs sau khi chuyển kho")
+    public ApiResponse<Void> attachReservations(
+            @PathVariable UUID orderId,
+            @Valid @RequestBody AttachOrderReservationsRequest request) {
+        log.info("Tiếp nhận yêu cầu gắn [{}] phiếu giữ kho cho đơn hàng [{}]",
+                request.reservationIds().size(), orderId);
+        orderService.attachReservations(orderId, request.reservationIds());
+        return ApiResponse.ok();
     }
 }
 

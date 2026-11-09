@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.commerce.config.SecurityConfig;
+import com.nexus.commerce.dto.request.AttachOrderReservationsRequest;
 import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
 import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.enums.OrderStatus;
@@ -41,6 +42,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @WebMvcTest(AuctionOrderInternalController.class)
 @AutoConfigureMockMvc
+@ActiveProfiles("test")
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 @ActiveProfiles("test")
 @DisplayName("AuctionOrderInternalController Tests - API nội bộ tạo đơn hàng đấu giá")
@@ -144,5 +146,24 @@ class AuctionOrderInternalControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("Gắn reservationIds thành công với ServiceIdentity hợp lệ trả về 200 OK")
+    void test_attachReservations_authorized_returns200() throws Exception {
+        AttachOrderReservationsRequest request = new AttachOrderReservationsRequest(
+                java.util.List.of(UUID.randomUUID())
+        );
+
+        mockMvc.perform(post("/api/v1/internal/commerce/orders/" + orderId + "/reservations")
+                        .with(jwt()
+                                .jwt(j -> j.claim("azp", "nexus-auction-service"))
+                                .authorities(new SimpleGrantedAuthority("COMMERCE.AUCTION")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(orderService).attachReservations(org.mockito.ArgumentMatchers.eq(orderId), any());
     }
 }

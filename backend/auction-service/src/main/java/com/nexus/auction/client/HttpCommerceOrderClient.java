@@ -1,10 +1,13 @@
 package com.nexus.auction.client;
 
+import com.nexus.auction.client.dto.AttachOrderReservationsPayload;
 import com.nexus.auction.client.dto.AuctionOrderResult;
 import com.nexus.auction.client.dto.CreateAuctionOrderPayload;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.response.ApiResponse;
+import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -120,5 +123,76 @@ public class HttpCommerceOrderClient implements CommerceOrderClient {
                 payload.auctionId(), MAX_RETRY_ATTEMPTS, lastException);
         throw new BusinessException(ErrorCode.BAD_GATEWAY,
                 "Không thể kết nối hoặc bàn giao đơn hàng sang Commerce Service sau " + MAX_RETRY_ATTEMPTS + " lần thử");
+    }
+
+    /**
+     * Gửi yêu cầu gắn danh sách reservationId vào đơn hàng đã tạo tại Commerce Service.
+     *
+     * Luồng xử lý:
+     * 1. Gọi POST /api/v1/internal/commerce/orders/{orderId}/reservations.
+     * 2. Bắt lỗi mạng / 5xx để retry tối đa 3 lần với backoff.
+     * 3. Bỏ qua 4xx và ném lỗi nghiệp vụ nếu dữ liệu không hợp lệ.
+     *
+     * @param orderId        Mã đơn hàng Commerce
+     * @param reservationIds Danh sách mã phiếu giữ kho từ Fulfillment
+     */
+    @Override
+    public void attachOrderReservations(UUID orderId, List<UUID> reservationIds) {
+        if (orderId == null || reservationIds == null || reservationIds.isEmpty()) {
+            return;
+        }
+
+        AttachOrderReservationsPayload payload = new AttachOrderReservationsPayload(reservationIds);
+        Exception lastException = null;
+
+        for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+            try {
+                log.info("Gửi yêu cầu gắn [{}] phiếu giữ kho cho đơn [{}] tại Commerce Service, lần thử [{}/{}]",
+                        reservationIds.size(), orderId, attempt, MAX_RETRY_ATTEMPTS);
+
+                ApiResponse<Void> response = client.post()
+                        .uri("/api/v1/internal/commerce/orders/{orderId}/reservations", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(payload)
+                        .retrieve()
+                        .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
+                            throw new HttpClientErrorException(res.getStatusCode(), res.getStatusText());
+                        })
+                        .body(new ParameterizedTypeReference<ApiResponse<Void>>() { });
+
+                if (response != null && response.success()) {
+                    log.info("Commerce Service đã gắn thành công [{}] phiếu giữ kho vào đơn [{}]",
+                            reservationIds.size(), orderId);
+                    return;
+                }
+            } catch (HttpClientErrorException clientEx) {
+                log.error("Commerce Service từ chối gắn reservationIds cho đơn [{}] với mã HTTP {}: {}",
+                        orderId, clientEx.getStatusCode(), clientEx.getMessage());
+                throw new BusinessException(ErrorCode.BUSINESS_ERROR,
+                        "Không thể gắn reservationIds tại Commerce Service: " + clientEx.getMessage());
+            } catch (ResourceAccessException | HttpServerErrorException netEx) {
+                lastException = netEx;
+                log.warn("Lỗi mạng khi gọi Commerce Service gắn reservations cho đơn [{}], lần thử [{}/{}]: {}",
+                        orderId, attempt, MAX_RETRY_ATTEMPTS, netEx.getMessage());
+
+                if (attempt < MAX_RETRY_ATTEMPTS) {
+                    try {
+                        Thread.sleep(INITIAL_BACKOFF_MS * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR, "Tiến trình retry bị gián đoạn");
+                    }
+                }
+            } catch (BusinessException be) {
+                throw be;
+            } catch (Exception ex) {
+                lastException = ex;
+                log.warn("Lỗi không mong muốn khi gọi Commerce Service gắn reservations cho đơn [{}], lần thử [{}/{}]: {}",
+                        orderId, attempt, MAX_RETRY_ATTEMPTS, ex.getMessage());
+            }
+        }
+
+        log.warn("Gọi Commerce Service gắn reservations cho đơn [{}] thất bại sau {} lần thử: {}",
+                orderId, MAX_RETRY_ATTEMPTS, (lastException != null ? lastException.getMessage() : "unknown"));
     }
 }

@@ -76,7 +76,15 @@ public class PaymentService {
             return response(payment);
         }
         // Không gia hạn khi mở lại; VNPAY chỉ nhận chính xác đến giây nên DB cũng dùng cùng mốc, tránh lệch phần mili giây.
-        Instant expires = order.getCreatedAt().plusSeconds(15 * 60).truncatedTo(ChronoUnit.SECONDS);
+        // Đối với đơn hàng đấu giá, hạn thanh toán được xác định theo paymentDeadline (mặc định 24h theo SRS §3.6.1).
+        Instant expires;
+        if (order.getPaymentDeadline() != null) {
+            expires = order.getPaymentDeadline().truncatedTo(ChronoUnit.SECONDS);
+        } else if (order.getSourceType() == com.nexus.commerce.enums.OrderSourceType.AUCTION) {
+            expires = order.getCreatedAt().plus(24, java.time.temporal.ChronoUnit.HOURS).truncatedTo(ChronoUnit.SECONDS);
+        } else {
+            expires = order.getCreatedAt().plusSeconds(15 * 60).truncatedTo(ChronoUnit.SECONDS);
+        }
         if (!expires.isAfter(Instant.now())) { throw new BusinessException(ErrorCode.PAYMENT_EXPIRED); }
         if (order.getReservationIds().isEmpty()) {
             throw new ApiException("PAYMENT_RESERVATIONS_MISSING", HttpStatus.CONFLICT, "Đơn chưa có snapshot phiếu giữ kho", null);

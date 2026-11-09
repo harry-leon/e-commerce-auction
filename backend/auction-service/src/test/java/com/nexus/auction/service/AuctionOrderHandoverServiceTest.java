@@ -3,11 +3,13 @@ package com.nexus.auction.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.nexus.auction.client.CommerceOrderClient;
+import com.nexus.auction.client.FulfillmentInventoryClient;
 import com.nexus.auction.client.dto.AuctionOrderResult;
 import com.nexus.auction.client.dto.CreateAuctionOrderPayload;
 import com.nexus.auction.dto.response.AuctionSettlementResponse;
@@ -25,6 +27,7 @@ import com.nexus.common.exception.ResourceNotFoundException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +46,8 @@ import org.springframework.context.ApplicationEventPublisher;
  * Chức năng:
  * - Tiếp nhận kết quả chốt phiên (Consume Settlement): Xác thực toàn vẹn dữ liệu (winner != seller, final_price > 0).
  * - Bàn giao khởi tạo đơn hàng sang Commerce Service (Order Creation Handover).
+ * - Chuyển tiếp phiếu giữ kho AUCTION -> ORDER thực tế tại Fulfillment Service (DoD KH-S2-1).
+ * - Gắn các reservationId vào Order Commerce để PaymentService kiểm tra trước thanh toán.
  * - Đảm bảo tính lũy nghiệm (Idempotency): Nếu đơn hàng đã tồn tại (order_id != null), không gọi sang Commerce nữa.
  * - Phát sinh domain event AuctionSettledEvent sau khi đơn hàng được tạo thành công.
  *
@@ -62,6 +67,9 @@ class AuctionOrderHandoverServiceTest {
     private CommerceOrderClient commerceOrderClient;
 
     @Mock
+    private FulfillmentInventoryClient fulfillmentInventoryClient;
+
+    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     @Captor
@@ -78,6 +86,7 @@ class AuctionOrderHandoverServiceTest {
     private final UUID productId = UUID.fromString("00000000-0000-0000-0000-000000000033");
     private final UUID skuId = UUID.fromString("00000000-0000-0000-0000-000000000044");
     private final UUID orderId = UUID.fromString("00000000-0000-0000-0000-000000000055");
+    private final UUID reservationId = UUID.fromString("00000000-0000-0000-0000-000000000099");
     private final BigDecimal finalPrice = new BigDecimal("1200000.00");
     private final Instant now = Instant.parse("2026-11-09T10:00:00Z");
 
@@ -87,6 +96,7 @@ class AuctionOrderHandoverServiceTest {
                 auctionRepository,
                 auctionSettlementRepository,
                 commerceOrderClient,
+                fulfillmentInventoryClient,
                 eventPublisher
         );
     }
@@ -127,7 +137,9 @@ class AuctionOrderHandoverServiceTest {
         when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.of(settlement));
         when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(auction));
         when(commerceOrderClient.createAuctionOrder(any(CreateAuctionOrderPayload.class))).thenReturn(orderResult);
-        when(auctionSettlementRepository.save(any(AuctionSettlement.class))).thenAnswer(i -> i.getArgument(0));
+        when(fulfillmentInventoryClient.transitionAuctionToOrder(eq(auctionId), eq(orderId), any()))
+                .thenReturn(List.of(reservationId));
+        when(auctionSettlementRepository.saveAndFlush(any(AuctionSettlement.class))).thenAnswer(i -> i.getArgument(0));
 
         // Thực thi
         AuctionSettlementResponse response = handoverService.handoverAuctionOrder(auctionId);
@@ -147,9 +159,15 @@ class AuctionOrderHandoverServiceTest {
         assertThat(payload.skuId()).isEqualTo(skuId);
         assertThat(payload.finalPrice()).isEqualByComparingTo(finalPrice);
 
-        // Xác minh bản ghi settlement được cập nhật order_id
+        // Xác minh gọi Fulfillment Service chuyển tiếp kho thực tế
+        verify(fulfillmentInventoryClient).transitionAuctionToOrder(eq(auctionId), eq(orderId), any());
+
+        // Xác minh gọi Commerce Service gắn reservationIds vào đơn hàng
+        verify(commerceOrderClient).attachOrderReservations(eq(orderId), eq(List.of(reservationId)));
+
+        // Xác minh bản ghi settlement được cập nhật order_id và saveAndFlush
         assertThat(settlement.getOrderId()).isEqualTo(orderId);
-        verify(auctionSettlementRepository).save(settlement);
+        verify(auctionSettlementRepository).saveAndFlush(settlement);
 
         // Xác minh domain event AuctionSettledEvent được phát sinh
         verify(eventPublisher).publishEvent(eventCaptor.capture());

@@ -1060,6 +1060,7 @@ class OrderServiceTest {
             assertEquals(finalPrice, savedOrder.getSubtotal());
             assertEquals(BigDecimal.ZERO, savedOrder.getShippingFee());
             assertEquals(finalPrice, savedOrder.getTotal());
+            assertEquals(paymentDeadline, savedOrder.getPaymentDeadline());
 
             // Xác minh OrderItem snapshot từ Catalog và đơn giá là giá thắng cuộc
             assertEquals(1, savedOrder.getItems().size());
@@ -1151,6 +1152,39 @@ class OrderServiceTest {
 
             assertEquals(ErrorCode.INVALID_PARAM_VALUE.name(), ex.getCode());
             verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Gắn danh sách reservationIds thành công và idempotent không ghi trùng")
+        void test_attachReservations_successAndIdempotent() {
+            UUID res1 = UUID.randomUUID();
+            UUID res2 = UUID.randomUUID();
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PENDING_PAYMENT);
+
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            // Lần 1: Gắn 2 phiếu
+            orderService.attachReservations(orderId, List.of(res1, res2));
+            assertEquals(2, order.getReservationIds().size());
+            assertTrue(order.getReservationIds().contains(res1));
+            assertTrue(order.getReservationIds().contains(res2));
+
+            // Lần 2: Gắn lại cùng danh sách (idempotent)
+            orderService.attachReservations(orderId, List.of(res1, res2));
+            assertEquals(2, order.getReservationIds().size());
+        }
+
+        @Test
+        @DisplayName("Gắn reservationIds cho đơn không tồn tại ném ngoại lệ ORDER_NOT_FOUND")
+        void test_attachReservations_notFound_throwsException() {
+            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.attachReservations(orderId, List.of(UUID.randomUUID()))
+            );
+            assertEquals(ErrorCode.ORDER_NOT_FOUND.name(), ex.getCode());
         }
     }
 }

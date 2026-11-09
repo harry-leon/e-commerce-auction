@@ -621,9 +621,26 @@ public class OrderServiceImpl implements OrderService {
             Order order = existing.get();
             log.info("Đơn hàng cho phiên đấu giá [{}] đã tồn tại với orderId [{}] (Idempotent), trả về đơn hàng hiện tại",
                     request.auctionId(), order.getId());
-            Instant deadline = request.paymentDeadline() != null
-                    ? request.paymentDeadline()
-                    : order.getCreatedAt().plus(24, ChronoUnit.HOURS);
+
+            // Nếu request có bổ sung reservationIds mà đơn cũ chưa có, cập nhật thêm vào đơn
+            if (request.reservationIds() != null && !request.reservationIds().isEmpty()) {
+                boolean updated = false;
+                for (UUID resId : request.reservationIds()) {
+                    if (!order.getReservationIds().contains(resId)) {
+                        order.getReservationIds().add(resId);
+                        updated = true;
+                    }
+                }
+                if (updated) {
+                    orderRepository.save(order);
+                }
+            }
+
+            Instant deadline = (order.getPaymentDeadline() != null)
+                    ? order.getPaymentDeadline()
+                    : ((request.paymentDeadline() != null)
+                            ? request.paymentDeadline()
+                            : order.getCreatedAt().plus(24, ChronoUnit.HOURS));
             return new AuctionOrderResponse(
                     order.getId(),
                     order.getOrderNo(),
@@ -669,7 +686,7 @@ public class OrderServiceImpl implements OrderService {
         // Bước 3: Sinh mã đơn hàng đấu giá duy nhất
         String orderNo = generateAuctionOrderNo(now);
 
-        // Bước 4: Khởi tạo Order entity với sourceType = AUCTION, status = PENDING_PAYMENT
+        // Bước 4: Khởi tạo Order entity với sourceType = AUCTION, status = PENDING_PAYMENT và paymentDeadline
         Order order = Order.builder()
                 .id(UUID.randomUUID())
                 .orderNo(orderNo)
@@ -685,8 +702,14 @@ public class OrderServiceImpl implements OrderService {
                 .shippingAddress("AUCTION_PENDING_BUYER_ADDRESS")
                 .idempotencyKey(request.auctionId().toString())
                 .paymentMethod("AUCTION")
+                .paymentDeadline(deadline)
                 .createdAt(now)
                 .build();
+
+        // Gắn reservationIds nếu được truyền kèm ngay khi tạo
+        if (request.reservationIds() != null && !request.reservationIds().isEmpty()) {
+            order.getReservationIds().addAll(request.reservationIds());
+        }
 
         // Bước 5: Tạo snapshot mặt hàng OrderItem (số lượng = 1 đơn vị theo quy chuẩn đấu giá)
         OrderItem item = OrderItem.builder()
@@ -724,6 +747,54 @@ public class OrderServiceImpl implements OrderService {
                 deadline,
                 savedOrder.getCreatedAt()
         );
+    }
+
+    /**
+     * Gắn danh sách mã phiếu giữ kho (reservation IDs) vào đơn hàng.
+     *
+     * Chức năng:
+     * - Lưu các reservationId đã chuyển tiếp từ Fulfillment Service vào bảng order_reservations.
+     * - Cung cấp dữ liệu cho PaymentService kiểm tra điều kiện phiếu kho trước khi tạo URL VNPAY,
+     *   và phục vụ PaymentInventoryWorker xuất kho sau khi đơn thanh toán thành công.
+     *
+     * Đầu vào và kết quả:
+     * - Đầu vào: orderId (mã đơn hàng), reservationIds (danh sách ID phiếu kho).
+     * - Kết quả: Cập nhật trường reservationIds của Order trong CSDL.
+     *
+     * Quy tắc và lý do:
+     * - Thao tác là idempotent: kiểm tra sự tồn tại của từng reservationId trước khi thêm, tránh bản ghi trùng.
+     * - Nếu đơn hàng không tồn tại, ném ResourceNotFoundException.
+     *
+     * Lỗi và giới hạn:
+     * - Bắn BusinessException(ErrorCode.INVALID_PARAM_VALUE) nếu tham số bị null hoặc rỗng.
+     */
+    @Override
+    @Transactional
+    public void attachReservations(UUID orderId, List<UUID> reservationIds) {
+        if (orderId == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã đơn hàng orderId không được để trống");
+        }
+        if (reservationIds == null || reservationIds.isEmpty()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Danh sách reservationIds không được để trống");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn hàng với mã: " + orderId));
+
+        boolean modified = false;
+        for (UUID resId : reservationIds) {
+            if (resId != null && !order.getReservationIds().contains(resId)) {
+                order.getReservationIds().add(resId);
+                modified = true;
+            }
+        }
+
+        if (modified) {
+            orderRepository.save(order);
+            log.info("Đã gắn [{}] phiếu giữ kho vào đơn hàng [{}]", reservationIds.size(), orderId);
+        } else {
+            log.info("Các phiếu giữ kho đã tồn tại trong đơn hàng [{}] (Idempotent), bỏ qua cập nhật lặp", orderId);
+        }
     }
 
     /**

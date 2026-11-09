@@ -58,6 +58,7 @@ app:
       opening-interval-ms: ${AUCTION_SCHEDULER_OPENING_INTERVAL_MS:5000}
       closing-interval-ms: ${AUCTION_SCHEDULER_CLOSING_INTERVAL_MS:10000}
       settlement-interval-ms: ${AUCTION_SCHEDULER_SETTLEMENT_INTERVAL_MS:10000}
+      handover-interval-ms: ${AUCTION_SCHEDULER_HANDOVER_INTERVAL_MS:10000}
     bidding:
       min-increment: ${AUCTION_MIN_INCREMENT:1000}
       anti-sniping-seconds: ${AUCTION_ANTI_SNIPING_SECONDS:120}

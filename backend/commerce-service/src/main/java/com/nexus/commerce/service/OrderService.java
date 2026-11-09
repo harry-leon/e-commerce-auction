@@ -256,4 +256,16 @@ public interface OrderService {
      * @return kết quả thông tin đơn hàng AuctionOrderResponse
      */
     AuctionOrderResponse createAuctionOrder(CreateAuctionOrderRequest request);
+
+    /**
+     * Gắn danh sách mã phiếu giữ kho (reservation IDs) vào đơn hàng.
+     *
+     * <p>Chức năng:
+     * - Lưu các reservationId đã chuyển tiếp từ Fulfillment Service vào bảng liên kết order_reservations.
+     * - Cung cấp dữ liệu cho PaymentService kiểm tra trước khi mở URL VNPAY và cho PaymentInventoryWorker xuất kho.
+     *
+     * @param orderId        Mã đơn hàng Commerce cần gắn phiếu kho
+     * @param reservationIds Danh sách mã phiếu giữ kho từ Fulfillment Service
+     */
+    void attachReservations(UUID orderId, List<UUID> reservationIds);
 }
