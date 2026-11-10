@@ -1,4 +1,4 @@
-import { Component, type ReactNode, type ErrorInfo } from 'react'
+import { Component, useState, useEffect, useRef, type ReactNode, type ErrorInfo } from 'react'
 import { AppProvider, useApp } from './context'
 import { ToastContainer } from './components/UI'
 import { AppRouter } from './routes/AppRouter'
@@ -84,11 +84,60 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     }
 }
 
+/**
+ * Chức năng: Component trung tâm kết nối Router và Toast.
+ * Luồng: Tự động hiển thị spinner Bootstrap thương hiệu (#ee4d2d) khi người dùng điều hướng chuyển trang (page transition).
+ * Quy tắc: Không trì hoãn việc mount trang con trong React tree để đảm bảo hiệu năng và tính ổn định cho kiểm thử.
+ */
 function AppInner() {
-    // Chỉ render route và thông báo; bỏ bộ đổi vai trò demo để phiên đăng nhập thật không bị thay bằng user giả.
-    const { toasts, dismissToast } = useApp()
+    const { toasts, dismissToast, page } = useApp()
+    const [pageTransitioning, setPageTransitioning] = useState(false)
+    const prevPageRef = useRef(page)
+
+    useEffect(() => {
+        if (prevPageRef.current !== page) {
+            prevPageRef.current = page
+            setPageTransitioning(true)
+            const timer = setTimeout(() => setPageTransitioning(false), 300)
+            return () => clearTimeout(timer)
+        }
+    }, [page])
+
     return (
         <>
+            {pageTransitioning && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 14,
+                        right: 14,
+                        zIndex: 9999,
+                        pointerEvents: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: 'rgba(255, 255, 255, 0.96)',
+                        padding: '6px 14px',
+                        borderRadius: '9999px',
+                        boxShadow: '0 4px 14px rgba(0, 0, 0, 0.12)',
+                        border: '1px solid #fee2e2',
+                        transition: 'opacity 0.2s ease-in-out',
+                    }}
+                    role="status"
+                    aria-label="Đang tải trang"
+                >
+                    <div
+                        className="spinner-border spinner-border-sm text-primary"
+                        style={{ color: '#ee4d2d' }}
+                        role="status"
+                    >
+                        <span className="visually-hidden">Đang tải...</span>
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+                        Đang tải...
+                    </span>
+                </div>
+            )}
             <AppRouter />
             <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         </>
