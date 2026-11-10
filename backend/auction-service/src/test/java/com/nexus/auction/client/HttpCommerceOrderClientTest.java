@@ -42,6 +42,23 @@ import org.springframework.web.client.RestClient;
 @ExtendWith(MockitoExtension.class)
 @DisplayName("HttpCommerceOrderClient Unit Tests - HTTP Client tạo đơn hàng đấu giá kèm Retry")
 class HttpCommerceOrderClientTest {
+    /** Exhaust retry attach phải báo lỗi cho handover, không return void làm scheduler đánh dấu hoàn tất giả. */
+    @Test
+    void exhaustedAttachRetryFailsForSchedulerRecovery() {
+        RestClient.RequestBodyUriSpec uriSpec = mock(RestClient.RequestBodyUriSpec.class);
+        RestClient.RequestBodySpec bodySpec = mock(RestClient.RequestBodySpec.class);
+        RestClient.ResponseSpec responseSpec = mock(RestClient.ResponseSpec.class);
+        when(restClient.post()).thenReturn(uriSpec);
+        when(uriSpec.uri(eq("/api/v1/internal/commerce/orders/{orderId}/reservations"), eq(orderId))).thenReturn(bodySpec);
+        when(bodySpec.contentType(any())).thenReturn(bodySpec);
+        when(bodySpec.body(any())).thenReturn(bodySpec);
+        when(bodySpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.onStatus(any(), any())).thenReturn(responseSpec);
+        when(responseSpec.body(any(ParameterizedTypeReference.class))).thenThrow(new ResourceAccessException("timeout"));
+        assertThatThrownBy(() -> client.attachOrderReservations(orderId, java.util.List.of(UUID.randomUUID())))
+                .isInstanceOf(BusinessException.class);
+        verify(restClient, times(3)).post();
+    }
 
     @Mock
     private RestClient restClient;

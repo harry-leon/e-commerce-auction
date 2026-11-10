@@ -101,6 +101,22 @@ class AuctionOrderHandoverServiceTest {
         );
     }
 
+    /** Attach lỗi không được lưu orderId: scheduler phải còn tìm được settlement để phục hồi sau lỗi/restart. */
+    @Test
+    void attachFailureKeepsSettlementPendingForRetry() {
+        var settlement = buildSettlement(SettlementResult.SUCCESS, winnerId, finalPrice, null);
+        when(auctionSettlementRepository.findByAuctionId(auctionId)).thenReturn(Optional.of(settlement));
+        when(auctionRepository.findById(auctionId)).thenReturn(Optional.of(buildAuction()));
+        when(commerceOrderClient.createAuctionOrder(any())).thenReturn(new AuctionOrderResult(orderId, "AUC-RETRY",
+                auctionId, winnerId, sellerId, "PENDING_PAYMENT", finalPrice, now.plus(24, ChronoUnit.HOURS)));
+        when(fulfillmentInventoryClient.transitionAuctionToOrder(eq(auctionId), eq(orderId), any())).thenReturn(List.of(reservationId));
+        org.mockito.Mockito.doThrow(new IllegalStateException("upstream unavailable"))
+                .when(commerceOrderClient).attachOrderReservations(orderId, List.of(reservationId));
+        assertThatThrownBy(() -> handoverService.handoverAuctionOrder(auctionId)).isInstanceOf(IllegalStateException.class);
+        assertThat(settlement.getOrderId()).isNull();
+        verify(auctionSettlementRepository, never()).saveAndFlush(any());
+    }
+
     private Auction buildAuction() {
         Auction auction = new Auction();
         auction.setId(auctionId);

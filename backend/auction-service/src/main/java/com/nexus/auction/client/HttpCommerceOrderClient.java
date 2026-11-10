@@ -194,5 +194,7 @@ public class HttpCommerceOrderClient implements CommerceOrderClient {
 
         log.warn("Gọi Commerce Service gắn reservations cho đơn [{}] thất bại sau {} lần thử: {}",
                 orderId, MAX_RETRY_ATTEMPTS, (lastException != null ? lastException.getMessage() : "unknown"));
+        // Không nuốt lỗi cuối: scheduler phải giữ settlement chưa hoàn tất để thử lại bước attach sau restart.
+        throw new BusinessException(ErrorCode.BAD_GATEWAY, "Chưa gắn được phiếu giữ kho vào đơn hàng");
     }
 }
