@@ -68,6 +68,13 @@ app:
     # BFF dùng HTTP URL; không đưa lb:// vào WebClient thông thường.
     user-service-url: ${USER_PROFILE_URL:http://localhost:8081}
 
+# Không bật trace HTTP/Gateway hoặc wiretap trên đường IPN: URL chứa chữ ký, header chứa cookie/service token.
+logging:
+  level:
+    org.springframework.web: INFO
+    org.springframework.cloud.gateway: INFO
+    reactor.netty.http: INFO
+
 management:
   endpoints:
     web:
