@@ -69,6 +69,7 @@ import org.springframework.data.domain.Pageable;
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("OrderServiceAccessControlChallengeTest - Bộ kiểm thử đối kháng phân quyền và điều kiện biên")
+// Stub đúng truy vấn fetch-items hiện tại để test kiểm tra quyền thay vì dừng nhầm ở ORDER_NOT_FOUND.
 class OrderServiceAccessControlChallengeTest {
 
     @Mock
@@ -195,7 +196,7 @@ class OrderServiceAccessControlChallengeTest {
         @DisplayName("Người mua lạ (Authenticated Stranger với ROLE_BUYER) bị từ chối với 403 AUTH_FORBIDDEN")
         void test_strangerBuyer_throwsAuthForbidden() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -210,7 +211,7 @@ class OrderServiceAccessControlChallengeTest {
         @DisplayName("Người bán lạ (Authenticated Stranger với ROLE_SELLER) bị từ chối với 403 AUTH_FORBIDDEN")
         void test_strangerSeller_throwsAuthForbidden() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -225,7 +226,7 @@ class OrderServiceAccessControlChallengeTest {
         @DisplayName("Người dùng với vai trò không đủ quyền (ROLE_SUPPORT) không phải Admin bị từ chối 403")
         void test_arbitraryRoleWithoutAdmin_throwsAuthForbidden() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PROCESSING);
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -239,7 +240,7 @@ class OrderServiceAccessControlChallengeTest {
         @DisplayName("Người dùng không truyền ID (null) và vai trò rỗng bị từ chối với 403 AUTH_FORBIDDEN")
         void test_nullUserAndEmptyRoles_throwsAuthForbidden() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -255,7 +256,7 @@ class OrderServiceAccessControlChallengeTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(orderId, buyerId, List.of("ROLE_BUYER"));
@@ -271,7 +272,7 @@ class OrderServiceAccessControlChallengeTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(orderId, sellerId, List.of("ROLE_SELLER"));
@@ -287,7 +288,7 @@ class OrderServiceAccessControlChallengeTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(orderId, adminId, List.of("ROLE_ADMIN"));
@@ -302,7 +303,7 @@ class OrderServiceAccessControlChallengeTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(orderId, adminId, List.of("ADMIN"));
@@ -324,7 +325,7 @@ class OrderServiceAccessControlChallengeTest {
         @Test
         @DisplayName("getOrderDetail với ID không tồn tại ném 404 ORDER_NOT_FOUND")
         void test_getOrderDetail_nonExistentOrder_throwsOrderNotFound() {
-            when(orderRepository.findById(nonExistentOrderId)).thenReturn(Optional.empty());
+            when(orderRepository.findWithItemsById(nonExistentOrderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,

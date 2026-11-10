@@ -5,7 +5,7 @@ package com.nexus.commerce.enums;
  *
  * <p>Vòng đời đơn hàng tuân thủ nghiêm ngặt máy trạng thái OrderStatusStateMachine (8 trạng thái):
  * <ul>
- *   <li>PENDING_PAYMENT: Đơn hàng vừa tạo, đang giữ kho tạm thời và chờ người mua thanh toán (tối đa 15 phút).</li>
+ *   <li>PENDING_PAYMENT: Chờ trả tiền hoặc xác nhận kho sau IPN winner; đơn thường hạn 15 phút, winner theo deadline settlement.</li>
  *   <li>PAID: Đã xác nhận thanh toán thành công (qua cổng thanh toán hoặc duyệt đơn COD). Tồn kho chính thức được trừ.</li>
  *   <li>PROCESSING: Người bán đã tiếp nhận đơn và đang thực hiện lấy hàng, đóng gói tại kho.</li>
  *   <li>SHIPPED: Đơn hàng đã bàn giao cho bên vận chuyển (đã có mã vận đơn) và đang trên đường giao.</li>
@@ -17,7 +17,7 @@ package com.nexus.commerce.enums;
  */
 public enum OrderStatus {
 
-    /** Đơn hàng mới tạo, đang chờ thanh toán (giữ kho 15 phút). */
+    /** Chờ thanh toán/xác nhận kho; winner chỉ chuyển PAID sau khi Fulfillment commit thành công. */
     PENDING_PAYMENT,
 
     /** Đã thanh toán thành công, đơn hàng sẵn sàng cho người bán xử lý. */

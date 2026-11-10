@@ -7,6 +7,7 @@ import com.nexus.commerce.dto.response.PaymentResponse;
 import com.nexus.commerce.dto.response.VnpayIpnResponse;
 import com.nexus.commerce.entity.Order;
 import com.nexus.commerce.enums.OrderStatus;
+import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.entity.Payment;
 import com.nexus.commerce.repository.CheckoutLock;
 import com.nexus.commerce.repository.OrderRepository;
@@ -26,7 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Tạo một attempt cho đơn VNPAY và xử lý IPN đã ký. IPN khóa theo TxnRef rồi Order để tuần tự hóa callback cùng payment.
- * Payment, Order, history và outbox kho/thông báo commit cùng transaction; browser return không cập nhật tài chính.
+ * Tiền winner và outbox kho commit cùng transaction; Order chỉ PAID sau worker xác nhận kho, browser return không cập nhật tài chính.
  */
 @Service
 @RequiredArgsConstructor
@@ -56,7 +57,7 @@ public class PaymentService {
                 .orElseGet(() -> start(order.getBuyerId(), order.getId(), ip).paymentUrl());
     }
 
-    /** Tạo/replay URL cho buyer sở hữu đơn còn chờ thanh toán; total chỉ lấy DB, không nhận amount từ request. */
+    /** Tạo/replay URL cho chủ đơn; winner dùng deadline settlement và phiếu đã bàn giao, total chỉ lấy DB, không nhận amount từ request. */
     @Transactional
     public PaymentResponse start(UUID buyer, UUID orderId, String ip) {
         requireConfigured();
@@ -64,11 +65,17 @@ public class PaymentService {
         if (!buyer.equals(order.getBuyerId())) {
             throw new ApiException("PAYMENT_ACCESS_DENIED", HttpStatus.FORBIDDEN, "Không được thanh toán đơn của người khác", null);
         }
-        if (!"VNPAY".equals(order.getPaymentMethod())) { throw new BusinessException(ErrorCode.PAYMENT_METHOD_UNSUPPORTED); }
+        // AUCTION là marker từ handover, không phải provider; chỉ winner được chọn VNPAY dưới khóa Order.
+        boolean auction = order.getSourceType() == OrderSourceType.AUCTION;
+        if (!"VNPAY".equals(order.getPaymentMethod()) && !(auction && "AUCTION".equals(order.getPaymentMethod()))) {
+            throw new BusinessException(ErrorCode.PAYMENT_METHOD_UNSUPPORTED);
+        }
         if (order.getStatus() != OrderStatus.PENDING_PAYMENT) { throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID); }
         var previous = payments.findByOrderIdAndProvider(orderId, "VNPAY");
         if (previous.isPresent()) {
             Payment payment = previous.get();
+            // Winner quay lại khi worker đang xử lý phải xem kết quả cũ, không tạo lần thu tiền mới.
+            if (auction && "SUCCESS".equals(payment.getStatus())) { return response(payment); }
             if (!"PENDING".equals(payment.getStatus())) { throw new BusinessException(ErrorCode.PAYMENT_ALREADY_COMPLETED); }
             if (payment.getExpiresAt() == null || !payment.getExpiresAt().isAfter(Instant.now())) {
                 throw new BusinessException(ErrorCode.PAYMENT_EXPIRED);
@@ -80,8 +87,9 @@ public class PaymentService {
         Instant expires;
         if (order.getPaymentDeadline() != null) {
             expires = order.getPaymentDeadline().truncatedTo(ChronoUnit.SECONDS);
-        } else if (order.getSourceType() == com.nexus.commerce.enums.OrderSourceType.AUCTION) {
-            expires = order.getCreatedAt().plus(24, java.time.temporal.ChronoUnit.HOURS).truncatedTo(ChronoUnit.SECONDS);
+        } else if (auction) {
+            // Không tự gia hạn từ createdAt khi thiếu deadline settlement: từ chối dữ liệu handover chưa đầy đủ.
+            throw new ApiException("AUCTION_PAYMENT_NOT_READY", HttpStatus.CONFLICT, "Đơn đấu giá chưa có hạn thanh toán", null);
         } else {
             expires = order.getCreatedAt().plusSeconds(15 * 60).truncatedTo(ChronoUnit.SECONDS);
         }
@@ -89,6 +97,7 @@ public class PaymentService {
         if (order.getReservationIds().isEmpty()) {
             throw new ApiException("PAYMENT_RESERVATIONS_MISSING", HttpStatus.CONFLICT, "Đơn chưa có snapshot phiếu giữ kho", null);
         }
+        order.setPaymentMethod("VNPAY");
         Payment payment = new Payment();
         payment.setId(UUID.randomUUID());
         payment.setOrderId(orderId);
@@ -120,6 +129,7 @@ public class PaymentService {
     /**
      * Chỉ IPN gọi hàm này: kiểm tra chữ ký/merchant trước DB, đối chiếu TxnRef→Payment→Order và amount ở cả hai bảng.
      * Duplicate terminal trả 02, sai amount 04, thiếu order 01; trạng thái bất thường trả 99 để đối soát/retry.
+     * Winner thu tiền chỉ tạo COMMIT trong outbox; IPN sau hủy lưu REVIEW, không hồi sinh Order hoặc tự hoàn tiền.
      */
     @Transactional
     public VnpayIpnResponse ipn(Map<String, String> params) {
@@ -143,7 +153,11 @@ public class PaymentService {
         // EXPIRED chỉ là trạng thái hiển thị của URL, DB còn PENDING để IPN đã ký đến chậm vẫn được đối soát.
         // Không chặn IPN theo giờ nhận: khách có thể trả trong hạn nhưng callback bị trễ mạng.
         if (!"PENDING".equals(payment.getStatus())) { return reply("02", "Order already confirmed"); }
-        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) { return reply("02", "Order already confirmed"); }
+        boolean auction = order.getSourceType() == OrderSourceType.AUCTION;
+        // IPN thu tiền đến sau hủy/hết hạn vẫn phải được ghi nhận để đối soát; tuyệt đối không hồi sinh đơn đã hủy.
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT && !(auction && order.getStatus() == OrderStatus.CANCELLED)) {
+            return reply("02", "Order already confirmed");
+        }
         String result = params.get("vnp_ResponseCode");
         String state = params.get("vnp_TransactionStatus");
         boolean success = "00".equals(result) && "00".equals(state);
@@ -166,13 +180,23 @@ public class PaymentService {
         payment.setResponseCode(result);
         payment.setTransactionStatus(state);
         payment.setCompletedAt(Instant.now());
+        if (auction && success) {
+            // Ghi nhận tiền và outbox cùng commit; worker quyết định PAID sau khi kho thắng cuộc đua với sweeper.
+            payment.setInventoryStatus(order.getStatus() == OrderStatus.CANCELLED ? "REVIEW" : "PENDING");
+            if (order.getStatus() == OrderStatus.PENDING_PAYMENT) { enqueue(order.getId(), order.getId(), "COMMIT"); }
+            payments.flush();
+            return reply("00", "Confirm Success");
+        }
+        OrderStatus before = order.getStatus();
         order.setStatus(success ? OrderStatus.PAID : OrderStatus.CANCELLED);
         // Outbox có unique key và chỉ tạo sau lần chuyển terminal đầu tiên, nên callback lặp không confirm/release hai lần.
         if (success) {
             for (UUID reservation : order.getReservationIds()) { enqueue(order.getId(), reservation, "CONFIRM"); }
         } else { enqueue(order.getId(), order.getId(), "RELEASE"); }
-        jdbc.update("INSERT INTO order_status_history(id,order_id,from_status,to_status,reason) VALUES (?,?,'PENDING_PAYMENT',?,?)",
-                UUID.randomUUID(), order.getId(), order.getStatus().name(), "VNPAY_IPN_" + result);
+        if (before != order.getStatus()) {
+            jdbc.update("INSERT INTO order_status_history(id,order_id,from_status,to_status,reason) VALUES (?,?,?,?,?)",
+                    UUID.randomUUID(), order.getId(), before.name(), order.getStatus().name(), "VNPAY_IPN_" + result);
+        }
         // Chỉ lần chuyển trạng thái terminal đầu tiên tạo thông báo, cùng commit với kết quả thanh toán.
         notifications.enqueue(order, success ? "PAYMENT_SUCCESS" : "PAYMENT_FAILED");
         payments.flush();
@@ -184,14 +208,17 @@ public class PaymentService {
                 UUID.randomUUID(), order, target, action);
     }
 
-    /** Chiếu PENDING quá hạn thành EXPIRED và bỏ link không còn dùng được; kết quả terminal từ IPN luôn được ưu tiên.
+    /** Chiếu PENDING quá hạn thành EXPIRED; tiền winner đang chờ kho trả PROCESSING, kho đã mất trả REQUIRES_REVIEW.
      * Đây là trạng thái trả cho client, không thay đổi entity/DB hay tạo thêm tác vụ kho.
      */
     private PaymentResponse response(Payment p) {
         boolean expired = "PENDING".equals(p.getStatus()) && p.getExpiresAt() != null
                 && !p.getExpiresAt().isAfter(Instant.now());
-        return new PaymentResponse(p.getId(), p.getOrderId(), expired ? "EXPIRED" : p.getStatus(), p.getAmount(),
-                "VND", expired ? null : p.getPaymentUrl(), p.getExpiresAt());
+        // SUCCESS của provider chưa đủ để giao hàng: client tiếp tục đợi kho hoặc hiển thị cần đối soát, không mời trả lần hai.
+        String status = "REVIEW".equals(p.getInventoryStatus()) ? "REQUIRES_REVIEW"
+                : "PENDING".equals(p.getInventoryStatus()) ? "PROCESSING" : expired ? "EXPIRED" : p.getStatus();
+        return new PaymentResponse(p.getId(), p.getOrderId(), status, p.getAmount(),
+                "VND", expired || !"PENDING".equals(p.getStatus()) ? null : p.getPaymentUrl(), p.getExpiresAt());
     }
     private VnpayIpnResponse reply(String code, String message) { return new VnpayIpnResponse(code, message); }
 }

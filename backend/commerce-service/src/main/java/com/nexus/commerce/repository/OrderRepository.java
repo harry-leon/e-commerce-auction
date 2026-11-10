@@ -38,15 +38,15 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
     @Query("select o from Order o where o.id = :id")
     Optional<Order> findForPayment(UUID id);
     /**
-     * Giống findForPayment nhưng eager-fetch items trong cùng câu truy vấn.
-     * Dùng trong PaymentService.ipn() để NotificationOutbox.emailSnapshot() truy cập order.getItems()
-     * không gặp LazyInitializationException - nguyên nhân gây RspCode 99 thay vì 00.
-     * Không fetch reservationIds cùng lúc vì cả hai đều là List; Hibernate không cho join-fetch hai bag
-     * và sẽ làm callback hợp lệ bị rollback trước khi trả ACK cho VNPAY.
+     * Khóa Order bằng SELECT FOR UPDATE trước rồi mới nạp items trong transaction của caller.
+     * Tránh follow-on locking của DISTINCT/JOIN FETCH: nạp entity trước khi chờ khóa có thể giữ status cũ sau expiry.
+     * Nạp collection riêng để NotificationOutbox dùng snapshot mà không join-fetch hai List hoặc gặp lazy ngoài session.
      */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select distinct o from Order o left join fetch o.items where o.id = :id")
-    Optional<Order> findForPaymentWithItems(UUID id);
+    default Optional<Order> findForPaymentWithItems(UUID id) {
+        var order = findForPayment(id);
+        order.ifPresent(value -> org.hibernate.Hibernate.initialize(value.getItems()));
+        return order;
+    }
 
     /**
      * Chức năng: Truy vấn chi tiết đơn hàng cùng danh sách sản phẩm snapshot (items).

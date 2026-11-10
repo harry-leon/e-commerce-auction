@@ -44,7 +44,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
-@ActiveProfiles("test")
+// Một profile test duy nhất để tắt scheduler; ActiveProfiles không cho phép khai báo lặp.
 @DisplayName("AuctionOrderInternalController Tests - API nội bộ tạo đơn hàng đấu giá")
 class AuctionOrderInternalControllerTest {
 

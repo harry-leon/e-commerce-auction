@@ -12,6 +12,9 @@ public interface InventoryClient {
     /** Worker dùng token service account; xác nhận lặp phải không trừ kho hai lần. */
     void confirm(UUID reservationId, String token);
 
+    /** Commit nguyên tử toàn bộ phiếu ORDER; Fulfillment khóa cùng dòng với sweeper, replay không trừ kho lần hai. */
+    void commitOrder(UUID orderId, List<UUID> expectedReservations, String token);
+
     /** warehouseId null yêu cầu kho mặc định của Fulfillment, không tự chọn kho tại Commerce. */
     record Item(UUID skuId, UUID warehouseId, int quantity) { }
 }

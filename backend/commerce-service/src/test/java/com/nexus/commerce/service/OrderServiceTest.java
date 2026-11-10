@@ -1161,7 +1161,8 @@ class OrderServiceTest {
             UUID res2 = UUID.randomUUID();
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PENDING_PAYMENT);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            // Attach khóa cùng Order với payment để replay đồng thời không insert trùng phiếu.
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
             // Lần 1: Gắn 2 phiếu
@@ -1178,7 +1179,7 @@ class OrderServiceTest {
         @Test
         @DisplayName("Gắn reservationIds cho đơn không tồn tại ném ngoại lệ ORDER_NOT_FOUND")
         void test_attachReservations_notFound_throwsException() {
-            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
