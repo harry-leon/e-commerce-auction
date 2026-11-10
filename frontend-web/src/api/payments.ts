@@ -1,11 +1,18 @@
 import { api } from './client'
 import type { ApiResponse } from './client'
 
-/** Kết quả DB sau IPN; EXPIRED do backend tính theo hạn URL, chưa phải kết luận thất bại/đã thu tiền. */
+/** Kết quả DB sau IPN; PROCESSING chờ kho, REQUIRES_REVIEW đã thu tiền nhưng cần đối soát, không được thanh toán lại. */
 export interface PaymentResult {
     paymentId: string
     orderId: string
-    status: 'PENDING' | 'EXPIRED' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
+    status:
+        | 'PENDING'
+        | 'PROCESSING'
+        | 'REQUIRES_REVIEW'
+        | 'EXPIRED'
+        | 'SUCCESS'
+        | 'FAILED'
+        | 'CANCELLED'
     amount: number
     currency: 'VND'
     paymentUrl: string | null
@@ -17,5 +24,15 @@ export async function getPayment(id: string): Promise<PaymentResult> {
     const response = await api<ApiResponse<PaymentResult>>(`/payments/${encodeURIComponent(id)}`)
     if (!response.success || !response.data)
         throw new Error('Không thể xác nhận kết quả thanh toán')
+    return response.data
+}
+
+/** Khởi tạo/replay payment cho đơn server; chỉ gửi orderId, backend tự xác minh winner, giá, hạn và kho. */
+export async function startPayment(orderId: string): Promise<PaymentResult> {
+    const response = await api<ApiResponse<PaymentResult>>('/payments', {
+        method: 'POST',
+        body: JSON.stringify({ orderId }),
+    })
+    if (!response.success || !response.data) throw new Error('Không thể tạo thanh toán')
     return response.data
 }

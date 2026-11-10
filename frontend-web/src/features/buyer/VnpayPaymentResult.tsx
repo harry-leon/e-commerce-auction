@@ -8,6 +8,7 @@ import { Button } from '../../components/UI'
  * Poll tối đa 10 lần, chờ 2 giây giữa các lần; unmount/đổi ID hủy timer và bỏ response cũ.
  * Chỉ hiển thị thành công khi backend đã lưu SUCCESS từ IPN; lỗi mạng/401 không bị đổi thành success giả.
  * EXPIRED dừng poll tự động, báo link hết hạn nhưng vẫn cho kiểm tra IPN đến chậm; không tự hướng dẫn trả tiền lần hai.
+ * PROCESSING tiếp tục chờ xác nhận kho; REQUIRES_REVIEW thông báo đối soát và không cung cấp nút trả tiền lần nữa.
  */
 export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const { lang, navigate } = useApp()
@@ -23,7 +24,7 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                 if (cancelled) return
                 setResult(data)
                 setError(null)
-                if (data.status === 'PENDING' && attempt < 9)
+                if ((data.status === 'PENDING' || data.status === 'PROCESSING') && attempt < 9)
                     timer = setTimeout(() => void poll(attempt + 1), 2000)
             } catch {
                 if (!cancelled)
@@ -45,25 +46,41 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const success = current?.status === 'SUCCESS'
     const failed = current?.status === 'FAILED' || current?.status === 'CANCELLED'
     const expired = current?.status === 'EXPIRED'
+    const review = current?.status === 'REQUIRES_REVIEW'
     return (
         <div className="max-w-lg mx-auto text-center py-12">
             <h1 className="text-2xl font-bold mb-4">
-                {success
+                {review
                     ? lang === 'vi'
-                        ? 'Thanh toán đã được xác nhận'
-                        : 'Payment confirmed'
-                    : failed
+                        ? 'Thanh toán cần đối soát'
+                        : 'Payment requires review'
+                    : success
                       ? lang === 'vi'
-                          ? 'Thanh toán không thành công'
-                          : 'Payment failed'
-                      : expired
+                          ? 'Thanh toán đã được xác nhận'
+                          : 'Payment confirmed'
+                      : failed
                         ? lang === 'vi'
-                            ? 'Liên kết thanh toán đã hết hạn'
-                            : 'Payment link expired'
-                        : lang === 'vi'
-                          ? 'Đang chờ xác nhận thanh toán'
-                          : 'Waiting for payment confirmation'}
+                            ? 'Thanh toán không thành công'
+                            : 'Payment failed'
+                        : expired
+                          ? lang === 'vi'
+                              ? 'Liên kết thanh toán đã hết hạn'
+                              : 'Payment link expired'
+                          : lang === 'vi'
+                            ? 'Đang chờ xác nhận thanh toán'
+                            : 'Waiting for payment confirmation'}
             </h1>
+            {(review || current?.status === 'PROCESSING') && (
+                <p className="mb-4" role="status">
+                    {review
+                        ? lang === 'vi'
+                            ? 'Đã ghi nhận tiền thanh toán nhưng chưa thể xác nhận đơn hàng. Vui lòng liên hệ hỗ trợ, không thanh toán lại. Hoàn tiền chưa được thực hiện tự động.'
+                            : 'Your payment was received, but the order could not be confirmed. Contact support and do not pay again. No automatic refund has been issued.'
+                        : lang === 'vi'
+                          ? 'Đã ghi nhận thanh toán, đang xác nhận hàng cho đơn đấu giá. Không thanh toán lại.'
+                          : 'Payment received. Confirming your auction inventory. Do not pay again.'}
+                </p>
+            )}
             {expired && (
                 <p className="mb-4" role="status">
                     {lang === 'vi'
