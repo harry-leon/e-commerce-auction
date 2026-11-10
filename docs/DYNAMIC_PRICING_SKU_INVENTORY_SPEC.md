@@ -186,3 +186,4 @@ CREATE TABLE IF NOT EXISTS fulfillment_svc.inventories (
 
 CREATE INDEX idx_fulfillment_sku_code ON fulfillment_svc.inventories(sku_code);
 ```
+

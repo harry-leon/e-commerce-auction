@@ -181,3 +181,4 @@ COMMENT ON COLUMN commerce_svc.order_items.final_item_price IS 'Giá thực thu 
    - Cơ chế kiểm tra `attempt.getStatus() == SUCCESS` chặn ngay từ đầu hàm xử lý để đảm bảo an toàn tuyệt đối, không trừ kho 2 lần và không ghi nhận doanh thu 2 lần.
 3. **Giá sản phẩm thay đổi trong lúc thanh toán**:
    - Khi thanh toán thành công, số tiền thu của khách tuân thủ theo `payment_attempts.amount` đã được ký với cổng thanh toán. Không phát sinh tranh chấp số tiền đã trừ tài khoản của khách.
+
