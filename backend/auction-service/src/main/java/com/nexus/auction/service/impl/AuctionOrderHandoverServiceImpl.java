@@ -212,8 +212,12 @@ public class AuctionOrderHandoverServiceImpl implements AuctionOrderHandoverServ
                 commerceOrderClient.attachOrderReservations(orderResult.orderId(), reservationIds);
             } catch (Exception ex) {
                 log.warn("Không thể gắn reservationIds vào đơn hàng [{}] ngay lúc này: {}",
-                        orderResult.orderId(), ex.getMessage());
+                        orderResult.orderId(), ex.getClass().getSimpleName());
+                // Chưa đủ dữ liệu payment: rollback liên kết local, scheduler replay create/transfer/attach idempotent.
+                throw ex;
             }
+        } else {
+            throw new BusinessException(ErrorCode.BAD_GATEWAY, "Chưa nhận được phiếu giữ kho cho đơn winner");
         }
 
         // Bước 7: Cập nhật orderId vào bản ghi settlement và lưu DB ngay lập tức (saveAndFlush)
