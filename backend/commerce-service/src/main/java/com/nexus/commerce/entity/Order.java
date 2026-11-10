@@ -128,6 +128,14 @@ public class Order {
     @Column(name = "idempotency_key", unique = true, length = 100)
     private String idempotencyKey;
 
+    /**
+     * Thời hạn thanh toán của đơn hàng (SRS §3.6.1 & §3.5.3, mặc định 24h đối với đơn hàng xuất phát từ đấu giá).
+     * Được PaymentService đối soát khi người mua bắt đầu thanh toán qua VNPAY URL.
+     */
+    @Column(name = "payment_deadline")
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
+    private Instant paymentDeadline;
+
     /** Thời điểm tạo đơn hàng (lưu timestamp UTC theo ERD). */
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

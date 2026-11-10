@@ -172,12 +172,45 @@
 
 ---
 
-## 2. Quyết toán Phiên đấu giá (Auction Settlement — HG-S2-1)
+## 2. Quyết toán Phiên đấu giá & Bàn giao Đơn hàng (Auction Settlement & Commerce Handover — HG-S2-1 & KH-S2-2)
 
 | Method | Path | Quyền truy cập | Mục đích |
 |---|---|---|---|
 | `POST` | `/api/v1/auctions/{auctionId}/settle` | `ROLE_ADMIN`, `ROLE_SELLER` | Khóa phiên và xác định người thắng cuộc khi kết thúc |
+| `POST` | `/api/v1/auctions/{auctionId}/handover` | `ROLE_ADMIN`, `ROLE_SELLER` | Bàn giao kết quả phiên thắng sang Commerce Service tạo đơn hàng idempotent (KH-S2-2) |
 | `GET` | `/api/v1/auctions/{auctionId}/settlement` | Authenticated | Tra cứu kết quả quyết toán chính thức |
+
+### 2.1. Bàn giao tạo đơn hàng đấu giá sang Commerce Service (Handover to Commerce — KH-S2-2)
+- **Method & Path:** `POST /api/v1/auctions/{auctionId}/handover`
+- **Quyền truy cập:** `ROLE_SELLER`, `ROLE_ADMIN`
+- **Luồng xử lý (SRS §3.5.3 & §3.4.3):**
+  1. Kiểm tra bản ghi quyết toán: nếu đã có `orderId` (idempotent), trả về kết quả hiện tại ngay lập tức.
+  2. Xác thực toàn vẹn: kết quả quyết toán phải là `SUCCESS`, có `winnerId != sellerId` và `finalPrice > 0`.
+  3. Gọi sang Commerce Service endpoint nội bộ `POST /api/v1/internal/commerce/orders/from-auction` với:
+     - Header `Idempotency-Key: {auctionId}`.
+     - Token Service Identity: client `nexus-auction-service` + privilege `COMMERCE.AUCTION`.
+     - Tự động retry tối đa 3 lần với exponential backoff khi gặp sự cố mạng tạm thời.
+  4. Cập nhật `settlement.order_id` và phát sinh domain event `AuctionSettledEvent(auctionId, orderId, winnerId, paymentDeadline)` sau khi transaction commit thành công.
+- **Response (`ApiResponse<AuctionSettlementResponse>` — HTTP 200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "7fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "auctionId": "c1f7b9c2-5717-4562-b3fc-2c963f66afa6",
+    "winnerId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "finalPrice": 5200000.00,
+    "result": "SUCCESS",
+    "orderId": "e2a3b4c5-5717-4562-b3fc-2c963f66afa6",
+    "settledAt": "2026-11-07T20:05:00Z"
+  },
+  "error": null,
+  "meta": {
+    "requestId": "req-xxx",
+    "timestamp": "2026-11-07T20:05:01Z"
+  }
+}
+```
 
 
 ---
