@@ -239,4 +239,58 @@ class PaymentServiceTest {
     private void assertCode(String code, org.junit.jupiter.api.function.Executable action) {
         assertEquals(code, assertThrows(ApiException.class, action).getCode());
     }
+
+    /** Winner mới chọn VNPAY dùng giá DB và deadline settlement; replay giữ URL/TxnRef cũ, không gia hạn thêm 24h. */
+    @Test
+    void winnerSelectsVnpayUsingSettlementDeadline() {
+        order.setSourceType(com.nexus.commerce.enums.OrderSourceType.AUCTION);
+        order.setPaymentMethod("AUCTION");
+        order.setCreatedAt(Instant.now().minusSeconds(3600));
+        Instant deadline = Instant.now().plusSeconds(7200).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        order.setPaymentDeadline(deadline);
+        var result = service.start(order.getBuyerId(), order.getId(), "127.0.0.1");
+        assertEquals(deadline, result.expiresAt());
+        assertEquals("VNPAY", order.getPaymentMethod());
+        assertEquals(order.getTotal(), result.amount());
+    }
+
+    /** Thiếu deadline/kho từ handover phải fail closed, không tự chọn mốc mới hoặc cấp URL cho người không phải winner. */
+    @Test
+    void winnerPaymentRequiresCompleteHandoverAndOwnership() {
+        order.setSourceType(com.nexus.commerce.enums.OrderSourceType.AUCTION);
+        order.setPaymentMethod("AUCTION");
+        assertCode("PAYMENT_ACCESS_DENIED", () -> service.start(UUID.randomUUID(), order.getId(), "ip"));
+        assertCode("AUCTION_PAYMENT_NOT_READY", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
+        order.setPaymentDeadline(Instant.now().plusSeconds(1000));
+        order.setReservationIds(List.of());
+        assertCode("PAYMENT_RESERVATIONS_MISSING", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
+        verify(payments, never()).saveAndFlush(any());
+    }
+
+    /** IPN winner chỉ ghi tiền và tác vụ kho một lần; client chưa thấy SUCCESS trước khi worker commit kho. */
+    @Test
+    void winnerSuccessWaitsForInventoryAndDuplicateHasNoSideEffects() {
+        order.setSourceType(com.nexus.commerce.enums.OrderSourceType.AUCTION);
+        var callback = signed("5000000", "00", "00");
+        assertEquals("00", service.ipn(callback).code());
+        assertEquals("SUCCESS", payment.getStatus());
+        assertEquals("PENDING", payment.getInventoryStatus());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
+        assertEquals("PROCESSING", service.get(order.getBuyerId(), payment.getId()).status());
+        assertNull(service.get(order.getBuyerId(), payment.getId()).paymentUrl());
+        assertEquals("02", service.ipn(callback).code());
+        verify(payments).flush();
+    }
+
+    /** Callback thu tiền sau timeout vẫn được lưu để hoàn tiền/đối soát; tuyệt đối không hồi sinh đơn CANCELLED. */
+    @Test
+    void lateWinnerFundsAfterCancellationRequireReview() {
+        order.setSourceType(com.nexus.commerce.enums.OrderSourceType.AUCTION);
+        order.setStatus(OrderStatus.CANCELLED);
+        assertEquals("00", service.ipn(signed("5000000", "00", "00")).code());
+        assertEquals("SUCCESS", payment.getStatus());
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        assertEquals("REQUIRES_REVIEW", service.get(order.getBuyerId(), payment.getId()).status());
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+    }
 }

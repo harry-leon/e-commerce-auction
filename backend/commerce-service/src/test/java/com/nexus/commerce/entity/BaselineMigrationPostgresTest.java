@@ -13,7 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
- * TT-S2-1: chạy migration mới và nâng V3 lên V7 trên schema test riêng.
+ * Chạy migration mới và nâng V3 lên V9 trên schema test riêng; payment cũ không bị đổi kết quả hoặc tạo lại tác vụ kho.
  * Chỉ dùng NEXUS_TEST_DB_URL của PostgreSQL tạm; finally chỉ dọn schema UUID do test tạo.
  */
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
@@ -41,7 +41,7 @@ class BaselineMigrationPostgresTest {
             }
             var baseline = migrate(url, schema, "latest");
             baseline.migrate();
-            assertEquals("7", baseline.info().current().getVersion().getVersion());
+            assertEquals("9", baseline.info().current().getVersion().getVersion());
             assertEquals(0, baseline.migrate().migrationsExecuted);
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema
                 + ".commerce_notification_outbox", Integer.class));

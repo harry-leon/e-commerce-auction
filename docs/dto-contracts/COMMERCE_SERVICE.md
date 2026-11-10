@@ -261,6 +261,9 @@ Checkout mới enqueue ORDER_CREATED; IPN terminal đầu tiên enqueue PAYMENT_
 
 API nội bộ cho phép Auction Service bàn giao kết quả phiên đấu giá thành công sang Commerce Service một cách tin cậy và có tính lũy nghiệm (Idempotent).
 
+Luồng payment winner TT-S2-3: [contract và trạng thái PROCESSING/REQUIRES_REVIEW](../TT-S2-3_WINNER_PAYMENT.md).
+Đơn winner chỉ PAID sau khi worker xác nhận kho; Payment SUCCESS riêng lẻ chưa đủ điều kiện giao hàng.
+
 ### 8.1. Endpoint tạo đơn đấu giá
 - **Method & Path:** `POST /api/v1/internal/commerce/orders/from-auction`
 - **Xác thực:** Service Identity (Client `nexus-auction-service` + privilege `COMMERCE.AUCTION`).

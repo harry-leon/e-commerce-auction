@@ -309,8 +309,9 @@ public class OrderServiceImpl implements OrderService {
 
         // Chưa có provider refund: không cho API đánh dấu đã hoàn tiền khi chưa hoàn tiền thật.
         if (targetStatus == OrderStatus.REFUNDED) { throw refundUnavailable(); }
-        // VNPAY chỉ được xác nhận PAID qua IPN đã ký, kể cả khi actor là admin.
-        if (targetStatus == OrderStatus.PAID && "VNPAY".equals(order.getPaymentMethod())) {
+        // VNPAY/đơn winner chỉ được PAID qua IPN và worker kho, kể cả trước khi marker AUCTION chuyển sang provider VNPAY.
+        if (targetStatus == OrderStatus.PAID && ("VNPAY".equals(order.getPaymentMethod())
+                || order.getSourceType() == OrderSourceType.AUCTION)) {
             throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID, "Thanh toán VNPAY chỉ xác nhận qua IPN");
         }
 
@@ -616,6 +617,8 @@ public class OrderServiceImpl implements OrderService {
         }
 
         // Bước 1: Kiểm tra tính lũy nghiệm (Idempotency - SRS §3.4.3 & §2.6 ORDER_IDEMPOTENCY_ENABLED = true)
+        // Khóa transaction theo auctionId trước đọc/insert; hai handover cùng phiên phải replay đơn đã commit, không lỗi unique.
+        jdbc.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "auction-order:" + request.auctionId());
         Optional<Order> existing = orderRepository.findByAuctionId(request.auctionId());
         if (existing.isPresent()) {
             Order order = existing.get();
@@ -778,7 +781,8 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Danh sách reservationIds không được để trống");
         }
 
-        Order order = orderRepository.findById(orderId)
+        // Đồng bộ attach với start/IPN dưới cùng khóa Order, tránh hai lần replay insert trùng order_reservations.
+        Order order = orderRepository.findForPayment(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn hàng với mã: " + orderId));
 
         boolean modified = false;

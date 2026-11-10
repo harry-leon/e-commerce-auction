@@ -66,7 +66,8 @@ public class PaymentController {
         try { return payments.ipn(params); }
         catch (RuntimeException error) {
             // Service proxy đã rollback trước khi trả 99; VNPAY có thể retry, không ACK thành công khi DB lỗi.
-            log.error("Không thể commit IPN VNPAY; cần retry/đối soát", error);
+            // Exception JDBC/HTTP có thể chứa bind values hoặc URL; chỉ log loại lỗi, không log params/hash/token hay stack chứa payload.
+            log.error("Không thể commit IPN VNPAY; cần retry/đối soát: errorType={}", error.getClass().getSimpleName());
             return new VnpayIpnResponse("99", "Unable to process callback");
         }
     }

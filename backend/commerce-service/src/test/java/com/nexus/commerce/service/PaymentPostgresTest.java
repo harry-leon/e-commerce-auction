@@ -52,7 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
+@Import({AuctionPaymentExpiryWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
         CheckoutLock.class, CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class, com.nexus.commerce.service.impl.OrderServiceImpl.class,
         com.nexus.commerce.dto.mapper.OrderMapper.class, com.nexus.commerce.statemachine.OrderStatusStateMachine.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
@@ -62,6 +62,7 @@ class PaymentPostgresTest {
     @Autowired private OrderService management;
     @Autowired private PaymentService payments;
     @Autowired private PaymentInventoryWorker worker;
+    @Autowired private AuctionPaymentExpiryWorker expiry;
     @Autowired private VnpayGateway gateway;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private NotificationWorker notificationWorker;
@@ -73,6 +74,140 @@ class PaymentPostgresTest {
     private UUID orderId;
     private UUID paymentId;
     private UUID reservation;
+
+    /** Nâng fixture checkout thành đơn winner đã handover để kiểm tra transaction IPN/expiry/outbox thật trên PostgreSQL. */
+    private void winner(boolean expired) {
+        jdbc.update("UPDATE orders SET source_type='AUCTION',auction_id=?,payment_deadline="
+                + "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + (? * interval '1 hour') WHERE id=?",
+                UUID.randomUUID(), expired ? -1 : 1, orderId);
+        jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 day' WHERE order_id<>?", orderId);
+        when(tokens.get()).thenReturn("service-jwt");
+    }
+
+    /** Callback đồng thời chỉ ghi một COMMIT; PAID/history/thông báo chỉ xuất hiện sau worker commit kho thành công. */
+    @Test
+    void winnerConcurrentIpnsWaitForInventoryThenCompleteExactlyOnce() throws Exception {
+        winner(false);
+        var callback = callback("00", "00", "5000000");
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var a = pool.submit(() -> { gate.await(); return payments.ipn(callback).code(); });
+            var b = pool.submit(() -> { gate.await(); return payments.ipn(callback).code(); });
+            gate.countDown();
+            assertEquals(List.of("00", "02"), List.of(a.get(20, TimeUnit.SECONDS), b.get(20, TimeUnit.SECONDS)).stream().sorted().toList());
+        }
+        assertEquals("PROCESSING", payments.get(buyer, paymentId).status());
+        assertEquals("PENDING_PAYMENT", orderState());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='COMMIT'", Integer.class, orderId));
+        worker.run();
+        worker.run();
+        assertEquals("PAID", orderState());
+        assertEquals("SUCCESS", payments.get(buyer, paymentId).status());
+        verify(inventory).commitOrder(orderId, List.of(reservation), "service-jwt");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=? AND to_status='PAID'", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND event_type='PAYMENT_SUCCESS'", Integer.class, orderId));
+    }
+
+    /** Sweeper kho thắng: tiền được ghi SUCCESS nhưng đơn CANCELLED/REVIEW, không phát thông báo đã thanh toán/giao hàng. */
+    @Test
+    void expiredInventoryNeverCreatesPaidWinner() {
+        winner(false);
+        payments.ipn(callback("00", "00", "5000000"));
+        doThrow(new com.nexus.common.exception.ApiException("INVENTORY_RESERVATION_EXPIRED",
+                org.springframework.http.HttpStatus.CONFLICT, "Phiếu đã hết hạn", null))
+                .when(inventory).commitOrder(orderId, List.of(reservation), "service-jwt");
+        worker.run();
+        assertEquals("CANCELLED", orderState());
+        assertEquals("REQUIRES_REVIEW", payments.get(buyer, paymentId).status());
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND event_type='PAYMENT_SUCCESS'", Integer.class, orderId));
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+    }
+
+    /** HTTP response mất sau commit kho: outbox còn pending, lần retry cùng orderId mới xác nhận PAID, không thu tiền lại. */
+    @Test
+    void winnerInventoryTimeoutRetriesAndDoesNotReportSuccessEarly() {
+        winner(false);
+        payments.ipn(callback("00", "00", "5000000"));
+        doThrow(new IllegalStateException("lost response")).doNothing()
+                .when(inventory).commitOrder(orderId, List.of(reservation), "service-jwt");
+        worker.run();
+        assertEquals("PROCESSING", payments.get(buyer, paymentId).status());
+        assertEquals("PENDING_PAYMENT", orderState());
+        jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP WHERE order_id=?", orderId);
+        worker.run();
+        assertEquals("PAID", orderState());
+        verify(inventory, org.mockito.Mockito.times(2)).commitOrder(orderId, List.of(reservation), "service-jwt");
+    }
+
+    /** Timeout đơn trước callback: hủy/release chỉ một lần, IPN muộn ghi tiền REVIEW và không tạo COMMIT hồi sinh đơn. */
+    @Test
+    void winnerDeadlineThenLateIpnKeepsCancellationAndRecordsFunds() {
+        winner(true);
+        expiry.run();
+        expiry.run();
+        assertEquals("CANCELLED", orderState());
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        assertEquals("REQUIRES_REVIEW", payments.get(buyer, paymentId).status());
+        assertEquals("CANCELLED", orderState());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='RELEASE'", Integer.class, orderId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='COMMIT'", Integer.class, orderId));
+    }
+
+    /** IPN và timeout chạy song song phải có một kết quả nhất quán; expiry không hủy đơn có SUCCESS đang chờ kho. */
+    @Test
+    void winnerExpiryRacesIpnWithoutPaidAndReleaseTogether() throws Exception {
+        winner(true);
+        var callback = callback("00", "00", "5000000");
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var a = pool.submit(() -> { gate.await(); return payments.ipn(callback).code(); });
+            var b = pool.submit(() -> { gate.await(); expiry.run(); return true; });
+            gate.countDown();
+            assertEquals("00", a.get(20, TimeUnit.SECONDS));
+            b.get(20, TimeUnit.SECONDS);
+        }
+        worker.run();
+        var releases = jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='RELEASE'", Integer.class, orderId);
+        if ("PAID".equals(orderState())) {
+            assertEquals(0, releases);
+            assertEquals("SUCCESS", payments.get(buyer, paymentId).status());
+        } else {
+            assertEquals("CANCELLED", orderState());
+            assertEquals("REQUIRES_REVIEW", payments.get(buyer, paymentId).status());
+        }
+    }
+
+    /** Đọc state bằng connection mới để kiểm tra kết quả commit, không đọc entity còn cache trong test. */
+    private String orderState() {
+        return jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId);
+    }
+
+    /** Hai handover thật chạy song song phải nhận cùng một orderId; khóa PostgreSQL bảo vệ read/insert, không giả lập bằng Map. */
+    @Test
+    void concurrentWinnerHandoverReturnsOnePersistedOrder() throws Exception {
+        UUID auction = UUID.randomUUID();
+        var deadline = java.time.Instant.now().plusSeconds(86400).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        var request = new com.nexus.commerce.dto.request.CreateAuctionOrderRequest(auction, buyer, UUID.randomUUID(),
+                null, UUID.randomUUID(), new BigDecimal("100000"), deadline, "Winner item", "WINNER-SKU", List.of(reservation));
+        var gate = new CountDownLatch(1);
+        UUID winnerOrder;
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var a = pool.submit(() -> { gate.await(); return management.createAuctionOrder(request); });
+            var b = pool.submit(() -> { gate.await(); return management.createAuctionOrder(request); });
+            gate.countDown();
+            var first = a.get(20, TimeUnit.SECONDS);
+            var replay = b.get(20, TimeUnit.SECONDS);
+            assertEquals(first.orderId(), replay.orderId());
+            assertEquals(deadline, replay.paymentDeadline());
+            winnerOrder = first.orderId();
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM orders WHERE auction_id=?", Integer.class, auction));
+        var payment = payments.start(buyer, winnerOrder, "127.0.0.1");
+        assertEquals(deadline, payment.expiresAt());
+        assertEquals("PENDING", payment.status());
+        assertEquals("VNPAY", jdbc.queryForObject("SELECT payment_method FROM orders WHERE id=?", String.class, winnerOrder));
+    }
 
     @TestConfiguration
     static class Config {
