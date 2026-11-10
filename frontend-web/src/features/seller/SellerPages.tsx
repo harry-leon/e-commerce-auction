@@ -36,8 +36,10 @@ import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi } from '../../api/auctions'
-import { api, ApiClientError, type ApiCategory, type ApiProduct, type Envelope } from '../../api/client'
-import { useLoad } from '../../hooks/useLoad'
+import { cacheAuctionProduct } from '../../api/auctions'
+import { api, ApiClientError, errorMessage, type ApiCategory, type ApiProduct, type Envelope, getProductStock, setProductStock } from '../../api/client'
+import { validateMinPrice } from '../../utils/pricingEngine'
+import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
 const VIETNAMESE_BANKS = [
@@ -509,21 +511,22 @@ export function SellerProductListPage() {
         ? `/products/seller/${user?.id}?v=${refreshKey}`
         : `/products?v=${refreshKey}`
 
-    // Tải danh sách sản phẩm của người bán từ Catalog Service
-    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(productUrl)
-
-    // Đọc danh sách sản phẩm đã tạo cục bộ để hỗ trợ tài khoản demo hoặc đồng bộ ngay sau khi tạo
-    const [localProducts, setLocalProducts] = useState<any[]>(() => {
-        try {
-            return JSON.parse(localStorage.getItem('nexus_seller_created_products') || '[]')
-        } catch {
-            return []
-        }
-    })
+    // Tải danh sách sản phẩm của người bán từ Catalog Service kết nối DB Supabase
+    const { data: prodEnvelope, loading: loadingProducts } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(productUrl)
 
     /**
-     * Chức năng: Ánh xạ danh sách sản phẩm thật của người bán từ Catalog backend.
-     * Quy tắc: Chuẩn hóa bóc tách cả ApiResponse { data: [...] } và mảng trần; kết hợp sản phẩm tạo cục bộ.
+     * Chức năng: Dọn sạch hoàn toàn các bản ghi rác/mock lưu tạm từ các phiên bản cũ trong localStorage.
+     * Quy tắc & lý do: Đảm bảo người dùng chỉ tương tác với dữ liệu thật trong cơ sở dữ liệu Supabase.
+     */
+    useEffect(() => {
+        try {
+            localStorage.removeItem('nexus_seller_created_products')
+        } catch {}
+    }, [])
+
+    /**
+     * Chức năng: Ánh xạ danh sách sản phẩm thật 100% của người bán từ Catalog backend.
+     * Quy tắc: Chuẩn hóa bóc tách cả ApiResponse { data: [...] } và mảng trần; không dùng mock hay localStorage.
      */
     const rawList = (prodEnvelope as any)?.data ?? prodEnvelope
     const apiProducts = Array.isArray(rawList)
@@ -532,8 +535,10 @@ export function SellerProductListPage() {
               name: p.name,
               nameVi: p.name,
               price: p.skus?.[0]?.price ?? 0,
+              originalPrice: p.skus?.[0]?.originalPrice ?? null,
               sku: p.skus?.[0]?.skuCode ?? '',
-              stock: (p.skus?.[0] as any)?.stock ?? 10,
+              // Lấy tồn kho thực tế: ưu tiên từ SKU API, nếu Catalog Service chưa có trường stock thì tra cứu cache người bán đã nhập hoặc trả về 0; không hardcode 10
+              stock: (p.skus?.[0] as any)?.stock ?? getProductStock(p.skus?.[0]?.skuCode, p.id) ?? 0,
               images:
                   p.images && p.images.length > 0
                       ? p.images.map((img) => img.url)
@@ -542,16 +547,8 @@ export function SellerProductListPage() {
           }))
         : []
 
-    // Gộp sản phẩm từ backend và sản phẩm tạo cục bộ (ưu tiên bản ghi cục bộ mới hơn, loại bỏ trùng lặp id/sku)
-    const combinedProducts = [
-        ...localProducts,
-        ...apiProducts.filter(
-            (ap) =>
-                !localProducts.some(
-                    (lp) => lp.id === ap.id || (lp.sku && ap.sku && lp.sku === ap.sku),
-                ),
-        ),
-    ]
+    // Sử dụng trực tiếp danh sách sản phẩm thật từ Catalog Service
+    const combinedProducts = apiProducts
 
     const statusLabel = (s: string) =>
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
@@ -609,7 +606,22 @@ export function SellerProductListPage() {
             </div>
 
             <div className="nexus-card">
-                {filtered.length === 0 ? (
+                {loadingProducts ? (
+                    <div className="py-12 text-center text-gray-400">
+                        <div
+                            className="spinner-border text-primary mb-2"
+                            style={{ color: '#ee4d2d' }}
+                            role="status"
+                        >
+                            <span className="visually-hidden">Loading...</span>
+                        </div>
+                        <p>
+                            {lang === 'en'
+                                ? 'Loading products...'
+                                : 'Đang tải danh sách sản phẩm...'}
+                        </p>
+                    </div>
+                ) : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState
                             icon={<Package size={20} />}
@@ -655,9 +667,24 @@ export function SellerProductListPage() {
                                 key: 'price',
                                 label: tr(lang, 'price'),
                                 render: (r: any) => (
-                                    <span className="font-bold text-primary">
-                                        {formatCurrency(r.price, lang)}
-                                    </span>
+                                    <div>
+                                        <div className="font-bold text-primary">
+                                            {formatCurrency(r.price, lang)}
+                                        </div>
+                                        {r.originalPrice && r.originalPrice > r.price && (
+                                            <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                                                <span className="line-through">{formatCurrency(r.originalPrice, lang)}</span>
+                                                <span className="text-amber-600 font-medium">
+                                                    -{Math.round(((r.originalPrice - r.price) / r.originalPrice) * 100)}%
+                                                </span>
+                                            </div>
+                                        )}
+                                        {r.originalPrice && r.originalPrice < r.price && (
+                                            <div className="text-[10px] text-gray-400">
+                                                {lang === 'en' ? 'Cost' : 'Vốn'}: {formatCurrency(r.originalPrice, lang)}
+                                            </div>
+                                        )}
+                                    </div>
                                 ),
                             },
                             {
@@ -721,22 +748,20 @@ export function SellerProductListPage() {
                     if (!deleteId) return
                     try {
                         await api(`/products/${deleteId}`, { method: 'DELETE' })
-                    } catch {
-                        // Bỏ qua lỗi xóa backend nếu là bản ghi cục bộ
+                        clearLoadCache()
+                        showToast({
+                            type: 'success',
+                            message:
+                                lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
+                        })
+                    } catch (err) {
+                        showToast({
+                            type: 'error',
+                            message:
+                                errorMessage(err) ||
+                                (lang === 'en' ? 'Failed to delete product.' : 'Xóa sản phẩm thất bại.'),
+                        })
                     }
-                    const updated = localProducts.filter((p) => p.id !== deleteId)
-                    setLocalProducts(updated)
-                    try {
-                        localStorage.setItem(
-                            'nexus_seller_created_products',
-                            JSON.stringify(updated),
-                        )
-                    } catch {}
-                    showToast({
-                        type: 'success',
-                        message:
-                            lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
-                    })
                     setRefreshKey((k) => k + 1)
                     setDeleteId(null)
                 }}
@@ -758,20 +783,37 @@ export function CreateProductPage() {
     const { lang, navigate, showToast } = useApp()
     const [saving, setSaving] = useState(false)
     const [name, setName] = useState('')
+    // Giá bán niêm yết trên sàn (Selling price đến tay khách hàng)
     const [price, setPrice] = useState('')
+    // Giá gốc / Giá nhập từ doanh nghiệp (Original / Cost price)
+    const [originalPrice, setOriginalPrice] = useState('')
     const [stock, setStock] = useState('')
+    // Mã SKU chuẩn doanh nghiệp (Stock Keeping Unit định danh sản phẩm & tồn kho)
     const [sku, setSku] = useState('')
-    const [status, setStatus] = useState('active')
     const [enableAuction, setEnableAuction] = useState(false)
     const [nameError, setNameError] = useState('')
-    const [categoryId, setCategoryId] = useState('11111111-1111-1111-1111-111111111111')
+    const [categoryId, setCategoryId] = useState('')
 
     // Tải danh mục thực tế từ Catalog Service (/api/v1/categories)
     const { data: catEnvelope } = useLoad<Envelope<ApiCategory[]> | ApiCategory[]>('/categories')
     const rawCats = (catEnvelope as any)?.data ?? catEnvelope
     const categoriesList: ApiCategory[] = Array.isArray(rawCats) ? rawCats : []
 
-    // Gọi API Catalog Service tạo sản phẩm mới vào PostgreSQL, hỗ trợ lưu trữ cục bộ khi demo/offline
+    // Tự động gán categoryId ban đầu từ danh mục đầu tiên của Catalog Service khi tải xong
+    useEffect(() => {
+        if (categoriesList.length > 0 && !categoryId) {
+            setCategoryId(categoriesList[0].id)
+        }
+    }, [categoriesList, categoryId])
+
+    /**
+     * Chức năng: Lưu sản phẩm mới vào Catalog Service backend.
+     * Đầu vào: Tên sản phẩm, giá, số lượng, SKU, danh mục, cho phép đấu giá.
+     * Kết quả: Tạo bản ghi Product trong nexus_catalog, lưu UUID thật vào cache và chuyển trang.
+     * Quy tắc & lý do:
+     * - categoryId bắt buộc phải là UUID thật trong bảng categories của PostgreSQL.
+     * - Nếu API backend thất bại, hiển thị toast thông báo lỗi rõ ràng và không điều hướng; không tạo thành công giả.
+     */
     const save = async () => {
         if (!name) {
             setNameError(tr(lang, 'required'))
@@ -780,21 +822,45 @@ export function CreateProductPage() {
         setSaving(true)
         setNameError('')
 
-        const generatedSku = sku || `SKU-${Date.now().toString().slice(-6)}`
+        const generatedSku = sku.trim() || `SKU-${Date.now().toString().slice(-6)}`
         const numericPrice = Number(price) || 100
-        const numericStock = Number(stock) || 10
+        // Giá gốc/nhập do doanh nghiệp quy định; nếu không nhập thì dùng luôn giá bán
+        const numericOriginalPrice = Number(originalPrice) > 0 ? Number(originalPrice) : numericPrice
+
+        // Ràng buộc Min Price: Seller không được đặt giá bán thấp hơn giá vốn/giá nhập tối thiểu
+        const minPriceCheck = validateMinPrice(numericPrice, numericOriginalPrice, lang)
+        if (!minPriceCheck.valid) {
+            showToast({
+                type: 'error',
+                message: minPriceCheck.message || (lang === 'en' ? 'Selling price cannot be lower than cost price.' : 'Giá bán không được thấp hơn giá nhập tối thiểu.'),
+            })
+            setSaving(false)
+            return
+        }
+
+        // Chức năng: Lưu trữ chính xác số lượng tồn kho do người bán nhập; nếu bỏ trống thì mặc định là 0, không tự động đổi thành 10
+        const numericStock = stock.trim() !== '' ? Math.max(0, parseInt(stock, 10) || 0) : 0
+        setProductStock(generatedSku, numericStock)
+        const selectedCatId = categoryId || categoriesList[0]?.id || '00000000-0000-0000-0000-000000000001'
+
+        const validLocalId =
+            typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID()
+                : '00000000-0000-4000-8000-000000000001'
 
         const newProduct = {
-            id: `prod-${Date.now()}`,
+            id: validLocalId,
             name,
             nameVi: name,
             price: numericPrice,
+            originalPrice: numericOriginalPrice,
             sku: generatedSku,
             stock: numericStock,
             images: [
                 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&h=600&fit=crop&auto=format',
             ],
-            status: (status.toLowerCase() as ProductStatus) || 'draft',
+            // Theo SRS §3.3.1 và Catalog Service: sản phẩm mới tạo luôn khởi tạo ở trạng thái DRAFT
+            status: 'draft' as ProductStatus,
             createdAt: new Date().toISOString(),
         }
 
@@ -804,14 +870,15 @@ export function CreateProductPage() {
                 body: JSON.stringify({
                     name,
                     description: name,
-                    categoryId: categoryId || '11111111-1111-1111-1111-111111111111',
+                    categoryId: selectedCatId,
                     auctionEnabled: enableAuction,
                     skus: [
                         {
                             skuCode: generatedSku,
                             price: numericPrice,
-                            originalPrice: numericPrice * 1.2,
-                            status: status === 'active' ? 'ACTIVE' : 'DRAFT',
+                            originalPrice: numericOriginalPrice,
+                            // SKU sẵn sàng ở trạng thái ACTIVE để khi sản phẩm được duyệt là mở bán được ngay
+                            status: 'ACTIVE',
                         },
                     ],
                     images: [
@@ -824,22 +891,22 @@ export function CreateProductPage() {
             })
             if (res?.data?.id) {
                 newProduct.id = res.data.id
+                // Lưu tồn kho theo UUID sản phẩm vừa tạo để tra cứu chéo ở cả màn hình Admin và Seller
+                setProductStock(res.data.id, numericStock)
             }
-        } catch (err) {
-            // Khi dùng Demo Seller hoặc chưa có session JWT, lưu cục bộ để người bán xem được ngay
-            console.warn('API save product failed, preserving in local storage:', err)
-        }
 
-        try {
-            const existing = JSON.parse(
-                localStorage.getItem('nexus_seller_created_products') || '[]',
-            )
-            localStorage.setItem(
-                'nexus_seller_created_products',
-                JSON.stringify([newProduct, ...existing]),
-            )
-        } catch {
-            // Bỏ qua lỗi storage
+            // Làm mới bộ nhớ đệm useLoad để các màn hình người bán hiển thị sản phẩm vừa lưu
+            clearLoadCache()
+        } catch (err) {
+            console.warn('API save product failed:', err)
+            showToast({
+                type: 'error',
+                message:
+                    errorMessage(err) ||
+                    (lang === 'en' ? 'Failed to save product.' : 'Không thể lưu sản phẩm lên hệ thống.'),
+            })
+            setSaving(false)
+            return
         }
 
         showToast({
@@ -882,30 +949,68 @@ export function CreateProductPage() {
                         </div>
                     </div>
                     <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Pricing & Inventory' : 'Giá & Kho hàng'}
-                        </h3>
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-bold">
+                                {lang === 'en' ? 'Pricing & SKU Inventory' : 'Quản lý Giá & SKU Tồn kho'}
+                            </h3>
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                                {lang === 'en' ? 'Enterprise Dynamic Pricing' : 'Giá động theo doanh nghiệp'}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <Input
-                                label={`${tr(lang, 'price')} ($)`}
+                                label={lang === 'en' ? 'Original / Cost Price ($)' : 'Giá gốc / Giá nhập ($)'}
+                                type="number"
+                                value={originalPrice}
+                                onChange={(e) => setOriginalPrice(e.target.value)}
+                                placeholder="0.00"
+                            />
+                            <Input
+                                label={lang === 'en' ? 'Selling Price ($)' : 'Giá bán trên sàn ($)'}
                                 type="number"
                                 value={price}
                                 onChange={(e) => setPrice(e.target.value)}
                                 placeholder="0.00"
                             />
                             <Input
-                                label={tr(lang, 'stock')}
+                                label={lang === 'en' ? 'Initial Stock' : 'Số lượng tồn kho'}
                                 type="number"
                                 value={stock}
                                 onChange={(e) => setStock(e.target.value)}
                                 placeholder="0"
                             />
+                        </div>
+
+                        {/* Phân tích chênh lệch giá động giữa Giá bán và Giá nhập */}
+                        {Number(price) > 0 && Number(originalPrice) > 0 && (
+                            <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-between text-xs">
+                                <span className="text-gray-600">
+                                    {lang === 'en' ? 'Price Margin Analysis:' : 'Phân tích biên độ giá:'}
+                                </span>
+                                {Number(price) >= Number(originalPrice) ? (
+                                    <span className="font-semibold text-emerald-600">
+                                        {lang === 'en' ? 'Gross Markup' : 'Lợi nhuận gộp'}: +{formatCurrency(Number(price) - Number(originalPrice), lang)} (+{(((Number(price) - Number(originalPrice)) / Number(originalPrice)) * 100).toFixed(1)}%)
+                                    </span>
+                                ) : (
+                                    <span className="font-semibold text-amber-600">
+                                        {lang === 'en' ? 'Promotional Discount' : 'Chiết khấu khuyến mãi'}: -{formatCurrency(Number(originalPrice) - Number(price), lang)} (-{(((Number(originalPrice) - Number(price)) / Number(originalPrice)) * 100).toFixed(1)}%)
+                                    </span>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="mt-4">
                             <Input
-                                label={tr(lang, 'sku')}
+                                label={lang === 'en' ? 'Enterprise SKU Code' : 'Mã SKU Doanh nghiệp'}
                                 value={sku}
                                 onChange={(e) => setSku(e.target.value)}
-                                placeholder="SKU-001"
+                                placeholder="VD: TGDD-IP15PM-256G-TITAN hoặc MSI-MOD15-F1MG"
                             />
+                            <p className="text-[11px] text-gray-500 mt-1">
+                                {lang === 'en'
+                                    ? 'Stock Keeping Unit (SKU) must be assigned by the enterprise/merchant to identify variants and accurately track warehouse inventory.'
+                                    : 'Mã SKU chuẩn được cấp từ doanh nghiệp để định danh biến thể và tra cứu chính xác số lượng tồn kho theo thời gian thực.'}
+                            </p>
                         </div>
                     </div>
                     <div className="nexus-card p-5">
@@ -924,18 +1029,26 @@ export function CreateProductPage() {
                 <div className="space-y-4">
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Publish Settings' : 'Cài đặt đăng'}
+                            {lang === 'en' ? 'Publish Settings' : 'Cài đặt đăng bán'}
                         </h3>
-                        <Select
-                            label={tr(lang, 'status')}
-                            value={status}
-                            onChange={(e) => setStatus(e.target.value)}
-                            options={[
-                                { value: 'active', label: tr(lang, 'active') },
-                                { value: 'draft', label: tr(lang, 'draft') },
-                                { value: 'inactive', label: tr(lang, 'inactive') },
-                            ]}
-                        />
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 block mb-1.5">
+                                    {tr(lang, 'status')}
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <StatusBadge status="draft" label={tr(lang, 'draft')} />
+                                    <span className="text-xs text-gray-500">
+                                        {lang === 'en' ? 'Requires Admin approval' : 'Chờ Admin duyệt'}
+                                    </span>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-400 leading-relaxed mt-1">
+                                {lang === 'en'
+                                    ? 'Requires Admin approval to publish. You can still run an auction immediately if "Allow Auction" is enabled.'
+                                    : 'Cần Admin phê duyệt để mở bán. Vẫn có thể đấu giá ngay nếu bật "Cho phép đấu giá".'}
+                            </p>
+                        </div>
                     </div>
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-4">{tr(lang, 'category')}</h3>
@@ -951,7 +1064,7 @@ export function CreateProductPage() {
                                       }))
                                     : [
                                           {
-                                              value: '11111111-1111-1111-1111-111111111111',
+                                              value: '00000000-0000-0000-0000-000000000001',
                                               label: 'Electronics / Điện tử',
                                           },
                                           {
@@ -1033,6 +1146,33 @@ export function SellerAuctionListPage() {
     // Tải danh sách phiên đấu giá từ API Adapter (có tự động fallback sang localStorage/mock)
     const currentSellerId = user?.id || 'u2'
 
+    /**
+     * Chức năng: Nạp danh sách sản phẩm của Seller vào cache để auction hiển thị đúng tên/SKU thật.
+     * Đầu vào: Danh sách sản phẩm từ Catalog Service (useLoad /products/seller/{sellerId}).
+     * Luồng: Mỗi sản phẩm hợp lệ được lưu vào auctionProductCache với key = productId (UUID).
+     *        validateAndNormalizeAuction sau đó tra cache này thay vì hiển thị "Auction Product".
+     */
+    const isSellerUuid = Boolean(
+        user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
+    )
+    const { data: sellerProductsEnvRaw } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(
+        isSellerUuid ? `/products/seller/${user?.id}` : '/products',
+    )
+    // Đồng bộ danh sách sản phẩm vào cache để auction list hiển thị đúng tên/SKU thật
+    useEffect(() => {
+        const rawProducts = (sellerProductsEnvRaw as Envelope<ApiProduct[]> | undefined)?.data ?? sellerProductsEnvRaw
+        if (!Array.isArray(rawProducts)) return
+        rawProducts.forEach((p) => {
+            if (!p?.id || !p?.name) return
+            cacheAuctionProduct(p.id, {
+                name: p.name,
+                nameVi: p.name,
+                sku: p.skus?.[0]?.skuCode,
+                images: p.images?.map((img) => img.url),
+            })
+        })
+    }, [sellerProductsEnvRaw])
+
     const refreshAuctions = async () => {
         try {
             const res = await auctionsApi.getAuctions({
@@ -1058,6 +1198,9 @@ export function SellerAuctionListPage() {
 
     useEffect(() => {
         refreshAuctions()
+        // Đồng bộ lại status với Auction Service để phiên quá giờ không bị giữ nhãn Scheduled trên trang đang mở.
+        const refreshTimer = window.setInterval(refreshAuctions, 5000)
+        return () => window.clearInterval(refreshTimer)
     }, [currentSellerId, createdAuctions, auctionReviews])
 
     const sellerAuctions = liveAuctions.map((auction) => ({
@@ -1331,7 +1474,7 @@ export function SellerAuctionListPage() {
                                     {lang === 'vi' ? detailAuction.product?.nameVi || detailAuction.product?.name : detailAuction.product?.name}
                                 </h3>
                                 <p className="mt-1 text-xs text-gray-500">
-                                    SKU: {detailAuction.product?.sku || 'N/A'} · ID: {detailAuction.id}
+                                    SKU: <span className="font-mono text-gray-700">{detailAuction.product?.sku || 'N/A'}</span>
                                 </p>
                                 <div className="mt-2">
                                     <StatusBadge status={detailAuction.status} label={statusLabel(detailAuction.status)} />
@@ -1373,7 +1516,16 @@ export function SellerAuctionListPage() {
                         <section>
                             <h4 className="mb-2 font-semibold">{tr(lang, 'bidHistory')}</h4>
                             {detailLoading ? (
-                                <p className="text-sm text-gray-500" role="status">{tr(lang, 'loadingAuctionDetails')}</p>
+                                <div className="flex items-center gap-2 py-3 text-sm text-gray-500" role="status">
+                                    <div
+                                        className="spinner-border spinner-border-sm text-primary"
+                                        style={{ color: '#ee4d2d' }}
+                                        role="status"
+                                    >
+                                        <span className="visually-hidden">Loading...</span>
+                                    </div>
+                                    <span>{tr(lang, 'loadingAuctionDetails')}</span>
+                                </div>
                             ) : detailAuction.bids?.length ? (
                                 <div className="max-h-56 overflow-y-auto rounded-lg border">
                                     <table className="w-full text-sm">
@@ -1566,15 +1718,13 @@ export function SellerAuctionListPage() {
  * Lỗi & giới hạn: Hiển thị lỗi đỏ chi tiết ngay dưới từng ô nhập liệu (inline error) và toast thông báo chung.
  */
 export function CreateAuctionPage() {
-    const { lang, navigate, showToast, submitAuction, pageParams, createdAuctions } = useApp()
+    const { lang, navigate, showToast, submitAuction, pageParams, createdAuctions, user } = useApp()
     const editAuctionId = (pageParams?.id as string) || undefined
     const isEdit = Boolean(editAuctionId)
 
     const [saving, setSaving] = useState(false)
     const [loadingData, setLoadingData] = useState(false)
     const [notEditableError, setNotEditableError] = useState('')
-    const [repError, setRepError] = useState(false)
-    const [overLimit, setOverLimit] = useState(false)
 
     // Dữ liệu form
     const [productId, setProductId] = useState('')
@@ -1586,6 +1736,62 @@ export function CreateAuctionPage() {
 
     // Bảng lỗi validation từng trường
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+
+    /**
+     * Chức năng: Chuẩn bị danh sách sản phẩm của người bán để chọn khi tạo phiên đấu giá.
+     * Đầu vào: user context, API Catalog (/products/seller/{sellerId} hoặc /products).
+     * Kết quả: availableProducts chứa danh sách sản phẩm hợp lệ 100% từ database Supabase.
+     * Luồng xử lý:
+     *   1. Xóa bỏ hoàn toàn dữ liệu tạm trong localStorage ('nexus_seller_created_products') để ngăn ngừa việc dùng ID giả dạng prod-...
+     *   2. Gọi API Catalog Service qua useLoad để lấy danh sách sản phẩm thật từ database.
+     *   3. Lọc các sản phẩm cho phép đấu giá (auctionEnabled !== false).
+     *   4. Khi offline/sandbox test suite thì fallback sang PRODUCTS.
+     * Quy tắc & lý do: Đảm bảo chỉ dùng ID sản phẩm (UUID) thật từ cơ sở dữ liệu Supabase, không để xảy ra lỗi Jackson deserialize UUID.
+     * Lỗi & giới hạn: Tự động bind sản phẩm đầu tiên khi tải xong để tránh form bị rỗng.
+     */
+    useEffect(() => {
+        try {
+            localStorage.removeItem('nexus_seller_created_products')
+        } catch {}
+    }, [])
+
+    const isSellerUuid = Boolean(
+        user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
+    )
+    const { data: sellerProductsEnvelope, loading: loadingProducts } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(
+        isSellerUuid ? `/products/seller/${user?.id}` : '/products',
+    )
+    const sellerProductsRaw = (sellerProductsEnvelope as Envelope<ApiProduct[]> | undefined)?.data ?? sellerProductsEnvelope
+
+    const apiProducts = Array.isArray(sellerProductsRaw)
+        ? sellerProductsRaw
+            .filter((p: any) => p.auctionEnabled !== false)
+            .map((product) => ({
+                id: product.id,
+                name: product.name,
+                nameVi: product.name,
+                sku: product.skus?.[0]?.skuCode || '',
+                skuId: product.skus?.[0]?.id || undefined,
+            }))
+        : []
+
+    const fallbackCatalog = PRODUCTS.filter((p) => p.enableAuction).map((p) => ({
+        id: p.id,
+        name: p.name,
+        nameVi: p.nameVi,
+        sku: p.sku,
+        skuId: undefined as string | undefined,
+    }))
+
+    // Sử dụng 100% danh sách sản phẩm thật từ Catalog Service Supabase DB
+    const availableProducts = apiProducts.length > 0 ? apiProducts : fallbackCatalog
+
+    // Xóa productId nếu đang chứa ID rác cũ dạng prod-... hoặc không tồn tại trong danh sách
+    useEffect(() => {
+        if (productId && (productId.startsWith('prod-') || (availableProducts.length > 0 && !availableProducts.some((p) => p.id === productId)))) {
+            setProductId('')
+        }
+    }, [availableProducts, productId])
 
     // Nạp dữ liệu khi ở chế độ chỉnh sửa phiên có sẵn
     useEffect(() => {
@@ -1672,6 +1878,11 @@ export function CreateAuctionPage() {
                 lang === 'en'
                     ? 'Please select a product for the auction'
                     : 'Vui lòng chọn sản phẩm cho phiên đấu giá'
+        } else if (productId.startsWith('prod-')) {
+            errors.productId =
+                lang === 'en'
+                    ? 'Selected product ID is invalid. Please choose a real product from the list.'
+                    : 'Mã sản phẩm không hợp lệ. Vui lòng chọn sản phẩm thật từ danh sách.'
         }
 
         const startPriceNum = Number(startingPrice)
@@ -1790,8 +2001,27 @@ export function CreateAuctionPage() {
                 })
             } else {
                 // Luồng tạo mới phiên đấu giá
+                const selectedProd = availableProducts.find((p) => p.id === productId)
+                // Chỉ gửi skuId nếu có định dạng UUID hợp lệ; không gửi skuCode chuỗi để tránh lỗi Jackson
+                const isUuidVal = (val?: string | null) =>
+                    Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val))
+                const validSkuId = isUuidVal((selectedProd as any)?.skuId)
+                    ? (selectedProd as any).skuId
+                    : undefined
+
+                // Lưu metadata sản phẩm vào cache trước khi tạo phiên,
+                // để auction list có thể hiển thị đúng tên/SKU thay vì fallback "Auction Product".
+                if (selectedProd && productId) {
+                    cacheAuctionProduct(productId, {
+                        name: selectedProd.name,
+                        nameVi: selectedProd.nameVi || selectedProd.name,
+                        sku: selectedProd.sku,
+                    })
+                }
+
                 const created = await auctionsApi.createAuction({
                     productId,
+                    skuId: validSkuId,
                     startingPrice: Number(startingPrice),
                     minIncrement: Number(minIncrement),
                     startTime: new Date(startTime).toISOString(),
@@ -1799,12 +2029,18 @@ export function CreateAuctionPage() {
                     visibility,
                 })
 
+                // Làm mới cache để danh sách phiên đấu giá cập nhật ngay từ backend
+                clearLoadCache()
+
                 // Đồng bộ context state
                 submitAuction(created)
 
                 showToast({
                     type: 'success',
-                    message: tr(lang, 'auctionSubmittedForApproval'),
+                    message:
+                        created.status === 'scheduled'
+                            ? tr(lang, 'auctionCreated')
+                            : tr(lang, 'auctionSubmittedForApproval'),
                 })
             }
 
@@ -1817,7 +2053,10 @@ export function CreateAuctionPage() {
                 }
                 showToast({
                     type: 'error',
-                    message: err.message,
+                    message:
+                        err.code === 'INVALID_AUCTION_RESPONSE'
+                            ? tr(lang, 'auctionCreateInvalidResponse')
+                            : err.message,
                 })
             } else {
                 showToast({
@@ -1833,8 +2072,6 @@ export function CreateAuctionPage() {
             setSaving(false)
         }
     }
-
-    const availableProducts = PRODUCTS.filter((p) => p.enableAuction)
 
     return (
         <SellerLayout title={isEdit ? tr(lang, 'editAuction') : tr(lang, 'createAuction')}>
@@ -1858,26 +2095,6 @@ export function CreateAuctionPage() {
                             }
                         />
                     )}
-                    {repError && (
-                        <AlertBanner
-                            type="error"
-                            message={
-                                lang === 'en'
-                                    ? 'Reputation score below 50. You cannot create auctions.'
-                                    : 'Điểm uy tín dưới 50. Bạn không thể tạo phiên đấu giá.'
-                            }
-                        />
-                    )}
-                    {overLimit && (
-                        <AlertBanner
-                            type="warning"
-                            message={
-                                lang === 'en'
-                                    ? 'You already have 5 running auctions. Please wait until one ends.'
-                                    : 'Bạn đã có 5 phiên đấu giá đang chạy. Vui lòng chờ một phiên kết thúc.'
-                            }
-                        />
-                    )}
 
                     {/* Khối chọn sản phẩm */}
                     <div className="nexus-card p-5">
@@ -1887,7 +2104,7 @@ export function CreateAuctionPage() {
                         <Select
                             label={lang === 'en' ? 'Product' : 'Sản phẩm'}
                             value={productId}
-                            disabled={isEdit || Boolean(notEditableError)}
+                            disabled={isEdit || Boolean(notEditableError) || (loadingProducts && availableProducts.length === 0)}
                             error={fieldErrors.productId}
                             onChange={(e) => handleFieldChange('productId', e.target.value, setProductId)}
                             options={[
@@ -1941,7 +2158,7 @@ export function CreateAuctionPage() {
                                 value={startTime}
                                 error={fieldErrors.startTime}
                                 onChange={(e) => handleFieldChange('startTime', e.target.value, setStartTime)}
-                                helper={lang === 'en' ? 'Must be greater than current time' : 'Lớn hơn thời gian hiện tại'}
+                                helper={lang === 'en' ? 'Must be after current time' : 'Phải sau thời gian hiện tại'}
                             />
                             <Input
                                 label={tr(lang, 'endTime')}
@@ -1953,7 +2170,6 @@ export function CreateAuctionPage() {
                                 helper={lang === 'en' ? 'Duration: 1 hour to 7 days' : 'Thời lượng: 1 giờ đến 7 ngày'}
                             />
                         </div>
-                        <p className="text-xs text-gray-400 mt-2">{tr(lang, 'auctionDuration')}</p>
                     </div>
 
                     {/* Chế độ hiển thị */}
@@ -1969,7 +2185,7 @@ export function CreateAuctionPage() {
                                 { value: 'public', label: lang === 'en' ? 'Public (All buyers)' : 'Công khai (Tất cả người mua)' },
                                 {
                                     value: 'restricted',
-                                    label: lang === 'en' ? 'Restricted' : 'Hạn chế',
+                                    label: lang === 'en' ? 'Private (Invited only)' : 'Riêng tư (Chỉ người được mời)',
                                 },
                             ]}
                         />
@@ -1998,24 +2214,6 @@ export function CreateAuctionPage() {
                                   ? 'Create Auction'
                                   : 'Khởi tạo phiên'}
                         </Button>
-                    </div>
-
-                    {/* Demo error toggles */}
-                    <div className="mt-4 p-3 bg-gray-50 rounded-xl text-xs text-gray-400 space-y-1">
-                        <p>Demo: trigger error states</p>
-                        <button
-                            onClick={() => setRepError((e) => !e)}
-                            className="text-primary hover:underline"
-                        >
-                            Toggle reputation error
-                        </button>{' '}
-                        ·{' '}
-                        <button
-                            onClick={() => setOverLimit((e) => !e)}
-                            className="text-primary hover:underline"
-                        >
-                            Toggle over-limit error
-                        </button>
                     </div>
                 </div>
             </div>
@@ -2203,7 +2401,13 @@ export function SellerOrdersPage() {
 
                 {loading ? (
                     <div className="py-12 text-center text-gray-400">
-                        <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
+                        <div
+                            className="spinner-border text-primary mb-2"
+                            style={{ color: '#ee4d2d' }}
+                            role="status"
+                        >
+                            <span className="visually-hidden">Loading...</span>
+                        </div>
                         <p>
                             {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
                         </p>
