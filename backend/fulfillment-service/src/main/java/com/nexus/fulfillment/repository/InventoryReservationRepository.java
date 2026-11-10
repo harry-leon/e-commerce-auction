@@ -35,6 +35,10 @@ public interface InventoryReservationRepository extends JpaRepository<InventoryR
      */
     List<InventoryReservation> findByStatusAndExpiresAtBefore(ReservationStatus status, Instant cutoffTime);
 
+    /** Chỉ lấy ID ứng viên; không đưa entity PENDING vào persistence context trước khi chờ khóa của callback commit. */
+    @Query("SELECT r.id FROM InventoryReservation r WHERE r.status = :status AND r.expiresAt < :cutoff ORDER BY r.id")
+    List<UUID> findExpiredIds(@Param("status") ReservationStatus status, @Param("cutoff") Instant cutoff);
+
     /**
      * Tra cứu và khóa dòng một phiếu giữ hàng theo ID để tránh việc nhiều tiến trình cùng release hoặc confirm một lúc.
      */
