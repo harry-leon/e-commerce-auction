@@ -715,7 +715,7 @@ export function SellerProductListPage() {
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation()
-                                                navigate('seller-create-product', { id: r.id })
+                                                navigate('seller-edit-product', { id: r.id })
                                             }}
                                             className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500"
                                         >
@@ -736,7 +736,7 @@ export function SellerProductListPage() {
                         ]}
                         data={filtered}
                         rowKey={(r) => r.id}
-                        onRowClick={(r) => navigate('seller-create-product', { id: r.id })}
+                        onRowClick={(r) => navigate('seller-edit-product', { id: r.id })}
                     />
                 )}
             </div>
@@ -780,9 +780,10 @@ export function SellerProductListPage() {
  * và lưu trữ dự phòng vào localStorage để sản phẩm hiển thị ngay trên danh sách người bán kể cả khi thao tác bằng tài khoản Demo.
  */
 export function CreateProductPage() {
-    const { lang, navigate, showToast, pageParams } = useApp()
-    const editProductId = (pageParams?.id as string) || undefined
-    const isEdit = Boolean(editProductId)
+    const { lang, page, navigate, showToast, pageParams } = useApp()
+    const searchId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('id') : null
+    const editProductId = (pageParams?.id as string) || (searchId as string) || undefined
+    const isEdit = Boolean(editProductId) || page === 'seller-edit-product' || page === 'seller-update-product'
     const [saving, setSaving] = useState(false)
     const [loadingDetail, setLoadingDetail] = useState(false)
     const [name, setName] = useState('')
