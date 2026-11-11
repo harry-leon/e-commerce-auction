@@ -38,7 +38,7 @@ import { ordersApi } from '../../api/orders'
 import { auctionsApi } from '../../api/auctions'
 import { cacheAuctionProduct } from '../../api/auctions'
 import { api, ApiClientError, errorMessage, type ApiCategory, type ApiProduct, type Envelope, getProductStock, setProductStock } from '../../api/client'
-import { validateMinPrice } from '../../utils/pricingEngine'
+// validateMinPrice đã được xóa khỏi luồng FE — contract giá sàn do BE kiểm tra (originalPrice >= price)
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
@@ -789,7 +789,8 @@ export function CreateProductPage() {
     const [name, setName] = useState('')
     // Giá bán niêm yết trên sàn (Selling price đến tay khách hàng)
     const [price, setPrice] = useState('')
-    // Giá gốc / Giá nhập từ doanh nghiệp (Original / Cost price)
+    // originalPrice trong BE = giá niêm yết gốc trước sale (phải >= price); không phải giá vốn/nhập hàng.
+    // FE chỉ điền lại từ API và gửi nguyên về BE — không dùng để validate giá sàn tối thiểu.
     const [originalPrice, setOriginalPrice] = useState('')
     const [stock, setStock] = useState('')
     // Mã SKU chuẩn doanh nghiệp (Stock Keeping Unit định danh sản phẩm & tồn kho)
@@ -797,7 +798,8 @@ export function CreateProductPage() {
     const [enableAuction, setEnableAuction] = useState(false)
     const [nameError, setNameError] = useState('')
     const [categoryId, setCategoryId] = useState('')
-
+    // Lưu toàn bộ danh sách SKU gốc khi edit; đảm bảo PUT không làm mất biến thể khác của sản phẩm
+    const [allSkus, setAllSkus] = useState<any[]>([])
     // Tải danh mục thực tế từ Catalog Service (/api/v1/categories)
     const { data: catEnvelope } = useLoad<Envelope<ApiCategory[]> | ApiCategory[]>('/categories')
     const rawCats = (catEnvelope as any)?.data ?? catEnvelope
@@ -811,9 +813,12 @@ export function CreateProductPage() {
     }, [categoriesList, categoryId])
 
     /**
-     * Chức năng: Khi ở chế độ Chỉnh sửa (editProductId hợp lệ), tải dữ liệu sản phẩm từ Catalog backend
-     * Đầu vào: editProductId từ pageParams.id
-     * Kết quả: Điền tự động tên, giá bán, giá vốn, mã SKU, tồn kho, danh mục và cờ auctionEnabled vào form
+     * Chức năng: Khi ở chế độ Chỉnh sửa (editProductId hợp lệ), tải dữ liệu sản phẩm từ Catalog backend.
+     * Đầu vào: editProductId từ pageParams.id.
+     * Kết quả: Điền tự động tên, giá bán, mã SKU, tồn kho, danh mục và cờ auctionEnabled vào form.
+     * Lưu ý: Giữ toàn bộ danh sách SKU gốc trong allSkus để tránh mất biến thể khi lưu lại.
+     * originalPrice KHÔNG dùng làm giá vốn hiển thị ra ngoài — BE yêu cầu originalPrice >= price
+     * (originalPrice là giá niêm yết gốc trước khuyến mãi, không phải giá nhập hàng).
      */
     useEffect(() => {
         if (!editProductId) return
@@ -827,9 +832,13 @@ export function CreateProductPage() {
                     setName(data.name || '')
                     if (data.categoryId) setCategoryId(data.categoryId)
                     if (data.auctionEnabled !== undefined) setEnableAuction(Boolean(data.auctionEnabled))
+                    // Lưu toàn bộ danh sách SKU để PUT không làm mất biến thể khác
+                    if (Array.isArray(data.skus)) setAllSkus(data.skus)
                     const skuObj = data.skus?.[0]
                     if (skuObj) {
                         setPrice(skuObj.price !== undefined ? String(skuObj.price) : '')
+                        // originalPrice trong BE = giá niêm yết gốc (trước sale), phải >= price
+                        // Chỉ điền nếu hợp lệ; không dùng như giá vốn/giá nhập hàng
                         setOriginalPrice(skuObj.originalPrice !== undefined ? String(skuObj.originalPrice) : '')
                         setSku(skuObj.skuCode || '')
                         const loadedStock = skuObj.stock ?? getProductStock(skuObj.skuCode, editProductId) ?? 0
@@ -871,37 +880,42 @@ export function CreateProductPage() {
         const generatedSku = sku.trim() || `SKU-${Date.now().toString().slice(-6)}`
         const numericPrice = Number(price) || 100
         // Giá gốc/nhập do doanh nghiệp quy định; nếu không nhập thì dùng luôn giá bán
-        const numericOriginalPrice = Number(originalPrice) > 0 ? Number(originalPrice) : numericPrice
 
-        // Ràng buộc Min Price: Seller không được đặt giá bán thấp hơn giá vốn/giá nhập tối thiểu
-        const minPriceCheck = validateMinPrice(numericPrice, numericOriginalPrice, lang)
-        if (!minPriceCheck.valid) {
-            showToast({
-                type: 'error',
-                message: minPriceCheck.message || (lang === 'en' ? 'Selling price cannot be lower than cost price.' : 'Giá bán không được thấp hơn giá nhập tối thiểu.'),
-            })
-            setSaving(false)
-            return
-        }
+        // [P1-FIX] Contract originalPrice với BE đã được làm rõ:
+        // BE yêu cầu originalPrice >= price (originalPrice = giá niêm yết gốc trước khuyến mãi).
+        // FE không validate giá vốn/sàn tối thiểu tại đây — đó là nghiệp vụ của BE (Min Price Rule).
+        // Nếu seller nhập originalPrice, chỉ gửi khi originalPrice >= price để không vi phạm BE constraint.
+        // Nếu không nhập hoặc không hợp lệ, bỏ qua trường này (gửi null).
+        const rawOriginalPrice = Number(originalPrice)
+        const numericOriginalPrice =
+            rawOriginalPrice > 0 && rawOriginalPrice >= numericPrice ? rawOriginalPrice : null
 
         // Chức năng: Lưu trữ chính xác số lượng tồn kho do người bán nhập; nếu bỏ trống thì mặc định là 0, không tự động đổi thành 10
         const numericStock = stock.trim() !== '' ? Math.max(0, parseInt(stock, 10) || 0) : 0
         setProductStock(generatedSku, numericStock)
         const selectedCatId = categoryId || categoriesList[0]?.id || '00000000-0000-0000-0000-000000000001'
 
+        // [P1-FIX] Khi edit: giữ đầy đủ danh sách SKU gốc, chỉ cập nhật SKU đang sửa (SKU đầu tiên).
+        // Tránh mất biến thể khác do BE xóa và tạo lại toàn bộ danh sách SKU.
+        // - Nếu đang edit và allSkus có nhiều hơn 1 SKU: cập nhật SKU đầu tiên, giữ nguyên các SKU còn lại.
+        // - Nếu tạo mới hoặc chỉ có 1 SKU: gửi danh sách 1 SKU như thường.
+        const editedSkuPayload = {
+            ...(allSkus[0] ?? {}),
+            skuCode: generatedSku,
+            price: numericPrice,
+            ...(numericOriginalPrice !== null ? { originalPrice: numericOriginalPrice } : {}),
+            status: 'ACTIVE',
+        }
+        const skusPayload = isEdit && allSkus.length > 1
+            ? [editedSkuPayload, ...allSkus.slice(1)]
+            : [editedSkuPayload]
+
         const payload = {
             name,
             description: name,
             categoryId: selectedCatId,
             auctionEnabled: enableAuction,
-            skus: [
-                {
-                    skuCode: generatedSku,
-                    price: numericPrice,
-                    originalPrice: numericOriginalPrice,
-                    status: 'ACTIVE',
-                },
-            ],
+            skus: skusPayload,
             images: [
                 {
                     url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&h=600&fit=crop&auto=format',
@@ -2767,6 +2781,8 @@ export function SellerInventoryPage() {
         id: string
         name: string
         sku: string
+        // skuId là UUID thực của SKU; fulfillment-service yêu cầu skuId khi gọi /inventory/inbound|outbound
+        skuId: string | null
         currentStock: number
     } | null>(null)
     const [adjustMode, setAdjustMode] = useState<'set' | 'inbound' | 'outbound'>('set')
@@ -2813,6 +2829,8 @@ export function SellerInventoryPage() {
               return {
                   id: p.id,
                   sku: skuCode,
+                  // skuId là UUID thực của SKU trong DB; fulfillment-service yêu cầu skuId (không phải skuCode)
+                  skuId: p.skus?.[0]?.id ?? null,
                   name: p.name,
                   nameVi: p.name,
                   stock: totalStock,
@@ -2836,6 +2854,8 @@ export function SellerInventoryPage() {
             id: item.id,
             name: item.name,
             sku: item.sku,
+            // Giữ skuId UUID thực để gọi fulfillment API đúng endpoint
+            skuId: item.skuId ?? null,
             currentStock: item.stock,
         })
         setAdjustMode('set')
@@ -2876,16 +2896,30 @@ export function SellerInventoryPage() {
             setProductStock(adjustItem.sku, newStock)
             setProductStock(adjustItem.id, newStock)
 
-            // Gửi yêu cầu điều chỉnh sang Fulfillment Service nếu endpoint khả dụng
-            try {
-                await api('/inventory/inbound', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        skuCode: adjustItem.sku,
-                        quantity: diff > 0 ? diff : 0,
-                    }),
-                })
-            } catch {}
+            // [P1-FIX] Gửi điều chỉnh tồn kho lên Fulfillment Service.
+            // BE yêu cầu skuId (UUID), không phải skuCode. Chỉ gửi khi có thay đổi thực (diff != 0).
+            // Lỗi API được báo rõ ràng; không bỏ qua im lặng để tránh UI hiển thị kho ảo.
+            if (diff !== 0) {
+                const skuIdForApi = (adjustItem as any).skuId
+                if (!skuIdForApi) {
+                    // skuId chưa có (sản phẩm chưa sync với fulfillment-service) → cảnh báo rõ ràng
+                    showToast({
+                        type: 'warning',
+                        message: lang === 'en'
+                            ? 'SKU ID not found — stock updated locally only. Sync with backend needed.'
+                            : 'Chưa có SKU ID — kho chỉ cập nhật cục bộ. Cần đồng bộ với hệ thống kho.',
+                    })
+                } else {
+                    const endpoint = diff > 0 ? '/inventory/inbound' : '/inventory/outbound'
+                    await api(endpoint, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            skuId: skuIdForApi,
+                            quantity: Math.abs(diff),
+                        }),
+                    })
+                }
+            }
 
             // Ghi nhật ký vào sổ cái tồn kho (Ledger)
             const ledgerType: InventoryLedgerItem['type'] = diff >= 0 ? 'inbound' : 'adjustment'
