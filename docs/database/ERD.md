@@ -268,6 +268,17 @@ erDiagram
     integer attempts
     jsonb email_payload
   }
+  auction_timeout_tasks {
+    uuid id
+    uuid order_id
+    uuid user_id
+    uuid auction_id
+    varchar task_type
+    integer score_delta
+    varchar reason
+    boolean done
+    integer attempts
+  }
   carts ||--o{ cart_items : cart_id
   vouchers ||--o{ orders : voucher_id
   orders ||--o{ order_items : order_id
@@ -368,6 +379,7 @@ erDiagram
     varchar ref_type
     uuid ref_id
     timestamp created_at
+    varchar idempotency_key
   }
   carriers {
     uuid id
@@ -443,6 +455,9 @@ erDiagram
     timestamp created_at
     uuid order_id
     varchar event_type
+    uuid auction_id
+    varchar payment_link
+    timestamp payment_deadline
   }
   notification_attempts {
     uuid id
