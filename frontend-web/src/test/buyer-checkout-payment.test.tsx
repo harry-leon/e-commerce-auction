@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState } from '../types'
 import { DEMO_BUYER } from '../mockData'
+import { VerifiedOrderResult } from '../features/buyer/VerifiedOrderResult'
 import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
 import { CheckoutPage, PaymentResultPage } from '../features/buyer/BuyerPages'
 import { ordersApi } from '../api/orders'
@@ -72,8 +73,20 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             auctionEnabled: false,
             createdAt: '2026-11-01T00:00:00Z',
             skus: [
-                { id: 'sku-size-s', skuCode: 'TSHIRT-S', price: 150000, originalPrice: 200000, status: 'ACTIVE' },
-                { id: 'sku-size-l', skuCode: 'TSHIRT-L', price: 180000, originalPrice: 220000, status: 'ACTIVE' },
+                {
+                    id: 'sku-size-s',
+                    skuCode: 'TSHIRT-S',
+                    price: 150000,
+                    originalPrice: 200000,
+                    status: 'ACTIVE',
+                },
+                {
+                    id: 'sku-size-l',
+                    skuCode: 'TSHIRT-L',
+                    price: 180000,
+                    originalPrice: 220000,
+                    status: 'ACTIVE',
+                },
             ],
             images: [{ id: 'img-1', url: '/tshirt.jpg', sortOrder: 0 }],
         }
@@ -82,10 +95,14 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             'fetch',
             vi.fn(async (input: string) => {
                 if (input.includes('/products/multi-sku-product')) {
-                    return new Response(JSON.stringify({ success: true, data: multiSkuProduct }), { status: 200 })
+                    return new Response(JSON.stringify({ success: true, data: multiSkuProduct }), {
+                        status: 200,
+                    })
                 }
                 if (input.includes('/products')) {
-                    return new Response(JSON.stringify({ success: true, data: [] }), { status: 200 })
+                    return new Response(JSON.stringify({ success: true, data: [] }), {
+                        status: 200,
+                    })
                 }
                 return new Response(JSON.stringify({ success: true, data: null }), { status: 200 })
             }),
@@ -160,7 +177,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             'fetch',
             vi.fn(async (input: string) => {
                 if (input.includes('/products/multi-sku-product')) {
-                    return new Response(JSON.stringify({ success: true, data: multiSkuProduct }), { status: 200 })
+                    return new Response(JSON.stringify({ success: true, data: multiSkuProduct }), {
+                        status: 200,
+                    })
                 }
                 return new Response(JSON.stringify({ success: true, data: [] }), { status: 200 })
             }),
@@ -245,12 +264,16 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await waitFor(() => expect(screen.getByText('Thẻ quốc tế')).toBeVisible())
 
         fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        await waitFor(() => expect(screen.getByRole('heading', { name: /xác nhận|confirmation/i })).toBeVisible())
+        await waitFor(() =>
+            expect(screen.getByRole('heading', { name: /xác nhận|confirmation/i })).toBeVisible(),
+        )
 
         // Đợi preview kích hoạt và hiển thị thông báo chênh lệch giá từ BE
         await waitFor(() => {
             expect(previewSpy).toHaveBeenCalled()
-            expect(screen.getByText(/Giá SKU NK-AF1-WHT đã thay đổi; đơn sẽ dùng giá hiện tại/i)).toBeVisible()
+            expect(
+                screen.getByText(/Giá SKU NK-AF1-WHT đã thay đổi; đơn sẽ dùng giá hiện tại/i),
+            ).toBeVisible()
         })
 
         previewSpy.mockRestore()
@@ -290,9 +313,15 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         })
 
         // Mock createOrder ném lỗi 503 chưa cấu hình merchant VNPAY
-        const createSpy = vi.spyOn(ordersApi, 'createOrder').mockRejectedValueOnce(
-            new ApiClientError('Chưa cấu hình merchant VNPAY sandbox hợp lệ', 'PAYMENT_NOT_CONFIGURED', 503),
-        )
+        const createSpy = vi
+            .spyOn(ordersApi, 'createOrder')
+            .mockRejectedValueOnce(
+                new ApiClientError(
+                    'Chưa cấu hình merchant VNPAY sandbox hợp lệ',
+                    'PAYMENT_NOT_CONFIGURED',
+                    503,
+                ),
+            )
 
         render(<CheckoutPage />)
         await screen.findByText('Nike Air Force')
@@ -310,7 +339,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         // Bước 3 -> 4
         fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        await waitFor(() => expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible())
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
+        )
 
         // Bấm Đặt hàng
         fireEvent.click(screen.getByRole('button', { name: /đặt hàng|place order/i }))
@@ -319,7 +350,10 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await waitFor(() => {
             expect(screen.getByText(/Chưa cấu hình merchant VNPAY sandbox hợp lệ/i)).toBeVisible()
         })
-        expect(contextHolder.current.navigate).not.toHaveBeenCalledWith('sandbox-payment', expect.anything())
+        expect(contextHolder.current.navigate).not.toHaveBeenCalledWith(
+            'sandbox-payment',
+            expect.anything(),
+        )
 
         createSpy.mockRestore()
     })
@@ -391,7 +425,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
         fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        await waitFor(() => expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible())
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
+        )
 
         fireEvent.click(screen.getByRole('button', { name: /đặt hàng|place order/i }))
 
@@ -527,13 +563,14 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
                 status: 'PENDING',
                 amount: 555000,
                 currency: 'VND',
-                paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=txn-second-001',
+                paymentUrl:
+                    'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=txn-second-001',
                 expiresAt: '2026-11-10T12:00:00Z',
             })
 
         const redirectSpy = vi.spyOn(paymentsApi, 'redirectToGateway').mockImplementation(() => {})
 
-        render(<CheckoutPage />)
+        const { unmount } = render(<CheckoutPage />)
         await screen.findByText('Nike Air Force')
 
         // Bước 1 -> 2
@@ -547,7 +584,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         // Chọn VNPAY
         fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
         fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        await waitFor(() => expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible())
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
+        )
 
         // Bấm đặt hàng lần 1 -> attempt lỗi
         fireEvent.click(screen.getByRole('button', { name: /đặt hàng|place order/i }))
@@ -556,6 +595,27 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         expect(attemptSpy).toHaveBeenCalledTimes(1)
 
         // Nút chuyển thành "Thử lại thanh toán"
+        // Mô phỏng reload: React state bị mất và giỏ server đã chuyển đổi thành đơn, không còn item.
+        const firstAttemptKey = attemptSpy.mock.calls[0][1]
+        unmount()
+        vi.mocked(cartApi.getActiveCart).mockResolvedValueOnce({
+            cartId: 'cart',
+            userId: 'user',
+            status: 'ACTIVE',
+            items: [],
+            totalItems: 0,
+            totalQuantity: 0,
+            subtotal: 0,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            totalAmount: 0,
+            expiresAt: null,
+        })
+        render(<CheckoutPage />)
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
         const retryBtn = screen.getByRole('button', { name: /thử lại thanh toán|retry payment/i })
         expect(retryBtn).toBeVisible()
 
@@ -565,7 +625,7 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await waitFor(() => {
             expect(createSpy).toHaveBeenCalledTimes(1)
             expect(attemptSpy).toHaveBeenCalledTimes(2)
-            expect(attemptSpy).toHaveBeenLastCalledWith('order-first-success-uuid', expect.any(String))
+            expect(attemptSpy).toHaveBeenLastCalledWith('order-first-success-uuid', firstAttemptKey)
             expect(redirectSpy).toHaveBeenCalledWith(
                 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=txn-second-001',
             )
@@ -610,7 +670,11 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         })
 
         vi.spyOn(ordersApi, 'createOrder').mockRejectedValueOnce(
-            new ApiClientError('Thời gian giữ kho đã hết hạn, vui lòng đặt lại', 'BUSINESS_ERROR', 400),
+            new ApiClientError(
+                'Thời gian giữ kho đã hết hạn, vui lòng đặt lại',
+                'BUSINESS_ERROR',
+                400,
+            ),
         )
 
         render(<CheckoutPage />)
@@ -621,12 +685,16 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
         await waitFor(() => expect(screen.getByText('Thẻ quốc tế')).toBeVisible())
         fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        await waitFor(() => expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible())
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
+        )
 
         fireEvent.click(screen.getByRole('button', { name: /đặt hàng|place order/i }))
 
         // Hiển thị lỗi nghiệp vụ, nhưng KHÔNG hiển thị modal cảnh báo "Phiên đăng nhập đã hết hạn"
-        expect(await screen.findByText('Thời gian giữ kho đã hết hạn, vui lòng đặt lại')).toBeVisible()
+        expect(
+            await screen.findByText('Thời gian giữ kho đã hết hạn, vui lòng đặt lại'),
+        ).toBeVisible()
         expect(screen.queryByText('Phiên đăng nhập đã hết hạn')).not.toBeInTheDocument()
         expect(sessionStorage.getItem('nexus.session')).not.toBeNull()
     })
@@ -651,9 +719,13 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         expect(await screen.findByText('Liên kết thanh toán đã hết hạn')).toBeVisible()
         // Không được có nút "Thử lại thanh toán"
-        expect(screen.queryByRole('button', { name: /thử lại thanh toán|retry payment/i })).not.toBeInTheDocument()
+        expect(
+            screen.queryByRole('button', { name: /thử lại thanh toán|retry payment/i }),
+        ).not.toBeInTheDocument()
         // Phải có nút "Lịch sử đơn hàng"
-        expect(screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i })).toBeVisible()
+        expect(
+            screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i }),
+        ).toBeVisible()
     })
 
     /**
@@ -677,9 +749,13 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         expect(await screen.findByText('Giao dịch thanh toán đã bị hủy')).toBeVisible()
         // Tuyệt đối không hiển thị nút Thử lại thanh toán
-        expect(screen.queryByRole('button', { name: /thử lại thanh toán|retry payment/i })).not.toBeInTheDocument()
+        expect(
+            screen.queryByRole('button', { name: /thử lại thanh toán|retry payment/i }),
+        ).not.toBeInTheDocument()
         // Phải có nút "Lịch sử đơn hàng"
-        expect(screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i })).toBeVisible()
+        expect(
+            screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i }),
+        ).toBeVisible()
     })
 
     /**
@@ -699,7 +775,8 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             expiresAt: '2026-11-10T12:00:00Z',
         })
 
-        const attemptSpy = vi.spyOn(paymentsApi, 'createPaymentAttempt')
+        const attemptSpy = vi
+            .spyOn(paymentsApi, 'createPaymentAttempt')
             // Lần 1: Lỗi mạng rớt kết nối
             .mockRejectedValueOnce(new Error('Network error'))
             // Lần 2: Thành công trả về sandbox url
@@ -734,6 +811,117 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         // Phải gửi CÙNG Idempotency-Key để BE replay attempt cũ
         expect(secondAttemptKey).toBe(firstAttemptKey)
-        expect(redirectSpy).toHaveBeenCalledWith('https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?token=abc')
+        expect(redirectSpy).toHaveBeenCalledWith(
+            'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?token=abc',
+        )
+    })
+    /** Mất ACK rồi attempt mới FAILED: replay cùng key một lần, sau kết quả rõ ràng retry tiếp phải có key khác. */
+    it('retry mất ACK rồi FAILED không bị replay vô hạn key cũ', async () => {
+        contextHolder.current.pageParams = { vnp_TxnRef: 'failed-old' }
+        vi.spyOn(paymentsApi, 'getPayment').mockImplementation(async (id) => ({
+            paymentId: id,
+            orderId: 'order',
+            status: id === 'review-new' ? 'REQUIRES_REVIEW' : 'FAILED',
+            amount: 100,
+            currency: 'VND',
+            paymentUrl: null,
+            expiresAt: '',
+        }))
+        const attempt = vi
+            .spyOn(paymentsApi, 'createPaymentAttempt')
+            .mockRejectedValueOnce(new Error('lost ACK'))
+            .mockResolvedValueOnce({
+                paymentId: 'failed-new',
+                orderId: 'order',
+                status: 'FAILED',
+                amount: 100,
+                currency: 'VND',
+                paymentUrl: null,
+                expiresAt: '',
+            })
+            .mockResolvedValueOnce({
+                paymentId: 'review-new',
+                orderId: 'order',
+                status: 'REQUIRES_REVIEW',
+                amount: 100,
+                currency: 'VND',
+                paymentUrl: null,
+                expiresAt: '',
+            })
+        render(<PaymentResultPage />)
+        fireEvent.click(await screen.findByRole('button', { name: /thử lại thanh toán/i }))
+        await screen.findByText('lost ACK')
+        fireEvent.click(screen.getByRole('button', { name: /thử lại thanh toán/i }))
+        await waitFor(() => expect(paymentsApi.getPayment).toHaveBeenCalledWith('failed-new'))
+        fireEvent.click(screen.getByRole('button', { name: /thử lại thanh toán/i }))
+        await screen.findByText('Thanh toán cần đối soát')
+        expect(attempt.mock.calls[1][1]).toBe(attempt.mock.calls[0][1])
+        expect(attempt.mock.calls[2][1]).not.toBe(attempt.mock.calls[1][1])
+        expect(
+            screen.queryByRole('button', { name: /thử lại thanh toán/i }),
+        ).not.toBeInTheDocument()
+    })
+
+    /** Khi retry trả trạng thái không cần URL, UI phải theo dõi attempt BE trả về và ngừng mời trả tiền lần hai. */
+    it.each(['PROCESSING', 'REQUIRES_REVIEW', 'SUCCESS'] as const)(
+        'retry nhận %s không báo thiếu URL',
+        async (status) => {
+            contextHolder.current.pageParams = { vnp_TxnRef: 'failed-old' }
+            vi.spyOn(paymentsApi, 'getPayment').mockImplementation(async (id) => ({
+                paymentId: id,
+                orderId: 'order',
+                status: id === 'failed-old' ? 'FAILED' : status,
+                amount: 100,
+                currency: 'VND',
+                paymentUrl: null,
+                expiresAt: '',
+            }))
+            vi.spyOn(paymentsApi, 'createPaymentAttempt').mockResolvedValue({
+                paymentId: 'current-new',
+                orderId: 'order',
+                status,
+                amount: 100,
+                currency: 'VND',
+                paymentUrl: null,
+                expiresAt: '',
+            })
+            render(<PaymentResultPage />)
+            fireEvent.click(await screen.findByRole('button', { name: /thử lại thanh toán/i }))
+            await waitFor(() => expect(paymentsApi.getPayment).toHaveBeenCalledWith('current-new'))
+            expect(
+                screen.queryByText('Không nhận được đường dẫn thanh toán từ máy chủ.'),
+            ).not.toBeInTheDocument()
+            expect(
+                screen.queryByRole('button', { name: /thử lại thanh toán/i }),
+            ).not.toBeInTheDocument()
+        },
+    )
+
+    /** Local PAID và query success không thay thế xác thực BE khi API đơn lỗi. */
+    it('không lấy PAID từ localStorage khi BE chưa xác nhận', async () => {
+        vi.spyOn(ordersApi, 'getOrderDetailV2').mockRejectedValue(new Error('Backend unavailable'))
+        const local = vi
+            .spyOn(ordersApi, 'getOrderById')
+            .mockResolvedValue({ id: 'ORD-LOCAL', status: 'PAID' } as NonNullable<
+                Awaited<ReturnType<typeof ordersApi.getOrderById>>
+            >)
+        render(<VerifiedOrderResult orderId="ORD-LOCAL" />)
+        await screen.findByRole('alert')
+        expect(local).not.toHaveBeenCalled()
+        expect(screen.queryByText('Thanh toán thành công')).not.toBeInTheDocument()
+    })
+
+    /** Chuyển từ đơn đã trả sang đơn API lỗi không được giữ nhãn thành công của đơn cũ. */
+    it('bỏ kết quả cũ khi đổi orderId', async () => {
+        vi.spyOn(ordersApi, 'getOrderDetailV2')
+            .mockResolvedValueOnce({ id: 'paid', status: 'PAID' } as Awaited<
+                ReturnType<typeof ordersApi.getOrderDetailV2>
+            >)
+            .mockRejectedValueOnce(new Error('Unavailable'))
+        const view = render(<VerifiedOrderResult orderId="paid" />)
+        await screen.findByText('Thanh toán thành công')
+        view.rerender(<VerifiedOrderResult orderId="unknown" />)
+        await screen.findByRole('alert')
+        expect(screen.queryByText('Thanh toán thành công')).not.toBeInTheDocument()
     })
 })

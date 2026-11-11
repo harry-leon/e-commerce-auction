@@ -1,6 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
-import { getPayment, createPaymentAttempt, redirectToGateway, type PaymentResult } from '../../api/payments'
-import { ApiClientError } from '../../api/client'
+import {
+    getPayment,
+    createPaymentAttempt,
+    redirectToGateway,
+    type PaymentResult,
+} from '../../api/payments'
 import { useApp } from '../../context'
 import { Button } from '../../components/UI'
 
@@ -19,21 +23,22 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const [refresh, setRefresh] = useState(0)
     const [retrying, setRetrying] = useState(false)
     const [retryError, setRetryError] = useState<string | null>(null)
-    const retryKeyRef = useRef<string | null>(null)
+    // Key gắn với attempt nguồn; lỗi mạng giữ nguyên, response FAILED của attempt mới mới cho sinh key tiếp.
+    const retryKeyRef = useRef<{ source: string; key: string } | null>(null)
+    const retryBusy = useRef(false)
+    const [selected, setSelected] = useState({ route: paymentId, id: paymentId })
+    const activeId = selected.route === paymentId ? selected.id : paymentId
 
     useEffect(() => {
         let isCancelled = false
         let timer: ReturnType<typeof setTimeout> | undefined
         async function poll(attempt: number) {
             try {
-                const data = await getPayment(paymentId)
+                const data = await getPayment(activeId)
                 if (isCancelled) return
                 setResult(data)
                 setError(null)
-                // Khi nhận được kết quả cuối cùng từ BE, xóa key nháp để lần retry tiếp theo sinh key mới
-                if (data.status === 'FAILED') {
-                    retryKeyRef.current = null
-                }
+                // Poll attempt nguồn FAILED không được xóa key của retry đang mất ACK.
                 if ((data.status === 'PENDING' || data.status === 'PROCESSING') && attempt < 9)
                     timer = setTimeout(() => void poll(attempt + 1), 2000)
             } catch {
@@ -50,9 +55,9 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
             isCancelled = true
             clearTimeout(timer)
         }
-    }, [paymentId, refresh, lang])
+    }, [activeId, refresh, lang])
 
-    const current = result?.paymentId === paymentId ? result : null
+    const current = result?.paymentId === activeId ? result : null
     const success = current?.status === 'SUCCESS'
     const failed = current?.status === 'FAILED'
     const cancelled = current?.status === 'CANCELLED'
@@ -69,36 +74,37 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
      */
     const handleRetry = async () => {
         // Chỉ cho phép retry khi đơn có orderId và trạng thái là FAILED (BE từ chối retry các trạng thái khác)
-        if (!current?.orderId || current?.status !== 'FAILED') return
+        if (!current?.orderId || current.status !== 'FAILED' || retryBusy.current) return
+        retryBusy.current = true
         setRetrying(true)
         setRetryError(null)
         try {
-            if (!retryKeyRef.current) {
-                retryKeyRef.current =
-                    typeof crypto !== 'undefined' && crypto.randomUUID
-                        ? crypto.randomUUID()
-                        : null
+            if (retryKeyRef.current?.source !== current.paymentId) {
+                retryKeyRef.current = { source: current.paymentId, key: crypto.randomUUID() }
             }
-            const attempt = await createPaymentAttempt(current.orderId, retryKeyRef.current || undefined)
-            if (attempt.paymentUrl) {
-                // Đã khởi tạo attempt thành công và chuẩn bị điều hướng, reset ref để lần sau (nếu attempt này FAILED) sẽ tạo key mới
-                retryKeyRef.current = null
+            const attempt = await createPaymentAttempt(current.orderId, retryKeyRef.current.key)
+            if (attempt.orderId !== current.orderId) throw new Error('Payment order mismatch')
+            if (attempt.status === 'PENDING' && attempt.paymentUrl) {
+                // Redirect lỗi vẫn giữ key để replay cùng giao dịch, không tạo lần thu tiền khác.
                 redirectToGateway(attempt.paymentUrl)
+            }
+            // Theo dõi đúng attempt BE trả về: FAILED cho phép retry mới, PROCESSING/REVIEW/SUCCESS chặn trả thêm.
+            setResult(attempt)
+            setSelected({ route: paymentId, id: attempt.paymentId })
+            if (attempt.status !== 'PENDING') {
+                retryKeyRef.current = null
+                // URL cũng trỏ tới attempt mới để reload không quay về kết quả FAILED của giao dịch nguồn.
+                navigate('payment-result', { vnp_TxnRef: attempt.paymentId })
                 return
             }
+            if (attempt.paymentUrl) return
             setRetryError(
                 lang === 'vi'
                     ? 'Không nhận được đường dẫn thanh toán từ máy chủ.'
                     : 'Payment gateway URL not received from server.',
             )
         } catch (err: unknown) {
-            // Nếu Backend yêu cầu Idempotency-Key mới do attempt trước đó đã FAILED
-            if (
-                err instanceof ApiClientError &&
-                (err.code === 'PAYMENT_RETRY_KEY_REQUIRED' || err.message.includes('PAYMENT_RETRY_KEY_REQUIRED'))
-            ) {
-                retryKeyRef.current = null
-            }
+            // Chưa biết kết quả request thì giữ key; backend replay sẽ trả trạng thái attempt chính xác.
             setRetryError(
                 err instanceof Error
                     ? err.message
@@ -107,6 +113,7 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                       : 'Unable to retry payment. Order reservation may have expired.',
             )
         } finally {
+            retryBusy.current = false
             setRetrying(false)
         }
     }
@@ -174,7 +181,10 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                 </p>
             )}
             {retryError && (
-                <p role="alert" className="mb-4 text-sm text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
+                <p
+                    role="alert"
+                    className="mb-4 text-sm text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200"
+                >
                     {retryError}
                 </p>
             )}

@@ -12,6 +12,7 @@ import { CartPage, CheckoutPage, SandboxPaymentPage } from '../features/buyer/Bu
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession, ApiClientError } from '../api/client'
 import { ordersApi } from '../api/orders'
+import * as paymentsApi from '../api/payments'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -652,7 +653,7 @@ describe('Cart, Checkout và Payment Result', () => {
         )
     })
 
-    it('CheckoutPage: đặt hàng với phương thức VNPAY và chuyển hướng tới sandbox-payment (Accept Criteria 1, 3, 4)', async () => {
+    it('CheckoutPage: đặt hàng với phương thức VNPAY và tiếp tục Payment Attempt và chuyển tới VNPAY thật', async () => {
         // Cô lập kiểm tra điều hướng UI bằng response fixture; VNPAY production không còn fallback URL mock.
         const createSpy = vi.spyOn(ordersApi, 'createOrder').mockResolvedValueOnce({
             id: 'test-order',
@@ -663,8 +664,18 @@ describe('Cart, Checkout và Payment Result', () => {
             discount: 0,
             total: 100,
             paymentMethod: 'VNPAY',
-            paymentUrl: '/sandbox-payment?provider=vnpay',
         })
+        // Contract mới: Create Order không trả URL; FE phải lấy URL từ Payment Attempt.
+        const attemptSpy = vi.spyOn(paymentsApi, 'createPaymentAttempt').mockResolvedValueOnce({
+            paymentId: 'attempt',
+            orderId: 'test-order',
+            status: 'PENDING',
+            amount: 100,
+            currency: 'VND',
+            paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=attempt',
+            expiresAt: '',
+        })
+        const redirectSpy = vi.spyOn(paymentsApi, 'redirectToGateway').mockImplementation(() => {})
         render(<CheckoutPage />)
         // Bước 1 -> Bước 2
         fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
@@ -687,13 +698,21 @@ describe('Cart, Checkout và Payment Result', () => {
         // Bấm Đặt hàng
         fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
 
-        // Chuyển hướng sang sandbox-payment
-        await waitFor(() => {
-            expect(holder.current.navigate).toHaveBeenCalledWith(
-                'sandbox-payment',
-                expect.objectContaining({ provider: 'vnpay' }),
-            )
-        })
+        await waitFor(() =>
+            expect(redirectSpy).toHaveBeenCalledWith(
+                'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=attempt',
+            ),
+        )
+        expect(attemptSpy).toHaveBeenCalledWith(
+            'test-order',
+            expect.stringMatching(/^[0-9a-f-]{36}$/i),
+        )
+        expect(holder.current.navigate).not.toHaveBeenCalledWith(
+            'sandbox-payment',
+            expect.anything(),
+        )
+        attemptSpy.mockRestore()
+        redirectSpy.mockRestore()
         createSpy.mockRestore()
     })
 
@@ -738,7 +757,11 @@ describe('Cart, Checkout và Payment Result', () => {
         const spy = vi
             .spyOn(ordersApi, 'createOrder')
             .mockRejectedValueOnce(
-                new ApiClientError('Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)', 'AUTH_UNAUTHORIZED', 401),
+                new ApiClientError(
+                    'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)',
+                    'AUTH_UNAUTHORIZED',
+                    401,
+                ),
             )
         render(<CheckoutPage />)
         // 1 -> 2 -> 3 -> 4
