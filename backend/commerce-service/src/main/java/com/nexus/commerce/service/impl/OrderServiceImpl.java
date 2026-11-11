@@ -825,8 +825,9 @@ public class OrderServiceImpl implements OrderService {
                 .build();
         order.addStatusHistory(history);
 
-        // Bước 7: Lưu đơn hàng vào cơ sở dữ liệu và ghi snapshot thông báo chúc mừng thắng đấu giá vào outbox
+        // Bước 7: Lưu đơn hàng, flush đơn cùng các bản ghi con xuống DB trong cùng transaction trước khi JDBC chèn outbox (tránh lỗi FK order_id)
         Order savedOrder = orderRepository.save(order);
+        orderRepository.flush();
         if (notificationOutbox != null) {
             notificationOutbox.enqueue(savedOrder, "AUCTION_WON");
         }

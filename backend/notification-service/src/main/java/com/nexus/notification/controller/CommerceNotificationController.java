@@ -208,7 +208,8 @@ public class CommerceNotificationController {
             case AUCTION_PAYMENT_REMINDER -> appendPaymentDetails(
                     "Nhắc nhở sắp hết hạn thanh toán " + base + " • Nguy cơ trừ " + resolvePenalty(event) + " điểm uy tín",
                     event.paymentDeadline(), resolvedLink);
-            case AUCTION_PAYMENT_TIMEOUT -> base + " • Quá hạn thanh toán 24h • Đã hoàn kho & trừ "
+            // Hoàn kho và trừ điểm uy tín chạy qua outbox bất đồng bộ khi quá hạn, nên chỉ báo trạng thái đang xử lý.
+            case AUCTION_PAYMENT_TIMEOUT -> base + " • Quá hạn thanh toán 24h • Đang xử lý hoàn kho và áp dụng mức trừ "
                     + resolvePenalty(event) + " điểm uy tín";
         };
     }

@@ -192,7 +192,13 @@ class PaymentPostgresTest {
                 .when(auctionTimeoutSync).applyTimeoutPenalty(eq(buyer), eq(auction), eq(created.orderId()), eq(10), any());
 
         timeoutSideEffectWorker.run();
-        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND done=true", Integer.class, created.orderId()));
+        // Lỗi Reputation Service giữ lại REPUTATION_PENALTY để retry; AUCTION_DEFAULTED vẫn hoàn tất độc lập.
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND task_type='REPUTATION_PENALTY' AND done=true",
+                Integer.class, created.orderId()));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND task_type='AUCTION_DEFAULTED' AND done=true",
+                Integer.class, created.orderId()));
 
         jdbc.update("UPDATE auction_timeout_tasks SET next_attempt_at=CURRENT_TIMESTAMP WHERE order_id=?", created.orderId());
         timeoutSideEffectWorker.run();

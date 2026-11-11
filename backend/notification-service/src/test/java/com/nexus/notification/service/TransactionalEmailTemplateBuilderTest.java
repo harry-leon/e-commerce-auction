@@ -1,5 +1,6 @@
 package com.nexus.notification.service;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -109,7 +110,12 @@ class TransactionalEmailTemplateBuilderTest {
                 new BigDecimal("2500000"), "AUCTION_PAYMENT_DEADLINE", items, "EVT-TMO",
                 auctionId, deadline, 10);
         assertTrue(templateBuilder.buildSubject(timeout).contains("quá hạn thanh toán 24h"));
-        assertTrue(templateBuilder.buildHtmlContent(timeout).contains("-10 điểm uy tín"));
-        assertTrue(templateBuilder.buildPlainTextContent(timeout).contains("trừ 10 điểm uy tín"));
+        String timeoutHtml = templateBuilder.buildHtmlContent(timeout);
+        String timeoutText = templateBuilder.buildPlainTextContent(timeout);
+        assertTrue(timeoutHtml.contains("-10 điểm uy tín"));
+        assertTrue(timeoutHtml.contains("đang xử lý hoàn trả tồn kho"));
+        assertFalse(timeoutHtml.contains("đã được giải phóng"));
+        assertTrue(timeoutText.contains("trừ 10 điểm uy tín"));
+        assertTrue(timeoutText.contains("đang xử lý hoàn trả tồn kho"));
     }
 }

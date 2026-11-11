@@ -1,5 +1,7 @@
 package com.nexus.notification.controller;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -15,6 +17,7 @@ import com.nexus.notification.config.SecurityConfig;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Bean;
@@ -122,5 +125,43 @@ class CommerceNotificationControllerPushTest {
                 .andExpect(status().isNoContent());
 
         verifyNoInteractions(messagingTemplate);
+    }
+
+    /** Thông báo quá hạn 24h chỉ báo đang xử lý hoàn kho/phạt uy tín vì tác vụ outbox chạy bất đồng bộ. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void timeoutNotificationReportsPendingRecoveryInsteadOfCompleted() throws Exception {
+        properties.setPushEnabled(true);
+        UUID eventId = UUID.randomUUID();
+        UUID winnerId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        String body = """
+                {
+                  "id": "%s",
+                  "userId": "%s",
+                  "orderId": "%s",
+                  "orderNo": "ORD-AUC-03",
+                  "type": "AUCTION_PAYMENT_TIMEOUT",
+                  "amount": 1500000,
+                  "occurredAt": "2026-11-11T10:00:00Z",
+                  "penaltyScore": 10
+                }
+                """.formatted(eventId, winnerId, orderId);
+
+        mvc.perform(post("/internal/commerce-notifications")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_NOTIFICATION_WRITER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNoContent());
+
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(messagingTemplate).convertAndSend(
+                eq("/topic/users/" + winnerId + "/notifications"),
+                payloadCaptor.capture());
+        String content = String.valueOf(payloadCaptor.getValue().get("content"));
+        assertTrue(content.contains("Đang xử lý hoàn kho"));
+        assertFalse(content.contains("Đã hoàn kho"));
     }
 }

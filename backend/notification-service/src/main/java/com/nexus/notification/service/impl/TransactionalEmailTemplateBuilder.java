@@ -153,9 +153,10 @@ public class TransactionalEmailTemplateBuilder {
                         .append(penalty).append(" điểm uy tín.\n\n");
             }
             case AUCTION_PAYMENT_TIMEOUT -> {
+                // Tác vụ giải phóng kho và trừ uy tín chạy bất đồng bộ ở outbox nên thông báo ghi nhận trạng thái đang xử lý.
                 sb.append("Đơn thắng đấu giá #").append(orderNo)
-                        .append(" đã quá hạn thanh toán 24 giờ nên bị hủy tự động và hoàn trả tồn kho cho người bán.\n");
-                sb.append("Hệ thống đã ghi nhận trừ ").append(penalty)
+                        .append(" đã quá hạn thanh toán 24 giờ nên đã được tự động hủy.\n");
+                sb.append("Hệ thống đang xử lý hoàn trả tồn kho cho người bán và áp dụng trừ ").append(penalty)
                         .append(" điểm uy tín theo quy định quá hạn thanh toán đấu giá.\n\n");
             }
             case ORDER_CREATED -> sb.append("Nexus Shop xác nhận quý khách đã đặt hàng thành công đơn hàng #")
@@ -221,9 +222,10 @@ public class TransactionalEmailTemplateBuilder {
                         .append(penalty).append(" điểm uy tín.</p>");
             }
             case AUCTION_PAYMENT_TIMEOUT -> {
+                // Tác vụ hoàn kho và phạt uy tín chạy bất đồng bộ nên email không khẳng định đã hoàn tất trước khi thực thi.
                 sb.append("<p>Đơn hàng thắng đấu giá <strong>#").append(orderNo)
                         .append("</strong> đã quá thời hạn thanh toán 24 giờ quy định và đã được tự động hủy.</p>");
-                sb.append("<p>Tồn kho đã được giải phóng an toàn về cho người bán. Hệ thống đã ghi nhận mức phạt <strong>-")
+                sb.append("<p>Hệ thống đang xử lý hoàn trả tồn kho về cho người bán và áp dụng mức phạt <strong>-")
                         .append(penalty).append(" điểm uy tín</strong> đối với tài khoản của quý khách.</p>");
             }
             case ORDER_CREATED -> sb.append("<p>Cảm ơn quý khách đã đặt hàng tại Nexus Shop! Đơn hàng <strong>#")

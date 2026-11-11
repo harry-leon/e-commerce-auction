@@ -94,7 +94,11 @@ class AuctionWinnerNotificationAndTimeoutTest {
         service.createAuctionOrder(request);
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(notificationOutbox).enqueue(orderCaptor.capture(), eq("AUCTION_WON"));
+        // Bảo đảm Order (và các bản ghi con) được flush xuống DB trước khi NotificationOutbox chạy JDBC INSERT tham chiếu FK order_id.
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(orderRepository, notificationOutbox);
+        inOrder.verify(orderRepository).save(any(Order.class));
+        inOrder.verify(orderRepository).flush();
+        inOrder.verify(notificationOutbox).enqueue(orderCaptor.capture(), eq("AUCTION_WON"));
         Order captured = orderCaptor.getValue();
         assertEquals("winner@nexus.test", captured.getBuyerEmail());
         assertEquals("Nguyễn Winner", captured.getRecipientName());
