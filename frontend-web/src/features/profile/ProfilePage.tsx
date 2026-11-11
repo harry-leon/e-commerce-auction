@@ -17,7 +17,16 @@ import { useApp } from '../../context'
 import { AdminLayout, SellerLayout, SupportLayout, BuyerLayout } from '../../components/Layout'
 import { Button, Input } from '../../components/UI'
 import { LoadState } from '../../components/LoadState'
-import { useLoad } from '../../hooks/useLoad'
+import { useLoad, clearLoadCache } from '../../hooks/useLoad'
+
+/**
+ * Định dạng ngày sinh sang chuỗi YYYY-MM-DD để gán vào input[type="date"].
+ * Hỗ trợ chuyển đổi an toàn khi backend trả về chuỗi ISO chứa 'T' (ví dụ 1995-10-25T00:00:00).
+ */
+function formatDateForInput(dob?: string): string {
+    if (!dob) return ''
+    return dob.includes('T') ? dob.split('T')[0] : dob
+}
 
 /**
  * Tải hồ sơ và 20 hoạt động gần đây của chính tài khoản qua JWT.
@@ -26,7 +35,7 @@ import { useLoad } from '../../hooks/useLoad'
  */
 export function ProfilePage() {
     const { setUser, showToast, navigate, user, page, lang } = useApp()
-    const { data: userProfile, error, loading } = useLoad<ApiUser>('/users/me')
+    const { data: userProfile, error, loading } = useLoad<ApiResponse<ApiUser> | ApiUser>('/users/me')
     // User Service bọc trang lịch sử trong data; đọc đúng envelope trước khi duyệt content.
     const history = useLoad<
         ApiResponse<{
@@ -36,6 +45,8 @@ export function ProfilePage() {
     const activities = Array.isArray(history.data?.data?.content) ? history.data.data.content : []
     const [saving, setSaving] = useState(false)
     const [failure, setFailure] = useState('')
+    const [savedProfile, setSavedProfile] = useState<ApiUser | null>(null)
+    const [revision, setRevision] = useState(0)
 
     // State riêng cho form đổi mật khẩu để validate realtime và hiển thị lỗi theo từng trường
     const [oldPassword, setOldPassword] = useState('')
@@ -44,8 +55,57 @@ export function ProfilePage() {
     const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>({})
 
     /**
-     * Cập nhật thông tin cá nhân qua PUT /api/v1/users/me.
-     * Luồng: form -> PUT /users/me -> hồ sơ trực tiếp -> store User -> toast.
+     * Chức năng: Trích xuất và hợp nhất dữ liệu người dùng để điền sẵn vào form hồ sơ.
+     * Đầu vào: Dữ liệu tải từ BE (/users/me), dữ liệu vừa lưu thành công (savedProfile), và user hiện tại trong session context.
+     * Kết quả: Đối tượng hồ sơ đầy đủ thông tin (họ tên, email, sđt, CCCD, ngày sinh, giới tính, địa chỉ).
+     * Luồng xử lý:
+     * 1. Đọc envelope ApiResponse<ApiUser> nếu có (payload.data), hoặc dùng trực tiếp nếu là DTO thô.
+     * 2. Ưu tiên dữ liệu vừa cập nhật (savedProfile) -> dữ liệu server vừa tải (/users/me) -> thông tin đăng nhập trong session (user).
+     * Quy tắc và lý do:
+     * - Khắc phục lỗi form bị trống trơn do backend bọc dữ liệu trong ApiResponse { success: true, data: { ... } }.
+     * - Khi vừa vào trang profile, hiển thị ngay thông tin từ session (0ms latency), không để form bị trống chờ mạng.
+     */
+    const rawUserProfile = (
+        userProfile && typeof userProfile === 'object' && 'data' in userProfile && userProfile.data
+            ? (userProfile as ApiResponse<ApiUser>).data
+            : userProfile
+    ) as ApiUser | null
+
+    const profile = savedProfile || rawUserProfile
+
+    const activeUser = profile
+        ? {
+              ...profile,
+              fullName: profile.fullName || user?.fullName || '',
+              email: profile.email || user?.email || '',
+              phone: profile.phone || user?.phone || '',
+              identifyNumber: profile.identifyNumber || user?.idNumber || '',
+              dateOfBirth: formatDateForInput(profile.dateOfBirth || user?.dateOfBirth),
+              gender: (profile.gender || user?.gender || 'OTHER').toUpperCase(),
+              address: profile.address || user?.address || '',
+          }
+        : user
+          ? {
+                id: user.id,
+                fullName: user.fullName || '',
+                email: user.email || '',
+                phone: user.phone || '',
+                identifyNumber: user.idNumber || '',
+                dateOfBirth: formatDateForInput(user.dateOfBirth),
+                gender: (user.gender || 'OTHER').toUpperCase(),
+                address: user.address || '',
+                status: user.status,
+                createdAt: user.createdAt,
+                roles: [user.role],
+            }
+          : null
+
+    /**
+     * Cập nhật thông tin cá nhân qua PUT /api/v1/users/me:
+     * 1. Chức năng: Lưu thay đổi thông tin cá nhân của người dùng vào hệ thống.
+     * 2. Đầu vào và kết quả: Nhận form data; gửi PUT /users/me; cập nhật session store và cache tải dữ liệu.
+     * 3. Luồng xử lý: Gửi request -> bóc envelope ApiResponse nếu có -> lưu vào savedProfile & session store -> xóa cache load -> báo toast thành công.
+     * 4. Lỗi: Hiển thị thông báo lỗi vào state failure nếu request thất bại.
      */
     const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
@@ -53,11 +113,19 @@ export function ProfilePage() {
         setSaving(true)
         setFailure('')
         try {
-            const updated = await api<ApiUser>('/users/me', {
+            const updated = await api<ApiResponse<ApiUser> | ApiUser>('/users/me', {
                 method: 'PUT',
                 body: JSON.stringify(Object.fromEntries(form)),
             })
-            setUser(mapUser(updated))
+            const raw = (
+                updated && typeof updated === 'object' && 'data' in updated && updated.data
+                    ? (updated as ApiResponse<ApiUser>).data
+                    : updated
+            ) as ApiUser
+            setSavedProfile(raw)
+            setRevision((r) => r + 1)
+            setUser(mapUser(raw))
+            clearLoadCache()
             showToast({ type: 'success', message: 'Đã lưu thay đổi' })
         } catch (err) {
             setFailure(errorMessage(err))
@@ -151,45 +219,45 @@ export function ProfilePage() {
     const profileBody = (
         <div className="max-w-4xl">
             <h1 className="text-2xl font-bold mb-5">{title}</h1>
-            <LoadState error={failure || error} loading={loading} />
-            {userProfile && (
+            <LoadState error={failure || error} loading={loading && !activeUser} />
+            {activeUser && (
                 <form
-                    key={userProfile.id}
+                    key={`${activeUser.id}-${profile ? 'server' : 'session'}-${revision}`}
                     className="nexus-card p-5 grid sm:grid-cols-2 gap-4"
                     onSubmit={(event) => submit(event)}
                 >
                     <Input
                         label="Họ tên"
                         name="fullName"
-                        defaultValue={userProfile.fullName}
+                        defaultValue={activeUser.fullName}
                         required
                     />
-                    <Input label="Email" value={userProfile.email} disabled />
-                    <Input label="Số điện thoại" name="phone" defaultValue={userProfile.phone} />
+                    <Input label="Email" value={activeUser.email} disabled />
+                    <Input label="Số điện thoại" name="phone" defaultValue={activeUser.phone} />
                     <Input
                         label="Số giấy tờ"
                         name="identifyNumber"
-                        defaultValue={userProfile.identifyNumber}
+                        defaultValue={activeUser.identifyNumber}
                     />
                     <Input
                         label="Ngày sinh"
                         type="date"
                         name="dateOfBirth"
-                        defaultValue={userProfile.dateOfBirth}
+                        defaultValue={activeUser.dateOfBirth}
                     />
                     <label>
                         Giới tính
                         <select
                             className="nexus-input w-full"
                             name="gender"
-                            defaultValue={userProfile.gender || 'OTHER'}
+                            defaultValue={activeUser.gender || 'OTHER'}
                         >
                             <option>MALE</option>
                             <option>FEMALE</option>
                             <option>OTHER</option>
                         </select>
                     </label>
-                    <Input label="Địa chỉ" name="address" defaultValue={userProfile.address} />
+                    <Input label="Địa chỉ" name="address" defaultValue={activeUser.address} />
                     <Button type="submit" loading={saving}>
                         Lưu thông tin
                     </Button>
