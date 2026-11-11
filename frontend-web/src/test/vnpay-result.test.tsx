@@ -28,6 +28,20 @@ beforeEach(() => {
     } as unknown as AppState
 })
 
+/** Tiền đã ghi nhận nhưng chưa chốt kho không được hiển thị thành công hoặc gợi ý thanh toán lần hai. */
+it.each(['PROCESSING', 'REQUIRES_REVIEW'] as const)(
+    'keeps %s separate from a confirmed order',
+    async (status) => {
+        vi.mocked(getPayment).mockResolvedValue({ ...pending, status, paymentUrl: null })
+        const view = render(<PaymentResultPage />)
+        expect(await screen.findByRole('status')).toHaveTextContent(/không thanh toán lại/i)
+        expect(screen.queryByText('Thanh toán đã được xác nhận')).not.toBeInTheDocument()
+        if (status === 'REQUIRES_REVIEW')
+            expect(screen.getByText('Thanh toán cần đối soát')).toBeVisible()
+        view.unmount()
+    },
+)
+
 /** Link hết hạn không đồng nghĩa đã thất bại; kiểm tra lại vẫn tiếp nhận được SUCCESS do IPN đến chậm. */
 it('shows an expired link without claiming failure and accepts a later confirmed result', async () => {
     vi.mocked(getPayment).mockResolvedValue({ ...pending, status: 'EXPIRED', paymentUrl: null })

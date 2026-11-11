@@ -45,7 +45,8 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Điều phối checkout: khóa key/buyer → validate giỏ/giá Catalog → snapshot DB → reserve Fulfillment → xóa item đã mua.
+ * Điều phối tạo đơn: khóa key/buyer → validate giỏ → lưu giá dự kiến → giữ kho COD → xóa item đã mua.
+ * VNPAY chỉ tạo đơn, buyer gọi POST /payments để tính giá mới/giữ kho theo attempt; chưa ghi giá chính thức.
  * PostgreSQL commit toàn bộ đơn/items/giỏ; rollback gọi release theo orderId kể cả lỗi commit hoặc reserve timeout.
  * Nếu process chết hoặc release lỗi mạng, TTL 15 phút của Fulfillment là phương án hoàn kho cuối; chưa có outbox retry.
  */
@@ -139,7 +140,7 @@ public class CheckoutService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
-                if (status == STATUS_ROLLED_BACK) {
+                if (status == STATUS_ROLLED_BACK && "COD".equals(request.paymentMethod())) {
                     try {
                         inventory.release(orderId, token);
                     } catch (RuntimeException cleanupError) {
@@ -152,9 +153,11 @@ public class CheckoutService {
                 }
             }
         });
-        // Lưu ID phiếu từ response kho đã kiểm tra; outbox sau IPN không cần giữ token người mua để confirm.
-        order.setReservationIds(new ArrayList<>(inventory.reserve(orderId,
-                selected.stream().map(i -> new InventoryClient.Item(i.getSkuId(), null, i.getQuantity())).toList(), token)));
+        // COD giữ luồng giữ kho theo đơn; VNPAY giữ theo attempt riêng ở POST /payments để retry không dùng lại phiếu đã release.
+        if ("COD".equals(order.getPaymentMethod())) {
+            order.setReservationIds(new ArrayList<>(inventory.reserve(orderId,
+                    selected.stream().map(i -> new InventoryClient.Item(i.getSkuId(), null, i.getQuantity())).toList(), token)));
+        }
         // Chỉ xóa items đã mua; những sản phẩm không được chọn vẫn giữ trong giỏ.
         cart.getItems().removeIf(i -> selected.stream().anyMatch(s -> s.getId().equals(i.getId())));
         cartItems.deleteAll(selected);
@@ -209,7 +212,7 @@ public class CheckoutService {
         return lines;
     }
 
-    /** Tạo snapshot bất biến cho đơn/items; UUID được cấp trước reserve để dùng làm refId bù trừ. */
+    /** Tạo thông tin đơn và giá dự kiến; các cột giá chính thức để null tới khi backend xác nhận thu tiền. */
     private Order buildOrder(UUID buyer, String key, String hash, CreateOrderRequest request,
                              List<CheckoutPreviewResponse.Line> lines) {
         Order order = new Order();
@@ -221,11 +224,16 @@ public class CheckoutService {
         order.setSourceType(OrderSourceType.REGULAR);
         // Enum dùng chung với quản lý đơn; DB vẫn lưu tên trạng thái theo Flyway.
         order.setStatus(OrderStatus.PENDING_PAYMENT);
-        order.setSubtotal(subtotal(lines));
-        order.setShippingFee(shippingFee());
-        order.setDiscount(ZERO);
-        order.setTotal(order.getSubtotal().add(order.getShippingFee()));
-        if (order.getTotal().precision() > 15) { throw invalid("CHECKOUT_AMOUNT_EXCEEDED", "Giá trị đơn vượt giới hạn"); }
+        order.setEstimatedSubtotal(subtotal(lines));
+        order.setEstimatedShippingFee(shippingFee());
+        order.setEstimatedDiscount(ZERO);
+        order.setEstimatedTotal(order.getEstimatedSubtotal().add(order.getEstimatedShippingFee()));
+        order.setPriceFinalized(false);
+        order.setSubtotal(null);
+        order.setShippingFee(null);
+        order.setDiscount(null);
+        order.setTotal(null);
+        if (order.getEstimatedTotal().precision() > 15) { throw invalid("CHECKOUT_AMOUNT_EXCEEDED", "Giá trị đơn vượt giới hạn"); }
         order.setShippingAddress(request.shippingAddress());
         order.setRecipientName(request.recipientName());
         order.setRecipientPhone(request.recipientPhone());
@@ -239,20 +247,21 @@ public class CheckoutService {
             item.setSkuId(line.skuId());
             item.setProductName(line.productName());
             item.setSkuCode(line.skuCode());
-            item.setUnitPrice(line.unitPrice());
+            item.setEstimatedUnitPrice(line.unitPrice());
+            item.setUnitPrice(null);
             item.setQuantity(line.quantity());
             order.addItem(item);
         }
         return order;
     }
 
-    /** Chỉ COD/VNPAY; VNPAY phải đủ cấu hình merchant trước reserve, voucher/auction vẫn chưa hỗ trợ. */
+    /** Tạo draft chỉ nhận COD/VNPAY và REGULAR; merchant kiểm tra ở POST /payments, voucher chưa hỗ trợ. */
     private void validateOptions(CreateOrderRequest request) {
         rejectVoucher(request.voucherCode());
         if (!"COD".equals(request.paymentMethod()) && !"VNPAY".equals(request.paymentMethod())) {
             throw new BusinessException(ErrorCode.PAYMENT_METHOD_UNSUPPORTED);
         }
-        if ("VNPAY".equals(request.paymentMethod())) { payments.requireConfigured(); }
+        // Tạo draft không cần merchant; cấu hình và quyền gọi kho được kiểm tra trước khi tạo Payment Attempt.
         if ((request.sourceType() != null && !"REGULAR".equals(request.sourceType())) || request.auctionId() != null) {
             throw invalid("CHECKOUT_SOURCE_UNSUPPORTED", "Checkout giỏ hàng chỉ hỗ trợ đơn REGULAR");
         }
@@ -270,10 +279,11 @@ public class CheckoutService {
     }
 
     private CreateOrderResponse response(Order order, String ip) {
-        String paymentUrl = "VNPAY".equals(order.getPaymentMethod())
-                ? payments.checkoutUrl(order, ip) : null;
+        // Không tự tạo attempt khi tạo/replay đơn: FE phải xác nhận bước thanh toán riêng qua POST /payments.
         return new CreateOrderResponse(order.getId(), order.getOrderNo(), order.getStatus().name(), order.getSubtotal(),
-                order.getShippingFee(), order.getDiscount(), order.getTotal(), order.getPaymentMethod(), paymentUrl);
+                order.getShippingFee(), order.getDiscount(), order.getTotal(), order.getPaymentMethod(), null,
+                order.getEstimatedSubtotal(), order.getEstimatedShippingFee(), order.getEstimatedDiscount(),
+                order.getEstimatedTotal(), order.isPriceFinalized());
     }
 
     private String normalizeKey(String key) {

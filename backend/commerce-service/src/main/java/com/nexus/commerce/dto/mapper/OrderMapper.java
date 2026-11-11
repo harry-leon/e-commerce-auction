@@ -85,7 +85,7 @@ public class OrderMapper {
 
         BigDecimal total = order.getTotal() != null
                 ? order.getTotal().setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                : (order.isPriceFinalized() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : null);
 
         return new OrderSummaryResponse(
                 order.getId(),
@@ -97,7 +97,7 @@ public class OrderMapper {
                 total,
                 itemCount,
                 order.getShippingAddress(),
-                order.getCreatedAt());
+                order.getCreatedAt(), order.getEstimatedTotal(), order.isPriceFinalized(), order.getFulfillmentStatus());
     }
 
     /**
@@ -135,19 +135,19 @@ public class OrderMapper {
 
         BigDecimal subtotal = order.getSubtotal() != null
                 ? order.getSubtotal().setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                : (order.isPriceFinalized() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : null);
 
         BigDecimal shippingFee = order.getShippingFee() != null
                 ? order.getShippingFee().setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                : (order.isPriceFinalized() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : null);
 
         BigDecimal discount = order.getDiscount() != null
                 ? order.getDiscount().setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                : (order.isPriceFinalized() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : null);
 
         BigDecimal total = order.getTotal() != null
                 ? order.getTotal().setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                : (order.isPriceFinalized() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : null);
 
         return new OrderDetailResponse(
                 order.getId(),
@@ -165,7 +165,8 @@ public class OrderMapper {
                 order.getShippingAddress(),
                 order.getCreatedAt(),
                 itemResponses,
-                historyResponses);
+                historyResponses, order.getEstimatedSubtotal(), order.getEstimatedShippingFee(),
+                order.getEstimatedDiscount(), order.getEstimatedTotal(), order.isPriceFinalized(), order.getFulfillmentStatus());
     }
 
     /**
@@ -179,15 +180,16 @@ public class OrderMapper {
             return null;
         }
 
+        // Giá chính thức null phải giữ nguyên để FE phân biệt chưa thu tiền với giá 0.
         BigDecimal unitPrice = item.getUnitPrice() != null
                 ? item.getUnitPrice().setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                : null;
 
         int quantity = item.getQuantity() != null ? item.getQuantity() : 0;
 
         BigDecimal subtotal = item.getSubtotal() != null
                 ? item.getSubtotal().setScale(2, RoundingMode.HALF_UP)
-                : unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
+                : null;
 
         return new OrderItemResponse(
                 item.getId(),
@@ -196,7 +198,8 @@ public class OrderMapper {
                 item.getSkuCode(),
                 unitPrice,
                 quantity,
-                subtotal);
+                subtotal, item.getEstimatedUnitPrice(), item.getEstimatedUnitPrice() == null ? null
+                        : item.getEstimatedUnitPrice().multiply(BigDecimal.valueOf(quantity)));
     }
 
     /**

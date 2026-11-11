@@ -14,9 +14,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.nexus.commerce.client.CatalogClient;
+import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.OrderMapper;
 import com.nexus.commerce.dto.request.CancelOrderRequest;
+import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
+import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
 import com.nexus.commerce.dto.response.OrderItemResponse;
 import com.nexus.commerce.dto.response.OrderStatusHistoryResponse;
@@ -87,6 +91,9 @@ class OrderServiceTest {
     @Mock
     private OrderMapper orderMapper;
 
+    @Mock
+    private CatalogClient catalogClient;
+
     @Captor
     private ArgumentCaptor<OrderStatusHistory> historyCaptor;
 
@@ -107,7 +114,9 @@ class OrderServiceTest {
                 orderRepository,
                 orderStatusHistoryRepository,
                 orderStatusStateMachine,
-                orderMapper, org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)
+                orderMapper,
+                org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class),
+                catalogClient
         );
     }
 
@@ -167,7 +176,7 @@ class OrderServiceTest {
                 order.getTotal(),
                 order.getItems() != null ? order.getItems().size() : 0,
                 order.getShippingAddress(),
-                order.getCreatedAt()
+                order.getCreatedAt(), order.getEstimatedTotal(), order.isPriceFinalized(), order.getFulfillmentStatus()
         );
     }
 
@@ -182,7 +191,7 @@ class OrderServiceTest {
                         it.getSkuCode(),
                         it.getUnitPrice(),
                         it.getQuantity(),
-                        it.getSubtotal()
+                        it.getSubtotal(), it.getEstimatedUnitPrice(), null
                 ));
             }
         }
@@ -215,7 +224,8 @@ class OrderServiceTest {
                 order.getShippingAddress(),
                 order.getCreatedAt(),
                 itemResponses,
-                historyResponses
+                historyResponses, order.getEstimatedSubtotal(), order.getEstimatedShippingFee(),
+                order.getEstimatedDiscount(), order.getEstimatedTotal(), order.isPriceFinalized(), order.getFulfillmentStatus()
         );
     }
 
@@ -400,7 +410,7 @@ class OrderServiceTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(
@@ -410,7 +420,7 @@ class OrderServiceTest {
             assertNotNull(result);
             assertEquals(orderId, result.id());
             assertEquals(buyerId, result.buyerId());
-            verify(orderRepository, times(1)).findById(orderId);
+            verify(orderRepository, times(1)).findWithItemsById(orderId);
             verify(orderMapper, times(1)).toDetailResponse(order);
         }
 
@@ -420,7 +430,7 @@ class OrderServiceTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(
@@ -437,7 +447,7 @@ class OrderServiceTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(
@@ -452,7 +462,7 @@ class OrderServiceTest {
         @DisplayName("Người dùng lạ không phải chủ đơn và không phải Admin bị từ chối truy cập (403 FORBIDDEN)")
         void test_getOrderDetail_nonOwnerNonAdmin_throwsForbidden() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -466,7 +476,7 @@ class OrderServiceTest {
         @Test
         @DisplayName("Tra cứu đơn hàng không tồn tại ném ngoại lệ 404 NOT_FOUND")
         void test_getOrderDetail_orderNotFound_throwsNotFound() {
-            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.empty());
 
             BusinessException ex = assertThrows(
                     BusinessException.class,
@@ -482,7 +492,7 @@ class OrderServiceTest {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PAID);
             OrderDetailResponse detailResponse = buildMockDetailResponse(order);
 
-            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findWithItemsById(orderId)).thenReturn(Optional.of(order));
             when(orderMapper.toDetailResponse(order)).thenReturn(detailResponse);
 
             OrderDetailResponse result = orderService.getOrderDetail(orderId, adminId, true);
@@ -979,6 +989,207 @@ class OrderServiceTest {
                     () -> orderService.cancelOrder(orderId, request, buyerId, List.of("ROLE_BUYER"))
             );
 
+            assertEquals(ErrorCode.ORDER_NOT_FOUND.name(), ex.getCode());
+        }
+    }
+
+    /**
+     * Bộ kiểm thử chức năng bàn giao khởi tạo đơn hàng từ phiên đấu giá thành công (DoD KH-S2-2 / SRS §3.5.3).
+     *
+     * Chức năng:
+     * - Tạo đơn hàng loại AUCTION với trạng thái PENDING_PAYMENT, hạn thanh toán 24h.
+     * - Lưu snapshot tên sản phẩm và mã SKU từ Catalog Service, giá trúng phiên làm đơn giá.
+     * - Đảm bảo tính lũy nghiệm (Idempotency): Nếu gọi lại với cùng auction_id, trả về đơn hàng đã tạo trước đó.
+     * - Xác thực tính toàn vẹn: Không cho phép winner trùng sellerId, finalPrice phải > 0.
+     */
+    @Nested
+    @DisplayName("CreateAuctionOrder Tests - Khởi tạo đơn hàng từ phiên đấu giá")
+    class CreateAuctionOrderTest {
+
+        private final UUID auctionId = UUID.fromString("00000000-0000-0000-0000-000000000099");
+        private final UUID skuId = UUID.fromString("00000000-0000-0000-0000-000000000088");
+        private final BigDecimal finalPrice = new BigDecimal("1500000.00");
+        private final Instant paymentDeadline = Instant.now().plus(24, ChronoUnit.HOURS);
+
+        @Test
+        @DisplayName("Tạo đơn hàng đấu giá thành công với snapshot Catalog và hạn thanh toán 24h")
+        void test_createAuctionOrder_success() {
+            // Đầu vào: Yêu cầu khởi tạo đơn hàng đấu giá hợp lệ
+            CreateAuctionOrderRequest request = new CreateAuctionOrderRequest(
+                    auctionId,
+                    buyerId,
+                    sellerId,
+                    skuId,
+                    finalPrice,
+                    paymentDeadline
+            );
+
+            // Giả lập Catalog Service trả về thông tin SKU snapshot
+            SkuInfo mockSkuInfo = new SkuInfo(
+                    skuId, "SKU-AUCTION-VINTAGE", "Dong ho Vintage 1980", "thumb.jpg",
+                    new BigDecimal("1000000.00"), 1, true, sellerId
+            );
+            when(orderRepository.findByAuctionId(auctionId)).thenReturn(Optional.empty());
+            when(catalogClient.getSkuInfo(skuId)).thenReturn(mockSkuInfo);
+            when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+                Order o = invocation.getArgument(0);
+                o.setId(orderId);
+                return o;
+            });
+
+            // Thực thi
+            AuctionOrderResponse response = orderService.createAuctionOrder(request);
+
+            // Kiểm tra kết quả
+            assertNotNull(response);
+            assertEquals(orderId, response.orderId());
+            assertEquals(auctionId, response.auctionId());
+            assertEquals(buyerId, response.buyerId());
+            assertEquals(sellerId, response.sellerId());
+            assertEquals(OrderStatus.PENDING_PAYMENT.name(), response.status());
+            assertEquals(finalPrice, response.total());
+            assertNotNull(response.paymentDeadline());
+            assertTrue(response.paymentDeadline().isAfter(Instant.now()));
+
+            // Xác minh thực thể Order được lưu với đúng cấu hình
+            verify(orderRepository).save(orderCaptor.capture());
+            Order savedOrder = orderCaptor.getValue();
+            assertEquals(OrderSourceType.AUCTION, savedOrder.getSourceType());
+            assertEquals(auctionId.toString(), savedOrder.getIdempotencyKey());
+            assertEquals(auctionId, savedOrder.getAuctionId());
+            assertEquals(OrderStatus.PENDING_PAYMENT, savedOrder.getStatus());
+            // Giá settlement là dự kiến bất biến; official chỉ được chốt sau IPN thành công.
+            org.junit.jupiter.api.Assertions.assertNull(savedOrder.getSubtotal());
+            org.junit.jupiter.api.Assertions.assertNull(savedOrder.getTotal());
+            assertEquals(finalPrice, savedOrder.getEstimatedSubtotal());
+            assertEquals(BigDecimal.ZERO, savedOrder.getEstimatedShippingFee());
+            assertEquals(finalPrice, savedOrder.getEstimatedTotal());
+            assertEquals(paymentDeadline, savedOrder.getPaymentDeadline());
+
+            // Xác minh OrderItem snapshot từ Catalog và đơn giá là giá thắng cuộc
+            assertEquals(1, savedOrder.getItems().size());
+            OrderItem item = savedOrder.getItems().getFirst();
+            assertEquals(skuId, item.getSkuId());
+            assertEquals("Dong ho Vintage 1980", item.getProductName());
+            assertEquals("SKU-AUCTION-VINTAGE", item.getSkuCode());
+            org.junit.jupiter.api.Assertions.assertNull(item.getUnitPrice());
+            assertEquals(finalPrice, item.getEstimatedUnitPrice());
+            assertEquals(1, item.getQuantity());
+
+            // Xác minh lịch sử trạng thái ban đầu PENDING_PAYMENT được ghi nhận trong đơn hàng
+            assertEquals(1, savedOrder.getStatusHistory().size());
+            OrderStatusHistory history = savedOrder.getStatusHistory().getFirst();
+            assertEquals(OrderStatus.PENDING_PAYMENT, history.getToStatus());
+        }
+
+        @Test
+        @DisplayName("Tính lũy nghiệm: Đã tồn tại đơn hàng với auction_id thì trả về đơn cũ mà không tạo mới")
+        void test_createAuctionOrder_idempotent_returnsExistingOrder() {
+            // Chuẩn bị đơn hàng đã được tạo trước đó
+            Order existingOrder = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PENDING_PAYMENT);
+            existingOrder.setSourceType(OrderSourceType.AUCTION);
+            existingOrder.setAuctionId(auctionId);
+            existingOrder.setTotal(finalPrice);
+            existingOrder.setCreatedAt(paymentDeadline.minus(24, ChronoUnit.HOURS));
+
+            CreateAuctionOrderRequest request = new CreateAuctionOrderRequest(
+                    auctionId,
+                    buyerId,
+                    sellerId,
+                    skuId,
+                    finalPrice,
+                    paymentDeadline
+            );
+
+            when(orderRepository.findByAuctionId(auctionId)).thenReturn(Optional.of(existingOrder));
+
+            // Thực thi
+            AuctionOrderResponse response = orderService.createAuctionOrder(request);
+
+            // Kiểm tra kết quả khớp với đơn hàng hiện hữu
+            assertNotNull(response);
+            assertEquals(orderId, response.orderId());
+            assertEquals(auctionId, response.auctionId());
+            assertEquals(buyerId, response.buyerId());
+
+            // Đảm bảo không gọi repository lưu mới hay ghi đè
+            verify(orderRepository, never()).save(any(Order.class));
+            verify(orderStatusHistoryRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Người thắng trùng với người bán ném ngoại lệ ORDER_SELLER_CANNOT_BUY_OWN_PRODUCT")
+        void test_createAuctionOrder_winnerIsSeller_throwsException() {
+            CreateAuctionOrderRequest request = new CreateAuctionOrderRequest(
+                    auctionId,
+                    sellerId, // winner = seller
+                    sellerId,
+                    skuId,
+                    finalPrice,
+                    paymentDeadline
+            );
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.createAuctionOrder(request)
+            );
+
+            assertEquals(ErrorCode.ORDER_SELLER_CANNOT_BUY_OWN_PRODUCT.name(), ex.getCode());
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Giá thắng cuộc không hợp lệ (nhỏ hơn hoặc bằng 0) ném ngoại lệ INVALID_PARAM_VALUE")
+        void test_createAuctionOrder_invalidPrice_throwsException() {
+            CreateAuctionOrderRequest request = new CreateAuctionOrderRequest(
+                    auctionId,
+                    buyerId,
+                    sellerId,
+                    skuId,
+                    BigDecimal.ZERO, // giá <= 0
+                    paymentDeadline
+            );
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.createAuctionOrder(request)
+            );
+
+            assertEquals(ErrorCode.INVALID_PARAM_VALUE.name(), ex.getCode());
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Gắn danh sách reservationIds thành công và idempotent không ghi trùng")
+        void test_attachReservations_successAndIdempotent() {
+            UUID res1 = UUID.randomUUID();
+            UUID res2 = UUID.randomUUID();
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PENDING_PAYMENT);
+
+            // Attach khóa cùng Order với payment để replay đồng thời không insert trùng phiếu.
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            // Lần 1: Gắn 2 phiếu
+            orderService.attachReservations(orderId, List.of(res1, res2));
+            assertEquals(2, order.getReservationIds().size());
+            assertTrue(order.getReservationIds().contains(res1));
+            assertTrue(order.getReservationIds().contains(res2));
+
+            // Lần 2: Gắn lại cùng danh sách (idempotent)
+            orderService.attachReservations(orderId, List.of(res1, res2));
+            assertEquals(2, order.getReservationIds().size());
+        }
+
+        @Test
+        @DisplayName("Gắn reservationIds cho đơn không tồn tại ném ngoại lệ ORDER_NOT_FOUND")
+        void test_attachReservations_notFound_throwsException() {
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.empty());
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.attachReservations(orderId, List.of(UUID.randomUUID()))
+            );
             assertEquals(ErrorCode.ORDER_NOT_FOUND.name(), ex.getCode());
         }
     }

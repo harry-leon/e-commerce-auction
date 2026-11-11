@@ -3,6 +3,7 @@ package com.nexus.auction.controller;
 import com.nexus.auction.config.SecurityConfig;
 import com.nexus.auction.dto.response.AuctionSettlementResponse;
 import com.nexus.auction.enums.SettlementResult;
+import com.nexus.auction.service.AuctionOrderHandoverService;
 import com.nexus.auction.service.AuctionSettlementService;
 import com.nexus.common.exception.GlobalExceptionHandler;
 import com.nexus.common.exception.ResourceNotFoundException;
@@ -41,6 +42,9 @@ class AuctionSettlementControllerTest {
 
     @MockBean
     private AuctionSettlementService auctionSettlementService;
+
+    @MockBean
+    private AuctionOrderHandoverService auctionOrderHandoverService;
 
     @Test
     @WithMockUser(roles = "ADMIN")
@@ -169,6 +173,45 @@ class AuctionSettlementControllerTest {
         UUID auctionId = UUID.randomUUID();
 
         mockMvc.perform(get("/api/v1/auctions/{auctionId}/settlement", auctionId))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Kiểm tra endpoint POST /api/v1/auctions/{auctionId}/handover bàn giao đơn hàng sang Commerce (DoD KH-S2-2).
+     */
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    @DisplayName("POST /handover: Admin gọi bàn giao thành công -> 200 OK với orderId")
+    void testHandoverAuctionOrder_AsAdmin_Success() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+
+        AuctionSettlementResponse response = new AuctionSettlementResponse();
+        response.setId(UUID.randomUUID());
+        response.setAuctionId(auctionId);
+        response.setOrderId(orderId);
+        response.setResult(SettlementResult.SUCCESS);
+
+        when(auctionOrderHandoverService.handoverAuctionOrder(auctionId)).thenReturn(response);
+
+        mockMvc.perform(post("/api/v1/auctions/{auctionId}/handover", auctionId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.orderId").value(orderId.toString()))
+                .andExpect(jsonPath("$.data.auctionId").value(auctionId.toString()));
+    }
+
+    @Test
+    @WithMockUser(roles = "BUYER")
+    @DisplayName("POST /handover: Buyer gọi bị từ chối 403 Forbidden")
+    void testHandoverAuctionOrder_AsBuyer_Forbidden() throws Exception {
+        UUID auctionId = UUID.randomUUID();
+
+        mockMvc.perform(post("/api/v1/auctions/{auctionId}/handover", auctionId)
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isForbidden());
     }
 }

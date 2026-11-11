@@ -18,6 +18,12 @@ import org.hibernate.type.SqlTypes;
 @Getter
 @Setter
 public class Payment {
+    /** Snapshot giá từng dòng và tổng đã gửi cổng, giữ nguyên xuyên suốt vòng đời attempt. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "price_snapshot", nullable = false, columnDefinition = "jsonb")
+    private com.nexus.commerce.entity.PaymentPriceSnapshot priceSnapshot;
+    /** Ref kho của attempt thường là paymentId; AUCTION/legacy dùng orderId từ handover. */
+    @Column(name = "inventory_ref_id", nullable = false) private UUID inventoryRefId;
     @Id private UUID id;
     @Column(name = "order_id", nullable = false) private UUID orderId;
     @Column(nullable = false, length = 30) private String provider;
@@ -25,6 +31,8 @@ public class Payment {
     @Column(nullable = false, length = 30) private String method;
     @Column(nullable = false, precision = 15, scale = 2) private BigDecimal amount;
     @Column(nullable = false, length = 20) private String status;
+    /** Kết quả kho của tiền winner đã thu: PENDING chờ worker, CONFIRMED được giao, REVIEW cần đối soát/hoàn tiền thủ công. */
+    @Column(name = "inventory_status", length = 20) private String inventoryStatus;
     @Column(name = "retry_count", nullable = false) private int retryCount;
     @Column(name = "idempotency_key", length = 100) private String idempotencyKey;
     @Column(name = "payment_url", columnDefinition = "text") private String paymentUrl;

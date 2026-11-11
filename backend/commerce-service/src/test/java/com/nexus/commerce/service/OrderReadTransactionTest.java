@@ -49,7 +49,8 @@ class OrderReadTransactionTest {
         when(repository.findBySellerId(any(), any())).thenAnswer(invocation -> { assertReadTransaction(); return page; });
         when(repository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Pageable.class)))
                 .thenAnswer(invocation -> { assertReadTransaction(); return page; });
-        when(repository.findById(orderId)).thenAnswer(invocation -> { assertReadTransaction(); return Optional.of(order); });
+        // Truy vấn chi tiết nạp items trong transaction read-only; dùng đúng repository method của implementation hiện tại.
+        when(repository.findWithItemsById(orderId)).thenAnswer(invocation -> { assertReadTransaction(); return Optional.of(order); });
         when(history.findByOrderIdOrderByChangedAtAsc(orderId)).thenReturn(List.of());
 
         var manager = new AbstractPlatformTransactionManager() {

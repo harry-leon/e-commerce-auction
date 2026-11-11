@@ -101,7 +101,9 @@ class CheckoutPostgresTest {
             start.countDown();
             CreateOrderResponse result = first.get(20, TimeUnit.SECONDS);
             assertEquals(result, second.get(20, TimeUnit.SECONDS));
-            assertEquals(new BigDecimal("200.00"), jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, result.id()));
+            // Tạo COD chưa xác nhận thu tiền: chỉ estimated_total có giá, official total phải null.
+            org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, result.id()));
+            assertEquals(new BigDecimal("200.00"), jdbc.queryForObject("SELECT estimated_total FROM orders WHERE id=?", BigDecimal.class, result.id()));
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_items WHERE order_id=?", Integer.class, result.id()));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cart_items WHERE cart_id=?", Integer.class, cart));
             assertEquals("CONVERTED", jdbc.queryForObject("SELECT status FROM carts WHERE id=?", String.class, cart));

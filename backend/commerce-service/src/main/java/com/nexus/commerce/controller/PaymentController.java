@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,13 +37,15 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 public class PaymentController {
     private final PaymentService payments;
-    /** Tạo URL sandbox từ đơn chờ thanh toán đã lưu; amount không nhận từ client. */
+    /** BE tính giá mới, reserve theo attempt rồi cấp URL; key UUID giữ nguyên khi gửi lại, đổi key khi retry FAILED. */
     @PostMapping
     @PreAuthorize("hasAuthority('ORDER.CREATE')")
     @Operation(summary = "Khởi tạo hoặc lấy lại URL thanh toán VNPAY sandbox")
     public ApiResponse<PaymentResponse> create(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody StartRequest body,
+                                               @RequestHeader(value = "Idempotency-Key", required = false) String key,
                                                HttpServletRequest request) {
-        return ApiResponse.ok(payments.start(buyer(jwt), body.orderId(), request.getRemoteAddr()));
+        return ApiResponse.ok(key == null ? payments.start(buyer(jwt), body.orderId(), request.getRemoteAddr())
+                : payments.start(buyer(jwt), body.orderId(), request.getRemoteAddr(), key));
     }
 
     /** Poll kết quả đã commit bởi IPN; quyền sở hữu được kiểm tra tại service. */
@@ -66,7 +69,8 @@ public class PaymentController {
         try { return payments.ipn(params); }
         catch (RuntimeException error) {
             // Service proxy đã rollback trước khi trả 99; VNPAY có thể retry, không ACK thành công khi DB lỗi.
-            log.error("Không thể commit IPN VNPAY; cần retry/đối soát", error);
+            // Exception JDBC/HTTP có thể chứa bind values hoặc URL; chỉ log loại lỗi, không log params/hash/token hay stack chứa payload.
+            log.error("Không thể commit IPN VNPAY; cần retry/đối soát: errorType={}", error.getClass().getSimpleName());
             return new VnpayIpnResponse("99", "Unable to process callback");
         }
     }

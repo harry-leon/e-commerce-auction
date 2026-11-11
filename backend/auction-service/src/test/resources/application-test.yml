@@ -1,3 +1,8 @@
 spring:
   application:
     name: auction-service
+  cloud:
+    config:
+      enabled: false
+  config:
+    import: ""

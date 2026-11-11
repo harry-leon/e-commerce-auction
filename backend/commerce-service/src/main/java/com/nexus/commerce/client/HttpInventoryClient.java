@@ -90,6 +90,24 @@ public class HttpInventoryClient implements InventoryClient {
     }
 
     /**
+     * Chỉ nhận receipt CONFIRMED của đúng đơn và đúng tập phiếu đã bàn giao; response rỗng/sai giữ outbox để retry.
+     * Timeout sau commit được gọi lại an toàn vì commitByOrder tại Fulfillment idempotent và khóa phiếu trước sweeper.
+     */
+    @Override
+    public void commitOrder(UUID orderId, List<UUID> expectedReservations, String token) {
+        var receipt = post("/orders/" + orderId + "/commit", Map.of(),
+                new ParameterizedTypeReference<ApiResponse<Receipt>>() { });
+        if (receipt == null || !orderId.equals(receipt.refId()) || !"ORDER".equals(receipt.refType())
+                || !"CONFIRMED".equals(receipt.status()) || receipt.items() == null || expectedReservations.isEmpty()
+                || receipt.items().size() != expectedReservations.size()
+                || receipt.items().stream().anyMatch(r -> r == null || !"CONFIRMED".equals(r.status()) || r.reservationId() == null)
+                || !new java.util.HashSet<>(expectedReservations).equals(receipt.items().stream()
+                        .map(Reserved::reservationId).collect(java.util.stream.Collectors.toSet()))) {
+            throw unavailable();
+        }
+    }
+
+    /**
      * POST nghiệp vụ kho bằng token Commerce; dữ liệu nhận từ checkout/worker, không dùng JWT buyer của luồng cũ.
      * Downstream 401 bỏ cache cho lần gọi sau, lỗi 4xx giữ mã nghiệp vụ; không retry vì reserve có thể đã commit.
      * Thiếu cấu hình/không lấy được token trả 503; lỗi kết nối/response kho hỏng trả lỗi unavailable cho caller bù trừ.

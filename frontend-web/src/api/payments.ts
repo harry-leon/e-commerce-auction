@@ -1,11 +1,18 @@
 import { api } from './client'
 import type { ApiResponse } from './client'
 
-/** Kết quả DB sau IPN; EXPIRED do backend tính theo hạn URL, chưa phải kết luận thất bại/đã thu tiền. */
+/** Kết quả DB sau IPN; PROCESSING chờ kho, REQUIRES_REVIEW đã thu tiền nhưng cần đối soát, không được thanh toán lại. */
 export interface PaymentResult {
     paymentId: string
     orderId: string
-    status: 'PENDING' | 'EXPIRED' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
+    status:
+        | 'PENDING'
+        | 'PROCESSING'
+        | 'REQUIRES_REVIEW'
+        | 'EXPIRED'
+        | 'SUCCESS'
+        | 'FAILED'
+        | 'CANCELLED'
     amount: number
     currency: 'VND'
     paymentUrl: string | null
@@ -20,25 +27,28 @@ export async function getPayment(id: string): Promise<PaymentResult> {
     return response.data
 }
 
+/** Khởi tạo/replay payment cho đơn server; chỉ gửi orderId, backend tự xác minh winner, giá, hạn và kho. */
+export async function startPayment(orderId: string): Promise<PaymentResult> {
+    const response = await api<ApiResponse<PaymentResult>>('/payments', {
+        method: 'POST',
+        body: JSON.stringify({ orderId }),
+    })
+    if (!response.success || !response.data) throw new Error('Không thể tạo thanh toán')
+    return response.data
+}
+
 /**
  * Khởi tạo hoặc lấy lại URL phiên thanh toán VNPAY sandbox cho đơn hàng chờ thanh toán.
  * 1. Chức năng: Gửi yêu cầu tới Backend để tạo attempt thanh toán mới hoặc lấy lại URL sandbox còn hiệu lực.
  * 2. Đầu vào và kết quả:
  *    - Đầu vào: orderId (UUID của đơn hàng cần thanh toán).
  *    - Kết quả: Đối tượng PaymentResult chứa paymentId (TxnRef), paymentUrl sandbox và hạn thời gian giữ kho.
- * 3. Luồng xử lý: Gọi POST /api/v1/payments với body { orderId } kèm Bearer JWT của Buyer.
+ * 3. Luồng xử lý: Gọi startPayment(orderId) gửi POST /api/v1/payments với body { orderId } kèm Bearer JWT của Buyer.
  * 4. Quy tắc và lý do: Số tiền thanh toán (amount) do Backend tính toán từ Order snapshot trong DB, không nhận từ client.
  * 5. Lỗi và giới hạn: Nếu đơn hàng không ở trạng thái PENDING_PAYMENT hoặc đã hết hạn giữ kho 15 phút, Backend sẽ ném lỗi.
  */
 export async function createPaymentAttempt(orderId: string): Promise<PaymentResult> {
-    const response = await api<ApiResponse<PaymentResult>>('/payments', {
-        method: 'POST',
-        body: JSON.stringify({ orderId }),
-    })
-    if (!response.success || !response.data) {
-        throw new Error('Không thể khởi tạo phiên thanh toán từ máy chủ')
-    }
-    return response.data
+    return startPayment(orderId)
 }
 
 /**
@@ -56,5 +66,3 @@ export function redirectToGateway(url: string): void {
         window.location.assign(url)
     }
 }
-
-

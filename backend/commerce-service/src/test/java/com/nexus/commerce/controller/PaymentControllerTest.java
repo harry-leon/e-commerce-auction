@@ -36,6 +36,17 @@ class PaymentControllerTest {
     @Autowired private MockMvc mvc;
     @MockitoBean private PaymentService payments;
 
+    /** Exception upstream có thể chứa hash/token; controller chỉ ghi loại lỗi, không in message/stack hoặc query IPN. */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void ipnExceptionDoesNotLogSensitivePayload(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+        String marker = "private-callback-hash-and-token-must-not-be-logged";
+        when(payments.ipn(any())).thenThrow(new IllegalStateException(marker));
+        mvc.perform(get("/api/v1/payments/vnpay/ipn").param("vnp_SecureHash", marker))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.RspCode").value("99"));
+        org.junit.jupiter.api.Assertions.assertFalse(output.getAll().contains(marker));
+    }
+
     /** Contract hết hạn vẫn trả 200 để UI đọc được trạng thái và không mở lại URL đã hết hạn. */
     @Test
     void expiredPaymentLookupReturnsExpiredStatusAndNullUrl() throws Exception {
