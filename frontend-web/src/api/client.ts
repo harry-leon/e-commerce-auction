@@ -331,7 +331,9 @@ export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
         createdAt: raw.createdAt || new Date().toISOString(),
         avatar: '/avatar.svg',
         trustLevel: 'bronze',
-        reputationScore: 0,
+        // Điểm uy tín mặc định cho tài khoản theo thiết kế Nexus (reputation-service DEFAULT 100).
+        // Tránh lỗi gán cứng 0 khiến tài khoản mới bị chặn đấu giá (Insufficient reputation score).
+        reputationScore: typeof raw.reputationScore === 'number' ? raw.reputationScore : 100,
     }
 }
 
