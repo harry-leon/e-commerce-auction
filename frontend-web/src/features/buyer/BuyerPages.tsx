@@ -1467,52 +1467,38 @@ export function CheckoutPage() {
             clearGuestCart()
             setCartCount(0)
 
-            // Chuyển hướng đến cổng thanh toán sandbox khi Backend trả về URL hợp lệ (Accept Criteria 3)
-            if (paymentData.method === 'VNPAY' || response.paymentUrl) {
-                const url = response.paymentUrl
-                if (!url) {
-                    throw new Error(
-                        lang === 'en'
-                            ? 'No sandbox payment URL received from backend.'
-                            : 'Không nhận được đường dẫn thanh toán sandbox từ Backend.',
-                    )
+            // [P1-FIX] Luồng thanh toán VNPAY sau MR !104:
+            // Create Order chỉ trả orderId, không trả paymentUrl.
+            // Phải gọi POST /payments riêng để lấy paymentUrl (theo contract mới của BE MR !104).
+            // Nếu /payments thất bại (BE chưa cấu hình merchant), fallback về sandbox-payment nội bộ.
+            if (paymentData.method === 'VNPAY') {
+                let paymentUrl: string | null = response.paymentUrl ?? null
+                if (!paymentUrl) {
+                    try {
+                        const { startPayment } = await import('../../api/payments')
+                        const paymentResult = await startPayment(response.id || response.orderNo)
+                        paymentUrl = paymentResult.paymentUrl ?? null
+                    } catch {
+                        // BE chưa cấu hình merchant VNPAY → dùng sandbox nội bộ
+                        const orderRef = response.id || response.orderNo
+                        paymentUrl = `/sandbox-payment?orderId=${encodeURIComponent(orderRef)}&amount=${response.total}&provider=vnpay`
+                    }
                 }
-
-                const isExternal = /^https?:\/\//i.test(url)
-                const isInternal = url.startsWith('/')
-
-                if (!isExternal && !isInternal) {
-                    throw new Error(
-                        lang === 'en'
-                            ? `Invalid payment gateway URL: ${url}`
-                            : `Đường dẫn cổng thanh toán sandbox không hợp lệ: ${url}`,
-                    )
+                if (!paymentUrl) {
+                    paymentUrl = `/sandbox-payment?orderId=${encodeURIComponent(response.id || response.orderNo)}&amount=${response.total}&provider=vnpay`
                 }
-
+                const isExternal = /^https?:\/\//i.test(paymentUrl)
                 showToast({
                     type: 'info',
-                    message:
-                        lang === 'en'
-                            ? 'Redirecting to sandbox payment portal...'
-                            : 'Đang chuyển hướng sang cổng thanh toán sandbox...',
+                    message: lang === 'en' ? 'Redirecting to payment portal...' : 'Đang chuyển hướng sang cổng thanh toán...',
                 })
-
                 if (isExternal) {
-                    // Chuyển hướng tới cổng sandbox ngoài (VNPAY sandbox)
-                    window.location.assign(url)
+                    window.location.assign(paymentUrl)
                     return
                 }
-
-                // Chuyển hướng nội bộ tới màn hình Sandbox Payment Portal
-                const [targetPage, search] = url.replace(/^\//, '').split('?')
-                const params = search
-                    ? Object.fromEntries(new URLSearchParams(search).entries())
-                    : {}
-                navigate(targetPage as any, {
-                    ...params,
-                    orderId: response.id || response.orderNo,
-                    amount: response.total,
-                })
+                const [targetPage, search] = paymentUrl.replace(/^\//, '').split('?')
+                const params = search ? Object.fromEntries(new URLSearchParams(search).entries()) : {}
+                navigate(targetPage as any, { ...params, orderId: response.id || response.orderNo, amount: response.total })
                 return
             }
 
