@@ -98,7 +98,18 @@ function InboxContent({
                         </button>
                     </div>
                     {error && <p role="alert">{error}</p>}
-                    {loading && <p role="status">Đang tải thông báo…</p>}
+                    {loading && (
+                        <div className="flex items-center gap-2 py-4 text-sm text-gray-500" role="status">
+                            <div
+                                className="spinner-border spinner-border-sm text-primary"
+                                style={{ color: '#ee4d2d' }}
+                                role="status"
+                            >
+                                <span className="visually-hidden">Loading...</span>
+                            </div>
+                            <span>Đang tải thông báo…</span>
+                        </div>
+                    )}
                     {inbox && (
                         <>
                             <p className="text-sm mb-3">

@@ -604,6 +604,12 @@ const SELLER_NAV = [
 export function SellerLayout({ children, title }: { children: ReactNode; title: string }) {
     const { lang, page, navigate, user, setUser } = useApp()
     const [notifOpen, setNotifOpen] = useState(false)
+
+    useEffect(() => {
+        if (title && typeof document !== 'undefined') {
+            document.title = `${title} | Nexus`
+        }
+    }, [title])
     return (
         <div className="min-h-screen flex bg-page">
             {/* Sidebar */}

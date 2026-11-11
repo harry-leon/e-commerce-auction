@@ -59,9 +59,9 @@ function AuthCard({
 }
 
 // ─── Login Page ────────────────────────────────────────────────────────────────
-/** Gửi tài khoản tới IAM, giữ token trong tab và chỉ ghi nhớ email nếu được chọn, sau đó điều hướng theo vai trò. */
+/** Gửi tài khoản tới IAM, giữ token trong tab và chỉ ghi nhớ email nếu được chọn, sau đó điều hướng theo vai trò hoặc redirect dở dang. */
 export function LoginPage() {
-    const { lang, navigate, setUser } = useApp()
+    const { lang, navigate, setUser, pageParams } = useApp()
     const [email, setEmail] = useState(readRememberedEmail)
     const [password, setPassword] = useState('')
     const [remember, setRemember] = useState(() => !!readRememberedEmail())
@@ -85,13 +85,24 @@ export function LoginPage() {
             saveSession({ ...payload, user })
             saveRememberedEmail(email, remember)
             setUser(user)
+            /**
+             * Chức năng: Điều hướng người dùng sau khi đăng nhập thành công.
+             * Đầu vào: user.role và tham số điều hướng pageParams.redirect từ useApp context.
+             * Kết quả: Chuyển hướng người dùng về đúng trang mục tiêu.
+             * Luồng xử lý: Nếu có pageParams.redirect (ví dụ 'checkout') và user là buyer,
+             * quay lại trang đó để tiếp tục quy trình thanh toán dở dang; ngược lại chuyển về dashboard theo vai trò.
+             */
             const pages: Record<string, Page> = {
                 buyer: 'home',
                 seller: 'seller-dashboard',
                 admin: 'admin-dashboard',
                 support: 'support-dashboard',
             }
-            navigate(pages[user.role])
+            const targetPage =
+                (pageParams?.redirect as Page) && user.role === 'buyer'
+                    ? (pageParams.redirect as Page)
+                    : pages[user.role]
+            navigate(targetPage)
         } catch (error) {
             setError(errorMessage(error))
             setAttempts((value) => value + 1)
@@ -109,6 +120,18 @@ export function LoginPage() {
                     : 'Đăng nhập vào tài khoản Nexus của bạn'
             }
         >
+            {pageParams?.redirect === 'checkout' && !error && (
+                <div className="mb-4">
+                    <AlertBanner
+                        type="info"
+                        message={
+                            lang === 'vi'
+                                ? 'Vui lòng đăng nhập tài khoản Buyer (gợi ý: buyer@nexus.vn / Nexus123@) để hoàn tất thanh toán đơn hàng.'
+                                : 'Please sign in to your Buyer account (e.g. buyer@nexus.vn / Nexus123@) to complete checkout.'
+                        }
+                    />
+                </div>
+            )}
             {error && (
                 <div className="mb-4">
                     <AlertBanner
@@ -168,25 +191,6 @@ export function LoginPage() {
                     {tr(lang, 'register')}
                 </button>
             </p>
-
-            {/* Chức năng: Cung cấp nút bấm điền nhanh tài khoản mẫu Buyer cho người dùng thử nghiệm */}
-            <div className="mt-5 pt-4 border-t border-gray-100">
-                <p className="text-xs text-gray-500 mb-2 font-medium">
-                    {lang === 'vi' ? 'Tài khoản mẫu để test nhanh:' : 'Demo accounts for testing:'}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setEmail('buyer@nexus.vn')
-                            setPassword('Nexus123@')
-                        }}
-                        className="text-xs bg-primary/10 hover:bg-primary/20 text-primary font-medium px-2.5 py-1.5 rounded-lg border border-primary/20 transition-colors"
-                    >
-                        Buyer: buyer@nexus.vn
-                    </button>
-                </div>
-            </div>
         </AuthCard>
     )
 }
@@ -200,12 +204,12 @@ function PasswordStrength({ password }: { password: string }) {
             /[A-Z]/.test(password) &&
             /[0-9]/.test(password) &&
             /[^A-Za-z0-9]/.test(password)
-          ? 4
-          : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
-            ? 3
-            : password.length >= 8
-              ? 2
-              : 1
+            ? 4
+            : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
+                ? 3
+                : password.length >= 8
+                    ? 2
+                    : 1
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very Strong']
     const colors = ['', 'bg-danger', 'bg-warning', 'bg-success', 'bg-primary']
     if (!password) return null

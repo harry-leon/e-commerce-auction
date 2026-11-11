@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
@@ -22,9 +22,17 @@ import {
     Search,
     Filter,
     X,
+    CreditCard,
 } from '../../components/UI'
 import { AUCTIONS } from '../../mockData'
-import { auctionsApi } from '../../api/auctions'
+import {
+    auctionsApi,
+    getAuctionSettlement,
+    getWinnerAuctionDetails,
+    type AuctionSettlement,
+    type WinnerAuctionDetails,
+} from '../../api/auctions'
+import { startPayment } from '../../api/payments'
 import type { Auction } from '../../types'
 
 // ─── Auction List Page ─────────────────────────────────────────────────────────
@@ -92,6 +100,9 @@ export function AuctionListPage() {
 
     useEffect(() => {
         fetchAuctions()
+        // Đồng bộ lại danh sách để phiên vừa đến startTime chuyển tab từ Scheduled sang Active.
+        const refreshTimer = window.setInterval(fetchAuctions, 5000)
+        return () => window.clearInterval(refreshTimer)
     }, [fetchAuctions])
 
     // Xử lý áp dụng khoảng giá
@@ -412,33 +423,40 @@ export function AuctionDetailPage() {
     const [selectedImageIndex, setSelectedImageIndex] = useState(0)
 
     // Tải thông tin chi tiết qua API Adapter
-    const loadAuctionDetail = useCallback(async () => {
+    const loadAuctionDetail = useCallback(async (backgroundRefresh = false) => {
         if (!auctionId) {
             setError(lang === 'en' ? 'Auction ID is missing.' : 'Thiếu mã phiên đấu giá.')
             setLoading(false)
             return
         }
-        setLoading(true)
-        setError('')
+        if (!backgroundRefresh) {
+            setLoading(true)
+            setError('')
+        }
         try {
             const data = await auctionsApi.getAuctionById(auctionId, createdAuctions, auctionReviews)
             setAuction(data)
-            setCustomBid(String(data.currentBid + data.minIncrement))
+            if (!backgroundRefresh) setCustomBid(String(data.currentBid + data.minIncrement))
         } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : lang === 'en'
-                      ? 'Failed to load auction details.'
-                      : 'Không thể tải thông tin chi tiết phiên đấu giá.',
-            )
+            if (!backgroundRefresh) {
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : lang === 'en'
+                          ? 'Failed to load auction details.'
+                          : 'Không thể tải thông tin chi tiết phiên đấu giá.',
+                )
+            }
         } finally {
-            setLoading(false)
+            if (!backgroundRefresh) setLoading(false)
         }
     }, [auctionId, createdAuctions, auctionReviews, lang])
 
     useEffect(() => {
         loadAuctionDetail()
+        // Làm mới status và bid history theo chu kỳ mở phiên của Auction Service khi Buyer đang xem detail.
+        const refreshTimer = window.setInterval(() => loadAuctionDetail(true), 5000)
+        return () => window.clearInterval(refreshTimer)
     }, [loadAuctionDetail])
 
     // Nếu đang loading, hiển thị skeleton loading state
@@ -502,7 +520,7 @@ export function AuctionDetailPage() {
                             <Button
                                 variant="outline"
                                 size="md"
-                                onClick={loadAuctionDetail}
+                                onClick={() => loadAuctionDetail()}
                             >
                                 {lang === 'en' ? 'Retry' : 'Thử lại'}
                             </Button>
@@ -1172,22 +1190,185 @@ export function MyBidsPage() {
 }
 
 // ─── Auction Payment Page ──────────────────────────────────────────────────────
+/**
+ * Trang Đơn hàng Thắng đấu giá (Winner Order Page) dành cho người thắng cuộc.
+ *
+ * Chức năng:
+ *   - Tải settlement chính thức từ Auction Service (/auctions/{id}/settlement) để lấy giá chốt,
+ *     deadline thanh toán và winnerId. Không fallback fixture — sai settlement = sai quyền thanh toán.
+ *   - Tải thêm thông tin sản phẩm từ Auction/Catalog để hiển thị ảnh và tên sản phẩm.
+ *   - Hiển thị countdown đếm ngược đến paymentDeadline; khi hết hạn khoá toàn bộ form và nút checkout.
+ *   - Người thắng nhập thông tin giao hàng (tên, SĐT, địa chỉ) rồi nhấn thanh toán VNPAY sandbox.
+ *
+ * Luồng checkout (One Settlement = One Order):
+ *   1. Đơn hàng đấu giá được khởi tạo tự động bởi Backend qua AuctionOrderHandoverService.
+ *   2. Backend CheckoutService chỉ hỗ trợ đơn REGULAR và từ chối đơn AUCTION qua POST /orders.
+ *   3. Nếu settlement.orderId đã có → gọi startPayment(orderId, idempotencyKey) để nhận URL sandbox VNPAY.
+ *   4. Nếu settlement.orderId chưa có (scheduler backend đang xử lý) → tự động tải lại settlement mới nhất.
+ *   5. Sau khi có orderId → gọi startPayment(orderId) → validate URL sandbox.vnpayment.vn → redirect.
+ *
+ * Quy tắc:
+ *   - Chỉ winner (session userId === settlement.winnerId) mới thấy form; người khác thấy thông báo lỗi.
+ *   - Deadline hết hạn → hiển thị AlertBanner lỗi, khoá nút; không thanh toán cho settlement đã quá hạn.
+ *   - Idempotency-Key được sinh một lần duy nhất (useRef) cho mỗi phiên trang để chống double-submit.
+ *
+ * Lỗi và giới hạn:
+ *   - Không tự ý gọi POST /orders cho đơn đấu giá nhằm tuân thủ thiết kế phân quyền và chống lỗi CHECKOUT_SOURCE_UNSUPPORTED.
+ *   - startPayment chỉ redirect khi URL hợp lệ từ sandbox.vnpayment.vn; lỗi cấu hình báo rõ ràng.
+ */
 export function AuctionPaymentPage() {
-    const { lang, navigate, pageParams, showToast } = useApp()
-    const auction = AUCTIONS.find((a) => a.id === pageParams?.auctionId) || AUCTIONS[3]
-    const deadline = new Date(Date.now() + 3600000 * 20).toISOString()
-    const [paying, setPaying] = useState(false)
-    const [expired, setExpired] = useState(false)
+    const { lang, pageParams, user, navigate, showToast } = useApp()
+    const auctionId = String(pageParams?.auctionId || '')
+    const [settlement, setSettlement] = useState<AuctionSettlement | null>(null)
+    const [auctionDetails, setAuctionDetails] = useState<WinnerAuctionDetails | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState(false)
+    const [now, setNow] = useState(Date.now())
+    const [recipientName, setRecipientName] = useState(user?.fullName || '')
+    const [recipientPhone, setRecipientPhone] = useState('')
+    const [shippingAddress, setShippingAddress] = useState('')
+    const [checkoutBusy, setCheckoutBusy] = useState(false)
+    const [checkoutError, setCheckoutError] = useState<string | null>(null)
+    const [checkoutStatus, setCheckoutStatus] = useState<string | null>(null)
+    // Idempotency-Key cố định cho mỗi phiên mount trang; chống double-submit khi mạng lag.
+    const idempotencyKeyRef = useRef<string>(
+        typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `auction-order-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    )
 
-    const pay = async () => {
-        setPaying(true)
-        await new Promise((r) => setTimeout(r, 1200))
-        setPaying(false)
-        showToast({
-            type: 'success',
-            message: lang === 'en' ? 'Payment successful!' : 'Thanh toán thành công!',
-        })
-        navigate('order-history')
+    // Settlement là nguồn chuẩn cho quyền winner, giá chốt và deadline; lỗi API không chuyển sang fixture.
+    useEffect(() => {
+        let active = true
+        setLoading(true)
+        setLoadError(false)
+        getAuctionSettlement(auctionId)
+            .then((result) => {
+                if (active) setSettlement(result)
+            })
+            .catch(() => {
+                if (active) setLoadError(true)
+            })
+            .finally(() => {
+                if (active) setLoading(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [auctionId])
+
+    // Tải thông tin sản phẩm riêng; nếu Catalog/Auction tạm lỗi vẫn giữ settlement chính thức và không dựng dữ liệu giả.
+    useEffect(() => {
+        let active = true
+        setAuctionDetails(null)
+        if (auctionId) {
+            getWinnerAuctionDetails(auctionId)
+                .then((details) => {
+                    if (active) setAuctionDetails(details)
+                })
+                .catch(() => undefined)
+        }
+        return () => {
+            active = false
+        }
+    }, [auctionId])
+
+    // Cập nhật mỗi giây để timeout phản ánh deadline server kể cả khi trang đang mở.
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000)
+        return () => window.clearInterval(timer)
+    }, [])
+
+    const deadline = settlement?.paymentDeadline || ''
+    const expired = !deadline || new Date(deadline).getTime() <= now
+    const isWinner = !!user?.id && settlement?.winnerId === user.id
+    // Cho phép sửa shipping khi: settlement hợp lệ, đúng winner, chưa quá hạn và chưa có orderId.
+    const canEditShipping = !!settlement && isWinner && !expired && !settlement.orderId
+
+    /**
+     * Luồng checkout hoàn chỉnh cho winner (One Settlement = One Order):
+     * 1. Validate form giao hàng (tên, SĐT, địa chỉ bắt buộc).
+     * 2. Đơn hàng đấu giá được khởi tạo tự động từ Backend qua luồng handover (AuctionOrderHandoverService).
+     *    Backend CheckoutService từ chối đơn AUCTION qua POST /orders (chỉ hỗ trợ REGULAR).
+     * 3. Nếu settlement.orderId chưa có (do scheduler handover chưa chạy xong), tự động tải lại
+     *    settlement mới nhất từ server. Nếu vẫn chưa có, thông báo người dùng chờ trong giây lát.
+     * 4. Khi đã có orderId hợp lệ, gọi startPayment(orderId, idempotencyKey) để nhận URL sandbox VNPAY.
+     * 5. Kiểm tra URL hợp lệ và chuyển hướng trình duyệt tới cổng thanh toán VNPAY sandbox.
+     * Lỗi: hiển thị inline bên dưới form; không navigate ra ngoài khi có lỗi.
+     */
+    async function handleCheckout() {
+        if (checkoutBusy) return
+        if (!settlement || expired || !isWinner) return
+
+        let orderId: string | null = settlement.orderId || null
+        const trimmedName = recipientName.trim()
+        const trimmedPhone = recipientPhone.trim()
+        const trimmedAddress = shippingAddress.trim()
+
+        // Chỉ kiểm tra dữ liệu form khi cần xác nhận thông tin giao hàng
+        if (!orderId) {
+            if (!trimmedName || !trimmedPhone || !trimmedAddress) {
+                setCheckoutError(tr(lang, 'checkoutFormIncomplete'))
+                return
+            }
+        }
+
+        setCheckoutBusy(true)
+        setCheckoutError(null)
+
+        try {
+            if (!orderId) {
+                // Đơn hàng đấu giá được Backend tự động tạo thông qua AuctionOrderHandoverService.
+                // Thử tải lại settlement mới nhất từ server để lấy orderId do backend sinh ra.
+                setCheckoutStatus('Đang kiểm tra trạng thái đơn hàng từ hệ thống...')
+                const freshSettlement = await getAuctionSettlement(auctionId)
+                if (freshSettlement?.orderId) {
+                    orderId = freshSettlement.orderId
+                    setSettlement(freshSettlement)
+                } else {
+                    setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
+                    return
+                }
+            }
+
+            // Lấy URL thanh toán VNPAY sandbox từ Commerce Service
+            setCheckoutStatus(tr(lang, 'checkoutRedirectingPayment'))
+            const payment = await startPayment(orderId, idempotencyKeyRef.current)
+
+            // Nếu đã PAID hoặc không còn PENDING, chuyển sang trang kết quả thanh toán
+            if (payment.status !== 'PENDING') {
+                navigate('payment-result', { vnp_TxnRef: payment.paymentId })
+                return
+            }
+
+            if (!payment.paymentUrl) {
+                setCheckoutError(tr(lang, 'checkoutPaymentUrlError'))
+                return
+            }
+
+            // Validate URL để đảm bảo chỉ redirect đến sandbox VNPAY chính thức
+            const url = new URL(payment.paymentUrl)
+            if (
+                url.origin !== 'https://sandbox.vnpayment.vn' ||
+                url.pathname !== '/paymentv2/vpcpay.html' ||
+                url.username ||
+                url.password ||
+                url.hash
+            ) {
+                setCheckoutError(tr(lang, 'checkoutPaymentUrlError'))
+                return
+            }
+
+            // Redirect tới cổng thanh toán VNPAY sandbox
+            window.location.assign(url.href)
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err)
+            setCheckoutError(message || tr(lang, 'checkoutOrderError'))
+            showToast({ type: 'error', message: message || tr(lang, 'checkoutOrderError') })
+        } finally {
+            setCheckoutBusy(false)
+            setCheckoutStatus(null)
+        }
     }
 
     return (
@@ -1195,133 +1376,182 @@ export function AuctionPaymentPage() {
             <Breadcrumb
                 items={[
                     { label: lang === 'en' ? 'My Bids' : 'Lượt đặt giá', page: 'my-bids' },
-                    { label: lang === 'en' ? 'Complete Payment' : 'Hoàn tất thanh toán' },
+                    { label: tr(lang, 'winnerOrderTitle') },
                 ]}
             />
-            <div className="mt-5 max-w-2xl mx-auto">
-                {/* Winner banner */}
-                <div className="nexus-card p-6 bg-white border-gray-300 mb-5">
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center shrink-0">
-                            <Trophy size={22} />
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-bold text-green-900">
-                                {lang === 'en'
-                                    ? 'Congratulations! You won this auction.'
-                                    : 'Chúc mừng! Bạn đã thắng phiên đấu giá này.'}
-                            </h2>
-                            <p className="text-green-700 mt-1">
-                                {lang === 'vi' ? auction.product.nameVi : auction.product.name}
-                            </p>
-                            <p className="text-3xl font-black text-success mt-1">
-                                {formatCurrency(auction.currentBid, lang)}
-                            </p>
-                        </div>
+            <div className="mt-5 max-w-2xl mx-auto space-y-5">
+                {loading ? (
+                    <div role="status" className="nexus-card p-6 text-gray-600">
+                        {tr(lang, 'loadingSettlement')}
                     </div>
-                </div>
-
-                {/* Payment deadline */}
-                <AlertBanner
-                    type={expired ? 'error' : 'warning'}
-                    message={
-                        expired
-                            ? lang === 'en'
-                                ? 'Payment deadline passed. Your reputation score has been penalized (-10 pts).'
-                                : 'Đã quá hạn thanh toán. Điểm uy tín của bạn bị trừ (-10 điểm).'
-                            : lang === 'en'
-                              ? `Complete payment within 24 hours to avoid reputation penalty.`
-                              : `Hoàn tất thanh toán trong 24 giờ để tránh bị trừ điểm uy tín.`
-                    }
-                />
-
-                {!expired && (
-                    <div className="nexus-card p-5 mt-5 mb-5 flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-gray-500">{tr(lang, 'paymentDeadline')}</p>
-                            <p className="font-semibold text-gray-900">
-                                {new Date(deadline).toLocaleString()}
-                            </p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-xs text-gray-400 mb-1">
-                                {lang === 'en' ? 'Time remaining' : 'Thời gian còn lại'}
-                            </p>
-                            <CountdownTimer endTime={deadline} large />
-                        </div>
-                    </div>
-                )}
-
-                <div className="nexus-card p-6 mt-5">
-                    <h3 className="font-bold text-lg mb-4">
-                        {lang === 'en' ? 'Order Summary' : 'Tóm tắt đơn hàng'}
-                    </h3>
-                    <div className="flex gap-4 mb-5">
-                        <img
-                            src={auction.product.images[0]}
-                            alt=""
-                            className="w-20 h-20 object-cover rounded-xl"
-                        />
-                        <div>
-                            <p className="font-semibold">
-                                {lang === 'vi' ? auction.product.nameVi : auction.product.name}
-                            </p>
-                            <p className="text-sm text-gray-500">
-                                {lang === 'en' ? 'Sold by' : 'Bởi'} {auction.sellerName}
-                            </p>
-                        </div>
-                    </div>
-                    <div className="space-y-2 text-sm border-t border-border pt-3">
-                        {[
-                            [
-                                lang === 'en' ? 'Winning bid' : 'Giá thắng',
-                                formatCurrency(auction.currentBid, lang),
-                            ],
-                            [tr(lang, 'shipping'), '$5.99'],
-                            [tr(lang, 'tax'), formatCurrency(auction.currentBid * 0.08, lang)],
-                            [
-                                tr(lang, 'total'),
-                                formatCurrency(auction.currentBid * 1.08 + 5.99, lang),
-                            ],
-                        ].map(([k, v], i) => (
-                            <div
-                                key={String(k)}
-                                className={`flex justify-between ${i === 3 ? 'font-bold text-primary border-t border-border pt-2 mt-1' : 'text-gray-600'}`}
-                            >
-                                <span>{k}</span>
-                                <span>{v}</span>
+                ) : loadError || !settlement ? (
+                    <AlertBanner type="error" message={tr(lang, 'settlementUnavailable')} />
+                ) : settlement.result === 'FAILED' || !settlement.winnerId ? (
+                    <AlertBanner type="info" message={tr(lang, 'settlementHasNoWinner')} />
+                ) : !isWinner ? (
+                    <AlertBanner type="error" message={tr(lang, 'winnerOnly')} />
+                ) : (
+                    <>
+                        {/* Banner thắng đấu giá: hiển thị ảnh sản phẩm, tên và giá chốt từ settlement */}
+                        <div className="nexus-card p-6 bg-gradient-to-br from-green-50 to-emerald-50 border-emerald-200">
+                            <div className="flex items-start gap-4">
+                                <div className="w-12 h-12 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                                    <Trophy size={22} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <h2 className="text-xl font-bold text-emerald-900">
+                                        {tr(lang, 'winnerOrderHeading')}
+                                    </h2>
+                                    <p className="text-sm text-gray-500 mt-1">
+                                        {tr(lang, 'auctionLabel')} &middot;{' '}
+                                        <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                                            {settlement.auctionId}
+                                        </span>
+                                    </p>
+                                    {auctionDetails && (
+                                        <div className="mt-3 flex items-center gap-3">
+                                            {auctionDetails.productImage && (
+                                                <img
+                                                    src={auctionDetails.productImage}
+                                                    alt={auctionDetails.productName}
+                                                    className="h-16 w-16 rounded-xl object-cover border border-gray-200 shadow-sm"
+                                                />
+                                            )}
+                                            <div>
+                                                <p className="font-semibold text-gray-900">
+                                                    {auctionDetails.productName}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <p className="text-3xl font-black text-emerald-700 mt-3">
+                                        {settlement.finalPrice == null
+                                            ? '\u2014'
+                                            : formatCurrency(settlement.finalPrice, lang)}
+                                    </p>
+                                </div>
                             </div>
-                        ))}
-                    </div>
-                </div>
-
-                {!expired && (
-                    <div className="mt-5 space-y-4">
-                        <Input
-                            label={lang === 'en' ? 'Card Number' : 'Số thẻ'}
-                            placeholder="4242 4242 4242 4242"
-                        />
-                        <div className="grid grid-cols-2 gap-4">
-                            <Input label={lang === 'en' ? 'Expiry' : 'Hạn'} placeholder="MM/YY" />
-                            <Input label="CVV" placeholder="123" type="password" />
                         </div>
-                        <Button
-                            variant="primary"
-                            size="lg"
-                            className="w-full"
-                            loading={paying}
-                            onClick={pay}
+
+                        {/* Thời hạn thanh toán và countdown; khi hết hạn hiển thị banner lỗi */}
+                        {expired ? (
+                            <AlertBanner type="error" message={tr(lang, 'paymentTimedOut')} />
+                        ) : (
+                            <div className="nexus-card p-5 flex items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-sm text-gray-500">{tr(lang, 'paymentDeadline')}</p>
+                                    <p className="font-semibold text-gray-900">
+                                        {new Date(deadline).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-xs text-gray-400 mb-1">
+                                        {tr(lang, 'timeRemaining')}
+                                    </p>
+                                    <CountdownTimer endTime={deadline} large />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Thông báo đơn đã tồn tại (One Settlement = One Order): cho phép tiếp tục thanh toán đơn cũ */}
+                        {settlement.orderId && (
+                            <div className="nexus-card p-4 flex items-center justify-between gap-3 border-blue-200 bg-blue-50">
+                                <p className="text-sm text-blue-800">
+                                    {tr(lang, 'linkedSettlementOrder')}{' '}
+                                    <span className="font-mono font-semibold">{settlement.orderId}</span>
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => navigate('order-detail', { id: settlement.orderId })}
+                                >
+                                    {tr(lang, 'viewLinkedOrder')}
+                                </Button>
+                            </div>
+                        )}
+
+                        {/* Form nhập thông tin giao hàng và nút thanh toán VNPAY sandbox */}
+                        <form
+                            className="nexus-card p-6 space-y-4"
+                            noValidate
+                            onSubmit={(event) => {
+                                event.preventDefault()
+                                void handleCheckout()
+                            }}
                         >
-                            {lang === 'en' ? 'Complete Payment' : 'Hoàn tất thanh toán'} –{' '}
-                            {formatCurrency(auction.currentBid * 1.08 + 5.99, lang)}
-                        </Button>
-                        <button
-                            onClick={() => setExpired(true)}
-                            className="text-xs text-gray-400 hover:text-gray-600 w-full text-center"
-                        >
-                            Simulate expired payment (demo)
-                        </button>
-                    </div>
+                            <h3 className="font-bold text-lg">{tr(lang, 'shippingDetails')}</h3>
+
+                            <Input
+                                label={tr(lang, 'recipientName')}
+                                autoComplete="name"
+                                value={recipientName}
+                                onChange={(event) => setRecipientName(event.target.value)}
+                                disabled={!canEditShipping || checkoutBusy}
+                                required
+                                maxLength={255}
+                            />
+                            <Input
+                                label={tr(lang, 'recipientPhone')}
+                                autoComplete="tel"
+                                type="tel"
+                                value={recipientPhone}
+                                onChange={(event) => setRecipientPhone(event.target.value)}
+                                disabled={!canEditShipping || checkoutBusy}
+                                required
+                                pattern="\+?[0-9]{8,15}"
+                            />
+                            <label className="flex flex-col gap-1.5 text-sm font-semibold text-gray-700">
+                                {tr(lang, 'shippingAddress')}
+                                <textarea
+                                    className="nexus-input min-h-24"
+                                    autoComplete="street-address"
+                                    value={shippingAddress}
+                                    onChange={(event) => setShippingAddress(event.target.value)}
+                                    disabled={!canEditShipping || checkoutBusy}
+                                    required
+                                    maxLength={500}
+                                />
+                            </label>
+
+                            {/* Hiển thị lỗi checkout ngay dưới form */}
+                            {checkoutError && (
+                                <AlertBanner
+                                    type="error"
+                                    message={checkoutError}
+                                    onClose={() => setCheckoutError(null)}
+                                />
+                            )}
+
+                            {/* Trạng thái trung gian khi đang tạo đơn hoặc đang redirect */}
+                            {checkoutStatus && !checkoutError && (
+                                <p className="text-sm text-gray-500 text-center animate-pulse">
+                                    {checkoutStatus}
+                                </p>
+                            )}
+
+                            {/*
+                             * Nút thanh toán VNPAY sandbox:
+                             * - Nếu đã quá hạn → hiển thị nhưng bị vô hiệu hoá.
+                             * - Nếu settlement.orderId có sẵn → cho phép retry payment (không tạo đơn mới).
+                             * - Nút luôn submit form để bắt HTML5 validation trước khi gọi handleCheckout.
+                             */}
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                size="lg"
+                                className="w-full font-bold"
+                                loading={checkoutBusy}
+                                disabled={expired || checkoutBusy}
+                            >
+                                <CreditCard size={16} />
+                                {checkoutBusy
+                                    ? (checkoutStatus || (lang === 'en' ? 'Processing\u2026' : '\u0110ang x\u1EED l\u00FD\u2026'))
+                                    : settlement.orderId
+                                      ? tr(lang, 'continueSandboxPayment')
+                                      : `${tr(lang, 'continueSandboxPayment')}${settlement.finalPrice != null ? ` \u00B7 ${formatCurrency(settlement.finalPrice, lang)}` : ''}`}
+                            </Button>
+                        </form>
+                    </>
                 )}
             </div>
         </BuyerLayout>

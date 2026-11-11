@@ -1,4 +1,4 @@
-import { Component, useEffect, type ReactNode, type ErrorInfo } from 'react'
+import { Component, useState, useEffect, useRef, type ReactNode, type ErrorInfo } from 'react'
 import { AppProvider, useApp } from './context'
 import { ToastContainer } from './components/UI'
 import { AppRouter } from './routes/AppRouter'
@@ -85,8 +85,14 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     }
 }
 
+/**
+ * Kết nối Router, Toast và push theo phiên; đổi trang chỉ bật spinner, không tạo lại socket thông báo.
+ * Đổi tài khoản/logout dọn socket và request cũ; spinner không trì hoãn mount trang con.
+ */
 function AppInner() {
-    const { toasts, dismissToast, user, showToast } = useApp()
+    const { toasts, dismissToast, user, showToast, page } = useApp()
+    const [pageTransitioning, setPageTransitioning] = useState(false)
+    const prevPageRef = useRef(page)
     // Một socket theo phiên UI; đổi tài khoản/logout dọn socket cũ, không dùng token/profile demo làm xác thực.
     useEffect(() => {
         if (!user?.id || !/^[0-9a-f-]{36}$/i.test(user.id)) return
@@ -96,8 +102,51 @@ function AppInner() {
             refreshInbox()
         }, refreshInbox)
     }, [user?.id, showToast])
+    // Chuyển trang chỉ điều khiển spinner 300 ms; giữ kết nối push xuyên suốt cùng một tài khoản.
+    useEffect(() => {
+        if (prevPageRef.current !== page) {
+            prevPageRef.current = page
+            setPageTransitioning(true)
+            const timer = setTimeout(() => setPageTransitioning(false), 300)
+            return () => clearTimeout(timer)
+        }
+    }, [page])
+
     return (
         <>
+            {pageTransitioning && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 14,
+                        right: 14,
+                        zIndex: 9999,
+                        pointerEvents: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        background: 'rgba(255, 255, 255, 0.96)',
+                        padding: '6px 14px',
+                        borderRadius: '9999px',
+                        boxShadow: '0 4px 14px rgba(0, 0, 0, 0.12)',
+                        border: '1px solid #fee2e2',
+                        transition: 'opacity 0.2s ease-in-out',
+                    }}
+                    role="status"
+                    aria-label="Đang tải trang"
+                >
+                    <div
+                        className="spinner-border spinner-border-sm text-primary"
+                        style={{ color: '#ee4d2d' }}
+                        role="status"
+                    >
+                        <span className="visually-hidden">Đang tải...</span>
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+                        Đang tải...
+                    </span>
+                </div>
+            )}
             <AppRouter />
             <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         </>

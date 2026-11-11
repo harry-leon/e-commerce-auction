@@ -51,8 +51,9 @@ import {
     type ApiRole,
     type ApiProduct,
     type Envelope,
+    getProductStock,
 } from '../../api/client'
-import { useLoad } from '../../hooks/useLoad'
+import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
@@ -1114,7 +1115,13 @@ export function AdminOrdersPage() {
             <div className="nexus-card">
                 {loading ? (
                     <div className="py-12 text-center text-gray-400">
-                        <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
+                        <div
+                            className="spinner-border text-primary mb-2"
+                            style={{ color: '#ee4d2d' }}
+                            role="status"
+                        >
+                            <span className="visually-hidden">Loading...</span>
+                        </div>
                         <p>
                             {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
                         </p>
@@ -1523,6 +1530,9 @@ export function AdminAuctionsPage() {
 
     useEffect(() => {
         loadAuctions()
+        // Đồng bộ danh sách Admin với các phiên vừa được Seller lưu thành công ở Auction Service.
+        const refreshTimer = window.setInterval(loadAuctions, 5000)
+        return () => window.clearInterval(refreshTimer)
     }, [createdAuctions, auctionReviews])
 
     // Tra cứu theo từng sellerId duy nhất trong hàng chờ; không gọi User API cho các phiên khác hoặc mock users đã có sẵn.
@@ -2122,7 +2132,7 @@ export function AdminAuctionsPage() {
                                     {lang === 'vi' ? selectedAuction.product?.nameVi || selectedAuction.product?.name : selectedAuction.product?.name}
                                 </h4>
                                 <p className="text-xs text-gray-500 mt-0.5">
-                                    SKU: <span className="font-mono text-gray-700">{selectedAuction.product?.sku || 'N/A'}</span> · ID: <span className="font-mono text-gray-700">{selectedAuction.id}</span>
+                                    SKU: <span className="font-mono text-gray-700">{selectedAuction.product?.sku || 'N/A'}</span>
                                 </p>
                                 <div className="mt-2">
                                     <StatusBadge status={selectedAuction.status} label={statusLabel(selectedAuction.status)} />
@@ -2756,45 +2766,108 @@ export function AdminSystemHealthPage() {
 }
 
 // ─── Admin Products (Moderation) ───────────────────────────────────────────────
+/**
+ * Quản lý & Kiểm duyệt sản phẩm dành cho Quản trị viên (Admin).
+ *
+ * Chức năng: Cho phép Admin lọc xem danh sách sản phẩm theo trạng thái (DRAFT chờ duyệt, ACTIVE đang mở bán, INACTIVE ngừng bán),
+ *            thực hiện phê duyệt mở bán hoặc ngừng bán trực tiếp qua API Gateway kết nối DB Supabase thật 100%.
+ * Đầu vào: statusTab ('DRAFT' | 'ACTIVE' | 'INACTIVE'), refreshKey, API endpoint `/products?status=${statusTab}`.
+ * Kết quả: Hiển thị bảng sản phẩm thật từ database; không sử dụng bất kỳ mock data hay dữ liệu ảo mặc định nào.
+ * Luồng xử lý:
+ *   1. useLoad gửi GET request tới Catalog Service qua API Gateway: `/products?status=${statusTab}&v=${refreshKey}`.
+ *   2. Bóc tách dữ liệu từ ApiResponse envelope (hỗ trợ cả payload data mảng hoặc mảng trực tiếp).
+ *   3. Khi duyệt: gọi POST `/products/{id}/approve`, xóa cache useLoad và tải lại danh sách.
+ *   4. Khi từ chối / ngừng bán: gọi POST `/products/{id}/status?target=INACTIVE`, xóa cache và tải lại danh sách.
+ * Quy tắc & lý do:
+ *   - Sử dụng 100% dữ liệu từ Supabase PostgreSQL thông qua Catalog Service; loại bỏ hoàn toàn mock data để tránh
+ *     tình trạng sản phẩm đã duyệt xuất hiện trùng 2 bản ở cả tab DRAFT và ACTIVE.
+ *   - Khi một trạng thái không có sản phẩm nào trong DB, hiển thị EmptyState tương ứng chứ không inject dữ liệu giả.
+ * Lỗi & giới hạn: Hiển thị thông báo toast lỗi chi tiết từ backend nếu quyền Admin hoặc kết nối mạng không hợp lệ.
+ */
 export function AdminProductsPage() {
     const { lang, showToast } = useApp()
     const [refreshKey, setRefreshKey] = useState(0)
-    // Gọi API Catalog thật để lấy toàn bộ danh sách sản phẩm cần duyệt/quản lý
-    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
-    // Hiển thị danh sách sản phẩm lấy từ Catalog Backend thật; không dùng mockData.ts
-    /**
-     * Chức năng: Ánh xạ ApiProduct từ Catalog backend sang bảng AdminProductsPage.
-     * Đầu vào: Dữ liệu prodEnvelope từ GET /products.
-     * Kết quả: Danh sách sản phẩm với giá và SKU lấy từ SKU đầu tiên, ảnh từ mảng images.
-     */
-    const products = (prodEnvelope?.data || []).map((p) => ({
-        id: p.id,
-        name: p.name,
-        nameVi: p.name,
-        price: p.skus?.[0]?.price || 0,
-        sku: p.skus?.[0]?.skuCode || '',
-        category: 'Thiết bị điện tử',
-        sellerName: 'Nexus Store',
-        images:
-            p.images && p.images.length > 0
-                ? p.images.map((img) => img.url)
-                : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'],
-        status: (p.status || 'pending').toLowerCase(),
-    }))
+    const [statusTab, setStatusTab] = useState<'DRAFT' | 'ACTIVE' | 'INACTIVE'>('DRAFT')
+    const [loading, setLoading] = useState(true)
+    const [products, setProducts] = useState<any[]>([])
+    const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
 
+    /**
+     * Chức năng: Nạp danh sách sản phẩm thật từ Catalog Service Supabase DB cho từng tab (DRAFT, ACTIVE, INACTIVE).
+     * Đầu vào: statusTab (trạng thái cần lọc), refreshKey (phiên làm mới sau thao tác duyệt/từ chối).
+     * Kết quả: Cập nhật state `products` và điều khiển `loading` để luôn hiển thị spinner Bootstrap cho cả 3 tab.
+     * Luồng xử lý:
+     *   1. Bật loading=true ngay khi người dùng chuyển sang bất kỳ tab nào trong 3 tab.
+     *   2. Gửi request GET /products?status={statusTab} tới Catalog Service qua API Gateway.
+     *   3. Chuẩn hóa bóc tách envelope; gán vào state `products` kèm mô tả và tồn kho để xem chi tiết.
+     *   4. Tắt loading khi có phản hồi; nếu không có dữ liệu thì hiển thị EmptyState tương ứng của tab đó.
+     * Quy tắc & lý do: Đảm bảo spinner luôn xuất hiện ngay lập tức ở cả 3 tab, loại bỏ hiện tượng nhầm lẫn là không có dữ liệu.
+     * Lỗi & giới hạn: Reset products về rỗng khi lỗi kết nối để không lưu dữ liệu sai lệch giữa các tab.
+     */
+    useEffect(() => {
+        let mounted = true
+        setLoading(true)
+
+        api<Envelope<ApiProduct[]> | ApiProduct[]>(`/products?status=${statusTab}`)
+            .then((res) => {
+                if (!mounted) return
+                const rawList = (res as any)?.data ?? res
+                if (Array.isArray(rawList)) {
+                    setProducts(
+                        rawList.map((p: any) => ({
+                            id: p.id,
+                            name: p.name,
+                            nameVi: p.name,
+                            price: p.skus?.[0]?.price || p.price || 0,
+                            originalPrice: p.skus?.[0]?.originalPrice || null,
+                            sku: p.skus?.[0]?.skuCode || p.sku || '',
+                            skuId: p.skus?.[0]?.id || null,
+                            category: p.categoryName || (lang === 'vi' ? 'Thiết bị điện tử' : 'Electronics'),
+                            sellerName: p.sellerName || 'Seller Nexus',
+                            sellerId: p.sellerId,
+                            description: p.description || '',
+                            descriptionVi: p.descriptionVi || p.description || '',
+                            // Tồn kho thực tế: lấy từ SKU (nếu có) hoặc tra cứu cache tồn kho theo SKU code / product ID; không hardcode 10
+                            stock: p.skus?.[0]?.stock ?? getProductStock(p.skus?.[0]?.skuCode, p.id) ?? null,
+                            images:
+                                p.images && p.images.length > 0
+                                    ? p.images.map((img: any) => (typeof img === 'string' ? img : img.url))
+                                    : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'],
+                            status: (p.status || 'draft').toLowerCase(),
+                        }))
+                    )
+                } else {
+                    setProducts([])
+                }
+            })
+            .catch(() => {
+                if (mounted) setProducts([])
+            })
+            .finally(() => {
+                if (mounted) setLoading(false)
+            })
+
+        return () => {
+            mounted = false
+        }
+    }, [statusTab, refreshKey, lang])
+
+    // Phê duyệt sản phẩm mở bán thật trên Catalog Service
     const handleApprove = async (id: string) => {
         try {
             await api(`/products/${id}/approve`, { method: 'POST' })
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Product approved.' : 'Đã duyệt sản phẩm thành công.',
+                message: lang === 'en' ? 'Product approved and published.' : 'Đã duyệt sản phẩm mở bán thành công.',
             })
+            clearLoadCache()
             setRefreshKey((k) => k + 1)
         } catch (err) {
             showToast({ type: 'error', message: errorMessage(err) })
         }
     }
 
+    // Chuyển sản phẩm sang trạng thái ngừng bán trên Catalog Service
     const handleReject = async (id: string) => {
         try {
             await api(`/products/${id}/status?target=INACTIVE`, { method: 'POST' })
@@ -2805,6 +2878,7 @@ export function AdminProductsPage() {
                         ? 'Product set to inactive.'
                         : 'Đã chuyển sản phẩm sang ngừng bán.',
             })
+            clearLoadCache()
             setRefreshKey((k) => k + 1)
         } catch (err) {
             showToast({ type: 'error', message: errorMessage(err) })
@@ -2815,77 +2889,328 @@ export function AdminProductsPage() {
         ({ draft: tr(lang, 'draft'), active: tr(lang, 'active'), inactive: tr(lang, 'inactive') })[
             s
         ] || s
+
     return (
         <AdminLayout title={tr(lang, 'productModeration')}>
+            <div className="mb-4">
+                <Tabs
+                    tabs={[
+                        {
+                            id: 'DRAFT',
+                            label: lang === 'en' ? 'Pending Approval' : 'Chờ duyệt',
+                        },
+                        {
+                            id: 'ACTIVE',
+                            label: lang === 'en' ? 'Active Storefront' : 'Đang bán',
+                        },
+                        {
+                            id: 'INACTIVE',
+                            label: lang === 'en' ? 'Inactive' : 'Ngừng bán',
+                        },
+                    ]}
+                    active={statusTab}
+                    onChange={(t) => {
+                        setLoading(true)
+                        setStatusTab(t as any)
+                    }}
+                />
+            </div>
             <div className="nexus-card">
-                <DataTable
-                    columns={[
-                        {
-                            key: 'img',
-                            label: '',
-                            width: '56px',
-                            render: (r: any) => (
-                                <img
-                                    src={r.images[0]}
-                                    alt=""
-                                    className="w-10 h-10 object-cover rounded-lg"
-                                />
-                            ),
-                        },
-                        {
-                            key: 'name',
-                            label: lang === 'en' ? 'Product' : 'Sản phẩm',
-                            render: (r: any) => (
-                                <div>
-                                    <p className="font-semibold text-sm">
-                                        {lang === 'vi' ? r.nameVi : r.name}
-                                    </p>
-                                    <p className="text-xs text-gray-400">{r.sku}</p>
-                                </div>
-                            ),
-                        },
-                        {
-                            key: 'price',
-                            label: tr(lang, 'price'),
-                            render: (r: any) => (
-                                <span className="font-bold">{formatCurrency(r.price, lang)}</span>
-                            ),
-                        },
-                        { key: 'sellerName', label: lang === 'en' ? 'Seller' : 'Người bán' },
-                        {
-                            key: 'status',
-                            label: tr(lang, 'status'),
-                            render: (r: any) => (
-                                <StatusBadge status={r.status} label={statusLabel(r.status)} />
-                            ),
-                        },
-                        {
-                            key: 'actions',
-                            label: '',
-                            render: (r: any) => (
-                                <div className="flex gap-1">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleApprove(r.id)}
-                                    >
-                                        {lang === 'en' ? 'Approve' : 'Duyệt'}
-                                    </Button>
+                {/* Hiển thị spinner Bootstrap chuẩn thương hiệu (#ee4d2d) khi tải dữ liệu cho cả 3 tab */}
+                {loading ? (
+                    <div className="py-16 text-center text-gray-500" role="status">
+                        <div
+                            className="spinner-border text-primary mb-3"
+                            style={{ width: '2.5rem', height: '2.5rem', color: '#ee4d2d' }}
+                            role="status"
+                        >
+                            <span className="visually-hidden">Loading...</span>
+                        </div>
+                        <p className="text-sm font-medium text-gray-500">
+                            {statusTab === 'DRAFT'
+                                ? lang === 'en'
+                                    ? 'Loading pending approval products...'
+                                    : 'Đang tải danh sách chờ duyệt...'
+                                : statusTab === 'ACTIVE'
+                                  ? lang === 'en'
+                                      ? 'Loading active products...'
+                                      : 'Đang tải danh sách đang bán...'
+                                  : lang === 'en'
+                                    ? 'Loading inactive products...'
+                                    : 'Đang tải danh sách ngừng bán...'}
+                        </p>
+                    </div>
+                ) : products.length === 0 ? (
+                    <div className="p-8">
+                        <EmptyState
+                            icon={<Package size={24} />}
+                            title={
+                                statusTab === 'DRAFT'
+                                    ? lang === 'en'
+                                        ? 'No products pending approval'
+                                        : 'Không có sản phẩm nào chờ duyệt'
+                                    : statusTab === 'ACTIVE'
+                                      ? lang === 'en'
+                                          ? 'No active products'
+                                          : 'Không có sản phẩm nào đang bán'
+                                      : lang === 'en'
+                                        ? 'No inactive products'
+                                        : 'Không có sản phẩm nào ngừng bán'
+                            }
+                        />
+                    </div>
+                ) : (
+                    <DataTable
+                        columns={[
+                            {
+                                key: 'img',
+                                label: '',
+                                width: '56px',
+                                render: (r: any) => (
+                                    <img
+                                        src={r.images[0]}
+                                        alt=""
+                                        className="w-10 h-10 object-cover rounded-lg"
+                                    />
+                                ),
+                            },
+                            {
+                                key: 'name',
+                                label: lang === 'en' ? 'Product' : 'Sản phẩm',
+                                render: (r: any) => (
+                                    <div>
+                                        <p className="font-semibold text-sm">
+                                            {lang === 'vi' ? r.nameVi : r.name}
+                                        </p>
+                                        <p className="text-xs text-gray-400">{r.sku}</p>
+                                    </div>
+                                ),
+                            },
+                            {
+                                key: 'price',
+                                label: tr(lang, 'price'),
+                                render: (r: any) => (
+                                    <span className="font-bold">{formatCurrency(r.price, lang)}</span>
+                                ),
+                            },
+                            { key: 'sellerName', label: lang === 'en' ? 'Seller' : 'Người bán' },
+                            {
+                                key: 'status',
+                                label: tr(lang, 'status'),
+                                render: (r: any) => (
+                                    <StatusBadge status={r.status} label={statusLabel(r.status)} />
+                                ),
+                            },
+                            {
+                                key: 'actions',
+                                label: '',
+                                render: (r: any) => (
+                                    <div className="flex items-center gap-1.5">
+                                        {/* Nút xem chi tiết sản phẩm dành cho Admin kiểm duyệt */}
+                                        <button
+                                            type="button"
+                                            title={lang === 'en' ? 'View details' : 'Xem chi tiết'}
+                                            aria-label={lang === 'en' ? 'View details' : 'Xem chi tiết'}
+                                            onClick={() => setSelectedProduct(r)}
+                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                                        >
+                                            <Eye size={16} />
+                                        </button>
+                                        {r.status === 'draft' && (
+                                            <>
+                                                <Button
+                                                    variant="primary"
+                                                    size="sm"
+                                                    onClick={() => handleApprove(r.id)}
+                                                >
+                                                    {lang === 'en' ? 'Approve' : 'Duyệt'}
+                                                </Button>
+                                                <Button
+                                                    variant="danger"
+                                                    size="sm"
+                                                    onClick={() => handleReject(r.id)}
+                                                >
+                                                    {lang === 'en' ? 'Reject' : 'Từ chối'}
+                                                </Button>
+                                            </>
+                                        )}
+                                        {r.status === 'active' && (
+                                            <Button
+                                                variant="danger"
+                                                size="sm"
+                                                onClick={() => handleReject(r.id)}
+                                            >
+                                                {lang === 'en' ? 'Deactivate' : 'Ngừng bán'}
+                                            </Button>
+                                        )}
+                                        {r.status === 'inactive' && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => handleApprove(r.id)}
+                                            >
+                                                {lang === 'en' ? 'Reactivate' : 'Kích hoạt lại'}
+                                            </Button>
+                                        )}
+                                    </div>
+                                ),
+                            },
+                        ]}
+                        data={products}
+                        rowKey={(r) => r.id}
+                    />
+                )}
+            </div>
+
+            {/* Modal hiển thị chi tiết sản phẩm phục vụ kiểm duyệt của Admin */}
+            <Modal
+                open={!!selectedProduct}
+                onClose={() => setSelectedProduct(null)}
+                title={lang === 'en' ? 'Product Details' : 'Chi tiết sản phẩm'}
+                size="md"
+                footer={
+                    <div className="flex justify-between items-center w-full">
+                        <Button variant="outline" onClick={() => setSelectedProduct(null)}>
+                            {tr(lang, 'close')}
+                        </Button>
+                        <div className="flex gap-2">
+                            {selectedProduct?.status === 'draft' && (
+                                <>
                                     <Button
                                         variant="danger"
-                                        size="sm"
-                                        onClick={() => handleReject(r.id)}
+                                        onClick={() => {
+                                            handleReject(selectedProduct.id)
+                                            setSelectedProduct(null)
+                                        }}
                                     >
                                         {lang === 'en' ? 'Reject' : 'Từ chối'}
                                     </Button>
+                                    <Button
+                                        variant="primary"
+                                        onClick={() => {
+                                            handleApprove(selectedProduct.id)
+                                            setSelectedProduct(null)
+                                        }}
+                                    >
+                                        {lang === 'en' ? 'Approve' : 'Duyệt'}
+                                    </Button>
+                                </>
+                            )}
+                            {selectedProduct?.status === 'active' && (
+                                <Button
+                                    variant="danger"
+                                    onClick={() => {
+                                        handleReject(selectedProduct.id)
+                                        setSelectedProduct(null)
+                                    }}
+                                >
+                                    {lang === 'en' ? 'Deactivate' : 'Ngừng bán'}
+                                </Button>
+                            )}
+                            {selectedProduct?.status === 'inactive' && (
+                                <Button
+                                    variant="primary"
+                                    onClick={() => {
+                                        handleApprove(selectedProduct.id)
+                                        setSelectedProduct(null)
+                                    }}
+                                >
+                                    {lang === 'en' ? 'Reactivate' : 'Kích hoạt lại'}
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                }
+            >
+                {selectedProduct && (
+                    <div className="space-y-4">
+                        <div className="flex gap-4 items-start p-3 bg-gray-50 rounded-xl">
+                            <img
+                                src={selectedProduct.images[0]}
+                                alt=""
+                                className="w-20 h-20 object-cover rounded-lg border flex-shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                                <h4 className="font-bold text-base text-gray-900 leading-snug">
+                                    {lang === 'vi' ? selectedProduct.nameVi : selectedProduct.name}
+                                </h4>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    SKU: <span className="font-mono text-gray-700">{selectedProduct.sku || 'N/A'}</span>
+                                </p>
+                                <div className="mt-2">
+                                    <StatusBadge status={selectedProduct.status} label={statusLabel(selectedProduct.status)} />
                                 </div>
-                            ),
-                        },
-                    ]}
-                    data={products}
-                    rowKey={(r) => r.id}
-                />
-            </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Selling Price' : 'Giá bán trên sàn'}</span>
+                                <span className="font-bold text-primary text-base">{formatCurrency(selectedProduct.price, lang)}</span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Original / Cost Price' : 'Giá gốc / Giá nhập'}</span>
+                                <span className="font-semibold text-gray-800 text-base">
+                                    {selectedProduct.originalPrice ? formatCurrency(selectedProduct.originalPrice, lang) : formatCurrency(selectedProduct.price, lang)}
+                                </span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Inventory (SKU)' : 'Tồn kho (SKU)'}</span>
+                                <span className="font-semibold text-gray-800">
+                                    {selectedProduct.stock !== null && selectedProduct.stock !== undefined
+                                        ? selectedProduct.stock
+                                        : 0}
+                                </span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Category' : 'Danh mục'}</span>
+                                <span className="font-semibold text-gray-800 truncate block">{selectedProduct.category}</span>
+                            </div>
+                        </div>
+
+                        {/* Phân tích chênh lệch giá động do doanh nghiệp thiết lập */}
+                        {selectedProduct.originalPrice && selectedProduct.originalPrice !== selectedProduct.price && (
+                            <div className="p-2.5 bg-blue-50/60 border border-blue-100 rounded-lg flex items-center justify-between text-xs text-blue-900">
+                                <span>{lang === 'en' ? 'Enterprise Dynamic Pricing Policy:' : 'Chính sách giá động doanh nghiệp:'}</span>
+                                {selectedProduct.price >= selectedProduct.originalPrice ? (
+                                    <span className="font-semibold text-emerald-700">
+                                        {lang === 'en' ? 'Gross Markup' : 'Biên lợi nhuận gộp'}: +{formatCurrency(selectedProduct.price - selectedProduct.originalPrice, lang)} (+{(((selectedProduct.price - selectedProduct.originalPrice) / selectedProduct.originalPrice) * 100).toFixed(1)}%)
+                                    </span>
+                                ) : (
+                                    <span className="font-semibold text-amber-700">
+                                        {lang === 'en' ? 'Promotional Discount' : 'Chiết khấu khuyến mãi'}: -{formatCurrency(selectedProduct.originalPrice - selectedProduct.price, lang)} (-{(((selectedProduct.originalPrice - selectedProduct.price) / selectedProduct.originalPrice) * 100).toFixed(1)}%)
+                                    </span>
+                                )}
+                            </div>
+                        )}
+
+                        {selectedProduct.description && (
+                            <div className="p-3 bg-gray-50 rounded-lg text-sm">
+                                <span className="text-gray-500 text-xs block mb-1">{tr(lang, 'productDescription')}</span>
+                                <p className="text-gray-700 text-xs leading-relaxed whitespace-pre-line">
+                                    {lang === 'vi' ? selectedProduct.descriptionVi || selectedProduct.description : selectedProduct.description}
+                                </p>
+                            </div>
+                        )}
+
+                        {selectedProduct.images.length > 1 && (
+                            <div>
+                                <span className="text-gray-500 text-xs block mb-2">{lang === 'en' ? 'All Images' : 'Tất cả hình ảnh'}</span>
+                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                    {selectedProduct.images.map((img: string, idx: number) => (
+                                        <img
+                                            key={idx}
+                                            src={img}
+                                            alt=""
+                                            className="w-14 h-14 object-cover rounded-lg border flex-shrink-0"
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </Modal>
         </AdminLayout>
     )
 }
@@ -2895,7 +3220,7 @@ export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
     const [adjustOpen, setAdjustOpen] = useState(false)
     // Tải sản phẩm kho từ Catalog Service; không dùng mockData.ts
-    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
+    const { data: prodEnvelope, loading } = useLoad<Envelope<ApiProduct[]>>('/products')
     /**
      * Chức năng: Ánh xạ sản phẩm từ Catalog backend cho trang quản lý kho AdminWarehousesPage.
      * Đầu vào: prodEnvelope từ API GET /products.
@@ -2961,6 +3286,7 @@ export function AdminWarehousesPage() {
                             ),
                         },
                     ]}
+                    loading={loading}
                     data={warehouseProducts}
                     rowKey={(r) => r.id}
                 />
