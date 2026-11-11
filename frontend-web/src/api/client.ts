@@ -147,6 +147,8 @@ export function readSession(): Session | null {
 export function saveSession(session: Session | null) {
     sessionVersion++
     const profile = session ? { user: session.user } : null
+    // Cập nhật cờ refresh: có profile -> cho phép refresh khi access token hết hạn; không có profile -> tắt thử refresh tự động.
+    canAttemptRefresh = Boolean(profile)
     try {
         localStorage.removeItem(tokenKey)
         sessionStorage.removeItem(tokenKey)
@@ -181,6 +183,20 @@ export function errorMessage(error: unknown): string {
 let refreshing: Promise<void> | null = null
 
 /**
+ * Cờ ghi nhớ khả năng thử refresh token HttpOnly từ browser.
+ * - Khởi tạo true để lần tải trang đầu tiên có thể gọi /users/me và thử refresh nếu access token hết hạn.
+ * - Chuyển sang false khi refresh thất bại (401 hoặc 400 AUTH_REFRESH_TOKEN_EXPIRED) hoặc khi đăng xuất.
+ * - Chuyển sang true khi người dùng đăng nhập thành công hoặc restoreSession() chủ động kiểm tra phiên.
+ * Quy tắc: Ngăn chặn vòng lặp gọi /auth/refresh liên tục mỗi khi request nền (như polling đấu giá 5s) bị 401 lúc khách chưa có phiên.
+ */
+let canAttemptRefresh = true
+
+/** Cho phép tầng store/component chủ động bật lại cờ thử refresh khi khởi động lại luồng kiểm tra phiên. */
+export function setCanAttemptRefresh(value: boolean) {
+    canAttemptRefresh = value
+}
+
+/**
  * Trả nguyên payload backend (User DTO hoặc Catalog envelope tùy endpoint).
  * HTTP 204 không parse JSON; lỗi HTTP/envelope bị throw để màn hình hiển thị thất bại.
  * RequestInit được chuyển tiếp, bao gồm AbortSignal để component có thể hủy request khi unmount.
@@ -192,37 +208,48 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     headers.set('X-Nexus-Request', '1')
     const response = await fetch(`${baseUrl}${path}`, { ...init, headers, credentials: 'include' })
     if (response.status === 401 && retry && !path.startsWith('/auth/')) {
-        // Cookie refresh có thể còn dù tab/origin mới không có profile; dùng chung Promise và chỉ gửi lại tối đa một lần.
-        const refreshVersion = sessionVersion
-        refreshing ??= api<AuthPayload>(
-            '/auth/refresh',
-            {
-                method: 'POST',
-                body: JSON.stringify({}),
-            },
-            false,
-        )
-            .then((payload) => {
-                const auth = (payload as any)?.data || payload
-                // Login/logout mới có thể hoàn tất trong lúc refresh cũ còn chạy; không ghi đè profile mới.
-                if (refreshVersion === sessionVersion) saveSession({ user: mapUser(auth.user) })
-            })
-            .catch((error) => {
-                // Chỉ hết phiên đã được server xác nhận mới xóa profile; lỗi mạng/5xx cho phép thử lại.
-                if (
-                    error instanceof ApiClientError &&
-                    refreshVersion === sessionVersion &&
-                    (error.status === 401 || error.code === 'AUTH_REFRESH_TOKEN_EXPIRED')
-                ) {
-                    saveSession(null)
-                }
-                throw error
-            })
-            .finally(() => {
-                refreshing = null
-            })
-        await refreshing
-        return api<T>(path, init, false)
+        // Chặn vòng lặp refresh vô hạn: Nếu khách chưa có phiên (readSession() rỗng) và cờ canAttemptRefresh đã tắt,
+        // không tiếp tục gửi POST /auth/refresh vô ích lên backend mà xử lý lỗi 401 ngay lập tức.
+        if (!canAttemptRefresh && !readSession()) {
+            // Không gửi request refresh khi đã xác định khách không có phiên hợp lệ
+        } else {
+            // Cookie refresh có thể còn dù tab/origin mới không có profile; dùng chung Promise và chỉ gửi lại tối đa một lần.
+            const refreshVersion = sessionVersion
+            refreshing ??= api<AuthPayload>(
+                '/auth/refresh',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({}),
+                },
+                false,
+            )
+                .then((payload) => {
+                    const auth = (payload as any)?.data || payload
+                    canAttemptRefresh = true
+                    // Login/logout mới có thể hoàn tất trong lúc refresh cũ còn chạy; không ghi đè profile mới.
+                    if (refreshVersion === sessionVersion) saveSession({ user: mapUser(auth.user) })
+                })
+                .catch((error) => {
+                    // Khi server từ chối refresh (401 hoặc 400 AUTH_REFRESH_TOKEN_EXPIRED), tắt cờ refresh để tránh lặp lỗi
+                    canAttemptRefresh = false
+                    // Chỉ hết phiên đã được server xác nhận mới xóa profile; lỗi mạng/5xx cho phép thử lại.
+                    if (
+                        error instanceof ApiClientError &&
+                        refreshVersion === sessionVersion &&
+                        (error.status === 401 ||
+                            error.code === 'AUTH_REFRESH_TOKEN_EXPIRED' ||
+                            error.status === 400)
+                    ) {
+                        saveSession(null)
+                    }
+                    throw error
+                })
+                .finally(() => {
+                    refreshing = null
+                })
+            await refreshing
+            return api<T>(path, init, false)
+        }
     }
     if (response.status === 204) return undefined as T
     const payload = await response.json().catch(() => ({}))
@@ -242,11 +269,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             response.status === 401
                 ? 'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)'
                 : `Request failed (${response.status})`
-        const msg =
-            errorObj.message ||
-            payload.message ||
-            payload.detail ||
-            defaultMsg
+        const msg = errorObj.message || payload.message || payload.detail || defaultMsg
         const code =
             errorObj.code ||
             (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
@@ -417,4 +440,3 @@ export function setProductStock(key: string, stock: number) {
         localStorage.setItem('nexus.product-stock-cache.v1', JSON.stringify(map))
     } catch {}
 }
-

@@ -1,5 +1,8 @@
 package com.nexus.catalog.dto.mapper;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.catalog.dto.request.ImageRequest;
 import com.nexus.catalog.dto.request.SkuRequest;
 import com.nexus.catalog.dto.response.ImageResponse;
@@ -16,6 +19,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.MappingConstants;
 import org.mapstruct.MappingTarget;
+import org.mapstruct.Named;
 import org.mapstruct.factory.Mappers;
 
 /**
@@ -28,6 +32,8 @@ public interface ProductMapper {
     ProductMapper INSTANCE = Mappers.getMapper(ProductMapper.class);
 
     @Mapping(target = "categoryId", source = "category.id")
+    @Mapping(target = "minPrice", ignore = true)
+    @Mapping(target = "maxPrice", ignore = true)
     ProductResponse toResponse(Product product);
 
     @Mapping(target = "id", ignore = true)
@@ -53,6 +59,8 @@ public interface ProductMapper {
 
     List<ImageResponse> toImageResponseList(List<ProductImage> images);
 
+    @Mapping(target = "price", ignore = true)
+    @Mapping(target = "attributes", source = "attributes", qualifiedByName = "formatAttributes")
     SkuResponse toSku(Sku sku);
 
     ImageResponse toImage(ProductImage image);
@@ -60,6 +68,7 @@ public interface ProductMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "product", ignore = true)
     @Mapping(target = "status", source = "status", defaultValue = "ACTIVE")
+    @Mapping(target = "attributes", source = "attributes", qualifiedByName = "normalizeAttributes")
     Sku toSkuEntity(SkuRequest request);
 
     @Mapping(target = "id", ignore = true)
@@ -69,6 +78,7 @@ public interface ProductMapper {
 
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "product", ignore = true)
+    @Mapping(target = "attributes", source = "attributes", qualifiedByName = "normalizeAttributes")
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateSkuFromRequest(SkuRequest request, @MappingTarget Sku sku);
 
@@ -76,4 +86,50 @@ public interface ProductMapper {
     @Mapping(target = "product", ignore = true)
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateImageFromRequest(ImageRequest request, @MappingTarget ProductImage image);
+
+    /** ObjectMapper nội bộ chuẩn hóa chuỗi attributes sang JSONB hợp lệ cho PostgreSQL. */
+    final class JsonHolder {
+        private static final ObjectMapper MAPPER = new ObjectMapper();
+
+        private JsonHolder() {}
+    }
+
+    /**
+     * Bảo đảm skus.attributes luôn là JSON hợp lệ trước khi ghi cột PostgreSQL jsonb:
+     * giữ nguyên JSON object/array, chuyển chuỗi rỗng thành null, và bọc chuỗi thuần thành JSON string.
+     */
+    @Named("normalizeAttributes")
+    static String normalizeAttributes(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        try {
+            JsonHolder.MAPPER.readTree(trimmed);
+            return trimmed;
+        } catch (JsonProcessingException ignored) {
+            try {
+                return JsonHolder.MAPPER.writeValueAsString(trimmed);
+            } catch (JsonProcessingException ex) {
+                throw new IllegalArgumentException("Không thể chuẩn hóa thuộc tính SKU sang JSON", ex);
+            }
+        }
+    }
+
+    /**
+     * Giải bọc chuỗi JSON scalar (ví dụ "\"Black / Size M\"") thành chuỗi hiển thị gọn cho UI,
+     * nhưng vẫn giữ nguyên nguyên văn nếu attributes là JSON object/array có cấu trúc.
+     */
+    @Named("formatAttributes")
+    static String formatAttributes(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw;
+        }
+        try {
+            JsonNode node = JsonHolder.MAPPER.readTree(raw);
+            return node.isTextual() ? node.asText() : raw;
+        } catch (JsonProcessingException ignored) {
+            return raw;
+        }
+    }
 }

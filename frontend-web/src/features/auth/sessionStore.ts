@@ -4,6 +4,7 @@ import {
     mapUser,
     readSession,
     saveSession,
+    setCanAttemptRefresh,
     subscribeSession,
     type ApiResponse,
     type ApiUser,
@@ -30,8 +31,15 @@ export const useSessionStore = create<{
         }
         set({ user })
     },
+    /**
+     * Khôi phục thông tin phiên người dùng khi component mount hoặc trở về từ cổng thanh toán VNPAY.
+     * Luồng: Cho phép thử refresh một lần từ cookie HttpOnly (setCanAttemptRefresh(true)) → gọi GET /users/me
+     * → nếu thành công lưu hồ sơ vào session store; nếu thất bại (401/400) client tự động dừng thử refresh tiếp.
+     */
     restoreSession: () => {
         if (restoring) return restoring
+        // Kích hoạt cờ cho phép probe cookie HttpOnly một lần duy nhất khi khởi động ứng dụng
+        setCanAttemptRefresh(true)
         const revision = sessionRevision
         // Tải một lần cho các component cùng mount; không ghi đè login/logout xảy ra khi request còn đang chạy.
         restoring = api<ApiUser | ApiResponse<ApiUser>>('/users/me')

@@ -72,6 +72,11 @@ public class GatewaySecurityConfig {
                     "/api/v1/auth/reset-password").permitAll()
                 .pathMatchers(HttpMethod.GET, "/api/v1/products/**",
                     "/api/v1/categories/**").permitAll()
+                // Mở API GET danh sách và chi tiết đấu giá công khai cho khách xem phiên không cần token.
+                // Các thao tác nhạy cảm (tạo phiên, sửa, hủy, đặt giá bid) sử dụng POST/PUT vẫn yêu cầu JWT hợp lệ
+                // thông qua rule anyExchange().authenticated() của Gateway và @PreAuthorize tại Auction Service.
+                .pathMatchers(HttpMethod.GET, "/api/v1/auctions/**")
+                    .permitAll()
                 .pathMatchers(HttpMethod.GET, "/api/v1/reputations/**")
                     .permitAll()
                 .anyExchange().authenticated())
