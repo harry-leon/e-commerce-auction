@@ -45,6 +45,7 @@ import {
 import { auctionsApi } from '../../api/auctions'
 import {
     api,
+    ApiClientError,
     mapUser,
     errorMessage,
     type ApiUser,
@@ -52,8 +53,23 @@ import {
     type ApiProduct,
     type Envelope,
     getProductStock,
-    setProductStock,
 } from '../../api/client'
+import {
+    adjustStock,
+    createInventoryIdempotencyKey,
+    createWarehouse,
+    getInventoryLedger,
+    inboundStock,
+    listInventory,
+    listWarehouses,
+    reconcileInventory,
+    updateWarehouse,
+    type InventoryLedgerResponse,
+    type InventoryReconciliationResponse,
+    type InventoryStockResponse,
+    type WarehouseResponse,
+    type WarehouseType,
+} from '../../api/inventory'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
@@ -1506,7 +1522,9 @@ export function AdminAuctionsPage() {
 
     // Dữ liệu danh sách phiên đấu giá
     const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
-    const [sellerAccounts, setSellerAccounts] = useState<Record<string, Pick<ApiUser, 'fullName' | 'email'>>>({})
+    const [sellerAccounts, setSellerAccounts] = useState<
+        Record<string, Pick<ApiUser, 'fullName' | 'email'>>
+    >({})
 
     // Tải danh sách toàn bộ phiên đấu giá
     const loadAuctions = async () => {
@@ -1537,12 +1555,14 @@ export function AdminAuctionsPage() {
     }, [createdAuctions, auctionReviews])
 
     // Tra cứu theo từng sellerId duy nhất trong hàng chờ; không gọi User API cho các phiên khác hoặc mock users đã có sẵn.
-    const pendingSellerIds = [...new Set(
-        liveAuctions
-            .filter((auction) => auction.status === 'pending_approval')
-            .map((auction) => auction.sellerId)
-            .filter((id) => id && !USERS.some((user) => user.id === id)),
-    )].sort()
+    const pendingSellerIds = [
+        ...new Set(
+            liveAuctions
+                .filter((auction) => auction.status === 'pending_approval')
+                .map((auction) => auction.sellerId)
+                .filter((id) => id && !USERS.some((user) => user.id === id)),
+        ),
+    ].sort()
     const pendingSellerIdsKey = pendingSellerIds.join('|')
 
     useEffect(() => {
@@ -1550,15 +1570,19 @@ export function AdminAuctionsPage() {
         let active = true
         const sellerIds = pendingSellerIdsKey.split('|')
 
-        Promise.all(sellerIds.map(async (sellerId) => {
-            try {
-                const response = await api<ApiUser | { data: ApiUser }>(`/users/${encodeURIComponent(sellerId)}`)
-                const account = 'data' in response ? response.data : response
-                return [sellerId, { fullName: account.fullName, email: account.email }] as const
-            } catch {
-                return null
-            }
-        })).then((accounts) => {
+        Promise.all(
+            sellerIds.map(async (sellerId) => {
+                try {
+                    const response = await api<ApiUser | { data: ApiUser }>(
+                        `/users/${encodeURIComponent(sellerId)}`,
+                    )
+                    const account = 'data' in response ? response.data : response
+                    return [sellerId, { fullName: account.fullName, email: account.email }] as const
+                } catch {
+                    return null
+                }
+            }),
+        ).then((accounts) => {
             if (!active) return
             setSellerAccounts((current) => ({
                 ...current,
@@ -1595,7 +1619,10 @@ export function AdminAuctionsPage() {
         try {
             await auctionsApi.reviewAuction(id, 'scheduled')
         } catch (err: any) {
-            console.warn('Backend reviewAuction API failed or not implemented; applying local fallback:', err)
+            console.warn(
+                'Backend reviewAuction API failed or not implemented; applying local fallback:',
+                err,
+            )
         }
         reviewAuction(id, 'scheduled')
         showToast({
@@ -1622,15 +1649,15 @@ export function AdminAuctionsPage() {
         try {
             await auctionsApi.reviewAuction(rejectAuctionId, 'rejected', rejectReason.trim())
         } catch (err: any) {
-            console.warn('Backend reject auction API failed or not implemented; applying local fallback:', err)
+            console.warn(
+                'Backend reject auction API failed or not implemented; applying local fallback:',
+                err,
+            )
         }
         reviewAuction(rejectAuctionId, 'rejected', rejectReason.trim())
         showToast({
             type: 'error',
-            message:
-                lang === 'en'
-                    ? 'Auction rejected.'
-                    : 'Đã từ chối phiên đấu giá.',
+            message: lang === 'en' ? 'Auction rejected.' : 'Đã từ chối phiên đấu giá.',
         })
         setRejectAuctionId(null)
         setRejectReason('')
@@ -1653,11 +1680,16 @@ export function AdminAuctionsPage() {
         try {
             await auctionsApi.cancelAuction(cancelAuctionId, cancelReason.trim(), 'admin')
         } catch (err: any) {
-            console.warn('Backend cancelAuction API failed or not implemented; applying local fallback:', err)
+            console.warn(
+                'Backend cancelAuction API failed or not implemented; applying local fallback:',
+                err,
+            )
         }
         // Cập nhật trạng thái trực tiếp trên UI client để admin có thể kiểm thử luồng
         setLiveAuctions((prev) =>
-            prev.map((a) => (a.id === cancelAuctionId ? { ...a, status: 'cancelled' as const } : a)),
+            prev.map((a) =>
+                a.id === cancelAuctionId ? { ...a, status: 'cancelled' as const } : a,
+            ),
         )
         showToast({
             type: 'success',
@@ -1677,20 +1709,29 @@ export function AdminAuctionsPage() {
     const handlePauseAuction = async () => {
         if (!pauseAuctionId) return
         if (!pauseReason.trim()) {
-            showToast({ type: 'error', message: lang === 'en' ? 'Reason is required' : 'Vui lòng nhập lý do tạm dừng' })
+            showToast({
+                type: 'error',
+                message: lang === 'en' ? 'Reason is required' : 'Vui lòng nhập lý do tạm dừng',
+            })
             return
         }
         setPausing(true)
         try {
             await auctionsApi.setAuctionPaused(pauseAuctionId, true, pauseReason.trim())
         } catch (err: any) {
-            console.warn('Backend pause API failed or not implemented; applying local fallback:', err)
+            console.warn(
+                'Backend pause API failed or not implemented; applying local fallback:',
+                err,
+            )
         }
         // Cập nhật trạng thái trực tiếp trên UI client
         setLiveAuctions((prev) =>
             prev.map((a) => (a.id === pauseAuctionId ? { ...a, status: 'paused' as const } : a)),
         )
-        showToast({ type: 'success', message: lang === 'en' ? 'Auction paused.' : 'Đã tạm dừng phiên đấu giá.' })
+        showToast({
+            type: 'success',
+            message: lang === 'en' ? 'Auction paused.' : 'Đã tạm dừng phiên đấu giá.',
+        })
         setPauseAuctionId(null)
         setPauseReason('')
         setPausing(false)
@@ -1698,15 +1739,25 @@ export function AdminAuctionsPage() {
 
     const handleResumeAuction = async (id: string) => {
         try {
-            await auctionsApi.setAuctionPaused(id, false, lang === 'en' ? 'Admin resumed auction' : 'Quản trị viên tiếp tục phiên')
+            await auctionsApi.setAuctionPaused(
+                id,
+                false,
+                lang === 'en' ? 'Admin resumed auction' : 'Quản trị viên tiếp tục phiên',
+            )
         } catch (err: any) {
-            console.warn('Backend resume API failed or not implemented; applying local fallback:', err)
+            console.warn(
+                'Backend resume API failed or not implemented; applying local fallback:',
+                err,
+            )
         }
         // Cập nhật trạng thái trực tiếp trên UI client
         setLiveAuctions((prev) =>
             prev.map((a) => (a.id === id ? { ...a, status: 'active' as const } : a)),
         )
-        showToast({ type: 'success', message: lang === 'en' ? 'Auction resumed.' : 'Đã tiếp tục phiên đấu giá.' })
+        showToast({
+            type: 'success',
+            message: lang === 'en' ? 'Auction resumed.' : 'Đã tiếp tục phiên đấu giá.',
+        })
     }
 
     // Lọc danh sách theo tab và từ khóa tìm kiếm
@@ -1728,13 +1779,21 @@ export function AdminAuctionsPage() {
             const seller = (a.sellerName || '').toLowerCase()
             const id = (a.id || '').toLowerCase()
             const sku = (a.product?.sku || '').toLowerCase()
-            return name.includes(q) || nameVi.includes(q) || seller.includes(q) || id.includes(q) || sku.includes(q)
+            return (
+                name.includes(q) ||
+                nameVi.includes(q) ||
+                seller.includes(q) ||
+                id.includes(q) ||
+                sku.includes(q)
+            )
         })
 
     const pendingCount = allAuctions.filter((a) => a.status === 'pending_approval').length
     const activeCount = allAuctions.filter((a) => a.status === 'active').length
     const scheduledCount = allAuctions.filter((a) => a.status === 'scheduled').length
-    const cancelledCount = allAuctions.filter((a) => ['cancelled', 'rejected'].includes(a.status)).length
+    const cancelledCount = allAuctions.filter((a) =>
+        ['cancelled', 'rejected'].includes(a.status),
+    ).length
 
     return (
         <AdminLayout title={tr(lang, 'auctionManagement')}>
@@ -1755,19 +1814,27 @@ export function AdminAuctionsPage() {
             {/* Thống kê chỉ số nhanh */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="nexus-card p-4">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Total Auctions' : 'Tổng số phiên'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Total Auctions' : 'Tổng số phiên'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-gray-800">{allAuctions.length}</p>
                 </div>
                 <div className="nexus-card p-4 border-l-4 border-l-green-500">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Active Sessions' : 'Đang diễn ra'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Active Sessions' : 'Đang diễn ra'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-green-600">{activeCount}</p>
                 </div>
                 <div className="nexus-card p-4 border-l-4 border-l-amber-500">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Pending Approval' : 'Chờ duyệt'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Pending Approval' : 'Chờ duyệt'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-amber-600">{pendingCount}</p>
                 </div>
                 <div className="nexus-card p-4 border-l-4 border-l-red-500">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Cancelled / Violations' : 'Đã hủy / Vi phạm'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Cancelled / Violations' : 'Đã hủy / Vi phạm'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-red-600">{cancelledCount}</p>
                 </div>
             </div>
@@ -1792,16 +1859,28 @@ export function AdminAuctionsPage() {
                             label: tr(lang, 'statusActive'),
                             count: activeCount,
                         },
-                        { id: 'paused', label: lang === 'en' ? 'Paused' : 'Tạm dừng', count: allAuctions.filter((a) => a.status === 'paused').length },
+                        {
+                            id: 'paused',
+                            label: lang === 'en' ? 'Paused' : 'Tạm dừng',
+                            count: allAuctions.filter((a) => a.status === 'paused').length,
+                        },
                         { id: 'ended', label: tr(lang, 'statusEnded') },
-                        { id: 'cancelled', label: tr(lang, 'statusCancelled'), count: cancelledCount },
+                        {
+                            id: 'cancelled',
+                            label: tr(lang, 'statusCancelled'),
+                            count: cancelledCount,
+                        },
                     ]}
                     active={tab}
                     onChange={setTab}
                 />
                 <div className="w-full md:w-72">
                     <Input
-                        placeholder={lang === 'en' ? 'Search by product, seller, SKU...' : 'Tìm theo sản phẩm, seller, SKU...'}
+                        placeholder={
+                            lang === 'en'
+                                ? 'Search by product, seller, SKU...'
+                                : 'Tìm theo sản phẩm, seller, SKU...'
+                        }
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         icon={<Search size={16} />}
@@ -1816,7 +1895,9 @@ export function AdminAuctionsPage() {
                         {
                             key: 'id',
                             label: 'ID',
-                            render: (r: any) => <span className="font-mono text-xs text-gray-600">{r.id}</span>,
+                            render: (r: any) => (
+                                <span className="font-mono text-xs text-gray-600">{r.id}</span>
+                            ),
                         },
                         {
                             key: 'product',
@@ -1824,15 +1905,22 @@ export function AdminAuctionsPage() {
                             render: (r: any) => (
                                 <div className="flex items-center gap-3">
                                     <img
-                                        src={r.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        src={
+                                            r.product?.images?.[0] ||
+                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                        }
                                         alt=""
                                         className="w-10 h-10 object-cover rounded-lg"
                                     />
                                     <div>
                                         <p className="font-semibold text-sm line-clamp-1">
-                                            {lang === 'vi' ? r.product?.nameVi || r.product?.name : r.product?.name}
+                                            {lang === 'vi'
+                                                ? r.product?.nameVi || r.product?.name
+                                                : r.product?.name}
                                         </p>
-                                        <p className="text-xs text-gray-400">SKU: {r.product?.sku || 'N/A'}</p>
+                                        <p className="text-xs text-gray-400">
+                                            SKU: {r.product?.sku || 'N/A'}
+                                        </p>
                                     </div>
                                 </div>
                             ),
@@ -1848,11 +1936,19 @@ export function AdminAuctionsPage() {
                                 const email = r.sellerEmail || account?.email
                                 return (
                                     <div>
-                                        <p className="text-sm font-medium">{accountName || r.sellerName}</p>
-                                        {accountName && r.sellerName && accountName !== r.sellerName && (
-                                            <p className="text-xs text-gray-500">{tr(lang, 'sellerStore')}: {r.sellerName}</p>
-                                        )}
-                                        <p className="text-xs text-gray-400 font-mono">{email || r.sellerId}</p>
+                                        <p className="text-sm font-medium">
+                                            {accountName || r.sellerName}
+                                        </p>
+                                        {accountName &&
+                                            r.sellerName &&
+                                            accountName !== r.sellerName && (
+                                                <p className="text-xs text-gray-500">
+                                                    {tr(lang, 'sellerStore')}: {r.sellerName}
+                                                </p>
+                                            )}
+                                        <p className="text-xs text-gray-400 font-mono">
+                                            {email || r.sellerId}
+                                        </p>
                                     </div>
                                 )
                             },
@@ -1885,8 +1981,12 @@ export function AdminAuctionsPage() {
                             label: lang === 'en' ? 'Duration' : 'Khung giờ',
                             render: (r: any) => (
                                 <div className="text-xs text-gray-500">
-                                    <p className="whitespace-nowrap">{formatDateTime(r.startTime, lang)}</p>
-                                    <p className="whitespace-nowrap text-gray-400">→ {formatDateTime(r.endTime, lang)}</p>
+                                    <p className="whitespace-nowrap">
+                                        {formatDateTime(r.startTime, lang)}
+                                    </p>
+                                    <p className="whitespace-nowrap text-gray-400">
+                                        → {formatDateTime(r.endTime, lang)}
+                                    </p>
                                 </div>
                             ),
                         },
@@ -1943,28 +2043,43 @@ export function AdminAuctionsPage() {
                                             </div>
                                         ) : ['scheduled', 'active', 'paused'].includes(status) ? (
                                             <div className="flex gap-1.5 items-center">
-                                            {status === 'paused' ? (
-                                                <Button variant="primary" size="sm" onClick={(e) => { e.stopPropagation(); handleResumeAuction(r.id) }}>
-                                                    {tr(lang, 'resumeAuction')}
+                                                {status === 'paused' ? (
+                                                    <Button
+                                                        variant="primary"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleResumeAuction(r.id)
+                                                        }}
+                                                    >
+                                                        {tr(lang, 'resumeAuction')}
+                                                    </Button>
+                                                ) : status === 'active' ? (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setPauseAuctionId(r.id)
+                                                            setPauseReason('')
+                                                        }}
+                                                    >
+                                                        {tr(lang, 'pauseAuction')}
+                                                    </Button>
+                                                ) : null}
+                                                <Button
+                                                    variant="danger"
+                                                    size="sm"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        setCancelAuctionId(r.id)
+                                                        setCancelReason('')
+                                                        setCancelReasonError('')
+                                                        setCancelOpen(true)
+                                                    }}
+                                                >
+                                                    {lang === 'en' ? 'Force Cancel' : 'Hủy vi phạm'}
                                                 </Button>
-                                            ) : status === 'active' ? (
-                                                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setPauseAuctionId(r.id); setPauseReason('') }}>
-                                                    {tr(lang, 'pauseAuction')}
-                                                </Button>
-                                            ) : null}
-                                            <Button
-                                                variant="danger"
-                                                size="sm"
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setCancelAuctionId(r.id)
-                                                    setCancelReason('')
-                                                    setCancelReasonError('')
-                                                    setCancelOpen(true)
-                                                }}
-                                            >
-                                                {lang === 'en' ? 'Force Cancel' : 'Hủy vi phạm'}
-                                            </Button>
                                             </div>
                                         ) : null}
                                     </div>
@@ -2001,11 +2116,7 @@ export function AdminAuctionsPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button
-                            variant="danger"
-                            loading={cancelling}
-                            onClick={handleForceCancel}
-                        >
+                        <Button variant="danger" loading={cancelling} onClick={handleForceCancel}>
                             {lang === 'en' ? 'Confirm Force Cancel' : 'Xác nhận hủy phiên'}
                         </Button>
                     </>
@@ -2041,17 +2152,36 @@ export function AdminAuctionsPage() {
             {/* Modal Admin Từ chối Phiên chờ duyệt */}
             <Modal
                 open={!!pauseAuctionId}
-                onClose={() => { setPauseAuctionId(null); setPauseReason('') }}
+                onClose={() => {
+                    setPauseAuctionId(null)
+                    setPauseReason('')
+                }}
                 title={tr(lang, 'pauseAuction')}
                 size="sm"
                 footer={
                     <>
-                        <Button variant="outline" onClick={() => { setPauseAuctionId(null); setPauseReason('') }}>{tr(lang, 'cancel')}</Button>
-                        <Button variant="primary" loading={pausing} onClick={handlePauseAuction}>{tr(lang, 'pauseAuction')}</Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setPauseAuctionId(null)
+                                setPauseReason('')
+                            }}
+                        >
+                            {tr(lang, 'cancel')}
+                        </Button>
+                        <Button variant="primary" loading={pausing} onClick={handlePauseAuction}>
+                            {tr(lang, 'pauseAuction')}
+                        </Button>
                     </>
                 }
             >
-                <Textarea label={`${tr(lang, 'pauseReason')} *`} placeholder={tr(lang, 'pauseReason')} value={pauseReason} onChange={(event) => setPauseReason(event.target.value)} rows={3} />
+                <Textarea
+                    label={`${tr(lang, 'pauseReason')} *`}
+                    placeholder={tr(lang, 'pauseReason')}
+                    value={pauseReason}
+                    onChange={(event) => setPauseReason(event.target.value)}
+                    rows={3}
+                />
             </Modal>
 
             <Modal
@@ -2075,11 +2205,7 @@ export function AdminAuctionsPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button
-                            variant="danger"
-                            loading={rejecting}
-                            onClick={handleReject}
-                        >
+                        <Button variant="danger" loading={rejecting} onClick={handleReject}>
                             {lang === 'en' ? 'Reject Auction' : 'Từ chối đấu giá'}
                         </Button>
                     </>
@@ -2116,63 +2242,109 @@ export function AdminAuctionsPage() {
             <Modal
                 open={!!selectedAuction}
                 onClose={() => setSelectedAuction(null)}
-                title={lang === 'en' ? 'Auction Details & Audit' : 'Chi tiết phiên đấu giá & Kiểm toán'}
+                title={
+                    lang === 'en' ? 'Auction Details & Audit' : 'Chi tiết phiên đấu giá & Kiểm toán'
+                }
                 size="md"
             >
                 {selectedAuction && (
                     <div className="space-y-4">
                         <div className="flex gap-4 items-start p-3 bg-gray-50 rounded-xl">
                             <img
-                                src={selectedAuction.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'}
+                                src={
+                                    selectedAuction.product?.images?.[0] ||
+                                    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'
+                                }
                                 alt=""
                                 className="w-16 h-16 object-cover rounded-lg border"
                             />
                             <div>
                                 <h4 className="font-bold text-base text-gray-900">
-                                    {lang === 'vi' ? selectedAuction.product?.nameVi || selectedAuction.product?.name : selectedAuction.product?.name}
+                                    {lang === 'vi'
+                                        ? selectedAuction.product?.nameVi ||
+                                          selectedAuction.product?.name
+                                        : selectedAuction.product?.name}
                                 </h4>
                                 <p className="text-xs text-gray-500 mt-0.5">
-                                    SKU: <span className="font-mono text-gray-700">{selectedAuction.product?.sku || 'N/A'}</span>
+                                    SKU:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {selectedAuction.product?.sku || 'N/A'}
+                                    </span>
                                 </p>
                                 <div className="mt-2">
-                                    <StatusBadge status={selectedAuction.status} label={statusLabel(selectedAuction.status)} />
+                                    <StatusBadge
+                                        status={selectedAuction.status}
+                                        label={statusLabel(selectedAuction.status)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-sm">
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Seller' : 'Người bán'}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Seller' : 'Người bán'}
+                                </span>
                                 <span className="font-semibold">{selectedAuction.sellerName}</span>
-                                <span className="text-xs text-gray-400 block font-mono">{selectedAuction.sellerId}</span>
+                                <span className="text-xs text-gray-400 block font-mono">
+                                    {selectedAuction.sellerId}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Visibility' : 'Chế độ hiển thị'}</span>
-                                <span className="font-semibold capitalize">{selectedAuction.visibility}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Visibility' : 'Chế độ hiển thị'}
+                                </span>
+                                <span className="font-semibold capitalize">
+                                    {selectedAuction.visibility}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'startingPrice')}</span>
-                                <span className="font-semibold text-gray-800">{formatCurrency(selectedAuction.startingPrice, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'startingPrice')}
+                                </span>
+                                <span className="font-semibold text-gray-800">
+                                    {formatCurrency(selectedAuction.startingPrice, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'currentBid')}</span>
-                                <span className="font-bold text-auction">{formatCurrency(selectedAuction.currentBid, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'currentBid')}
+                                </span>
+                                <span className="font-bold text-auction">
+                                    {formatCurrency(selectedAuction.currentBid, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'minIncrement')}</span>
-                                <span className="font-semibold">{formatCurrency(selectedAuction.minIncrement, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'minIncrement')}
+                                </span>
+                                <span className="font-semibold">
+                                    {formatCurrency(selectedAuction.minIncrement, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Total Bids' : 'Tổng số lượt đặt'}</span>
-                                <span className="font-semibold">{selectedAuction.bidCount} lượt</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Total Bids' : 'Tổng số lượt đặt'}
+                                </span>
+                                <span className="font-semibold">
+                                    {selectedAuction.bidCount} lượt
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'startTime')}</span>
-                                <span className="text-xs text-gray-700">{formatDateTime(selectedAuction.startTime, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'startTime')}
+                                </span>
+                                <span className="text-xs text-gray-700">
+                                    {formatDateTime(selectedAuction.startTime, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'endTime')}</span>
-                                <span className="text-xs text-gray-700">{formatDateTime(selectedAuction.endTime, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'endTime')}
+                                </span>
+                                <span className="text-xs text-gray-700">
+                                    {formatDateTime(selectedAuction.endTime, lang)}
+                                </span>
                             </div>
                         </div>
 
@@ -2180,9 +2352,13 @@ export function AdminAuctionsPage() {
                         {selectedAuction.cancelReason && (
                             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                                 <p className="text-xs font-bold text-red-800 uppercase tracking-wider mb-1">
-                                    {lang === 'en' ? 'Cancellation / Rejection Reason:' : 'Lý do Hủy / Từ chối:'}
+                                    {lang === 'en'
+                                        ? 'Cancellation / Rejection Reason:'
+                                        : 'Lý do Hủy / Từ chối:'}
                                 </p>
-                                <p className="text-sm text-red-700">{selectedAuction.cancelReason}</p>
+                                <p className="text-sm text-red-700">
+                                    {selectedAuction.cancelReason}
+                                </p>
                             </div>
                         )}
 
@@ -2197,14 +2373,20 @@ export function AdminAuctionsPage() {
                                         <thead className="bg-gray-100 text-gray-600">
                                             <tr>
                                                 <th className="p-2 text-left">Bidder</th>
-                                                <th className="p-2 text-right">{lang === 'en' ? 'Amount' : 'Mức giá'}</th>
-                                                <th className="p-2 text-right">{lang === 'en' ? 'Time' : 'Thời gian'}</th>
+                                                <th className="p-2 text-right">
+                                                    {lang === 'en' ? 'Amount' : 'Mức giá'}
+                                                </th>
+                                                <th className="p-2 text-right">
+                                                    {lang === 'en' ? 'Time' : 'Thời gian'}
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
                                             {selectedAuction.bids.map((b) => (
                                                 <tr key={b.id} className="hover:bg-gray-50">
-                                                    <td className="p-2 font-medium">{b.bidderName}</td>
+                                                    <td className="p-2 font-medium">
+                                                        {b.bidderName}
+                                                    </td>
                                                     <td className="p-2 text-right font-bold text-auction">
                                                         {formatCurrency(b.amount, lang)}
                                                     </td>
@@ -2218,7 +2400,9 @@ export function AdminAuctionsPage() {
                                 </div>
                             ) : (
                                 <p className="text-xs text-gray-400 italic">
-                                    {lang === 'en' ? 'No bids placed yet.' : 'Chưa có lượt đặt giá nào.'}
+                                    {lang === 'en'
+                                        ? 'No bids placed yet.'
+                                        : 'Chưa có lượt đặt giá nào.'}
                                 </p>
                             )}
                         </div>
@@ -2822,19 +3006,28 @@ export function AdminProductsPage() {
                             originalPrice: p.skus?.[0]?.originalPrice || null,
                             sku: p.skus?.[0]?.skuCode || p.sku || '',
                             skuId: p.skus?.[0]?.id || null,
-                            category: p.categoryName || (lang === 'vi' ? 'Thiết bị điện tử' : 'Electronics'),
+                            category:
+                                p.categoryName ||
+                                (lang === 'vi' ? 'Thiết bị điện tử' : 'Electronics'),
                             sellerName: p.sellerName || 'Seller Nexus',
                             sellerId: p.sellerId,
                             description: p.description || '',
                             descriptionVi: p.descriptionVi || p.description || '',
                             // Tồn kho thực tế: lấy từ SKU (nếu có) hoặc tra cứu cache tồn kho theo SKU code / product ID; không hardcode 10
-                            stock: p.skus?.[0]?.stock ?? getProductStock(p.skus?.[0]?.skuCode, p.id) ?? null,
+                            stock:
+                                p.skus?.[0]?.stock ??
+                                getProductStock(p.skus?.[0]?.skuCode, p.id) ??
+                                null,
                             images:
                                 p.images && p.images.length > 0
-                                    ? p.images.map((img: any) => (typeof img === 'string' ? img : img.url))
-                                    : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'],
+                                    ? p.images.map((img: any) =>
+                                          typeof img === 'string' ? img : img.url,
+                                      )
+                                    : [
+                                          'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200',
+                                      ],
                             status: (p.status || 'draft').toLowerCase(),
-                        }))
+                        })),
                     )
                 } else {
                     setProducts([])
@@ -2858,7 +3051,10 @@ export function AdminProductsPage() {
             await api(`/products/${id}/approve`, { method: 'POST' })
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Product approved and published.' : 'Đã duyệt sản phẩm mở bán thành công.',
+                message:
+                    lang === 'en'
+                        ? 'Product approved and published.'
+                        : 'Đã duyệt sản phẩm mở bán thành công.',
             })
             clearLoadCache()
             setRefreshKey((k) => k + 1)
@@ -2990,7 +3186,9 @@ export function AdminProductsPage() {
                                 key: 'price',
                                 label: tr(lang, 'price'),
                                 render: (r: any) => (
-                                    <span className="font-bold">{formatCurrency(r.price, lang)}</span>
+                                    <span className="font-bold">
+                                        {formatCurrency(r.price, lang)}
+                                    </span>
                                 ),
                             },
                             { key: 'sellerName', label: lang === 'en' ? 'Seller' : 'Người bán' },
@@ -3010,7 +3208,9 @@ export function AdminProductsPage() {
                                         <button
                                             type="button"
                                             title={lang === 'en' ? 'View details' : 'Xem chi tiết'}
-                                            aria-label={lang === 'en' ? 'View details' : 'Xem chi tiết'}
+                                            aria-label={
+                                                lang === 'en' ? 'View details' : 'Xem chi tiết'
+                                            }
                                             onClick={() => setSelectedProduct(r)}
                                             className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-600 hover:bg-gray-100 rounded"
                                         >
@@ -3135,67 +3335,130 @@ export function AdminProductsPage() {
                                     {lang === 'vi' ? selectedProduct.nameVi : selectedProduct.name}
                                 </h4>
                                 <p className="text-xs text-gray-500 mt-1">
-                                    SKU: <span className="font-mono text-gray-700">{selectedProduct.sku || 'N/A'}</span>
+                                    SKU:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {selectedProduct.sku || 'N/A'}
+                                    </span>
                                 </p>
                                 <div className="mt-2">
-                                    <StatusBadge status={selectedProduct.status} label={statusLabel(selectedProduct.status)} />
+                                    <StatusBadge
+                                        status={selectedProduct.status}
+                                        label={statusLabel(selectedProduct.status)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Selling Price' : 'Giá bán trên sàn'}</span>
-                                <span className="font-bold text-primary text-base">{formatCurrency(selectedProduct.price, lang)}</span>
-                            </div>
-                            <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Original / Cost Price' : 'Giá gốc / Giá nhập'}</span>
-                                <span className="font-semibold text-gray-800 text-base">
-                                    {selectedProduct.originalPrice ? formatCurrency(selectedProduct.originalPrice, lang) : formatCurrency(selectedProduct.price, lang)}
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Selling Price' : 'Giá bán trên sàn'}
+                                </span>
+                                <span className="font-bold text-primary text-base">
+                                    {formatCurrency(selectedProduct.price, lang)}
                                 </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Inventory (SKU)' : 'Tồn kho (SKU)'}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Original / Cost Price' : 'Giá gốc / Giá nhập'}
+                                </span>
+                                <span className="font-semibold text-gray-800 text-base">
+                                    {selectedProduct.originalPrice
+                                        ? formatCurrency(selectedProduct.originalPrice, lang)
+                                        : formatCurrency(selectedProduct.price, lang)}
+                                </span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg">
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Inventory (SKU)' : 'Tồn kho (SKU)'}
+                                </span>
                                 <span className="font-semibold text-gray-800">
-                                    {selectedProduct.stock !== null && selectedProduct.stock !== undefined
+                                    {selectedProduct.stock !== null &&
+                                    selectedProduct.stock !== undefined
                                         ? selectedProduct.stock
                                         : 0}
                                 </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Category' : 'Danh mục'}</span>
-                                <span className="font-semibold text-gray-800 truncate block">{selectedProduct.category}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Category' : 'Danh mục'}
+                                </span>
+                                <span className="font-semibold text-gray-800 truncate block">
+                                    {selectedProduct.category}
+                                </span>
                             </div>
                         </div>
 
                         {/* Phân tích chênh lệch giá động do doanh nghiệp thiết lập */}
-                        {selectedProduct.originalPrice && selectedProduct.originalPrice !== selectedProduct.price && (
-                            <div className="p-2.5 bg-blue-50/60 border border-blue-100 rounded-lg flex items-center justify-between text-xs text-blue-900">
-                                <span>{lang === 'en' ? 'Enterprise Dynamic Pricing Policy:' : 'Chính sách giá động doanh nghiệp:'}</span>
-                                {selectedProduct.price >= selectedProduct.originalPrice ? (
-                                    <span className="font-semibold text-emerald-700">
-                                        {lang === 'en' ? 'Gross Markup' : 'Biên lợi nhuận gộp'}: +{formatCurrency(selectedProduct.price - selectedProduct.originalPrice, lang)} (+{(((selectedProduct.price - selectedProduct.originalPrice) / selectedProduct.originalPrice) * 100).toFixed(1)}%)
+                        {selectedProduct.originalPrice &&
+                            selectedProduct.originalPrice !== selectedProduct.price && (
+                                <div className="p-2.5 bg-blue-50/60 border border-blue-100 rounded-lg flex items-center justify-between text-xs text-blue-900">
+                                    <span>
+                                        {lang === 'en'
+                                            ? 'Enterprise Dynamic Pricing Policy:'
+                                            : 'Chính sách giá động doanh nghiệp:'}
                                     </span>
-                                ) : (
-                                    <span className="font-semibold text-amber-700">
-                                        {lang === 'en' ? 'Promotional Discount' : 'Chiết khấu khuyến mãi'}: -{formatCurrency(selectedProduct.originalPrice - selectedProduct.price, lang)} (-{(((selectedProduct.originalPrice - selectedProduct.price) / selectedProduct.originalPrice) * 100).toFixed(1)}%)
-                                    </span>
-                                )}
-                            </div>
-                        )}
+                                    {selectedProduct.price >= selectedProduct.originalPrice ? (
+                                        <span className="font-semibold text-emerald-700">
+                                            {lang === 'en' ? 'Gross Markup' : 'Biên lợi nhuận gộp'}:
+                                            +
+                                            {formatCurrency(
+                                                selectedProduct.price -
+                                                    selectedProduct.originalPrice,
+                                                lang,
+                                            )}{' '}
+                                            (+
+                                            {(
+                                                ((selectedProduct.price -
+                                                    selectedProduct.originalPrice) /
+                                                    selectedProduct.originalPrice) *
+                                                100
+                                            ).toFixed(1)}
+                                            %)
+                                        </span>
+                                    ) : (
+                                        <span className="font-semibold text-amber-700">
+                                            {lang === 'en'
+                                                ? 'Promotional Discount'
+                                                : 'Chiết khấu khuyến mãi'}
+                                            : -
+                                            {formatCurrency(
+                                                selectedProduct.originalPrice -
+                                                    selectedProduct.price,
+                                                lang,
+                                            )}{' '}
+                                            (-
+                                            {(
+                                                ((selectedProduct.originalPrice -
+                                                    selectedProduct.price) /
+                                                    selectedProduct.originalPrice) *
+                                                100
+                                            ).toFixed(1)}
+                                            %)
+                                        </span>
+                                    )}
+                                </div>
+                            )}
 
                         {selectedProduct.description && (
                             <div className="p-3 bg-gray-50 rounded-lg text-sm">
-                                <span className="text-gray-500 text-xs block mb-1">{tr(lang, 'productDescription')}</span>
+                                <span className="text-gray-500 text-xs block mb-1">
+                                    {tr(lang, 'productDescription')}
+                                </span>
                                 <p className="text-gray-700 text-xs leading-relaxed whitespace-pre-line">
-                                    {lang === 'vi' ? selectedProduct.descriptionVi || selectedProduct.description : selectedProduct.description}
+                                    {lang === 'vi'
+                                        ? selectedProduct.descriptionVi ||
+                                          selectedProduct.description
+                                        : selectedProduct.description}
                                 </p>
                             </div>
                         )}
 
                         {selectedProduct.images.length > 1 && (
                             <div>
-                                <span className="text-gray-500 text-xs block mb-2">{lang === 'en' ? 'All Images' : 'Tất cả hình ảnh'}</span>
+                                <span className="text-gray-500 text-xs block mb-2">
+                                    {lang === 'en' ? 'All Images' : 'Tất cả hình ảnh'}
+                                </span>
                                 <div className="flex gap-2 overflow-x-auto pb-1">
                                     {selectedProduct.images.map((img: string, idx: number) => (
                                         <img
@@ -3216,223 +3479,794 @@ export function AdminProductsPage() {
 }
 
 // ─── Admin Warehouses ──────────────────────────────────────────────────────────
+/**
+ * Màn hình Quản trị Kho hàng & Tồn kho toàn hệ thống cho Admin:
+ * 1. Liệt kê, tạo mới và chỉnh sửa danh mục kho (/api/v1/warehouses).
+ * 2. Xem tồn kho toàn hệ thống theo từng kho/SKU, nhập kho hoặc điều chỉnh tồn kho kèm Idempotency-Key.
+ * 3. Đối soát tồn kho với sổ cái bất biến (/api/v1/inventory/reconcile) và theo dõi lịch sử biến động (/api/v1/inventory/ledger).
+ * Chỉ phản ánh biến động sau khi API xác nhận rồi tải lại tồn/sổ cái; không ghi cache để giả lập thao tác kho thành công.
+ */
 export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
-    const [refreshKey, setRefreshKey] = useState(0)
+    const [warehouses, setWarehouses] = useState<WarehouseResponse[]>([])
+    const [stocks, setStocks] = useState<InventoryStockResponse[]>([])
+    const [ledger, setLedger] = useState<InventoryLedgerResponse[]>([])
+    const [reconciliations, setReconciliations] = useState<InventoryReconciliationResponse[]>([])
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState('')
+    const [skuFilter, setSkuFilter] = useState('')
+    const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState('')
+    const [reloadTick, setReloadTick] = useState(0)
+
+    // Modal thêm / sửa kho hàng
+    const [whModalOpen, setWhModalOpen] = useState(false)
+    const [editingWh, setEditingWh] = useState<WarehouseResponse | null>(null)
+    const [whCode, setWhCode] = useState('')
+    const [whName, setWhName] = useState('')
+    const [whAddress, setWhAddress] = useState('')
+    const [whType, setWhType] = useState<WarehouseType>('STANDARD')
+    const [whActive, setWhActive] = useState(true)
+    const [whError, setWhError] = useState('')
+    const [whSaving, setWhSaving] = useState(false)
+
+    // Modal nhập kho Admin
+    const [inboundOpen, setInboundOpen] = useState(false)
+    const [inboundSkuCode, setInboundSkuCode] = useState('')
+    const [inboundSkuId, setInboundSkuId] = useState('')
+    const [inboundWarehouseId, setInboundWarehouseId] = useState('')
+    const [inboundQty, setInboundQty] = useState('10')
+    const [inboundReason, setInboundReason] = useState('')
+    const [inboundIdemKey, setInboundIdemKey] = useState('')
+    const [inboundError, setInboundError] = useState('')
+    const [inboundSaving, setInboundSaving] = useState(false)
+
+    // Modal điều chỉnh tồn kho Admin
     const [adjustOpen, setAdjustOpen] = useState(false)
-    const [adjustItem, setAdjustItem] = useState<{
-        id: string
-        sku: string
-        skuId: string | null
-        name: string
-        nameVi: string
-        currentStock: number
-    } | null>(null)
-    const [adjustQty, setAdjustQty] = useState('')
+    const [adjustTarget, setAdjustTarget] = useState<InventoryStockResponse | null>(null)
+    const [adjustMode, setAdjustMode] = useState<'delta' | 'target'>('delta')
+    const [adjustValue, setAdjustValue] = useState('0')
     const [adjustReason, setAdjustReason] = useState('')
-    const [savingAdjust, setSavingAdjust] = useState(false)
+    const [adjustIdemKey, setAdjustIdemKey] = useState('')
+    const [adjustError, setAdjustError] = useState('')
+    const [adjustSaving, setAdjustSaving] = useState(false)
+    const [reconciling, setReconciling] = useState(false)
 
-    // Tải sản phẩm kho từ Catalog Service; làm mới khi điều chỉnh tồn kho thành công
-    const { data: prodEnvelope, loading } = useLoad<Envelope<ApiProduct[]>>(`/products?v=${refreshKey}`)
-
-    /**
-     * Chức năng: Ánh xạ sản phẩm từ Catalog backend cho trang quản lý kho AdminWarehousesPage.
-     * Đầu vào: prodEnvelope từ API GET /products.
-     * Kết quả: Danh sách tồn kho thực tế theo SKU và giá từ backend database/cache đồng bộ,
-     *          không hardcode stock: 50.
-     */
-    const warehouseProducts = (prodEnvelope?.data || []).map((p) => {
-        const skuCode = p.skus?.[0]?.skuCode || (p.id ? p.id.slice(0, 8).toUpperCase() : '')
-        const actualStock = (p.skus?.[0] as any)?.stock ?? getProductStock(skuCode, p.id) ?? 0
-        const reserved = 0
-        const available = Math.max(0, actualStock - reserved)
-        return {
-            id: p.id,
-            sku: skuCode,
-            skuId: p.skus?.[0]?.id ?? null,
-            name: p.name,
-            nameVi: p.name,
-            stock: actualStock,
-            available,
-            reserved,
-            price: p.skus?.[0]?.price || 0,
-            location: 'Kho Tân Bình, TP. HCM',
+    const { data: prodEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products?page=0&size=50')
+    const skuLookup: Record<string, { skuCode: string; productName: string }> = {}
+    for (const product of prodEnvelope?.data || []) {
+        for (const sku of product.skus || []) {
+            if (sku?.id) {
+                skuLookup[sku.id] = { skuCode: sku.skuCode, productName: product.name }
+            }
         }
-    })
+    }
 
-    const handleSaveAdjust = async () => {
-        if (!adjustItem) return
-        const diff = parseInt(adjustQty, 10)
-        if (isNaN(diff) || diff === 0) {
-            showToast({
-                type: 'error',
-                message: lang === 'en' ? 'Please enter a non-zero adjustment number.' : 'Vui lòng nhập số lượng điều chỉnh khác 0.',
-            })
+    useEffect(() => {
+        const controller = new AbortController()
+        let active = true
+        async function fetchData() {
+            setLoading(true)
+            setLoadError('')
+            try {
+                const codeFilter = skuFilter.trim() || undefined
+                const [whRes, invRes, ledRes] = await Promise.all([
+                    listWarehouses({ size: 50 }, controller.signal),
+                    listInventory(
+                        {
+                            warehouseId: selectedWarehouseId || undefined,
+                            skuCode: codeFilter,
+                            size: 50,
+                        },
+                        controller.signal,
+                    ),
+                    getInventoryLedger(
+                        {
+                            warehouseId: selectedWarehouseId || undefined,
+                            skuCode: codeFilter,
+                            size: 25,
+                        },
+                        controller.signal,
+                    ),
+                ])
+                if (!active) return
+                setWarehouses(whRes.items)
+                setStocks(invRes.items)
+                setLedger(ledRes.items)
+                if (!inboundWarehouseId && whRes.items.length > 0) {
+                    setInboundWarehouseId(whRes.items[0].id)
+                }
+            } catch (err) {
+                if (!active || (err instanceof Error && err.name === 'AbortError')) return
+                setLoadError(
+                    err instanceof ApiClientError
+                        ? `${err.code}: ${err.message}`
+                        : errorMessage(err),
+                )
+            } finally {
+                if (active) setLoading(false)
+            }
+        }
+        void fetchData()
+        return () => {
+            active = false
+            controller.abort()
+        }
+    }, [selectedWarehouseId, skuFilter, reloadTick])
+
+    const openCreateWarehouse = () => {
+        setEditingWh(null)
+        setWhCode('')
+        setWhName('')
+        setWhAddress('')
+        setWhType('STANDARD')
+        setWhActive(true)
+        setWhError('')
+        setWhModalOpen(true)
+    }
+
+    const openEditWarehouse = (wh: WarehouseResponse) => {
+        setEditingWh(wh)
+        setWhCode(wh.code)
+        setWhName(wh.name)
+        setWhAddress(wh.address)
+        setWhType(wh.type)
+        setWhActive(wh.active)
+        setWhError('')
+        setWhModalOpen(true)
+    }
+
+    const handleSaveWarehouse = async () => {
+        if ((!editingWh && !whCode.trim()) || !whName.trim() || !whAddress.trim()) {
+            setWhError(
+                lang === 'en'
+                    ? 'Warehouse code, name and address are required'
+                    : 'Vui lòng nhập đầy đủ mã, tên và địa chỉ kho',
+            )
             return
         }
-
-        const newStock = Math.max(0, adjustItem.currentStock + diff)
-        setSavingAdjust(true)
+        setWhSaving(true)
+        setWhError('')
         try {
-            // Cập nhật tồn kho vào cache bộ nhớ cho cả mã SKU và productId
-            setProductStock(adjustItem.sku, newStock)
-            setProductStock(adjustItem.id, newStock)
-
-            // Gửi điều chỉnh lên Fulfillment Service nếu có skuId hợp lệ
-            if (adjustItem.skuId) {
-                const endpoint = diff > 0 ? '/inventory/inbound' : '/inventory/outbound'
-                await api(endpoint, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        skuId: adjustItem.skuId,
-                        quantity: Math.abs(diff),
-                    }),
+            if (editingWh) {
+                await updateWarehouse(editingWh.id, {
+                    name: whName.trim(),
+                    address: whAddress.trim(),
+                    type: whType,
+                    active: whActive,
+                })
+            } else {
+                await createWarehouse({
+                    code: whCode.trim().toUpperCase(),
+                    name: whName.trim(),
+                    address: whAddress.trim(),
+                    type: whType,
+                    active: whActive,
                 })
             }
-
-            // Ghi nhật ký vào sổ cái tồn kho hệ thống (Ledger)
-            try {
-                const rawLedger = localStorage.getItem('nexus_inventory_ledger')
-                const currentLedger = rawLedger ? JSON.parse(rawLedger) : []
-                const newEntry = {
-                    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-                    date: new Date().toISOString().split('T')[0],
-                    sku: adjustItem.sku,
-                    type: diff > 0 ? 'inbound' : 'adjustment',
-                    qty: diff,
-                    notes: adjustReason.trim() || (lang === 'en' ? 'Admin stock adjustment' : 'Quản trị viên điều chỉnh kho'),
-                }
-                localStorage.setItem('nexus_inventory_ledger', JSON.stringify([newEntry, ...currentLedger]))
-            } catch {}
-
-            clearLoadCache()
-            setRefreshKey((k) => k + 1)
-            setAdjustOpen(false)
-            setAdjustItem(null)
-            setAdjustQty('')
-            setAdjustReason('')
+            setWhModalOpen(false)
+            setReloadTick((t) => t + 1)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Stock adjusted successfully.' : 'Đã điều chỉnh kho thành công.',
+                message: editingWh
+                    ? lang === 'en'
+                        ? 'Warehouse updated.'
+                        : 'Cập nhật kho thành công.'
+                    : lang === 'en'
+                      ? 'Warehouse created.'
+                      : 'Tạo kho hàng mới thành công.',
             })
-        } catch (err: any) {
+        } catch (err) {
+            setWhError(
+                err instanceof ApiClientError ? `${err.code}: ${err.message}` : errorMessage(err),
+            )
+        } finally {
+            setWhSaving(false)
+        }
+    }
+
+    const openInboundModal = (stock?: InventoryStockResponse) => {
+        const firstSkuId = Object.keys(skuLookup)[0] || ''
+        setInboundSkuId(stock?.skuId || firstSkuId)
+        setInboundSkuCode(stock?.skuCode || skuLookup[firstSkuId]?.skuCode || '')
+        setInboundWarehouseId(stock?.warehouseId || selectedWarehouseId || warehouses[0]?.id || '')
+        setInboundQty('10')
+        setInboundReason('')
+        setInboundError('')
+        setInboundIdemKey(createInventoryIdempotencyKey('admin-inb'))
+        setInboundOpen(true)
+    }
+
+    const handleInboundSubmit = async () => {
+        const qty = Number(inboundQty)
+        if (!Number.isInteger(qty) || qty < 1) {
+            setInboundError(
+                lang === 'en' ? 'Quantity must be at least 1' : 'Số lượng nhập phải >= 1',
+            )
+            return
+        }
+        if (!inboundSkuId && !inboundSkuCode.trim()) {
+            setInboundError(lang === 'en' ? 'Please choose SKU or skuCode' : 'Vui lòng nhập mã SKU')
+            return
+        }
+        setInboundSaving(true)
+        setInboundError('')
+        try {
+            await inboundStock(
+                {
+                    skuId: inboundSkuId || undefined,
+                    skuCode: inboundSkuCode.trim() || undefined,
+                    warehouseId: inboundWarehouseId || undefined,
+                    quantity: qty,
+                    reason: inboundReason.trim() || 'Admin nhập kho',
+                },
+                inboundIdemKey,
+            )
+            setInboundOpen(false)
+            setReloadTick((t) => t + 1)
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Stock inbound saved.' : 'Nhập kho thành công.',
+            })
+        } catch (err) {
+            setInboundError(
+                err instanceof ApiClientError ? `${err.code}: ${err.message}` : errorMessage(err),
+            )
+        } finally {
+            setInboundSaving(false)
+        }
+    }
+
+    const openAdjustModal = (stock: InventoryStockResponse) => {
+        setAdjustTarget(stock)
+        setAdjustMode('delta')
+        setAdjustValue('0')
+        setAdjustReason('')
+        setAdjustError('')
+        setAdjustIdemKey(createInventoryIdempotencyKey('admin-adj'))
+        setAdjustOpen(true)
+    }
+
+    const handleAdjustSubmit = async () => {
+        if (!adjustTarget) return
+        const value = Number(adjustValue)
+        if (!Number.isInteger(value)) {
+            setAdjustError(
+                lang === 'en' ? 'Value must be an integer' : 'Số lượng phải là số nguyên',
+            )
+            return
+        }
+        if (!adjustReason.trim()) {
+            setAdjustError(lang === 'en' ? 'Reason is required' : 'Lý do điều chỉnh là bắt buộc')
+            return
+        }
+        setAdjustSaving(true)
+        setAdjustError('')
+        try {
+            await adjustStock(
+                {
+                    skuId: adjustTarget.skuId,
+                    warehouseId: adjustTarget.warehouseId,
+                    deltaQty: adjustMode === 'delta' ? value : undefined,
+                    targetTotalQty: adjustMode === 'target' ? value : undefined,
+                    reason: adjustReason.trim(),
+                },
+                adjustIdemKey,
+            )
+            setAdjustOpen(false)
+            setReloadTick((t) => t + 1)
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Stock adjusted.' : 'Đã điều chỉnh tồn kho.',
+            })
+        } catch (err) {
+            setAdjustError(
+                err instanceof ApiClientError ? `${err.code}: ${err.message}` : errorMessage(err),
+            )
+        } finally {
+            setAdjustSaving(false)
+        }
+    }
+
+    const handleReconcile = async () => {
+        setReconciling(true)
+        try {
+            const list = await reconcileInventory({
+                warehouseId: selectedWarehouseId || undefined,
+            })
+            setReconciliations(list)
+            const unmatched = list.filter((r) => !r.matched || !r.nonNegative).length
+            showToast({
+                type: unmatched === 0 ? 'success' : 'warning',
+                message:
+                    unmatched === 0
+                        ? lang === 'en'
+                            ? `Reconciled ${list.length} records: all matched.`
+                            : `Đối soát ${list.length} bản ghi: khớp 100% với sổ cái.`
+                        : lang === 'en'
+                          ? `${unmatched} records mismatched.`
+                          : `Có ${unmatched} bản ghi lệch sổ cái.`,
+            })
+        } catch (err) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to adjust stock.' : 'Không thể điều chỉnh kho.'),
+                message:
+                    err instanceof ApiClientError
+                        ? `${err.code}: ${err.message}`
+                        : errorMessage(err),
             })
         } finally {
-            setSavingAdjust(false)
+            setReconciling(false)
         }
     }
 
     return (
         <AdminLayout title={tr(lang, 'warehouseManagement')}>
+            {loadError && (
+                <div className="mb-4">
+                    <AlertBanner type="error" message={loadError} />
+                </div>
+            )}
+
             <div className="nexus-card mb-5">
+                <div className="p-5 border-b border-border flex flex-wrap items-center justify-between gap-3">
+                    <span className="font-bold">
+                        {lang === 'en' ? 'Warehouse Directory' : 'Danh mục kho hàng'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            loading={reconciling}
+                            onClick={() => void handleReconcile()}
+                        >
+                            <CheckCircle size={14} />
+                            {lang === 'en' ? 'Reconcile All' : 'Đối soát sổ cái'}
+                        </Button>
+                        <Button variant="primary" size="sm" onClick={openCreateWarehouse}>
+                            <Plus size={14} />
+                            {lang === 'en' ? 'Add Warehouse' : 'Thêm kho mới'}
+                        </Button>
+                    </div>
+                </div>
                 <DataTable
+                    loading={loading}
                     columns={[
                         {
-                            key: 'sku',
-                            label: 'SKU',
-                            render: (r: any) => <span className="font-mono text-xs">{r.sku}</span>,
+                            key: 'code',
+                            label: lang === 'en' ? 'Code' : 'Mã kho',
+                            render: (w: WarehouseResponse) => (
+                                <span className="font-mono text-xs font-bold">{w.code}</span>
+                            ),
                         },
                         {
                             key: 'name',
-                            label: lang === 'en' ? 'Product' : 'Sản phẩm',
-                            render: (r: any) => (
-                                <span className="font-semibold text-sm">
-                                    {lang === 'vi' ? r.nameVi : r.name}
-                                </span>
+                            label: lang === 'en' ? 'Name' : 'Tên kho',
+                            render: (w: WarehouseResponse) => (
+                                <span className="font-semibold text-sm">{w.name}</span>
                             ),
                         },
                         {
-                            key: 'stock',
-                            label: lang === 'en' ? 'Total' : 'Tổng',
-                            render: (r: any) => <span className="font-bold">{r.stock}</span>,
-                        },
-                        {
-                            key: 'available',
-                            label: tr(lang, 'totalAvailable'),
-                            render: (r: any) => (
-                                <span className="text-success font-semibold">{r.available}</span>
+                            key: 'address',
+                            label: lang === 'en' ? 'Address' : 'Địa chỉ',
+                            render: (w: WarehouseResponse) => (
+                                <span className="text-xs text-gray-600">{w.address}</span>
                             ),
                         },
                         {
-                            key: 'reserved',
-                            label: tr(lang, 'totalReserved'),
-                            render: (r: any) => <span className="text-warning">{r.reserved}</span>,
+                            key: 'type',
+                            label: lang === 'en' ? 'Type' : 'Loại kho',
+                            render: (w: WarehouseResponse) => (
+                                <span className="badge badge-gray text-xs">{w.type}</span>
+                            ),
+                        },
+                        {
+                            key: 'active',
+                            label: lang === 'en' ? 'Status' : 'Trạng thái',
+                            render: (w: WarehouseResponse) => (
+                                <StatusBadge
+                                    status={w.active ? 'active' : 'cancelled'}
+                                    label={w.active ? 'ACTIVE' : 'INACTIVE'}
+                                />
+                            ),
                         },
                         {
                             key: 'actions',
                             label: '',
-                            render: (r: any) => (
+                            render: (w: WarehouseResponse) => (
+                                <div className="flex items-center gap-2 justify-end">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setSelectedWarehouseId(w.id)}
+                                    >
+                                        {lang === 'en' ? 'View Stock' : 'Lọc tồn'}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => openEditWarehouse(w)}
+                                    >
+                                        <Pencil size={14} />
+                                    </Button>
+                                </div>
+                            ),
+                        },
+                    ]}
+                    data={warehouses}
+                    rowKey={(w) => w.id}
+                />
+            </div>
+
+            {reconciliations.length > 0 && (
+                <div className="nexus-card mb-5">
+                    <div className="p-4 border-b border-border font-bold text-sm">
+                        {lang === 'en'
+                            ? 'Reconciliation Summary'
+                            : 'Báo cáo đối soát tồn kho & sổ cái'}
+                    </div>
+                    <div className="p-4 grid gap-2 text-xs">
+                        {reconciliations.map((rec) => (
+                            <div
+                                key={`${rec.skuId}-${rec.warehouseId}`}
+                                className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-surface-alt border border-border"
+                            >
+                                <span className="font-mono">
+                                    {rec.warehouseCode} ·{' '}
+                                    {skuLookup[rec.skuId]?.skuCode || rec.skuId.slice(0, 8)}
+                                </span>
+                                <span>
+                                    total={rec.totalQty}/ledger={rec.ledgerTotalQty} · reserved=
+                                    {rec.reservedQty}/ledger={rec.ledgerReservedQty}/pending=
+                                    {rec.activeReservationQty}
+                                </span>
+                                <StatusBadge
+                                    status={rec.matched && rec.nonNegative ? 'active' : 'cancelled'}
+                                    label={rec.matched && rec.nonNegative ? 'MATCHED' : 'MISMATCH'}
+                                />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div className="nexus-card mb-5">
+                <div className="p-5 border-b border-border flex flex-wrap items-end justify-between gap-3">
+                    <div className="flex flex-wrap items-end gap-3">
+                        <div className="w-56">
+                            <Select
+                                label={lang === 'en' ? 'Filter Warehouse' : 'Lọc theo kho'}
+                                value={selectedWarehouseId}
+                                onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                                options={[
+                                    {
+                                        value: '',
+                                        label: lang === 'en' ? 'All warehouses' : 'Tất cả kho',
+                                    },
+                                    ...warehouses.map((w) => ({
+                                        value: w.id,
+                                        label: `${w.code} — ${w.name}`,
+                                    })),
+                                ]}
+                            />
+                        </div>
+                        <div className="w-52">
+                            <Input
+                                label={lang === 'en' ? 'Filter SKU Code' : 'Lọc mã SKU'}
+                                value={skuFilter}
+                                onChange={(e) => setSkuFilter(e.target.value)}
+                                placeholder="VD: NX-KB-01"
+                            />
+                        </div>
+                    </div>
+                    <Button variant="primary" size="sm" onClick={() => openInboundModal()}>
+                        <Plus size={14} />
+                        {lang === 'en' ? 'Inbound Stock' : 'Nhập kho'}
+                    </Button>
+                </div>
+                <DataTable
+                    loading={loading}
+                    columns={[
+                        {
+                            key: 'sku',
+                            label: 'SKU',
+                            render: (r: InventoryStockResponse) => {
+                                const info = skuLookup[r.skuId]
+                                return (
+                                    <div>
+                                        <p className="font-mono text-xs font-bold">
+                                            {r.skuCode || info?.skuCode || r.skuId.slice(0, 8)}
+                                        </p>
+                                        {info?.productName && (
+                                            <p className="text-xs text-gray-500">
+                                                {info.productName}
+                                            </p>
+                                        )}
+                                    </div>
+                                )
+                            },
+                        },
+                        {
+                            key: 'warehouse',
+                            label: lang === 'en' ? 'Warehouse' : 'Kho',
+                            render: (r: InventoryStockResponse) => (
+                                <span className="font-mono text-xs">{r.warehouseCode}</span>
+                            ),
+                        },
+                        {
+                            key: 'totalQty',
+                            label: lang === 'en' ? 'Total' : 'Tổng',
+                            render: (r: InventoryStockResponse) => (
+                                <span className="font-bold">{r.totalQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'availableQty',
+                            label: tr(lang, 'totalAvailable'),
+                            render: (r: InventoryStockResponse) => (
+                                <span className="text-success font-semibold">{r.availableQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'reservedQty',
+                            label: tr(lang, 'totalReserved'),
+                            render: (r: InventoryStockResponse) => (
+                                <span className="text-warning">{r.reservedQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'unavailableQty',
+                            label: tr(lang, 'totalUnavailable'),
+                            render: (r: InventoryStockResponse) => (
+                                <span className="text-gray-500">{r.unavailableQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'actions',
+                            label: '',
+                            render: (r: InventoryStockResponse) => (
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => {
-                                        setAdjustItem({
-                                            id: r.id,
-                                            sku: r.sku,
-                                            skuId: r.skuId,
-                                            name: r.name,
-                                            nameVi: r.nameVi,
-                                            currentStock: r.stock,
-                                        })
-                                        setAdjustQty('')
-                                        setAdjustReason('')
-                                        setAdjustOpen(true)
-                                    }}
+                                    onClick={() => openAdjustModal(r)}
                                 >
                                     {lang === 'en' ? 'Adjust Stock' : 'Điều chỉnh kho'}
                                 </Button>
                             ),
                         },
                     ]}
-                    loading={loading}
-                    data={warehouseProducts}
-                    rowKey={(r) => r.id}
+                    data={stocks}
+                    rowKey={(r) => `${r.skuId}-${r.warehouseId}`}
                 />
             </div>
+
+            <div className="nexus-card">
+                <div className="p-5 border-b border-border font-bold">
+                    {lang === 'en'
+                        ? 'System Inventory Ledger'
+                        : 'Sổ cái biến động kho toàn hệ thống'}
+                </div>
+                <div className="p-5">
+                    {ledger.length === 0 ? (
+                        <p className="text-sm text-gray-500">
+                            {lang === 'en'
+                                ? 'No inventory movements recorded.'
+                                : 'Chưa có bản ghi biến động nào.'}
+                        </p>
+                    ) : (
+                        ledger.map((entry) => (
+                            <div
+                                key={entry.id}
+                                className="flex flex-wrap items-center justify-between gap-2 py-2.5 border-b border-border last:border-0 text-sm"
+                            >
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <span className="text-xs text-gray-400">
+                                        {formatDateTime(entry.createdAt, lang)}
+                                    </span>
+                                    <span className="badge badge-gray text-xs">
+                                        {entry.warehouseCode || entry.warehouseId.slice(0, 8)}
+                                    </span>
+                                    <span className="font-mono text-xs">
+                                        {skuLookup[entry.skuId]?.skuCode || entry.skuId.slice(0, 8)}
+                                    </span>
+                                    <StatusBadge status="info" label={entry.movementType} />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs text-gray-500">
+                                        {entry.reason || entry.refType || '—'}
+                                    </span>
+                                    <span className="font-bold">
+                                        {entry.quantity > 0 ? `+${entry.quantity}` : entry.quantity}
+                                    </span>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+
             <Modal
-                open={adjustOpen}
-                onClose={() => setAdjustOpen(false)}
-                title={lang === 'en' ? `Adjust Stock - ${adjustItem?.sku || ''}` : `Điều chỉnh kho - SKU: ${adjustItem?.sku || ''}`}
+                open={whModalOpen}
+                onClose={() => setWhModalOpen(false)}
+                title={
+                    editingWh
+                        ? lang === 'en'
+                            ? `Edit Warehouse ${editingWh.code}`
+                            : `Cập nhật kho ${editingWh.code}`
+                        : lang === 'en'
+                          ? 'Create Warehouse'
+                          : 'Tạo kho hàng mới'
+                }
                 size="sm"
                 footer={
                     <>
-                        <Button variant="outline" onClick={() => setAdjustOpen(false)} disabled={savingAdjust}>
+                        <Button variant="outline" onClick={() => setWhModalOpen(false)}>
                             {tr(lang, 'cancel')}
                         </Button>
                         <Button
                             variant="primary"
-                            loading={savingAdjust}
-                            onClick={handleSaveAdjust}
+                            loading={whSaving}
+                            onClick={() => void handleSaveWarehouse()}
                         >
                             {tr(lang, 'save')}
                         </Button>
                     </>
                 }
             >
-                {adjustItem && (
-                    <div className="mb-3 text-xs text-gray-500">
-                        <span>{lang === 'en' ? 'Current stock: ' : 'Tồn kho hiện tại: '}</span>
-                        <strong className="text-gray-800 text-sm font-semibold">{adjustItem.currentStock}</strong>
-                    </div>
-                )}
-                <Input
-                    label={lang === 'en' ? 'Adjustment (±)' : 'Số lượng điều chỉnh (±)'}
-                    type="number"
-                    placeholder="+10 or -5"
-                    value={adjustQty}
-                    onChange={(e) => setAdjustQty(e.target.value)}
-                />
-                <div className="mt-3">
+                <div className="flex flex-col gap-3">
+                    {whError && <AlertBanner type="error" message={whError} />}
+                    {!editingWh && (
+                        <Input
+                            label={lang === 'en' ? 'Warehouse Code' : 'Mã kho'}
+                            value={whCode}
+                            onChange={(e) => setWhCode(e.target.value)}
+                            placeholder="VD: WH_004"
+                        />
+                    )}
+                    <Input
+                        label={lang === 'en' ? 'Warehouse Name' : 'Tên kho'}
+                        value={whName}
+                        onChange={(e) => setWhName(e.target.value)}
+                        placeholder="VD: Kho Cần Thơ"
+                    />
+                    <Textarea
+                        label={lang === 'en' ? 'Address' : 'Địa chỉ'}
+                        rows={2}
+                        value={whAddress}
+                        onChange={(e) => setWhAddress(e.target.value)}
+                    />
+                    <Select
+                        label={lang === 'en' ? 'Type' : 'Loại kho'}
+                        value={whType}
+                        onChange={(e) => setWhType(e.target.value as WarehouseType)}
+                        options={[
+                            { value: 'STANDARD', label: 'STANDARD' },
+                            { value: 'RETURN', label: 'RETURN' },
+                            { value: 'BONDED', label: 'BONDED' },
+                            { value: 'CROSS_DOCK', label: 'CROSS_DOCK' },
+                        ]}
+                    />
+                    <Toggle
+                        checked={whActive}
+                        onChange={setWhActive}
+                        label={lang === 'en' ? 'Active' : 'Đang hoạt động'}
+                    />
+                </div>
+            </Modal>
+
+            <Modal
+                open={inboundOpen}
+                onClose={() => setInboundOpen(false)}
+                title={lang === 'en' ? 'Admin Stock Inbound' : 'Nhập kho hàng hóa'}
+                size="sm"
+                footer={
+                    <>
+                        <Button variant="outline" onClick={() => setInboundOpen(false)}>
+                            {tr(lang, 'cancel')}
+                        </Button>
+                        <Button
+                            variant="primary"
+                            loading={inboundSaving}
+                            onClick={() => void handleInboundSubmit()}
+                        >
+                            {tr(lang, 'save')}
+                        </Button>
+                    </>
+                }
+            >
+                <div className="flex flex-col gap-3">
+                    {inboundError && <AlertBanner type="error" message={inboundError} />}
+                    <Input
+                        label="SKU Code"
+                        value={inboundSkuCode}
+                        onChange={(e) => {
+                            setInboundSkuCode(e.target.value)
+                            setInboundSkuId('')
+                        }}
+                        placeholder="VD: NX-KB-01"
+                    />
+                    <Select
+                        label={lang === 'en' ? 'Warehouse' : 'Kho hàng'}
+                        value={inboundWarehouseId}
+                        onChange={(e) => setInboundWarehouseId(e.target.value)}
+                        options={warehouses.map((w) => ({
+                            value: w.id,
+                            label: `${w.code} — ${w.name}`,
+                        }))}
+                    />
+                    <Input
+                        label={lang === 'en' ? 'Quantity' : 'Số lượng nhập'}
+                        type="number"
+                        min={1}
+                        value={inboundQty}
+                        onChange={(e) => setInboundQty(e.target.value)}
+                    />
+                    <Textarea
+                        label={tr(lang, 'reason')}
+                        rows={2}
+                        value={inboundReason}
+                        onChange={(e) => setInboundReason(e.target.value)}
+                    />
+                    <p className="text-[11px] font-mono text-gray-400">
+                        Idempotency-Key: {inboundIdemKey}
+                    </p>
+                </div>
+            </Modal>
+
+            <Modal
+                open={adjustOpen}
+                onClose={() => setAdjustOpen(false)}
+                title={lang === 'en' ? 'Adjust Stock' : 'Điều chỉnh kho'}
+                size="sm"
+                footer={
+                    <>
+                        <Button variant="outline" onClick={() => setAdjustOpen(false)}>
+                            {tr(lang, 'cancel')}
+                        </Button>
+                        <Button
+                            variant="primary"
+                            loading={adjustSaving}
+                            onClick={() => void handleAdjustSubmit()}
+                        >
+                            {tr(lang, 'save')}
+                        </Button>
+                    </>
+                }
+            >
+                <div className="flex flex-col gap-3">
+                    {adjustError && <AlertBanner type="error" message={adjustError} />}
+                    <Select
+                        label={lang === 'en' ? 'Mode' : 'Kiểu điều chỉnh'}
+                        value={adjustMode}
+                        onChange={(e) => setAdjustMode(e.target.value as 'delta' | 'target')}
+                        options={[
+                            { value: 'delta', label: 'Delta (±deltaQty)' },
+                            { value: 'target', label: 'Target Total (targetTotalQty)' },
+                        ]}
+                    />
+                    <Input
+                        label={
+                            adjustMode === 'delta'
+                                ? lang === 'en'
+                                    ? 'Adjustment (±)'
+                                    : 'Điều chỉnh (±)'
+                                : lang === 'en'
+                                  ? 'New Total Quantity'
+                                  : 'Tổng tồn mới'
+                        }
+                        type="number"
+                        value={adjustValue}
+                        onChange={(e) => setAdjustValue(e.target.value)}
+                        placeholder="+10 or -5"
+                    />
                     <Textarea
                         label={tr(lang, 'reason')}
                         rows={2}
                         value={adjustReason}
                         onChange={(e) => setAdjustReason(e.target.value)}
-                        placeholder={lang === 'en' ? 'Reason for adjustment...' : 'Lý do điều chỉnh kho...'}
                     />
+                    <p className="text-[11px] font-mono text-gray-400">
+                        Idempotency-Key: {adjustIdemKey}
+                    </p>
                 </div>
             </Modal>
         </AdminLayout>

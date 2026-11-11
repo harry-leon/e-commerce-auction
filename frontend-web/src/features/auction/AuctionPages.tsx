@@ -32,7 +32,6 @@ import {
     type AuctionSettlement,
     type WinnerAuctionDetails,
 } from '../../api/auctions'
-import { ordersApi } from '../../api/orders'
 import { startPayment } from '../../api/payments'
 import type { Auction } from '../../types'
 
@@ -1202,17 +1201,19 @@ export function MyBidsPage() {
  *   - Người thắng nhập thông tin giao hàng (tên, SĐT, địa chỉ) rồi nhấn thanh toán VNPAY sandbox.
  *
  * Luồng checkout (One Settlement = One Order):
- *   1. Nếu settlement.orderId đã tồn tại → gọi startPayment(orderId) để replay URL VNPAY (tránh tạo trùng đơn).
- *   2. Nếu chưa có orderId → gọi ordersApi.createOrder() với sourceType='AUCTION' và auctionId.
- *   3. Sau khi có orderId → gọi startPayment(orderId) → validate URL sandbox.vnpayment.vn → redirect.
+ *   1. Đơn hàng đấu giá được khởi tạo tự động bởi Backend qua AuctionOrderHandoverService.
+ *   2. Backend CheckoutService chỉ hỗ trợ đơn REGULAR và từ chối đơn AUCTION qua POST /orders.
+ *   3. Nếu settlement.orderId đã có → gọi startPayment(orderId, idempotencyKey) để nhận URL sandbox VNPAY.
+ *   4. Nếu settlement.orderId chưa có (scheduler backend đang xử lý) → tự động tải lại settlement mới nhất.
+ *   5. Sau khi có orderId → gọi startPayment(orderId) → validate URL sandbox.vnpayment.vn → redirect.
  *
  * Quy tắc:
  *   - Chỉ winner (session userId === settlement.winnerId) mới thấy form; người khác thấy thông báo lỗi.
- *   - Deadline hết hạn → hiển thị AlertBanner lỗi, khoá nút; không tạo order mới cho settlement đã quá hạn.
+ *   - Deadline hết hạn → hiển thị AlertBanner lỗi, khoá nút; không thanh toán cho settlement đã quá hạn.
  *   - Idempotency-Key được sinh một lần duy nhất (useRef) cho mỗi phiên trang để chống double-submit.
  *
  * Lỗi và giới hạn:
- *   - Backend chưa hỗ trợ AUCTION sourceType → createOrder có thể fallback mock (COD không phải VNPAY).
+ *   - Không tự ý gọi POST /orders cho đơn đấu giá nhằm tuân thủ thiết kế phân quyền và chống lỗi CHECKOUT_SOURCE_UNSUPPORTED.
  *   - startPayment chỉ redirect khi URL hợp lệ từ sandbox.vnpayment.vn; lỗi cấu hình báo rõ ràng.
  */
 export function AuctionPaymentPage() {
@@ -1287,21 +1288,25 @@ export function AuctionPaymentPage() {
     /**
      * Luồng checkout hoàn chỉnh cho winner (One Settlement = One Order):
      * 1. Validate form giao hàng (tên, SĐT, địa chỉ bắt buộc).
-     * 2. Nếu settlement.orderId đã có → replay startPayment(orderId) thay vì tạo đơn mới.
-     * 3. Nếu chưa có orderId → tạo đơn AUCTION qua ordersApi.createOrder() với Idempotency-Key.
-     * 4. Nhận orderId từ response → gọi startPayment(orderId) → validate URL sandbox → redirect.
+     * 2. Đơn hàng đấu giá được khởi tạo tự động từ Backend qua luồng handover (AuctionOrderHandoverService).
+     *    Backend CheckoutService từ chối đơn AUCTION qua POST /orders (chỉ hỗ trợ REGULAR).
+     * 3. Nếu settlement.orderId chưa có (do scheduler handover chưa chạy xong), tự động tải lại
+     *    settlement mới nhất từ server. Nếu vẫn chưa có, thông báo người dùng chờ trong giây lát.
+     * 4. Khi đã có orderId hợp lệ, gọi startPayment(orderId, idempotencyKey) để nhận URL sandbox VNPAY.
+     * 5. Kiểm tra URL hợp lệ và chuyển hướng trình duyệt tới cổng thanh toán VNPAY sandbox.
      * Lỗi: hiển thị inline bên dưới form; không navigate ra ngoài khi có lỗi.
      */
     async function handleCheckout() {
         if (checkoutBusy) return
-        if (!settlement || expired || !isWinner) return
+        // Chặn checkout khi settlement DEFAULTED (winner không thanh toán đúng hạn, kho đã nhả)
+        if (!settlement || expired || !isWinner || settlement.result === 'DEFAULTED') return
 
         let orderId: string | null = settlement.orderId || null
         const trimmedName = recipientName.trim()
         const trimmedPhone = recipientPhone.trim()
         const trimmedAddress = shippingAddress.trim()
 
-        // Chỉ kiểm tra dữ liệu form khi cần tạo đơn hàng mới (chưa có orderId)
+        // Chỉ kiểm tra dữ liệu form khi cần xác nhận thông tin giao hàng
         if (!orderId) {
             if (!trimmedName || !trimmedPhone || !trimmedAddress) {
                 setCheckoutError(tr(lang, 'checkoutFormIncomplete'))
@@ -1314,31 +1319,22 @@ export function AuctionPaymentPage() {
 
         try {
             if (!orderId) {
-                // Bước 1: Tạo đơn hàng mới cho phiên đấu giá với Idempotency-Key chống tạo trùng
-                setCheckoutStatus(tr(lang, 'checkoutCreatingOrder'))
-                const orderResult = await ordersApi.createOrder(
-                    {
-                        shippingAddress: trimmedAddress,
-                        recipientName: trimmedName,
-                        recipientPhone: trimmedPhone,
-                        paymentMethod: 'VNPAY',
-                        sourceType: 'AUCTION',
-                        auctionId,
-                    },
-                    idempotencyKeyRef.current,
-                )
-                orderId = orderResult.id || orderResult.orderNo || null
-                if (!orderId) {
-                    setCheckoutError(tr(lang, 'checkoutOrderError'))
+                // Đơn hàng đấu giá được Backend tự động tạo thông qua AuctionOrderHandoverService.
+                // Thử tải lại settlement mới nhất từ server để lấy orderId do backend sinh ra.
+                setCheckoutStatus('Đang kiểm tra trạng thái đơn hàng từ hệ thống...')
+                const freshSettlement = await getAuctionSettlement(auctionId)
+                if (freshSettlement?.orderId) {
+                    orderId = freshSettlement.orderId
+                    setSettlement(freshSettlement)
+                } else {
+                    setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
                     return
                 }
-                // Cập nhật settlement local để UI phản ánh orderId vừa tạo (tránh tạo lại khi nhấn đúp)
-                setSettlement((prev) => (prev ? { ...prev, orderId: orderId as string } : prev))
             }
 
-            // Bước 2: Lấy URL thanh toán VNPAY sandbox từ Commerce Service
+            // Lấy URL thanh toán VNPAY sandbox từ Commerce Service
             setCheckoutStatus(tr(lang, 'checkoutRedirectingPayment'))
-            const payment = await startPayment(orderId)
+            const payment = await startPayment(orderId, idempotencyKeyRef.current)
 
             // Nếu đã PAID hoặc không còn PENDING, chuyển sang trang kết quả thanh toán
             if (payment.status !== 'PENDING') {
@@ -1391,6 +1387,14 @@ export function AuctionPaymentPage() {
                     </div>
                 ) : loadError || !settlement ? (
                     <AlertBanner type="error" message={tr(lang, 'settlementUnavailable')} />
+                ) : settlement.result === 'DEFAULTED' ? (
+                    // Trạng thái DEFAULTED: winner đã thắng nhưng không thanh toán đúng hạn.
+                    // BE (KH-S2-3) đổi result từ SUCCESS → DEFAULTED sau khi hủy đơn, nhả kho và trừ điểm uy tín.
+                    // FE hiển thị thông báo rõ ràng; không cho phép thanh toán lại vì kho đã được nhả.
+                    <AlertBanner
+                        type="error"
+                        message="Phiên đấu giá này đã bị hủy thanh toán. Người thắng không hoàn tất thanh toán trong thời hạn, kho đã được giải phóng và điểm uy tín đã bị trừ."
+                    />
                 ) : settlement.result === 'FAILED' || !settlement.winnerId ? (
                     <AlertBanner type="info" message={tr(lang, 'settlementHasNoWinner')} />
                 ) : !isWinner ? (

@@ -833,4 +833,34 @@ class AuctionSettlementServiceTest {
         assertThat(closedEvent.finalPrice()).isEqualByComparingTo(winningAmount);
 
     }
+
+    /** Đồng bộ quá hạn 24h chuyển settlement SUCCESS -> DEFAULTED, replay idempotent và chặn sai orderId/trạng thái. */
+    @Test
+    @DisplayName("markSettlementDefaulted: Chuyển SUCCESS -> DEFAULTED, idempotent và bảo vệ toàn vẹn orderId")
+    void testMarkSettlementDefaulted() {
+        UUID auctionId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        AuctionSettlement settlement = new AuctionSettlement();
+        settlement.setId(UUID.randomUUID());
+        settlement.setAuctionId(auctionId);
+        settlement.setOrderId(orderId);
+        settlement.setWinnerId(UUID.randomUUID());
+        settlement.setFinalPrice(new BigDecimal("500000"));
+        settlement.setResult(SettlementResult.SUCCESS);
+        settlement.setPaymentDeadline(now);
+
+        when(auctionSettlementRepository.findByAuctionIdForUpdate(auctionId)).thenReturn(Optional.of(settlement));
+        when(auctionSettlementRepository.save(any(AuctionSettlement.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AuctionSettlementResponse first = settlementService.markSettlementDefaulted(auctionId, orderId);
+        assertThat(first.getResult()).isEqualTo(SettlementResult.DEFAULTED);
+
+        // Replay cùng orderId trả về DEFAULTED không ném lỗi.
+        AuctionSettlementResponse replay = settlementService.markSettlementDefaulted(auctionId, orderId);
+        assertThat(replay.getResult()).isEqualTo(SettlementResult.DEFAULTED);
+
+        // Sai orderId bị từ chối để tránh cập nhật nhầm phiên.
+        assertThatThrownBy(() -> settlementService.markSettlementDefaulted(auctionId, UUID.randomUUID()))
+                .isInstanceOf(BusinessException.class);
+    }
 }

@@ -2,7 +2,9 @@ package com.nexus.fulfillment.service.impl;
 
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.client.CatalogClient;
 import com.nexus.fulfillment.config.FulfillmentProperties;
+import com.nexus.fulfillment.dto.request.BatchStockRequest;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
 import com.nexus.fulfillment.dto.request.ReleaseReservationRequest;
@@ -13,6 +15,7 @@ import com.nexus.fulfillment.dto.request.StockAdjustmentRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
 import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
+import com.nexus.fulfillment.dto.response.InventoryReconciliationResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
@@ -30,43 +33,48 @@ import com.nexus.fulfillment.event.InventoryReleasedEvent;
 import com.nexus.fulfillment.event.InventoryReservationExpiredEvent;
 import com.nexus.fulfillment.event.InventoryReservedEvent;
 import com.nexus.fulfillment.repository.InventoryLedgerRepository;
+import com.nexus.fulfillment.repository.InventoryLedgerSearchRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
+import com.nexus.fulfillment.security.InventoryAccessPolicy;
 import com.nexus.fulfillment.service.InventoryService;
+import jakarta.persistence.criteria.Predicate;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cài đặt nghiệp vụ quản trị tồn kho và vòng đời giữ hàng Checkout / Đấu giá (SRS §3.6.1).
+ * Cài đặt nghiệp vụ quản trị tồn kho, phân quyền seller và vòng đời giữ hàng Checkout / Đấu giá (SRS §3.6.1).
  *
  * Chức năng:
- * - Quản lý 4 trạng thái tồn kho chính xác theo SKU và kho hàng (total_qty, available_qty, reserved_qty, unavailable_qty).
- * - Khóa giữ hàng nguyên tử (Atomic Reservation) với Pessimistic Write Lock để chống Overselling (ALLOW_OVERSELL = false).
- * - Quản lý toàn vẹn vòng đời giữ tồn kho cho phiên đấu giá (Auction Inventory Lifecycle):
- *   + Khóa giữ kho khi tạo phiên (TTL = endTime, bao quát toàn bộ phiên).
- *   + Gia hạn thời hạn giữ kho khi có Anti-sniping (+5 phút hoặc mốc mới).
- *   + Hủy phiên & giải phóng hoàn kho tức thời khi phiên bị hủy hoặc không có người đặt giá (Idempotent).
- *   + Chuyển tiếp trạng thái giữ kho sang Đơn hàng của Winner (Transition to Order) mà không bị Reserve kép.
- * - Tự động giải phóng các phiếu giữ hàng quá hạn.
- * - Ghi nhận mọi biến động vào Sổ cái tồn kho bất biến (Immutable Inventory Ledger).
- * - Phát các sự kiện miền InventoryChecked, InventoryReserved, InventoryReleased, InventoryReservationExpired, InventoryCommitted.
- *
- * Quy tắc và lý do:
- * - Khi giữ hàng nhiều SKU cùng lúc, sắp xếp tăng dần theo skuId trước khi khóa dòng DB để triệt tiêu Deadlock.
- * - Sổ cái tồn kho chỉ thêm mới (INSERT) và đọc (SELECT), tuyệt đối cấm sửa đổi hoặc xóa.
- * - Chuyển tiếp AUCTION sang ORDER giữ nguyên reserved_qty, không tạo khoảng trống cho khách mua ngay cướp kho.
+ * - Quản lý 4 trạng thái tồn kho theo SKU và kho hàng (total_qty, available_qty, reserved_qty, unavailable_qty).
+ * - Đọc danh sách tồn kho theo SKU/kho, batch read và tra cứu theo mã skuCode.
+ * - Kiểm tra quyền thao tác và phạm vi dữ liệu seller thông qua InventoryAccessPolicy và CatalogClient.
+ * - Khóa giữ hàng nguyên tử (Atomic Reservation) với Pessimistic Write Lock, chống Overselling (ALLOW_OVERSELL = false)
+ *   và bảo đảm idempotency cho cả ORDER lẫn AUCTION khi retry request.
+ * - Quản lý vòng đời giữ tồn kho đấu giá, gia hạn anti-sniping, chuyển tiếp sang đơn hàng và quét hết hạn an toàn.
+ * - Chống thao tác lặp khi nhập kho/điều chỉnh kho thông qua idempotencyKey và refId; đối soát khớp sổ cái bất biến.
  */
 @Service
 public class InventoryServiceImpl implements InventoryService {
@@ -79,7 +87,12 @@ public class InventoryServiceImpl implements InventoryService {
     private final WarehouseRepository warehouseRepository;
     private final FulfillmentProperties properties;
     private final ApplicationEventPublisher eventPublisher;
+    private final CatalogClient catalogClient;
+    private final InventoryAccessPolicy accessPolicy;
 
+    /**
+     * Constructor mặc định cho unit test không cần cấu hình CatalogClient hay Spring Security.
+     */
     public InventoryServiceImpl(
             InventoryRepository inventoryRepository,
             InventoryReservationRepository reservationRepository,
@@ -88,18 +101,88 @@ public class InventoryServiceImpl implements InventoryService {
             FulfillmentProperties properties,
             ApplicationEventPublisher eventPublisher
     ) {
+        this(
+                inventoryRepository,
+                reservationRepository,
+                ledgerRepository,
+                warehouseRepository,
+                properties,
+                eventPublisher,
+                emptyCatalogClient(),
+                new InventoryAccessPolicy(emptyCatalogClient())
+        );
+    }
+
+    /**
+     * Constructor chính cho Spring IoC; dùng ObjectProvider để hỗ trợ cả ngữ cảnh full app lẫn @DataJpaTest thu gọn.
+     */
+    @Autowired
+    public InventoryServiceImpl(
+            InventoryRepository inventoryRepository,
+            InventoryReservationRepository reservationRepository,
+            InventoryLedgerRepository ledgerRepository,
+            WarehouseRepository warehouseRepository,
+            FulfillmentProperties properties,
+            ApplicationEventPublisher eventPublisher,
+            ObjectProvider<CatalogClient> catalogClientProvider,
+            ObjectProvider<InventoryAccessPolicy> accessPolicyProvider
+    ) {
+        this(
+                inventoryRepository,
+                reservationRepository,
+                ledgerRepository,
+                warehouseRepository,
+                properties,
+                eventPublisher,
+                catalogClientProvider != null ? catalogClientProvider.getIfAvailable(InventoryServiceImpl::emptyCatalogClient) : emptyCatalogClient(),
+                accessPolicyProvider != null ? accessPolicyProvider.getIfAvailable() : null
+        );
+    }
+
+    /**
+     * Constructor mở rộng cho phép test tiêm trực tiếp CatalogClient và InventoryAccessPolicy giả lập.
+     */
+    public InventoryServiceImpl(
+            InventoryRepository inventoryRepository,
+            InventoryReservationRepository reservationRepository,
+            InventoryLedgerRepository ledgerRepository,
+            WarehouseRepository warehouseRepository,
+            FulfillmentProperties properties,
+            ApplicationEventPublisher eventPublisher,
+            CatalogClient catalogClient,
+            InventoryAccessPolicy accessPolicy
+    ) {
         this.inventoryRepository = inventoryRepository;
         this.reservationRepository = reservationRepository;
         this.ledgerRepository = ledgerRepository;
         this.warehouseRepository = warehouseRepository;
         this.properties = properties;
         this.eventPublisher = eventPublisher;
+        this.catalogClient = (catalogClient != null) ? catalogClient : emptyCatalogClient();
+        this.accessPolicy = (accessPolicy != null) ? accessPolicy : new InventoryAccessPolicy(this.catalogClient);
+    }
+
+    private static CatalogClient emptyCatalogClient() {
+        return new CatalogClient() {
+            @Override
+            public Optional<SkuOwnershipInfo> findSkuById(UUID skuId) {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<SkuOwnershipInfo> findSkuByCode(String skuCode) {
+                return Optional.empty();
+            }
+
+            @Override
+            public List<SkuOwnershipInfo> findSkusBySeller(UUID sellerId) {
+                return List.of();
+            }
+        };
     }
 
     /**
      * Tra cứu thông tin 4 trạng thái tồn kho của SKU tại một kho hàng cụ thể (hoặc kho mặc định WH_001).
-     *
-     * Luồng xử lý: Xác định kho → tìm bản ghi tồn kho → trả về DTO chứa total_qty, available_qty, reserved_qty, unavailable_qty.
      */
     @Override
     @Transactional(readOnly = true)
@@ -109,9 +192,35 @@ public class InventoryServiceImpl implements InventoryService {
                 .orElse(null);
 
         if (inventory == null) {
-            return new InventoryStockResponse(skuId, warehouse.getId(), warehouse.getCode(), 0, 0, 0, 0);
+            return new InventoryStockResponse(skuId, warehouse.getId(), warehouse.getCode(), warehouse.getName(), null, 0, 0, 0, 0);
         }
-        return toStockResponse(inventory);
+        return toStockResponse(inventory, null);
+    }
+
+    /**
+     * Tra cứu tồn kho của SKU theo mã doanh nghiệp skuCode tại kho chỉ định hoặc kho mặc định.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public InventoryStockResponse getStockBySkuCode(String skuCode, UUID warehouseId) {
+        CatalogClient.SkuOwnershipInfo sku = resolveSkuByCodeOrThrow(skuCode);
+        Warehouse warehouse = resolveWarehouse(warehouseId);
+        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseId(sku.skuId(), warehouse.getId())
+                .orElse(null);
+        if (inventory == null) {
+            return new InventoryStockResponse(
+                    sku.skuId(),
+                    warehouse.getId(),
+                    warehouse.getCode(),
+                    warehouse.getName(),
+                    sku.skuCode(),
+                    0,
+                    0,
+                    0,
+                    0
+            );
+        }
+        return toStockResponse(inventory, sku.skuCode());
     }
 
     /**
@@ -121,14 +230,87 @@ public class InventoryServiceImpl implements InventoryService {
     @Transactional(readOnly = true)
     public List<InventoryStockResponse> getAllStockBySku(UUID skuId) {
         List<Inventory> list = inventoryRepository.findBySkuId(skuId);
-        return list.stream().map(this::toStockResponse).toList();
+        return list.stream().map(inv -> toStockResponse(inv, null)).toList();
+    }
+
+    /**
+     * Đọc hàng loạt 4 trạng thái tồn kho cho danh sách SKU tại một kho hàng (mặc định WH_001).
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<InventoryStockResponse> getBatchStock(BatchStockRequest request) {
+        Warehouse warehouse = resolveWarehouse(request.warehouseId());
+        List<UUID> distinctSkuIds = request.skuIds().stream().distinct().toList();
+        List<Inventory> rows = inventoryRepository.findBySkuIdInAndWarehouseId(distinctSkuIds, warehouse.getId());
+        Map<UUID, Inventory> bySkuId = new HashMap<>();
+        for (Inventory row : rows) {
+            bySkuId.put(row.getSkuId(), row);
+        }
+
+        List<InventoryStockResponse> responses = new ArrayList<>(distinctSkuIds.size());
+        for (UUID skuId : distinctSkuIds) {
+            Inventory inv = bySkuId.get(skuId);
+            if (inv == null) {
+                responses.add(new InventoryStockResponse(skuId, warehouse.getId(), warehouse.getCode(), warehouse.getName(), null, 0, 0, 0, 0));
+            } else {
+                responses.add(toStockResponse(inv, null));
+            }
+        }
+        return responses;
+    }
+
+    /**
+     * Liệt kê và lọc tồn kho có phân trang theo SKU, mã skuCode, kho hàng và phạm vi seller.
+     * Quy tắc: Seller chỉ nhìn thấy bản ghi tồn kho thuộc các SKU của chính mình; Admin/Support xem toàn hệ thống.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<InventoryStockResponse> listInventory(
+            UUID skuId,
+            String skuCode,
+            UUID warehouseId,
+            UUID sellerId,
+            Pageable pageable
+    ) {
+        UUID resolvedSkuId = skuId;
+        String resolvedSkuCode = null;
+        if (resolvedSkuId == null && skuCode != null && !skuCode.isBlank()) {
+            Optional<CatalogClient.SkuOwnershipInfo> skuOpt = catalogClient.findSkuByCode(skuCode.trim());
+            if (skuOpt.isEmpty()) {
+                // Kiểm tra phạm vi quyền trước khi trả rỗng để Seller không đoán được thông tin sellerId khác.
+                accessPolicy.resolveReadableSellerSkuScope(sellerId, null);
+                return Page.empty(pageable);
+            }
+            resolvedSkuId = skuOpt.get().skuId();
+            resolvedSkuCode = skuOpt.get().skuCode();
+        }
+
+        List<UUID> allowedSkuIds = accessPolicy.resolveReadableSellerSkuScope(sellerId, resolvedSkuId);
+        if (allowedSkuIds != null && allowedSkuIds.isEmpty()) {
+            return Page.empty(pageable);
+        }
+
+        final UUID finalSkuId = resolvedSkuId;
+        Specification<Inventory> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (finalSkuId != null) {
+                predicates.add(cb.equal(root.get("skuId"), finalSkuId));
+            }
+            if (allowedSkuIds != null) {
+                predicates.add(root.get("skuId").in(allowedSkuIds));
+            }
+            if (warehouseId != null) {
+                predicates.add(cb.equal(root.get("warehouse").get("id"), warehouseId));
+            }
+            return cb.and(predicates.toArray(Predicate[]::new));
+        };
+
+        final String finalSkuCode = resolvedSkuCode;
+        return inventoryRepository.findAll(spec, pageable).map(inv -> toStockResponse(inv, finalSkuCode));
     }
 
     /**
      * Kiểm tra nhanh số lượng tồn khả dụng cho danh sách SKU (dùng cho Cart và Checkout validation).
-     *
-     * Luồng xử lý: Với mỗi item trong danh sách, tìm kho và bản ghi tồn kho, kiểm tra available_qty >= quantity.
-     * Bắn sự kiện InventoryCheckedEvent theo SRS §2.8.
      */
     @Override
     @Transactional(readOnly = true)
@@ -143,7 +325,6 @@ public class InventoryServiceImpl implements InventoryService {
             int available = (inventory != null) ? inventory.getAvailableQty() : 0;
             boolean isAvailable = available > 0;
 
-            // Khởi tạo DTO phản hồi tình trạng tồn kho SKU
             result.add(new SkuAvailabilityResponse(
                     skuId,
                     warehouse.getId(),
@@ -151,7 +332,6 @@ public class InventoryServiceImpl implements InventoryService {
                     isAvailable
             ));
 
-            // Bắn sự kiện InventoryCheckedEvent theo SRS §2.8 thông báo số lượng tồn kho khả dụng
             eventPublisher.publishEvent(InventoryCheckedEvent.of(
                     skuId,
                     warehouse.getId(),
@@ -163,51 +343,31 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     /**
-     * Khóa giữ hàng tồn kho khi người dùng Checkout (Atomic Reservation).
+     * Khóa giữ hàng tồn kho khi người dùng Checkout hoặc giữ kho theo tham chiếu (Atomic Reservation).
      *
      * Đầu vào: CreateReservationRequest chứa refType (ORDER/AUCTION), refId, danh sách SKU + số lượng, timeoutMinutes/expiresAt.
      * Kết quả: ReservationResponse chứa danh sách phiếu giữ hàng PENDING cùng thời điểm hết hạn.
      *
      * Luồng xử lý:
-     * 1. Kiểm tra Idempotency cho AUCTION: nếu đã giữ kho thì trả về kết quả hiện tại.
-     * 2. Sắp xếp danh sách items tăng dần theo skuId để triệt tiêu nguy cơ Deadlock khi khóa nhiều dòng DB.
-     * 3. Khóa ghi (SELECT FOR UPDATE) từng dòng tồn kho.
-     * 4. Kiểm tra available_qty: Nếu < số lượng yêu cầu và allowOversell = false → ném INVENTORY_INSUFFICIENT.
-     * 5. Tăng reserved_qty của tồn kho (làm giảm available_qty tương ứng).
-     * 6. Tạo bản ghi InventoryReservation với trạng thái PENDING và expires_at.
-     * 7. Ghi nhận biến động RESERVE vào Sổ cái tồn kho bất biến (inventory_ledger).
-     * 8. Bắn sự kiện miền InventoryReservedEvent cho từng mặt hàng được giữ.
+     * 1. Chuẩn hóa kho và sắp xếp items theo (skuId, warehouseId) để tránh Deadlock.
+     * 2. Khóa danh sách phiếu hiện có theo (refType, refId) để đảm bảo Idempotency cho cả ORDER và AUCTION:
+     *    - Nếu đã có phiếu PENDING khớp đúng tập SKU và số lượng → trả về kết quả cũ, không trừ/giữ kho lần hai.
+     *    - Nếu khác SKU/số lượng → ném HTTP 409 ORDER_IDEMPOTENCY_CONFLICT.
+     *    - Nếu phiếu đã CONFIRMED/RELEASED/EXPIRED → từ chối với HTTP 409 để không giữ lại đơn đã kết thúc.
+     * 3. Khóa dòng tồn kho (SELECT ... FOR UPDATE), kiểm tra ALLOW_OVERSELL = false, tăng reserved_qty, lưu phiếu và sổ cái RESERVE.
      */
     @Override
     @Transactional
     public ReservationResponse reserveStock(CreateReservationRequest request) {
-        // Kiểm tra tính Idempotent đối với AUCTION
-        if (request.refType() == ReservationRefType.AUCTION) {
-            List<InventoryReservation> existing = reservationRepository.findByRefTypeAndRefId(
-                    ReservationRefType.AUCTION,
-                    request.refId()
-            );
-            if (!existing.isEmpty()) {
-                InventoryReservation res = existing.get(0);
-                if (res.getStatus() == ReservationStatus.PENDING) {
-                    log.info("Phiên đấu giá {} đã được giữ kho trước đó (Idempotent), trả về phiếu hiện tại", request.refId());
-                    ReservationItemResponse item = new ReservationItemResponse(
-                            res.getId(),
-                            res.getInventory().getSkuId(),
-                            res.getInventory().getWarehouse().getId(),
-                            res.getQuantity(),
-                            res.getStatus(),
-                            res.getExpiresAt()
-                    );
-                    return new ReservationResponse(
-                            res.getRefType(),
-                            res.getRefId(),
-                            res.getStatus(),
-                            List.of(item),
-                            res.getExpiresAt()
-                    );
-                }
-            }
+        List<ResolvedReservationItem> resolvedItems = resolveAndSortReservationItems(request.items());
+
+        // Kiểm tra và khóa theo (refType, refId) cho cả ORDER và AUCTION để chống giữ kho lặp khi retry HTTP.
+        List<InventoryReservation> existing = reservationRepository.findByRefTypeAndRefIdForUpdate(
+                request.refType(),
+                request.refId()
+        );
+        if (!existing.isEmpty()) {
+            return handleExistingReservationReplay(request.refType(), request.refId(), existing, resolvedItems);
         }
 
         Instant expiresAt;
@@ -220,16 +380,11 @@ public class InventoryServiceImpl implements InventoryService {
             expiresAt = Instant.now().plus(timeoutMinutes, ChronoUnit.MINUTES);
         }
 
-        // Sắp xếp items theo skuId để đảm bảo thứ tự khóa dòng nhất quán, loại bỏ Deadlock giữa các luồng
-        List<ReservationItemRequest> sortedItems = new ArrayList<>(request.items());
-        sortedItems.sort(Comparator.comparing(ReservationItemRequest::skuId));
-
         List<ReservationItemResponse> itemResponses = new ArrayList<>();
 
-        for (ReservationItemRequest item : sortedItems) {
-            Warehouse warehouse = resolveWarehouse(item.warehouseId());
+        for (ResolvedReservationItem item : resolvedItems) {
+            Warehouse warehouse = item.warehouse();
 
-            // Áp dụng Pessimistic Write Lock (SELECT ... FOR UPDATE) trên bản ghi tồn kho SKU
             Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(item.skuId(), warehouse.getId())
                     .orElseThrow(() -> new BusinessException(
                             ErrorCode.INVENTORY_NOT_FOUND,
@@ -239,7 +394,6 @@ public class InventoryServiceImpl implements InventoryService {
             int available = inventory.getAvailableQty();
             int requestedQty = item.quantity();
 
-            // Kiểm tra quy tắc chống bán vượt tồn kho (ALLOW_OVERSELL = false)
             if (available < requestedQty && !Boolean.TRUE.equals(properties.getAllowOversell())) {
                 log.warn("Từ chối giữ kho cho SKU {}: yêu cầu={}, khả dụng={}", item.skuId(), requestedQty, available);
                 throw new BusinessException(
@@ -249,11 +403,9 @@ public class InventoryServiceImpl implements InventoryService {
                 );
             }
 
-            // Thực hiện tăng số lượng đang giữ (reserved_qty)
             inventory.setReservedQty(inventory.getReservedQty() + requestedQty);
             inventoryRepository.save(inventory);
 
-            // Tạo phiếu giữ kho (Inventory Reservation)
             UUID reservationId = UUID.randomUUID();
             InventoryReservation reservation = new InventoryReservation(
                     reservationId,
@@ -266,7 +418,6 @@ public class InventoryServiceImpl implements InventoryService {
             );
             reservationRepository.save(reservation);
 
-            // Ghi nhận vào Sổ cái tồn kho bất biến (Immutable Inventory Ledger)
             InventoryLedger ledger = new InventoryLedger(
                     UUID.randomUUID(),
                     inventory,
@@ -278,7 +429,6 @@ public class InventoryServiceImpl implements InventoryService {
             );
             ledgerRepository.save(ledger);
 
-            // Bắn sự kiện miền InventoryReservedEvent theo SRS §2.8
             eventPublisher.publishEvent(InventoryReservedEvent.of(
                     reservationId,
                     item.skuId(),
@@ -310,16 +460,6 @@ public class InventoryServiceImpl implements InventoryService {
 
     /**
      * Khóa giữ hàng chuyên biệt khi Seller tạo phiên đấu giá (Auction Reservation - SRS §3.6.1).
-     *
-     * Chức năng:
-     * - Khóa giữ 1 đơn vị tồn kho khả dụng cho sản phẩm đấu giá với refType = AUCTION.
-     * - Thiết lập TTL của phiếu giữ kho bao quát toàn bộ thời gian diễn ra phiên đấu giá (expires_at = endTime).
-     * - Nghiêm cấm bán vượt số lượng tồn (ALLOW_OVERSELL = false), từ chối tạo phiên nếu tồn kho khả dụng không đủ.
-     *
-     * Quy tắc và kiểm tra nghiệp vụ:
-     * - endTime phải sau startTime và phải ở tương lai.
-     * - Thời lượng phiên phải >= AUCTION_MIN_DURATION_MINUTES (60 phút) và <= AUCTION_MAX_DURATION_HOURS (168 giờ = 7 ngày).
-     * - Idempotency: nếu cùng auctionId đã có phiếu PENDING, trả về kết quả hiện tại, không khóa kho trùng lặp.
      */
     @Override
     @Transactional
@@ -337,7 +477,6 @@ public class InventoryServiceImpl implements InventoryService {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thời gian kết thúc phiên đấu giá phải ở tương lai");
         }
 
-        // Kiểm tra thời lượng tối thiểu và tối đa của phiên đấu giá (SRS §2.6)
         long durationMinutes = ChronoUnit.MINUTES.between(request.startTime(), request.endTime());
         if (durationMinutes < properties.getAuctionMinDurationMinutes()) {
             throw new BusinessException(
@@ -353,7 +492,6 @@ public class InventoryServiceImpl implements InventoryService {
             );
         }
 
-        // Kiểm tra tính Idempotent: nếu đã giữ kho cho phiên này rồi, trả về phiếu PENDING hiện tại
         List<InventoryReservation> existing = reservationRepository.findByRefTypeAndRefId(
                 ReservationRefType.AUCTION,
                 auctionId
@@ -362,28 +500,23 @@ public class InventoryServiceImpl implements InventoryService {
             InventoryReservation res = existing.get(0);
             if (res.getStatus() == ReservationStatus.PENDING) {
                 log.info("Phiên đấu giá {} đã được giữ kho trước đó (Idempotent), trả về phiếu hiện tại", auctionId);
-                ReservationItemResponse item = new ReservationItemResponse(
-                        res.getId(),
-                        res.getInventory().getSkuId(),
-                        res.getInventory().getWarehouse().getId(),
-                        res.getQuantity(),
-                        res.getStatus(),
-                        res.getExpiresAt()
-                );
-                return new ReservationResponse(
-                        res.getRefType(),
-                        res.getRefId(),
-                        res.getStatus(),
-                        List.of(item),
-                        res.getExpiresAt()
+                return toReservationResponse(ReservationRefType.AUCTION, auctionId, existing);
+            }
+            if (res.getStatus() == ReservationStatus.CONFIRMED) {
+                throw new BusinessException(
+                        ErrorCode.INVENTORY_RESERVATION_ALREADY_COMMITTED,
+                        "Phiên đấu giá " + auctionId + " đã xuất kho trước đó"
                 );
             }
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_RESERVATION_EXPIRED,
+                    "Phiếu giữ kho của phiên đấu giá " + auctionId + " đã ở trạng thái " + res.getStatus()
+            );
         }
 
         int requestedQty = (request.quantity() != null && request.quantity() > 0) ? request.quantity() : 1;
         Warehouse warehouse = resolveWarehouse(request.warehouseId());
 
-        // Áp dụng Pessimistic Write Lock trên bản ghi tồn kho SKU
         Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(request.skuId(), warehouse.getId())
                 .orElseThrow(() -> new BusinessException(
                         ErrorCode.INVENTORY_NOT_FOUND,
@@ -392,7 +525,6 @@ public class InventoryServiceImpl implements InventoryService {
 
         int available = inventory.getAvailableQty();
 
-        // Kiểm tra chống bán vượt tồn kho (ALLOW_OVERSELL = false)
         if (available < requestedQty && !Boolean.TRUE.equals(properties.getAllowOversell())) {
             log.warn("Từ chối tạo phiên đấu giá cho SKU {}: yêu cầu={}, khả dụng={}", request.skuId(), requestedQty, available);
             throw new BusinessException(
@@ -402,11 +534,9 @@ public class InventoryServiceImpl implements InventoryService {
             );
         }
 
-        // Tăng reserved_qty để khóa sản phẩm
         inventory.setReservedQty(inventory.getReservedQty() + requestedQty);
         inventoryRepository.save(inventory);
 
-        // Tạo phiếu giữ kho AUCTION với expires_at bao quát toàn bộ thời gian phiên (đến endTime)
         UUID reservationId = UUID.randomUUID();
         InventoryReservation reservation = new InventoryReservation(
                 reservationId,
@@ -419,7 +549,6 @@ public class InventoryServiceImpl implements InventoryService {
         );
         reservationRepository.save(reservation);
 
-        // Ghi nhận vào Sổ cái tồn kho bất biến (RESERVE cho AUCTION)
         InventoryLedger ledger = new InventoryLedger(
                 UUID.randomUUID(),
                 inventory,
@@ -431,7 +560,6 @@ public class InventoryServiceImpl implements InventoryService {
         );
         ledgerRepository.save(ledger);
 
-        // Phát sinh sự kiện miền InventoryReservedEvent theo SRS §2.8
         eventPublisher.publishEvent(InventoryReservedEvent.of(
                 reservationId,
                 request.skuId(),
@@ -465,14 +593,6 @@ public class InventoryServiceImpl implements InventoryService {
 
     /**
      * Gia hạn thời gian giữ kho khi phiên đấu giá bị kéo dài do Anti-sniping (SRS §2.6 & §3.6.1).
-     *
-     * Chức năng:
-     * - Tiếp nhận tín hiệu gia hạn khi phiên đấu giá kéo dài (mặc định ANTI_SNIPING_EXTENSION_MINUTES = 5 phút).
-     * - Tự động kéo dài expires_at của phiếu giữ kho tương ứng, ngăn chặn việc kho bị giải phóng nhầm khi phiên vẫn đang mở.
-     *
-     * Quy tắc:
-     * - Khóa bi quan phiếu giữ kho AUCTION (PENDING).
-     * - Thời hạn mới phải lớn hơn thời hạn hiện tại.
      */
     @Override
     @Transactional
@@ -481,7 +601,6 @@ public class InventoryServiceImpl implements InventoryService {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã phiên đấu giá auctionId không được để trống");
         }
 
-        // Khóa phiếu giữ kho của phiên đấu giá đang ở trạng thái PENDING
         List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
                 ReservationRefType.AUCTION,
                 auctionId,
@@ -559,14 +678,7 @@ public class InventoryServiceImpl implements InventoryService {
 
     /**
      * Xác nhận đơn hàng đã thanh toán thành công (Commit Reservation).
-     *
-     * Luồng xử lý:
-     * 1. Khóa phiếu giữ hàng theo reservationId.
-     * 2. Kiểm tra trạng thái: phải là PENDING.
-     * 3. Khóa bản ghi tồn kho: trừ cả reserved_qty và total_qty tương ứng (hàng thực sự rời khỏi kho).
-     * 4. Cập nhật trạng thái phiếu thành CONFIRMED.
-     * 5. Ghi sổ cái OUTBOUND.
-     * 6. Bắn sự kiện InventoryCommittedEvent.
+     * Bảo đảm Idempotent: phiếu đã CONFIRMED trả về ngay, phiếu EXPIRED hoặc RELEASED ném INVENTORY_RESERVATION_EXPIRED.
      */
     @Override
     @Transactional
@@ -577,108 +689,25 @@ public class InventoryServiceImpl implements InventoryService {
                         "Không tìm thấy phiếu giữ hàng có mã " + reservationId
                 ));
 
-        // Quy tắc Idempotent: Nếu đã CONFIRMED trước đó (do webhook gửi trùng hoặc retry), trả về kết quả ngay
         if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
             log.info("Phiếu giữ hàng {} đã được xác nhận xuất kho trước đó (Idempotent), bỏ qua trừ kho lặp", reservationId);
-            ReservationItemResponse item = new ReservationItemResponse(
-                    reservation.getId(),
-                    reservation.getInventory().getSkuId(),
-                    reservation.getInventory().getWarehouse().getId(),
-                    reservation.getQuantity(),
-                    ReservationStatus.CONFIRMED,
-                    reservation.getExpiresAt()
-            );
-            return new ReservationResponse(
-                    reservation.getRefType(),
-                    reservation.getRefId(),
-                    ReservationStatus.CONFIRMED,
-                    List.of(item),
-                    reservation.getExpiresAt()
-            );
+            return toReservationResponse(reservation.getRefType(), reservation.getRefId(), List.of(reservation));
         }
 
-        if (reservation.getStatus() == ReservationStatus.EXPIRED) {
+        if (reservation.getStatus() == ReservationStatus.EXPIRED || reservation.getStatus() == ReservationStatus.RELEASED) {
             throw new BusinessException(
                     ErrorCode.INVENTORY_RESERVATION_EXPIRED,
-                    "Phiếu giữ hàng đã quá hạn và bị hủy"
+                    "Phiếu giữ hàng đã quá hạn hoặc bị hủy: " + reservation.getStatus()
             );
         }
 
-        if (reservation.getStatus() != ReservationStatus.PENDING) {
-            throw new BusinessException(
-                    ErrorCode.BUSINESS_ERROR,
-                    "Phiếu giữ hàng không ở trạng thái hợp lệ để xác nhận: " + reservation.getStatus()
-            );
-        }
+        commitSinglePendingReservation(reservation, "CONFIRMED_PAYMENT");
 
-        Inventory inventory = inventoryRepository.findByIdForUpdate(reservation.getInventory().getId())
-                .orElseThrow(() -> new BusinessException(
-                        ErrorCode.INVENTORY_NOT_FOUND,
-                        "Không tìm thấy bản ghi tồn kho liên kết với phiếu giữ hàng"
-                ));
-
-        int qty = reservation.getQuantity();
-        // Trừ vĩnh viễn số lượng trong reserved_qty và total_qty
-        inventory.setReservedQty(Math.max(0, inventory.getReservedQty() - qty));
-        inventory.setTotalQty(Math.max(0, inventory.getTotalQty() - qty));
-        inventoryRepository.save(inventory);
-
-        reservation.setStatus(ReservationStatus.CONFIRMED);
-        reservationRepository.save(reservation);
-
-        // Ghi nhận biến động xuất kho OUTBOUND vào sổ cái bất biến (transaction_type = COMMITTED)
-        InventoryLedger ledger = new InventoryLedger(
-                UUID.randomUUID(),
-                inventory,
-                LedgerMovementType.OUTBOUND,
-                qty,
-                reservation.getRefType().name(),
-                reservation.getRefId(),
-                Instant.now()
-        );
-        ledgerRepository.save(ledger);
-
-        // Phát sinh sự kiện miền InventoryCommittedEvent theo SRS §2.8
-        eventPublisher.publishEvent(InventoryCommittedEvent.of(
-                reservation.getId(),
-                inventory.getSkuId(),
-                inventory.getWarehouse().getId(),
-                qty,
-                reservation.getRefType(),
-                reservation.getRefId()
-        ));
-
-        ReservationItemResponse item = new ReservationItemResponse(
-                reservation.getId(),
-                inventory.getSkuId(),
-                inventory.getWarehouse().getId(),
-                qty,
-                ReservationStatus.CONFIRMED,
-                reservation.getExpiresAt()
-        );
-
-        return new ReservationResponse(
-                reservation.getRefType(),
-                reservation.getRefId(),
-                ReservationStatus.CONFIRMED,
-                List.of(item),
-                reservation.getExpiresAt()
-        );
+        return toReservationResponse(reservation.getRefType(), reservation.getRefId(), List.of(reservation));
     }
 
     /**
      * Xác nhận trừ kho thực tế cho toàn bộ các mặt hàng của đơn hàng khi thanh toán thành công (SRS §3.6.1).
-     *
-     * Chức năng:
-     * - Trừ vĩnh viễn số lượng trong reserved_qty và total_qty cho từng mặt hàng.
-     * - Ghi bản ghi xuất kho thực tế vào sổ cái (movement_type = OUTBOUND).
-     * - Phát sinh sự kiện miền InventoryCommittedEvent.
-     *
-     * Quy tắc Idempotency:
-     * - Khóa danh sách phiếu của orderId theo thứ tự r.id ASC để tránh Deadlock giữa các tiến trình đồng thời.
-     * - Nếu toàn bộ các phiếu đã CONFIRMED: trả về kết quả thành công ngay lập tức, không trừ kho lần 2.
-     * - Nếu phiếu ở trạng thái PENDING: thực hiện trừ kho và chuyển sang CONFIRMED.
-     * - Nếu phiếu đã EXPIRED hoặc RELEASED: ném lỗi nghiệp vụ vì không thể xuất kho phiếu đã bị hủy/quá hạn.
      */
     @Override
     @Transactional
@@ -695,31 +724,13 @@ public class InventoryServiceImpl implements InventoryService {
             );
         }
 
-        // Kiểm tra tính Idempotent: nếu tất cả đã CONFIRMED thì trả về luôn, không trừ kho lặp
         boolean allConfirmed = reservations.stream()
                 .allMatch(r -> r.getStatus() == ReservationStatus.CONFIRMED);
         if (allConfirmed) {
             log.info("Đơn hàng {} đã được xác nhận xuất kho trước đó (Idempotent), bỏ qua trừ kho lặp", orderId);
-            List<ReservationItemResponse> items = reservations.stream()
-                    .map(r -> new ReservationItemResponse(
-                            r.getId(),
-                            r.getInventory().getSkuId(),
-                            r.getInventory().getWarehouse().getId(),
-                            r.getQuantity(),
-                            ReservationStatus.CONFIRMED,
-                            r.getExpiresAt()
-                    ))
-                    .toList();
-            return new ReservationResponse(
-                    ReservationRefType.ORDER,
-                    orderId,
-                    ReservationStatus.CONFIRMED,
-                    items,
-                    reservations.get(0).getExpiresAt()
-            );
+            return toReservationResponse(ReservationRefType.ORDER, orderId, reservations);
         }
 
-        // Kiểm tra trạng thái không hợp lệ (đã bị hoàn hủy hoặc hết hạn)
         boolean hasExpiredOrReleased = reservations.stream()
                 .anyMatch(r -> r.getStatus() == ReservationStatus.EXPIRED || r.getStatus() == ReservationStatus.RELEASED);
         if (hasExpiredOrReleased) {
@@ -729,82 +740,18 @@ public class InventoryServiceImpl implements InventoryService {
             );
         }
 
-        List<ReservationItemResponse> items = new ArrayList<>();
-        Instant latestExpiresAt = reservations.get(0).getExpiresAt();
-
         for (InventoryReservation res : reservations) {
             if (res.getStatus() == ReservationStatus.PENDING) {
-                Inventory inventory = inventoryRepository.findByIdForUpdate(res.getInventory().getId())
-                        .orElseThrow(() -> new BusinessException(
-                                ErrorCode.INVENTORY_NOT_FOUND,
-                                "Không tìm thấy bản ghi tồn kho liên kết với phiếu giữ hàng " + res.getId()
-                        ));
-
-                int qty = res.getQuantity();
-                // Trừ vĩnh viễn số lượng trong reserved_qty và total_qty
-                inventory.setReservedQty(Math.max(0, inventory.getReservedQty() - qty));
-                inventory.setTotalQty(Math.max(0, inventory.getTotalQty() - qty));
-                inventoryRepository.save(inventory);
-
-                res.setStatus(ReservationStatus.CONFIRMED);
-                reservationRepository.save(res);
-
-                // Ghi bản ghi xuất kho thực tế vào sổ cái (OUTBOUND)
-                InventoryLedger ledger = new InventoryLedger(
-                        UUID.randomUUID(),
-                        inventory,
-                        LedgerMovementType.OUTBOUND,
-                        qty,
-                        res.getRefType().name(),
-                        res.getRefId(),
-                        Instant.now()
-                );
-                ledgerRepository.save(ledger);
-
-                // Phát sinh sự kiện miền InventoryCommittedEvent
-                eventPublisher.publishEvent(InventoryCommittedEvent.of(
-                        res.getId(),
-                        inventory.getSkuId(),
-                        inventory.getWarehouse().getId(),
-                        qty,
-                        res.getRefType(),
-                        res.getRefId()
-                ));
-            }
-
-            items.add(new ReservationItemResponse(
-                    res.getId(),
-                    res.getInventory().getSkuId(),
-                    res.getInventory().getWarehouse().getId(),
-                    res.getQuantity(),
-                    ReservationStatus.CONFIRMED,
-                    res.getExpiresAt()
-            ));
-            if (res.getExpiresAt().isAfter(latestExpiresAt)) {
-                latestExpiresAt = res.getExpiresAt();
+                commitSinglePendingReservation(res, "ORDER_PAID_COMMIT");
             }
         }
 
-        log.info("Xác nhận xuất kho thành công cho đơn hàng {} với {} mặt hàng", orderId, items.size());
-        return new ReservationResponse(
-                ReservationRefType.ORDER,
-                orderId,
-                ReservationStatus.CONFIRMED,
-                items,
-                latestExpiresAt
-        );
+        log.info("Xác nhận xuất kho thành công cho đơn hàng {} với {} mặt hàng", orderId, reservations.size());
+        return toReservationResponse(ReservationRefType.ORDER, orderId, reservations);
     }
 
     /**
-     * Giải phóng một phiếu giữ hàng cụ thể (do người dùng hủy giỏ hoặc thanh toán thất bại).
-     *
-     * Luồng xử lý:
-     * 1. Khóa phiếu và kiểm tra trạng thái PENDING.
-     * 2. Nếu phiếu đã RELEASED hoặc EXPIRED: bỏ qua không hoàn kho lần hai (Idempotent).
-     * 3. Khóa tồn kho, giảm reserved_qty để hoàn trả lại available_qty.
-     * 4. Chuyển trạng thái phiếu sang RELEASED.
-     * 5. Ghi nhận RELEASE vào sổ cái bất biến.
-     * 6. Bắn sự kiện InventoryReleasedEvent.
+     * Giải phóng một phiếu giữ hàng cụ thể theo reservationId (Idempotent).
      */
     @Override
     @Transactional
@@ -821,7 +768,11 @@ public class InventoryServiceImpl implements InventoryService {
             return;
         }
 
-        releaseSingleReservation(reservation, ReservationStatus.RELEASED, (reason != null) ? reason : "MANUAL_RELEASE");
+        releaseSingleReservation(
+                reservation,
+                ReservationStatus.RELEASED,
+                (reason != null && !reason.isBlank()) ? reason : "MANUAL_RELEASE"
+        );
     }
 
     /**
@@ -849,102 +800,25 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     /**
-     * Giải phóng tồn kho khi thanh toán lỗi/hủy (Release Inventory theo đơn hàng) (SRS §3.6.1).
-     *
-     * Chức năng:
-     * - Lắng nghe/xử lý sự kiện OrderPaymentFailed hoặc OrderCancelled.
-     * - Giảm reserved_qty và hoàn trả đầy đủ số lượng về lại available_qty.
-     * - Ghi nhận giao dịch vào sổ cái (movement_type = RELEASE) và phát sinh sự kiện InventoryReleasedEvent.
-     *
-     * Quy tắc Idempotency:
-     * - Khóa danh sách phiếu của orderId theo thứ tự r.id ASC để tránh Deadlock.
-     * - Nếu các phiếu đã ở trạng thái RELEASED hoặc EXPIRED: bỏ qua không hoàn kho lần hai.
-     * - Chỉ hoàn kho các phiếu còn ở trạng thái PENDING.
+     * Giải phóng tồn kho khi thanh toán lỗi/hủy theo đơn hàng (Idempotent).
      */
     @Override
     @Transactional
     public void releaseByOrder(UUID orderId, String reason) {
-        List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefIdForUpdate(
-                ReservationRefType.ORDER,
-                orderId
-        );
-
-        if (reservations.isEmpty()) {
-            log.warn("Không tìm thấy phiếu giữ kho nào cho đơn hàng {} khi giải phóng kho", orderId);
-            return;
-        }
-
-        String effectiveReason = (reason != null && !reason.isBlank()) ? reason : "ORDER_RELEASE";
-        int releasedCount = 0;
-
-        for (InventoryReservation res : reservations) {
-            if (res.getStatus() == ReservationStatus.PENDING) {
-                releaseSingleReservation(res, ReservationStatus.RELEASED, effectiveReason);
-                releasedCount++;
-            } else {
-                log.info("Phiếu giữ hàng {} của đơn {} đã ở trạng thái {} (Idempotent), bỏ qua giải phóng",
-                        res.getId(), orderId, res.getStatus());
-            }
-        }
-
-        log.info("Đã giải phóng {} phiếu giữ hàng cho đơn hàng {} với lý do: {}", releasedCount, orderId, effectiveReason);
+        releasePendingReservationsByRef(ReservationRefType.ORDER, orderId, reason, "ORDER_RELEASE", "đơn hàng");
     }
 
     /**
-     * Hủy phiên & Giải phóng tồn kho phiên đấu giá (Release Inventory for Auction) (SRS §3.6.1).
-     *
-     * Chức năng:
-     * - Khi phiên bị Seller/Admin hủy (AuctionCancelled) hoặc kết thúc mà không có người đặt giá (AuctionFailed):
-     *   Tức thời giải phóng số lượng giữ trước, hoàn trả về available_qty trong kho.
-     * - Ghi bản ghi biến động vào sổ cái (inventory_ledger) với loại giao dịch RELEASE.
-     *
-     * Quy tắc Idempotency:
-     * - Khóa danh sách phiếu của auctionId theo thứ tự ID ASC để tránh Deadlock.
-     * - Nếu các phiếu đã ở trạng thái RELEASED hoặc EXPIRED: bỏ qua không hoàn kho lần hai (retry release không tăng kho thừa).
-     * - Chỉ hoàn kho các phiếu còn ở trạng thái PENDING.
+     * Hủy phiên & Giải phóng tồn kho phiên đấu giá (Idempotent).
      */
     @Override
     @Transactional
     public void releaseByAuction(UUID auctionId, String reason) {
-        List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefIdForUpdate(
-                ReservationRefType.AUCTION,
-                auctionId
-        );
-
-        if (reservations.isEmpty()) {
-            log.warn("Không tìm thấy phiếu giữ kho nào cho phiên đấu giá {} khi giải phóng kho", auctionId);
-            return;
-        }
-
-        String effectiveReason = (reason != null && !reason.isBlank()) ? reason : "AUCTION_RELEASE";
-        int releasedCount = 0;
-
-        for (InventoryReservation res : reservations) {
-            if (res.getStatus() == ReservationStatus.PENDING) {
-                releaseSingleReservation(res, ReservationStatus.RELEASED, effectiveReason);
-                releasedCount++;
-            } else {
-                log.info("Phiếu giữ kho {} của phiên {} đã ở trạng thái {} (Idempotent), bỏ qua giải phóng",
-                        res.getId(), auctionId, res.getStatus());
-            }
-        }
-
-        log.info("Đã giải phóng {} phiếu giữ hàng cho phiên đấu giá {} với lý do: {}", releasedCount, auctionId, effectiveReason);
+        releasePendingReservationsByRef(ReservationRefType.AUCTION, auctionId, reason, "AUCTION_RELEASE", "phiên đấu giá");
     }
 
     /**
-     * Chuyển tiếp trạng thái giữ kho sang Đơn hàng (Transition to Order) (SRS §3.6.1).
-     *
-     * Chức năng:
-     * - Đảm bảo không xảy ra hiện tượng "Reserve kép" (Double Reservation): Khi chốt người thắng cuộc,
-     *   chuyển đổi mã tham chiếu từ auction_id sang order_id mà không cần nhả kho rồi giữ lại từ đầu.
-     * - Cập nhật hạn thanh toán mới cho đơn hàng (mặc định 24 giờ kể từ thời điểm chốt).
-     *
-     * Quy tắc Idempotency và an toàn dữ liệu:
-     * - Nếu đơn hàng orderId đã có phiếu giữ kho loại ORDER, trả về kết quả thành công ngay lập tức (Idempotent).
-     * - Khóa bi quan các phiếu AUCTION đang PENDING.
-     * - Chuyển đổi trực tiếp refType thành ORDER, refId thành orderId, cập nhật expiresAt = paymentDeadline.
-     * - Tuyệt đối KHÔNG thay đổi total_qty hoặc reserved_qty trong kho, hàng hóa được giữ liên tục không gián đoạn.
+     * Chuyển tiếp trạng thái giữ kho từ AUCTION sang Đơn hàng của người thắng cuộc (Transition to Order).
      */
     @Override
     @Transactional
@@ -956,33 +830,15 @@ public class InventoryServiceImpl implements InventoryService {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã đơn hàng orderId không được để trống");
         }
 
-        // Bước 1: Kiểm tra tính Idempotent: nếu đơn hàng đã được chuyển tiếp trước đó, trả về luôn
         List<InventoryReservation> existingOrderRes = reservationRepository.findByRefTypeAndRefIdForUpdate(
                 ReservationRefType.ORDER,
                 request.orderId()
         );
         if (!existingOrderRes.isEmpty()) {
             log.info("Đơn hàng {} đã được chuyển tiếp giữ kho trước đó (Idempotent), bỏ qua chuyển tiếp lặp", request.orderId());
-            List<ReservationItemResponse> items = existingOrderRes.stream()
-                    .map(r -> new ReservationItemResponse(
-                            r.getId(),
-                            r.getInventory().getSkuId(),
-                            r.getInventory().getWarehouse().getId(),
-                            r.getQuantity(),
-                            r.getStatus(),
-                            r.getExpiresAt()
-                    ))
-                    .toList();
-            return new ReservationResponse(
-                    ReservationRefType.ORDER,
-                    request.orderId(),
-                    existingOrderRes.get(0).getStatus(),
-                    items,
-                    existingOrderRes.get(0).getExpiresAt()
-            );
+            return toReservationResponse(ReservationRefType.ORDER, request.orderId(), existingOrderRes);
         }
 
-        // Bước 2: Khóa các phiếu giữ kho AUCTION đang ở trạng thái PENDING
         List<InventoryReservation> auctionReservations = reservationRepository.findByRefTypeAndRefIdAndStatusForUpdate(
                 ReservationRefType.AUCTION,
                 auctionId,
@@ -996,7 +852,6 @@ public class InventoryServiceImpl implements InventoryService {
             );
         }
 
-        // Bước 3: Xác định thời hạn thanh toán đơn hàng (SRS §3.6.1: mặc định now + 24 giờ)
         Instant orderExpiresAt;
         if (request.paymentDeadline() != null) {
             orderExpiresAt = request.paymentDeadline();
@@ -1007,74 +862,54 @@ public class InventoryServiceImpl implements InventoryService {
             orderExpiresAt = Instant.now().plus(timeoutMinutes, ChronoUnit.MINUTES);
         }
 
-        // Bước 4: Chuyển đổi mã tham chiếu mà không nhả kho rồi giữ lại (chống Double Reservation và chống cướp kho)
-        List<ReservationItemResponse> items = new ArrayList<>();
         for (InventoryReservation res : auctionReservations) {
             res.setRefType(ReservationRefType.ORDER);
             res.setRefId(request.orderId());
             res.setExpiresAt(orderExpiresAt);
             reservationRepository.save(res);
-
-            items.add(new ReservationItemResponse(
-                    res.getId(),
-                    res.getInventory().getSkuId(),
-                    res.getInventory().getWarehouse().getId(),
-                    res.getQuantity(),
-                    res.getStatus(),
-                    orderExpiresAt
-            ));
         }
 
         log.info("Chuyển tiếp thành công phiếu giữ kho từ phiên đấu giá {} sang đơn hàng {} với hạn thanh toán {}",
                 auctionId, request.orderId(), orderExpiresAt);
 
-        return new ReservationResponse(
-                ReservationRefType.ORDER,
-                request.orderId(),
-                ReservationStatus.PENDING,
-                items,
-                orderExpiresAt
-        );
+        return toReservationResponse(ReservationRefType.ORDER, request.orderId(), auctionReservations);
     }
 
     /**
      * Quét và tự động hoàn kho các phiếu giữ hàng PENDING đã quá thời hạn.
-     *
-     * Luồng xử lý:
-     * 1. Tìm tất cả các phiếu PENDING có expires_at <= current_time.
-     * 2. Với mỗi phiếu: khóa bản ghi, chuyển status = EXPIRED, hoàn trả reserved_qty về available_qty.
-     * 3. Ghi sổ cái RELEASE.
-     * 4. Bắn sự kiện InventoryReservationExpiredEvent theo SRS §2.8.
+     * Chỉ nạp danh sách ID ứng viên trước khi khóa FOR UPDATE để tránh đọc nhầm trạng thái cache khi cạnh tranh với callback thanh toán hoặc gia hạn anti-sniping.
      */
     @Override
     @Transactional
     public int autoReleaseExpiredReservations() {
         Instant now = Instant.now();
-        // Chỉ đọc ID trước khóa: entity PENDING nạp sớm có thể bị cache và nhả nhầm phiếu callback vừa CONFIRMED.
-        List<UUID> expiredList = reservationRepository.findExpiredIds(
+        List<UUID> expiredIds = reservationRepository.findExpiredIds(
                 ReservationStatus.PENDING,
                 now
         );
 
-        if (expiredList.isEmpty()) {
+        if (expiredIds.isEmpty()) {
             return 0;
         }
 
-        log.info("Phát hiện {} phiếu giữ hàng quá hạn, tiến hành tự động hoàn kho...", expiredList.size());
+        log.info("Phát hiện {} phiếu giữ hàng quá hạn, tiến hành tự động hoàn kho...", expiredIds.size());
         int count = 0;
 
-        for (UUID reservationId : expiredList) {
+        for (UUID reservationId : expiredIds) {
             try {
-                // Khóa lại dòng phiếu để tránh xung đột với request thanh toán đồng thời
                 InventoryReservation lockedRes = reservationRepository.findByIdForUpdate(reservationId)
                         .orElse(null);
 
-                if (lockedRes != null && lockedRes.getStatus() == ReservationStatus.PENDING) {
+                // Kiểm tra lại status và expiresAt sau khi đã giữ khóa dòng (phòng trường hợp vừa được CONFIRMED hoặc gia hạn).
+                if (lockedRes != null
+                        && lockedRes.getStatus() == ReservationStatus.PENDING
+                        && !lockedRes.getExpiresAt().isAfter(Instant.now())) {
                     releaseSingleReservation(lockedRes, ReservationStatus.EXPIRED, "TIMEOUT_EXPIRED");
                     count++;
                 }
             } catch (Exception ex) {
-                log.error("Lỗi khi tự động hoàn kho phiếu giữ hàng {}: errorType={}", reservationId, ex.getClass().getSimpleName());
+                log.error("Lỗi khi tự động hoàn kho phiếu giữ hàng {}: errorType={}",
+                        reservationId, ex.getClass().getSimpleName());
             }
         }
 
@@ -1088,22 +923,60 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public InventoryStockResponse inboundStock(StockInboundRequest request) {
-        Warehouse warehouse = resolveWarehouse(request.warehouseId());
+        return inboundStock(request, null);
+    }
 
-        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(request.skuId(), warehouse.getId())
-                .orElseGet(() -> new Inventory(
-                        UUID.randomUUID(),
-                        request.skuId(),
-                        warehouse,
-                        0,
-                        0,
-                        0
-                ));
+    /**
+     * Nhập thêm hàng hóa vào kho hỗ trợ kiểm tra quyền sở hữu seller và chống lặp qua idempotencyKey / refId.
+     *
+     * Luồng xử lý:
+     * 1. Phân giải skuId (trực tiếp hoặc qua skuCode từ Catalog Service).
+     * 2. Xác minh quyền thao tác và sở hữu SKU của seller (Admin bỏ qua, Seller bắt buộc sở hữu SKU).
+     * 3. Xác định khóa chống lặp (Idempotency-Key từ header hoặc body, hoặc refId).
+     * 4. Nếu đã có bản ghi INBOUND khớp khóa và số lượng → trả về tồn kho hiện tại, không cộng dồn hai lần.
+     * 5. Nếu cùng khóa nhưng khác SKU/kho/số lượng → từ chối với HTTP 409 ORDER_IDEMPOTENCY_CONFLICT.
+     * 6. Khóa dòng tồn kho, tăng total_qty và ghi nhận sổ cái INBOUND bất biến.
+     */
+    @Override
+    @Transactional
+    public InventoryStockResponse inboundStock(StockInboundRequest request, String headerIdempotencyKey) {
+        ResolvedSku sku = resolveSkuForMutation(request.skuId(), request.skuCode());
+        InventoryAccessPolicy.ActorContext actor = accessPolicy.verifyWriteAccessAndOwnership(sku.skuId());
+        Warehouse warehouse = resolveWarehouse(request.warehouseId());
+        String ledgerIdempotencyKey = buildOperationIdempotencyKey("INBOUND", headerIdempotencyKey, request.idempotencyKey());
+
+        if (ledgerIdempotencyKey != null) {
+            Optional<InventoryLedger> existingByKey = ledgerRepository.findByIdempotencyKey(ledgerIdempotencyKey);
+            if (existingByKey.isPresent()) {
+                return verifyInboundReplay(existingByKey.get(), sku.skuId(), warehouse.getId(), request.quantity(), sku.skuCode());
+            }
+        }
+
+        Inventory existingInventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(sku.skuId(), warehouse.getId())
+                .orElse(null);
+
+        if (existingInventory != null && ledgerIdempotencyKey == null && request.refId() != null) {
+            Optional<InventoryLedger> existingByRef = ledgerRepository.findFirstByInventoryIdAndMovementTypeAndRefId(
+                    existingInventory.getId(),
+                    LedgerMovementType.INBOUND,
+                    request.refId()
+            );
+            if (existingByRef.isPresent()) {
+                return verifyInboundReplay(existingByRef.get(), sku.skuId(), warehouse.getId(), request.quantity(), sku.skuCode());
+            }
+        }
+
+        Inventory inventory = (existingInventory != null)
+                ? existingInventory
+                : new Inventory(UUID.randomUUID(), sku.skuId(), warehouse, 0, 0, 0);
 
         inventory.setTotalQty(inventory.getTotalQty() + request.quantity());
         inventory = inventoryRepository.save(inventory);
 
-        // Ghi sổ cái INBOUND
+        String reason = (request.reason() != null && !request.reason().isBlank())
+                ? request.reason().trim()
+                : "Nhập kho hàng hóa";
+
         InventoryLedger ledger = new InventoryLedger(
                 UUID.randomUUID(),
                 inventory,
@@ -1111,11 +984,14 @@ public class InventoryServiceImpl implements InventoryService {
                 request.quantity(),
                 "INBOUND",
                 request.refId(),
-                Instant.now()
+                Instant.now(),
+                ledgerIdempotencyKey,
+                reason,
+                actor.actorId()
         );
         ledgerRepository.save(ledger);
 
-        return toStockResponse(inventory);
+        return toStockResponse(inventory, sku.skuCode());
     }
 
     /**
@@ -1124,71 +1000,422 @@ public class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public InventoryStockResponse adjustStock(StockAdjustmentRequest request) {
-        if (request.deltaQty() == 0) {
+        return adjustStock(request, null);
+    }
+
+    /**
+     * Điều chỉnh tồn kho thực tế hỗ trợ quyền seller, targetTotalQty, unavailableDeltaQty và chống lặp.
+     *
+     * Quy tắc bảo vệ bất biến:
+     * - Chỉ Admin hoặc Seller sở hữu chính SKU mới được điều chỉnh.
+     * - Hỗ trợ điều chỉnh tương đối (deltaQty) hoặc đặt tổng tồn mới (targetTotalQty) dưới khóa dòng DB.
+     * - Không cho phép tồn kho âm hoặc totalQty < reservedQty + unavailableQty (ném INVENTORY_INSUFFICIENT).
+     * - Không ghi bản ghi quantity = 0 vào sổ cái (nếu targetTotalQty bằng đúng tồn hiện tại thì trả về ngay).
+     */
+    @Override
+    @Transactional
+    public InventoryStockResponse adjustStock(StockAdjustmentRequest request, String headerIdempotencyKey) {
+        if (request.targetTotalQty() == null
+                && request.deltaQty() != null
+                && request.deltaQty() == 0
+                && (request.unavailableDeltaQty() == null || request.unavailableDeltaQty() == 0)) {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Số lượng điều chỉnh deltaQty phải khác 0");
         }
 
+        ResolvedSku sku = resolveSkuForMutation(request.skuId(), request.skuCode());
+        InventoryAccessPolicy.ActorContext actor = accessPolicy.verifyWriteAccessAndOwnership(sku.skuId());
         Warehouse warehouse = resolveWarehouse(request.warehouseId());
-        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(request.skuId(), warehouse.getId())
+        String ledgerIdempotencyKey = buildOperationIdempotencyKey("ADJUST", headerIdempotencyKey, request.idempotencyKey());
+
+        if (ledgerIdempotencyKey != null) {
+            Optional<InventoryLedger> existingByKey = ledgerRepository.findByIdempotencyKey(ledgerIdempotencyKey);
+            if (existingByKey.isPresent()) {
+                return verifyAdjustmentReplay(existingByKey.get(), sku.skuId(), warehouse.getId(), request, sku.skuCode());
+            }
+        }
+
+        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(sku.skuId(), warehouse.getId())
                 .orElseThrow(() -> new BusinessException(
                         ErrorCode.INVENTORY_NOT_FOUND,
                         "Không tìm thấy bản ghi tồn kho để điều chỉnh"
                 ));
 
-        int newTotal = inventory.getTotalQty() + request.deltaQty();
-        if (newTotal < (inventory.getReservedQty() + inventory.getUnavailableQty())) {
+        if (ledgerIdempotencyKey == null && request.refId() != null) {
+            Optional<InventoryLedger> existingByRef = ledgerRepository.findFirstByInventoryIdAndMovementTypeAndRefId(
+                    inventory.getId(),
+                    LedgerMovementType.ADJUSTMENT,
+                    request.refId()
+            );
+            if (existingByRef.isPresent()) {
+                return verifyAdjustmentReplay(existingByRef.get(), sku.skuId(), warehouse.getId(), request, sku.skuCode());
+            }
+        }
+
+        int deltaTotal = (request.targetTotalQty() != null)
+                ? (request.targetTotalQty() - inventory.getTotalQty())
+                : (request.deltaQty() != null ? request.deltaQty() : 0);
+        int deltaUnavailable = (request.unavailableDeltaQty() != null) ? request.unavailableDeltaQty() : 0;
+
+        int newTotal = inventory.getTotalQty() + deltaTotal;
+        int newUnavailable = inventory.getUnavailableQty() + deltaUnavailable;
+
+        if (newTotal < 0 || newUnavailable < 0) {
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_INSUFFICIENT,
+                    "Không thể điều chỉnh làm âm tổng tồn kho hoặc số lượng cách ly"
+            );
+        }
+        if (newTotal < (inventory.getReservedQty() + newUnavailable)) {
             throw new BusinessException(
                     ErrorCode.INVENTORY_INSUFFICIENT,
                     "Không thể điều chỉnh tồn kho vì tổng số lượng mới (" + newTotal
                             + ") nhỏ hơn số lượng đang giữ và không khả dụng ("
-                            + (inventory.getReservedQty() + inventory.getUnavailableQty()) + ")"
+                            + (inventory.getReservedQty() + newUnavailable) + ")"
             );
         }
 
+        if (deltaTotal == 0 && deltaUnavailable == 0) {
+            // Khi đặt targetTotalQty bằng đúng tổng tồn hiện tại, trả về tồn kho hiện tại mà không ghi sổ cái quantity=0.
+            return toStockResponse(inventory, sku.skuCode());
+        }
+
         inventory.setTotalQty(newTotal);
+        inventory.setUnavailableQty(newUnavailable);
         inventory = inventoryRepository.save(inventory);
 
-        // Ghi sổ cái ADJUSTMENT
-        InventoryLedger ledger = new InventoryLedger(
-                UUID.randomUUID(),
-                inventory,
-                LedgerMovementType.ADJUSTMENT,
-                request.deltaQty(),
-                "ADJUSTMENT",
-                request.refId(),
-                Instant.now()
-        );
-        ledgerRepository.save(ledger);
+        // Chỉ ghi sổ cái ADJUSTMENT khi tổng tồn vật lý thực sự thay đổi để tổng sổ cái luôn khớp total_qty.
+        if (deltaTotal != 0) {
+            InventoryLedger ledger = new InventoryLedger(
+                    UUID.randomUUID(),
+                    inventory,
+                    LedgerMovementType.ADJUSTMENT,
+                    deltaTotal,
+                    "ADJUSTMENT",
+                    request.refId(),
+                    Instant.now(),
+                    ledgerIdempotencyKey,
+                    request.reason().trim(),
+                    actor.actorId()
+            );
+            ledgerRepository.save(ledger);
+        }
 
-        return toStockResponse(inventory);
+        return toStockResponse(inventory, sku.skuCode());
     }
 
     /**
-     * Đọc lịch sử sổ cái tồn kho bất biến (chỉ đọc, phân trang, lọc theo SKU hoặc ref_id).
+     * Đọc lịch sử sổ cái tồn kho bất biến (tương thích ngược chữ ký cũ, áp dụng phạm vi seller).
      */
     @Override
     @Transactional(readOnly = true)
     public Page<InventoryLedgerResponse> getLedger(UUID skuId, UUID refId, Pageable pageable) {
-        Page<InventoryLedger> page = ledgerRepository.searchLedger(skuId, refId, pageable);
-        return page.map(l -> new InventoryLedgerResponse(
-                l.getId(),
-                l.getInventory().getSkuId(),
-                l.getInventory().getWarehouse().getId(),
-                l.getMovementType(),
-                l.getQuantity(),
-                l.getRefType(),
-                l.getRefId(),
-                l.getCreatedAt()
-        ));
+        return getLedger(skuId, null, null, null, null, refId, null, null, pageable);
+    }
+
+    /**
+     * Đọc lịch sử sổ cái tồn kho bất biến với đầy đủ bộ lọc theo SKU/kho/loại biến động/thời gian và phạm vi seller.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<InventoryLedgerResponse> getLedger(
+            UUID skuId,
+            String skuCode,
+            UUID warehouseId,
+            LedgerMovementType movementType,
+            String refType,
+            UUID refId,
+            Instant fromTime,
+            Instant toTime,
+            Pageable pageable
+    ) {
+        UUID resolvedSkuId = skuId;
+        if (resolvedSkuId == null && skuCode != null && !skuCode.isBlank()) {
+            Optional<CatalogClient.SkuOwnershipInfo> skuOpt = catalogClient.findSkuByCode(skuCode.trim());
+            if (skuOpt.isEmpty()) {
+                accessPolicy.resolveReadableSellerSkuScope(null, null);
+                return Page.empty(pageable);
+            }
+            resolvedSkuId = skuOpt.get().skuId();
+        }
+
+        List<UUID> allowedSkuIds = accessPolicy.resolveReadableSellerSkuScope(null, resolvedSkuId);
+        if (allowedSkuIds != null && allowedSkuIds.isEmpty()) {
+            return Page.empty(pageable);
+        }
+
+        boolean hasExtendedFilters = allowedSkuIds != null
+                || warehouseId != null
+                || movementType != null
+                || (refType != null && !refType.isBlank())
+                || fromTime != null
+                || toTime != null;
+
+        Page<InventoryLedger> page;
+        if (!hasExtendedFilters) {
+            page = ledgerRepository.searchLedger(resolvedSkuId, refId, pageable);
+        } else {
+            InventoryLedgerSearchRepository.LedgerFilter filter = new InventoryLedgerSearchRepository.LedgerFilter(
+                    resolvedSkuId,
+                    allowedSkuIds,
+                    allowedSkuIds != null,
+                    warehouseId,
+                    movementType,
+                    refType,
+                    refId,
+                    fromTime,
+                    toTime
+            );
+            page = ledgerRepository.searchLedgerFiltered(filter, pageable);
+        }
+
+        return page.map(this::toLedgerResponse);
+    }
+
+    /**
+     * Đối soát số dư tồn kho thực tế với tổng biến động trong sổ cái bất biến và tổng phiếu giữ hàng PENDING.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<InventoryReconciliationResponse> reconcileStock(UUID skuId, UUID warehouseId) {
+        List<UUID> allowedSkuIds = accessPolicy.resolveReadableSellerSkuScope(null, skuId);
+        if (allowedSkuIds != null && allowedSkuIds.isEmpty()) {
+            return List.of();
+        }
+
+        Specification<Inventory> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (skuId != null) {
+                predicates.add(cb.equal(root.get("skuId"), skuId));
+            }
+            if (allowedSkuIds != null) {
+                predicates.add(root.get("skuId").in(allowedSkuIds));
+            }
+            if (warehouseId != null) {
+                predicates.add(cb.equal(root.get("warehouse").get("id"), warehouseId));
+            }
+            return cb.and(predicates.toArray(Predicate[]::new));
+        };
+
+        List<Inventory> inventories = inventoryRepository.findAll(spec);
+        List<InventoryReconciliationResponse> results = new ArrayList<>(inventories.size());
+
+        for (Inventory inv : inventories) {
+            List<InventoryLedger> entries = ledgerRepository.findByInventoryIdOrderByCreatedAtAsc(inv.getId());
+            int ledgerTotal = 0;
+            int ledgerReserved = 0;
+            for (InventoryLedger entry : entries) {
+                int absQty = Math.abs(entry.getQuantity());
+                switch (entry.getMovementType()) {
+                    case INBOUND -> ledgerTotal += absQty;
+                    case OUTBOUND -> {
+                        ledgerTotal -= absQty;
+                        ledgerReserved -= absQty;
+                    }
+                    case ADJUSTMENT -> ledgerTotal += entry.getQuantity();
+                    case RESERVE -> ledgerReserved += absQty;
+                    case RELEASE -> ledgerReserved -= absQty;
+                    default -> {
+                    }
+                }
+            }
+
+            Integer pendingSum = reservationRepository.sumPendingQuantityByInventoryId(inv.getId());
+            int activeReservations = (pendingSum != null) ? pendingSum : 0;
+
+            boolean nonNegative = inv.getTotalQty() >= 0
+                    && inv.getReservedQty() >= 0
+                    && inv.getUnavailableQty() >= 0
+                    && inv.getTotalQty() >= (inv.getReservedQty() + inv.getUnavailableQty());
+
+            boolean matched = nonNegative
+                    && inv.getTotalQty() == ledgerTotal
+                    && inv.getReservedQty() == ledgerReserved
+                    && inv.getReservedQty() == activeReservations;
+
+            results.add(new InventoryReconciliationResponse(
+                    inv.getSkuId(),
+                    inv.getWarehouse().getId(),
+                    inv.getWarehouse().getCode(),
+                    inv.getTotalQty(),
+                    inv.getAvailableQty(),
+                    inv.getReservedQty(),
+                    inv.getUnavailableQty(),
+                    ledgerTotal,
+                    ledgerReserved,
+                    activeReservations,
+                    nonNegative,
+                    matched
+            ));
+        }
+        return results;
     }
 
     // ==========================================
     // Các phương thức trợ giúp nội bộ (Helpers)
     // ==========================================
 
-    /**
-     * Xác định kho hàng: nếu warehouseId null, tìm kho mặc định theo code 'WH_001'.
-     */
+    private record ResolvedSku(UUID skuId, String skuCode) {
+    }
+
+    private record ResolvedReservationItem(UUID skuId, Warehouse warehouse, int quantity) {
+    }
+
+    private ResolvedSku resolveSkuForMutation(UUID skuId, String skuCode) {
+        if (skuId != null) {
+            String normalizedCode = (skuCode != null && !skuCode.isBlank()) ? skuCode.trim() : null;
+            return new ResolvedSku(skuId, normalizedCode);
+        }
+        CatalogClient.SkuOwnershipInfo info = resolveSkuByCodeOrThrow(skuCode);
+        return new ResolvedSku(info.skuId(), info.skuCode());
+    }
+
+    private CatalogClient.SkuOwnershipInfo resolveSkuByCodeOrThrow(String skuCode) {
+        if (skuCode == null || skuCode.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã skuCode không được để trống");
+        }
+        return catalogClient.findSkuByCode(skuCode.trim())
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.SKU_NOT_FOUND,
+                        "Không tìm thấy SKU với mã " + skuCode.trim()
+                ));
+    }
+
+    private List<ResolvedReservationItem> resolveAndSortReservationItems(List<ReservationItemRequest> items) {
+        List<ResolvedReservationItem> resolved = new ArrayList<>(items.size());
+        for (ReservationItemRequest item : items) {
+            Warehouse warehouse = resolveWarehouse(item.warehouseId());
+            resolved.add(new ResolvedReservationItem(item.skuId(), warehouse, item.quantity()));
+        }
+        // Sắp xếp nhất quán theo skuId rồi warehouseId để tránh chu trình chờ khóa (Deadlock).
+        resolved.sort(Comparator.comparing(ResolvedReservationItem::skuId)
+                .thenComparing(r -> r.warehouse().getId()));
+        return resolved;
+    }
+
+    private ReservationResponse handleExistingReservationReplay(
+            ReservationRefType refType,
+            UUID refId,
+            List<InventoryReservation> existing,
+            List<ResolvedReservationItem> requested
+    ) {
+        boolean anyConfirmed = existing.stream().anyMatch(r -> r.getStatus() == ReservationStatus.CONFIRMED);
+        if (anyConfirmed) {
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_RESERVATION_ALREADY_COMMITTED,
+                    "Tham chiếu " + refType + " " + refId + " đã xuất kho trước đó"
+            );
+        }
+        boolean anyClosed = existing.stream()
+                .anyMatch(r -> r.getStatus() == ReservationStatus.RELEASED || r.getStatus() == ReservationStatus.EXPIRED);
+        if (anyClosed) {
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_RESERVATION_EXPIRED,
+                    "Phiếu giữ kho của tham chiếu " + refType + " " + refId + " đã hết hạn hoặc bị hủy"
+            );
+        }
+
+        List<InventoryReservation> sortedExisting = new ArrayList<>(existing);
+        sortedExisting.sort(Comparator.comparing((InventoryReservation r) -> r.getInventory().getSkuId())
+                .thenComparing(r -> r.getInventory().getWarehouse().getId()));
+
+        if (sortedExisting.size() != requested.size()) {
+            throw new BusinessException(
+                    ErrorCode.ORDER_IDEMPOTENCY_CONFLICT,
+                    "Tham chiếu " + refType + " " + refId + " đã giữ kho với số lượng dòng hàng khác"
+            );
+        }
+        for (int i = 0; i < sortedExisting.size(); i++) {
+            InventoryReservation current = sortedExisting.get(i);
+            ResolvedReservationItem incoming = requested.get(i);
+            if (!current.getInventory().getSkuId().equals(incoming.skuId())
+                    || !current.getInventory().getWarehouse().getId().equals(incoming.warehouse().getId())
+                    || current.getQuantity() != incoming.quantity()) {
+                throw new BusinessException(
+                        ErrorCode.ORDER_IDEMPOTENCY_CONFLICT,
+                        "Tham chiếu " + refType + " " + refId + " đã giữ kho với SKU/kho/số lượng khác"
+                );
+            }
+        }
+
+        log.info("Tham chiếu {} {} đã giữ kho PENDING trùng khớp trước đó (Idempotent), trả về phiếu hiện tại", refType, refId);
+        return toReservationResponse(refType, refId, sortedExisting);
+    }
+
+    private void commitSinglePendingReservation(InventoryReservation reservation, String reason) {
+        Inventory inventory = inventoryRepository.findByIdForUpdate(reservation.getInventory().getId())
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.INVENTORY_NOT_FOUND,
+                        "Không tìm thấy bản ghi tồn kho liên kết với phiếu giữ hàng " + reservation.getId()
+                ));
+
+        int qty = reservation.getQuantity();
+        if (inventory.getReservedQty() < qty || (inventory.getTotalQty() - qty) < inventory.getUnavailableQty()) {
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_INSUFFICIENT,
+                    "Không thể xuất kho vì số dư tồn hoặc đang giữ không hợp lệ cho SKU " + inventory.getSkuId()
+            );
+        }
+
+        inventory.setReservedQty(inventory.getReservedQty() - qty);
+        inventory.setTotalQty(inventory.getTotalQty() - qty);
+        inventoryRepository.save(inventory);
+
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        reservationRepository.save(reservation);
+
+        InventoryLedger ledger = new InventoryLedger(
+                UUID.randomUUID(),
+                inventory,
+                LedgerMovementType.OUTBOUND,
+                qty,
+                reservation.getRefType().name(),
+                reservation.getRefId(),
+                Instant.now(),
+                null,
+                reason,
+                null
+        );
+        ledgerRepository.save(ledger);
+
+        eventPublisher.publishEvent(InventoryCommittedEvent.of(
+                reservation.getId(),
+                inventory.getSkuId(),
+                inventory.getWarehouse().getId(),
+                qty,
+                reservation.getRefType(),
+                reservation.getRefId()
+        ));
+    }
+
+    private void releasePendingReservationsByRef(
+            ReservationRefType refType,
+            UUID refId,
+            String reason,
+            String defaultReason,
+            String label
+    ) {
+        List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefIdForUpdate(refType, refId);
+        if (reservations.isEmpty()) {
+            log.warn("Không tìm thấy phiếu giữ kho nào cho {} {} khi giải phóng kho", label, refId);
+            return;
+        }
+
+        String effectiveReason = (reason != null && !reason.isBlank()) ? reason : defaultReason;
+        int releasedCount = 0;
+
+        for (InventoryReservation res : reservations) {
+            if (res.getStatus() == ReservationStatus.PENDING) {
+                releaseSingleReservation(res, ReservationStatus.RELEASED, effectiveReason);
+                releasedCount++;
+            } else {
+                log.info("Phiếu giữ kho {} của {} {} đã ở trạng thái {} (Idempotent), bỏ qua giải phóng",
+                        res.getId(), label, refId, res.getStatus());
+            }
+        }
+
+        log.info("Đã giải phóng {} phiếu giữ hàng cho {} {} với lý do: {}", releasedCount, label, refId, effectiveReason);
+    }
+
     private Warehouse resolveWarehouse(UUID warehouseId) {
         if (warehouseId != null) {
             return warehouseRepository.findByIdAndIsActiveTrue(warehouseId)
@@ -1206,67 +1433,174 @@ public class InventoryServiceImpl implements InventoryService {
                 ));
     }
 
-    /**
-     * Giải phóng một phiếu giữ hàng, cập nhật reserved_qty và bắn sự kiện miền tương ứng.
-     */
     private void releaseSingleReservation(InventoryReservation reservation, ReservationStatus targetStatus, String reason) {
         Inventory inventory = inventoryRepository.findByIdForUpdate(reservation.getInventory().getId())
-                .orElse(null);
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.INVENTORY_NOT_FOUND,
+                        "Không tìm thấy bản ghi tồn kho liên kết với phiếu giữ hàng " + reservation.getId()
+                ));
 
-        if (inventory != null) {
-            int qty = reservation.getQuantity();
-            inventory.setReservedQty(Math.max(0, inventory.getReservedQty() - qty));
-            inventoryRepository.save(inventory);
-
-            // Ghi sổ cái RELEASE
-            InventoryLedger ledger = new InventoryLedger(
-                    UUID.randomUUID(),
-                    inventory,
-                    LedgerMovementType.RELEASE,
-                    qty,
-                    reservation.getRefType().name(),
-                    reservation.getRefId(),
-                    Instant.now()
+        int qty = reservation.getQuantity();
+        if (inventory.getReservedQty() < qty) {
+            throw new BusinessException(
+                    ErrorCode.INVENTORY_INSUFFICIENT,
+                    "Số lượng đang giữ trong kho nhỏ hơn số lượng phiếu cần giải phóng cho SKU " + inventory.getSkuId()
             );
-            ledgerRepository.save(ledger);
+        }
 
-            reservation.setStatus(targetStatus);
-            reservationRepository.save(reservation);
+        inventory.setReservedQty(inventory.getReservedQty() - qty);
+        inventoryRepository.save(inventory);
 
-            if (targetStatus == ReservationStatus.EXPIRED) {
-                // Bắn sự kiện InventoryReservationExpiredEvent theo SRS §2.8
-                eventPublisher.publishEvent(InventoryReservationExpiredEvent.of(
-                        reservation.getId(),
-                        inventory.getSkuId(),
-                        inventory.getWarehouse().getId(),
-                        qty,
-                        reservation.getRefType(),
-                        reservation.getRefId()
-                ));
-            } else {
-                // Bắn sự kiện InventoryReleasedEvent theo SRS §2.8
-                eventPublisher.publishEvent(InventoryReleasedEvent.of(
-                        reservation.getId(),
-                        inventory.getSkuId(),
-                        inventory.getWarehouse().getId(),
-                        qty,
-                        reservation.getRefType(),
-                        reservation.getRefId(),
-                        reason
-                ));
-            }
+        InventoryLedger ledger = new InventoryLedger(
+                UUID.randomUUID(),
+                inventory,
+                LedgerMovementType.RELEASE,
+                qty,
+                reservation.getRefType().name(),
+                reservation.getRefId(),
+                Instant.now(),
+                null,
+                reason,
+                null
+        );
+        ledgerRepository.save(ledger);
+
+        reservation.setStatus(targetStatus);
+        reservationRepository.save(reservation);
+
+        if (targetStatus == ReservationStatus.EXPIRED) {
+            eventPublisher.publishEvent(InventoryReservationExpiredEvent.of(
+                    reservation.getId(),
+                    inventory.getSkuId(),
+                    inventory.getWarehouse().getId(),
+                    qty,
+                    reservation.getRefType(),
+                    reservation.getRefId()
+            ));
+        } else {
+            eventPublisher.publishEvent(InventoryReleasedEvent.of(
+                    reservation.getId(),
+                    inventory.getSkuId(),
+                    inventory.getWarehouse().getId(),
+                    qty,
+                    reservation.getRefType(),
+                    reservation.getRefId(),
+                    reason
+            ));
         }
     }
 
-    private InventoryStockResponse toStockResponse(Inventory inv) {
+    private String buildOperationIdempotencyKey(String operationPrefix, String headerKey, String bodyKey) {
+        String raw = (headerKey != null && !headerKey.isBlank()) ? headerKey.trim() : (bodyKey != null ? bodyKey.trim() : null);
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String prefixed = operationPrefix + ":" + raw;
+        if (prefixed.length() <= 128) {
+            return prefixed;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(prefixed.getBytes(StandardCharsets.UTF_8));
+            return operationPrefix + ":" + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("Không thể băm khóa idempotency", ex);
+        }
+    }
+
+    private InventoryStockResponse verifyInboundReplay(
+            InventoryLedger existing,
+            UUID skuId,
+            UUID warehouseId,
+            int requestedQty,
+            String skuCode
+    ) {
+        Inventory inv = existing.getInventory();
+        if (existing.getMovementType() != LedgerMovementType.INBOUND
+                || !inv.getSkuId().equals(skuId)
+                || !inv.getWarehouse().getId().equals(warehouseId)
+                || existing.getQuantity() != requestedQty) {
+            throw new BusinessException(
+                    ErrorCode.ORDER_IDEMPOTENCY_CONFLICT,
+                    "Khóa idempotency hoặc chứng từ nhập kho đã được sử dụng với SKU/kho/số lượng khác"
+            );
+        }
+        log.info("Yêu cầu nhập kho lặp (Idempotent) cho SKU {} tại kho {}, trả về trạng thái hiện tại", skuId, warehouseId);
+        return toStockResponse(inv, skuCode);
+    }
+
+    private InventoryStockResponse verifyAdjustmentReplay(
+            InventoryLedger existing,
+            UUID skuId,
+            UUID warehouseId,
+            StockAdjustmentRequest request,
+            String skuCode
+    ) {
+        Inventory inv = existing.getInventory();
+        boolean mismatch = existing.getMovementType() != LedgerMovementType.ADJUSTMENT
+                || !inv.getSkuId().equals(skuId)
+                || !inv.getWarehouse().getId().equals(warehouseId)
+                || (request.deltaQty() != null && existing.getQuantity() != request.deltaQty());
+        if (mismatch) {
+            throw new BusinessException(
+                    ErrorCode.ORDER_IDEMPOTENCY_CONFLICT,
+                    "Khóa idempotency hoặc chứng từ điều chỉnh kho đã được sử dụng với tham số khác"
+            );
+        }
+        log.info("Yêu cầu điều chỉnh kho lặp (Idempotent) cho SKU {} tại kho {}, trả về trạng thái hiện tại", skuId, warehouseId);
+        return toStockResponse(inv, skuCode);
+    }
+
+    private ReservationResponse toReservationResponse(
+            ReservationRefType refType,
+            UUID refId,
+            List<InventoryReservation> reservations
+    ) {
+        List<ReservationItemResponse> items = reservations.stream()
+                .map(r -> new ReservationItemResponse(
+                        r.getId(),
+                        r.getInventory().getSkuId(),
+                        r.getInventory().getWarehouse().getId(),
+                        r.getQuantity(),
+                        r.getStatus(),
+                        r.getExpiresAt()
+                ))
+                .toList();
+        Instant latestExpiresAt = reservations.get(0).getExpiresAt();
+        for (InventoryReservation res : reservations) {
+            if (res.getExpiresAt().isAfter(latestExpiresAt)) {
+                latestExpiresAt = res.getExpiresAt();
+            }
+        }
+        return new ReservationResponse(refType, refId, reservations.get(0).getStatus(), items, latestExpiresAt);
+    }
+
+    private InventoryStockResponse toStockResponse(Inventory inv, String skuCode) {
         return new InventoryStockResponse(
                 inv.getSkuId(),
                 inv.getWarehouse().getId(),
                 inv.getWarehouse().getCode(),
+                inv.getWarehouse().getName(),
+                skuCode,
                 inv.getTotalQty(),
                 inv.getAvailableQty(),
                 inv.getReservedQty(),
                 inv.getUnavailableQty()
+        );
+    }
+
+    private InventoryLedgerResponse toLedgerResponse(InventoryLedger l) {
+        return new InventoryLedgerResponse(
+                l.getId(),
+                l.getInventory().getSkuId(),
+                l.getInventory().getWarehouse().getId(),
+                l.getInventory().getWarehouse().getCode(),
+                l.getMovementType(),
+                l.getQuantity(),
+                l.getRefType(),
+                l.getRefId(),
+                l.getReason(),
+                l.getActorId(),
+                l.getCreatedAt()
         );
     }
 }

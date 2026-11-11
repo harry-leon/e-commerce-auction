@@ -1,6 +1,8 @@
 package com.nexus.fulfillment.repository;
 
 import com.nexus.fulfillment.entity.InventoryLedger;
+import com.nexus.fulfillment.enums.LedgerMovementType;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -21,7 +23,7 @@ import org.springframework.data.repository.query.Param;
  * - Mọi biến động kho sau khi ghi vào sổ cái là vĩnh viễn không thể chỉnh sửa hay hoàn tác.
  */
 @org.springframework.stereotype.Repository
-public interface InventoryLedgerRepository extends Repository<InventoryLedger, UUID> {
+public interface InventoryLedgerRepository extends Repository<InventoryLedger, UUID>, InventoryLedgerSearchRepository {
 
     /**
      * Thêm mới một bản ghi biến động vào sổ cái tồn kho.
@@ -35,6 +37,25 @@ public interface InventoryLedgerRepository extends Repository<InventoryLedger, U
      * Tra cứu bản ghi sổ cái theo ID.
      */
     Optional<InventoryLedger> findById(UUID id);
+
+    /**
+     * Tra cứu bản ghi sổ cái theo khóa idempotency để chặn thao tác nhập/điều chỉnh kho lặp lại.
+     */
+    Optional<InventoryLedger> findByIdempotencyKey(String idempotencyKey);
+
+    /**
+     * Tra cứu bản ghi sổ cái theo inventory, loại biến động và mã chứng từ refId phục vụ chống lặp theo chứng từ.
+     */
+    Optional<InventoryLedger> findFirstByInventoryIdAndMovementTypeAndRefId(
+            UUID inventoryId,
+            LedgerMovementType movementType,
+            UUID refId
+    );
+
+    /**
+     * Lấy toàn bộ bản ghi sổ cái của một bản ghi tồn kho theo thứ tự thời gian phục vụ đối soát tổng tồn với ledger.
+     */
+    List<InventoryLedger> findByInventoryIdOrderByCreatedAtAsc(UUID inventoryId);
 
     /**
      * Tra cứu toàn bộ lịch sử sổ cái có phân trang, sắp xếp theo thời gian mới nhất trước.

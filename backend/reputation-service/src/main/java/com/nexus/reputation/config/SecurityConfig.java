@@ -29,7 +29,15 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
-                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/reputations/**").permitAll()
+                // API trừ điểm uy tín nội bộ bắt buộc token của nexus-commerce-service kèm privilege REPUTATION.PENALTY.
+                .requestMatchers("/api/v1/internal/reputations/**").access((auth, context) ->
+                    new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-commerce-service", "REPUTATION.PENALTY")))
+                // Lịch sử xử phạt và hồ sơ /me bắt buộc xác thực JWT trước khi mở rule public cho tóm tắt {userId}.
+                .requestMatchers(org.springframework.http.HttpMethod.GET,
+                    "/api/v1/reputations/me", "/api/v1/reputations/*/penalties").authenticated()
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/reputations/*").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();

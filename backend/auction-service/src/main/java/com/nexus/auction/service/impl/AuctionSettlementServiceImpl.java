@@ -353,5 +353,41 @@ public class AuctionSettlementServiceImpl implements AuctionSettlementService {
 
         return true;
     }
+
+    /**
+     * Chuyển kết quả quyết toán phiên đấu giá sang DEFAULTED khi Commerce xác nhận quá hạn thanh toán 24h.
+     * Luồng: Khóa bi quan settlement -> kiểm tra trùng khớp orderId (nếu có) -> replay nếu đã DEFAULTED
+     * -> chỉ cho phép chuyển từ SUCCESS sang DEFAULTED -> lưu DB để giữ nhất quán Auction–Commerce.
+     */
+    @Override
+    @Transactional
+    public AuctionSettlementResponse markSettlementDefaulted(UUID auctionId, UUID orderId) {
+        if (auctionId == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã phiên đấu giá không được để trống");
+        }
+        AuctionSettlement settlement = auctionSettlementRepository.findByAuctionIdForUpdate(auctionId)
+                .or(() -> auctionSettlementRepository.findByAuctionId(auctionId))
+                .orElseThrow(() -> new ResourceNotFoundException("Chưa có kết quả quyết toán cho phiên đấu giá: " + auctionId));
+
+        if (orderId != null && settlement.getOrderId() != null && !settlement.getOrderId().equals(orderId)) {
+            throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID,
+                    "Đơn hàng không khớp với bản ghi quyết toán của phiên đấu giá");
+        }
+
+        // Lũy nghiệm: worker Commerce gửi lại sau mất ACK vẫn trả kết quả DEFAULTED an toàn.
+        if (settlement.getResult() == SettlementResult.DEFAULTED) {
+            return AuctionSettlementMapper.toResponse(settlement);
+        }
+        if (settlement.getResult() != SettlementResult.SUCCESS) {
+            throw new BusinessException(ErrorCode.AUCTION_NOT_ACTIVE,
+                    "Chỉ có thể chuyển phiên thắng cuộc (SUCCESS) sang trạng thái DEFAULTED");
+        }
+
+        settlement.setResult(SettlementResult.DEFAULTED);
+        AuctionSettlement saved = auctionSettlementRepository.save(settlement);
+        log.info("Đã đồng bộ kết quả quyết toán phiên [{}] sang DEFAULTED do quá hạn thanh toán đơn [{}]",
+                auctionId, orderId);
+        return AuctionSettlementMapper.toResponse(saved);
+    }
 }
 

@@ -56,5 +56,15 @@ public interface AuctionSettlementService {
      * @return true nếu phiên đang ACTIVE và bidTime nằm trong khoảng hợp lệ trước endTime
      */
     boolean canAcceptBid(UUID auctionId, Instant bidTime);
+
+    /**
+     * Đánh dấu kết quả quyết toán sang DEFAULTED khi đơn hàng winner quá hạn thanh toán 24h tại Commerce.
+     * Quy tắc: Idempotent nếu đã DEFAULTED; từ chối nếu orderId không khớp hoặc trạng thái khác SUCCESS.
+     *
+     * @param auctionId mã phiên đấu giá
+     * @param orderId   mã đơn hàng bị hủy do quá hạn thanh toán (tùy chọn kiểm tra đối chiếu)
+     * @return bản ghi quyết toán sau cập nhật
+     */
+    AuctionSettlementResponse markSettlementDefaulted(UUID auctionId, UUID orderId);
 }
 

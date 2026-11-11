@@ -9,3 +9,10 @@ app:
     order:
       max-daily-orders: 10          # Giới hạn số đơn hàng tối đa của 1 user mỗi ngày
       cancellation-timeout-minutes: 30 # Thời gian tối đa được phép hủy đơn hàng sau khi tạo
+  payment:
+    auction:
+      expiry-poll-ms: 10000         # Chu kỳ quét đơn đấu giá quá hạn thanh toán 24h
+      reminder-poll-ms: 60000       # Chu kỳ quét nhắc hạn thanh toán trước 2 giờ
+      reminder-before-minutes: 120  # Nhắc nhở trước khi hết hạn thanh toán (phút)
+      timeout-poll-ms: 5000         # Chu kỳ xử lý outbox trừ điểm uy tín và đồng bộ DEFAULTED
+      timeout-penalty-score: 10     # PAYMENT_TIMEOUT_PENALTY_SCORE theo SRS §2.6

@@ -7,20 +7,43 @@ import java.math.BigDecimal;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
- * Chạy migration mới và nâng V3/V9/V10 lên V11 trên schema riêng; giữ giá lịch sử, snapshot và đối soát COD.
+ * Chạy migration mới và nâng V3/V9/V10/V11 lên V12 trên schema riêng; giữ giá lịch sử, snapshot, đối soát COD và outbox timeout đấu giá.
  * Chỉ dùng NEXUS_TEST_DB_URL của PostgreSQL tạm; finally chỉ dọn schema UUID do test tạo.
  */
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 class BaselineMigrationPostgresTest {
+    /** V12 chỉ đổi constraint của schema đích, kể cả database đã có schema Commerce khác nâng lên V12. */
+    @Test
+    void timeoutMigrationResolvesConstraintInTargetSchemaOnly() {
+        String url = System.getenv("NEXUS_TEST_DB_URL");
+        String upgraded = "upgraded_" + UUID.randomUUID().toString().replace("-", "");
+        String target = "target_" + UUID.randomUUID().toString().replace("-", "");
+        var jdbc = new JdbcTemplate(new DriverManagerDataSource(url, "postgres", ""));
+        try {
+            migrate(url, upgraded, "latest").migrate();
+            migrate(url, target, "11").migrate();
+            migrate(url, target, "latest").migrate();
+            for (String schema : new String[] {upgraded, target}) {
+                assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM pg_constraint "
+                        + "WHERE conrelid=?::regclass AND conname='chk_commerce_notification_event_type'",
+                        Integer.class, schema + ".commerce_notification_outbox"));
+            }
+        } finally {
+            jdbc.execute("DROP SCHEMA IF EXISTS " + target + " CASCADE");
+            jdbc.execute("DROP SCHEMA IF EXISTS " + upgraded + " CASCADE");
+        }
+    }
+
     /** Nâng cấp không được đổi tiền/trạng thái đơn cũ hoặc phát lại thông báo lịch sử. */
     @ParameterizedTest
-    @ValueSource(ints = {0, 3, 9, 10})
+    @ValueSource(ints = {0, 3, 9, 10, 11})
     void createsBaselineAndPreservesLegacyOrders(int previous) {
         String url = System.getenv("NEXUS_TEST_DB_URL");
         String schema = "baseline_" + UUID.randomUUID().toString().replace("-", "");
@@ -50,7 +73,7 @@ class BaselineMigrationPostgresTest {
             }
             var baseline = migrate(url, schema, "latest");
             baseline.migrate();
-            assertEquals("11", baseline.info().current().getVersion().getVersion());
+            assertEquals("12", baseline.info().current().getVersion().getVersion());
             assertEquals(0, baseline.migrate().migrationsExecuted);
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema
                 + ".commerce_notification_outbox", Integer.class));

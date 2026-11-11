@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { NotificationInbox } from '../features/buyer/NotificationInbox'
 import { getNotifications, readNotification, type Inbox } from '../api/notifications'
 import type { AppState } from '../types'
+import { NOTIFICATIONS_CHANGED } from '../api/notificationStream'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -25,6 +26,15 @@ const inbox: Inbox = {
     totalElements: 1,
     unreadCount: 1,
 }
+
+/** Push/reconnect phải tải lại từ REST để trạng thái READ/unread không lệ thuộc payload realtime. */
+it('refreshes the authoritative inbox after a notification push', async () => {
+    vi.mocked(getNotifications).mockResolvedValue(inbox)
+    render(<NotificationInbox />)
+    await screen.findByText(inbox.content[0].content)
+    fireEvent(window, new Event(NOTIFICATIONS_CHANGED))
+    await waitFor(() => expect(getNotifications).toHaveBeenCalledTimes(2))
+})
 
 beforeEach(() => {
     vi.resetAllMocks()

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,14 +18,14 @@ import org.springframework.stereotype.Repository;
  *
  * Chức năng:
  * - Tra cứu và khóa ghi (PESSIMISTIC_WRITE) dòng tồn kho theo SKU và kho hàng để bảo đảm tính nguyên tử (Atomic).
- * - Cung cấp các hàm kiểm tra tồn kho hàng loạt cho Cart và Checkout.
+ * - Cung cấp các hàm kiểm tra tồn kho hàng loạt cho Cart và Checkout và tìm kiếm/phân trang theo phạm vi seller/kho.
  *
  * Quy tắc và lý do:
  * - Khóa Pessimistic Locking ngăn ngừa race-condition tuyệt đối khi nhiều khách hàng cùng tranh mua 1 SKU cuối cùng.
  * - Sắp xếp theo sku_id khi khóa nhiều mặt hàng cùng lúc để ngăn chặn Deadlock giữa các giao dịch đồng thời.
  */
 @Repository
-public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
+public interface InventoryRepository extends JpaRepository<Inventory, UUID>, JpaSpecificationExecutor<Inventory> {
 
     /**
      * Tra cứu thông tin tồn kho thông thường theo SKU và kho hàng (không khóa).
@@ -40,6 +41,11 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
      * Tra cứu danh sách tồn kho cho tập hợp SKU trên mọi kho hàng.
      */
     List<Inventory> findBySkuIdIn(Collection<UUID> skuIds);
+
+    /**
+     * Tra cứu danh sách tồn kho cho tập hợp SKU tại một kho hàng cụ thể.
+     */
+    List<Inventory> findBySkuIdInAndWarehouseId(Collection<UUID> skuIds, UUID warehouseId);
 
     /**
      * Tra cứu và khóa dòng (SELECT ... FOR UPDATE) bản ghi tồn kho theo SKU và kho hàng.
