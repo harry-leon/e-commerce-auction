@@ -60,7 +60,6 @@ import {
     type LedgerMovementType,
     type WarehouseResponse,
 } from '../../api/inventory'
-import { validateMinPrice } from '../../utils/pricingEngine'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
@@ -526,15 +525,16 @@ export function SellerProductListPage() {
 
     // Kiểm tra xem seller có ID dạng UUID hợp lệ từ backend hay không
     const isUuid = Boolean(
-        user?.id &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
+        user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
     )
     const productUrl = isUuid
         ? `/products/seller/${user?.id}?v=${refreshKey}`
         : `/products?v=${refreshKey}`
 
     // Tải danh sách sản phẩm của người bán từ Catalog Service kết nối DB Supabase
-    const { data: prodEnvelope, loading: loadingProducts } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(productUrl)
+    const { data: prodEnvelope, loading: loadingProducts } = useLoad<
+        Envelope<ApiProduct[]> | ApiProduct[]
+    >(productUrl)
 
     /**
      * Chức năng: Dọn sạch hoàn toàn các bản ghi rác/mock lưu tạm từ các phiên bản cũ trong localStorage.
@@ -560,7 +560,8 @@ export function SellerProductListPage() {
               originalPrice: p.skus?.[0]?.originalPrice ?? null,
               sku: p.skus?.[0]?.skuCode ?? '',
               // Lấy tồn kho thực tế: ưu tiên từ SKU API, nếu Catalog Service chưa có trường stock thì tra cứu cache người bán đã nhập hoặc trả về 0; không hardcode 10
-              stock: (p.skus?.[0] as any)?.stock ?? getProductStock(p.skus?.[0]?.skuCode, p.id) ?? 0,
+              stock:
+                  (p.skus?.[0] as any)?.stock ?? getProductStock(p.skus?.[0]?.skuCode, p.id) ?? 0,
               images:
                   p.images && p.images.length > 0
                       ? p.images.map((img) => img.url)
@@ -695,15 +696,24 @@ export function SellerProductListPage() {
                                         </div>
                                         {r.originalPrice && r.originalPrice > r.price && (
                                             <div className="flex items-center gap-1 text-[11px] text-gray-400">
-                                                <span className="line-through">{formatCurrency(r.originalPrice, lang)}</span>
+                                                <span className="line-through">
+                                                    {formatCurrency(r.originalPrice, lang)}
+                                                </span>
                                                 <span className="text-amber-600 font-medium">
-                                                    -{Math.round(((r.originalPrice - r.price) / r.originalPrice) * 100)}%
+                                                    -
+                                                    {Math.round(
+                                                        ((r.originalPrice - r.price) /
+                                                            r.originalPrice) *
+                                                            100,
+                                                    )}
+                                                    %
                                                 </span>
                                             </div>
                                         )}
                                         {r.originalPrice && r.originalPrice < r.price && (
                                             <div className="text-[10px] text-gray-400">
-                                                {lang === 'en' ? 'Cost' : 'Vốn'}: {formatCurrency(r.originalPrice, lang)}
+                                                {lang === 'en' ? 'Cost' : 'Vốn'}:{' '}
+                                                {formatCurrency(r.originalPrice, lang)}
                                             </div>
                                         )}
                                     </div>
@@ -781,7 +791,9 @@ export function SellerProductListPage() {
                             type: 'error',
                             message:
                                 errorMessage(err) ||
-                                (lang === 'en' ? 'Failed to delete product.' : 'Xóa sản phẩm thất bại.'),
+                                (lang === 'en'
+                                    ? 'Failed to delete product.'
+                                    : 'Xóa sản phẩm thất bại.'),
                         })
                     }
                     setRefreshKey((k) => k + 1)
@@ -803,15 +815,18 @@ export function SellerProductListPage() {
  */
 export function CreateProductPage() {
     const { lang, page, navigate, showToast, pageParams } = useApp()
-    const searchId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('id') : null
+    const searchId =
+        typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('id') : null
     const editProductId = (pageParams?.id as string) || (searchId as string) || undefined
-    const isEdit = Boolean(editProductId) || page === 'seller-edit-product' || page === 'seller-update-product'
+    const isEdit =
+        Boolean(editProductId) || page === 'seller-edit-product' || page === 'seller-update-product'
     const [saving, setSaving] = useState(false)
     const [loadingDetail, setLoadingDetail] = useState(false)
     const [name, setName] = useState('')
     // Giá bán niêm yết trên sàn (Selling price đến tay khách hàng)
     const [price, setPrice] = useState('')
-    // Giá gốc / Giá nhập từ doanh nghiệp (Original / Cost price)
+    // originalPrice trong BE = giá niêm yết gốc trước sale (phải >= price); không phải giá vốn/nhập hàng.
+    // FE chỉ điền lại từ API và gửi nguyên về BE — không dùng để validate giá sàn tối thiểu.
     const [originalPrice, setOriginalPrice] = useState('')
     const [stock, setStock] = useState('')
     // Mã SKU chuẩn doanh nghiệp (Stock Keeping Unit định danh sản phẩm & tồn kho)
@@ -819,7 +834,8 @@ export function CreateProductPage() {
     const [enableAuction, setEnableAuction] = useState(false)
     const [nameError, setNameError] = useState('')
     const [categoryId, setCategoryId] = useState('')
-
+    // Lưu toàn bộ danh sách SKU gốc khi edit; đảm bảo PUT không làm mất biến thể khác của sản phẩm
+    const [allSkus, setAllSkus] = useState<any[]>([])
     // Tải danh mục thực tế từ Catalog Service (/api/v1/categories)
     const { data: catEnvelope } = useLoad<Envelope<ApiCategory[]> | ApiCategory[]>('/categories')
     const rawCats = (catEnvelope as any)?.data ?? catEnvelope
@@ -833,9 +849,12 @@ export function CreateProductPage() {
     }, [categoriesList, categoryId])
 
     /**
-     * Chức năng: Khi ở chế độ Chỉnh sửa (editProductId hợp lệ), tải dữ liệu sản phẩm từ Catalog backend
-     * Đầu vào: editProductId từ pageParams.id
-     * Kết quả: Điền tự động tên, giá bán, giá vốn, mã SKU, tồn kho, danh mục và cờ auctionEnabled vào form
+     * Chức năng: Khi ở chế độ Chỉnh sửa (editProductId hợp lệ), tải dữ liệu sản phẩm từ Catalog backend.
+     * Đầu vào: editProductId từ pageParams.id.
+     * Kết quả: Điền tự động tên, giá bán, mã SKU, tồn kho, danh mục và cờ auctionEnabled vào form.
+     * Lưu ý: Giữ toàn bộ danh sách SKU gốc trong allSkus để tránh mất biến thể khi lưu lại.
+     * originalPrice KHÔNG dùng làm giá vốn hiển thị ra ngoài — BE yêu cầu originalPrice >= price
+     * (originalPrice là giá niêm yết gốc trước khuyến mãi, không phải giá nhập hàng).
      */
     useEffect(() => {
         if (!editProductId) return
@@ -848,13 +867,21 @@ export function CreateProductPage() {
                 if (data) {
                     setName(data.name || '')
                     if (data.categoryId) setCategoryId(data.categoryId)
-                    if (data.auctionEnabled !== undefined) setEnableAuction(Boolean(data.auctionEnabled))
+                    if (data.auctionEnabled !== undefined)
+                        setEnableAuction(Boolean(data.auctionEnabled))
+                    // Lưu toàn bộ danh sách SKU để PUT không làm mất biến thể khác
+                    if (Array.isArray(data.skus)) setAllSkus(data.skus)
                     const skuObj = data.skus?.[0]
                     if (skuObj) {
                         setPrice(skuObj.price !== undefined ? String(skuObj.price) : '')
-                        setOriginalPrice(skuObj.originalPrice !== undefined ? String(skuObj.originalPrice) : '')
+                        // originalPrice trong BE = giá niêm yết gốc (trước sale), phải >= price
+                        // Chỉ điền nếu hợp lệ; không dùng như giá vốn/giá nhập hàng
+                        setOriginalPrice(
+                            skuObj.originalPrice !== undefined ? String(skuObj.originalPrice) : '',
+                        )
                         setSku(skuObj.skuCode || '')
-                        const loadedStock = skuObj.stock ?? getProductStock(skuObj.skuCode, editProductId) ?? 0
+                        const loadedStock =
+                            skuObj.stock ?? getProductStock(skuObj.skuCode, editProductId) ?? 0
                         setStock(String(loadedStock))
                     }
                 }
@@ -863,7 +890,10 @@ export function CreateProductPage() {
                 console.warn('Failed to load product detail for edit:', err)
                 showToast({
                     type: 'error',
-                    message: lang === 'en' ? 'Unable to load product for editing.' : 'Không thể tải thông tin sản phẩm để chỉnh sửa.',
+                    message:
+                        lang === 'en'
+                            ? 'Unable to load product for editing.'
+                            : 'Không thể tải thông tin sản phẩm để chỉnh sửa.',
                 })
             })
             .finally(() => {
@@ -892,38 +922,45 @@ export function CreateProductPage() {
 
         const generatedSku = sku.trim() || `SKU-${Date.now().toString().slice(-6)}`
         const numericPrice = Number(price) || 100
-        // Giá gốc/nhập do doanh nghiệp quy định; nếu không nhập thì dùng luôn giá bán
-        const numericOriginalPrice = Number(originalPrice) > 0 ? Number(originalPrice) : numericPrice
+        // Giá bán lấy từ form; originalPrice chỉ gửi riêng khi hợp lệ theo contract Catalog bên dưới.
 
-        // Ràng buộc Min Price: Seller không được đặt giá bán thấp hơn giá vốn/giá nhập tối thiểu
-        const minPriceCheck = validateMinPrice(numericPrice, numericOriginalPrice, lang)
-        if (!minPriceCheck.valid) {
-            showToast({
-                type: 'error',
-                message: minPriceCheck.message || (lang === 'en' ? 'Selling price cannot be lower than cost price.' : 'Giá bán không được thấp hơn giá nhập tối thiểu.'),
-            })
-            setSaving(false)
-            return
-        }
+        // [P1-FIX] Contract originalPrice với BE đã được làm rõ:
+        // BE yêu cầu originalPrice >= price (originalPrice = giá niêm yết gốc trước khuyến mãi).
+        // FE không validate giá vốn/sàn tối thiểu tại đây — đó là nghiệp vụ của BE (Min Price Rule).
+        // Nếu seller nhập originalPrice, chỉ gửi khi originalPrice >= price để không vi phạm BE constraint.
+        // Nếu không nhập hoặc không hợp lệ, bỏ qua trường này (gửi null).
+        const rawOriginalPrice = Number(originalPrice)
+        const numericOriginalPrice =
+            rawOriginalPrice > 0 && rawOriginalPrice >= numericPrice ? rawOriginalPrice : null
 
         // Chức năng: Lưu trữ chính xác số lượng tồn kho do người bán nhập; nếu bỏ trống thì mặc định là 0, không tự động đổi thành 10
         const numericStock = stock.trim() !== '' ? Math.max(0, parseInt(stock, 10) || 0) : 0
         setProductStock(generatedSku, numericStock)
-        const selectedCatId = categoryId || categoriesList[0]?.id || '00000000-0000-0000-0000-000000000001'
+        const selectedCatId =
+            categoryId || categoriesList[0]?.id || '00000000-0000-0000-0000-000000000001'
+
+        // [P1-FIX] Khi edit: giữ đầy đủ danh sách SKU gốc, chỉ cập nhật SKU đang sửa (SKU đầu tiên).
+        // Tránh mất biến thể khác do BE xóa và tạo lại toàn bộ danh sách SKU.
+        // - Nếu đang edit và allSkus có nhiều hơn 1 SKU: cập nhật SKU đầu tiên, giữ nguyên các SKU còn lại.
+        // - Nếu tạo mới hoặc chỉ có 1 SKU: gửi danh sách 1 SKU như thường.
+        const editedSkuPayload = {
+            ...(allSkus[0] ?? {}),
+            skuCode: generatedSku,
+            price: numericPrice,
+            ...(numericOriginalPrice !== null ? { originalPrice: numericOriginalPrice } : {}),
+            status: 'ACTIVE',
+        }
+        const skusPayload =
+            isEdit && allSkus.length > 1
+                ? [editedSkuPayload, ...allSkus.slice(1)]
+                : [editedSkuPayload]
 
         const payload = {
             name,
             description: name,
             categoryId: selectedCatId,
             auctionEnabled: enableAuction,
-            skus: [
-                {
-                    skuCode: generatedSku,
-                    price: numericPrice,
-                    originalPrice: numericOriginalPrice,
-                    status: 'ACTIVE',
-                },
-            ],
+            skus: skusPayload,
             images: [
                 {
                     url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&h=600&fit=crop&auto=format',
@@ -961,7 +998,9 @@ export function CreateProductPage() {
                 type: 'error',
                 message:
                     errorMessage(err) ||
-                    (lang === 'en' ? 'Failed to save product.' : 'Không thể lưu sản phẩm lên hệ thống.'),
+                    (lang === 'en'
+                        ? 'Failed to save product.'
+                        : 'Không thể lưu sản phẩm lên hệ thống.'),
             })
             setSaving(false)
             return
@@ -970,15 +1009,21 @@ export function CreateProductPage() {
         showToast({
             type: 'success',
             message: isEdit
-                ? (lang === 'en' ? 'Product updated successfully!' : 'Đã cập nhật sản phẩm thành công!')
-                : (lang === 'en' ? 'Product saved!' : 'Đã lưu sản phẩm thành công!'),
+                ? lang === 'en'
+                    ? 'Product updated successfully!'
+                    : 'Đã cập nhật sản phẩm thành công!'
+                : lang === 'en'
+                  ? 'Product saved!'
+                  : 'Đã lưu sản phẩm thành công!',
         })
         navigate('seller-products')
         setSaving(false)
     }
 
     const pageHeading = isEdit
-        ? (lang === 'en' ? 'Edit Product' : 'Chỉnh sửa sản phẩm')
+        ? lang === 'en'
+            ? 'Edit Product'
+            : 'Chỉnh sửa sản phẩm'
         : tr(lang, 'createProduct')
 
     return (
@@ -1015,15 +1060,23 @@ export function CreateProductPage() {
                     <div className="nexus-card p-5">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="font-bold">
-                                {lang === 'en' ? 'Pricing & SKU Inventory' : 'Quản lý Giá & SKU Tồn kho'}
+                                {lang === 'en'
+                                    ? 'Pricing & SKU Inventory'
+                                    : 'Quản lý Giá & SKU Tồn kho'}
                             </h3>
                             <span className="text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
-                                {lang === 'en' ? 'Enterprise Dynamic Pricing' : 'Giá động theo doanh nghiệp'}
+                                {lang === 'en'
+                                    ? 'Enterprise Dynamic Pricing'
+                                    : 'Giá động theo doanh nghiệp'}
                             </span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <Input
-                                label={lang === 'en' ? 'Original / Cost Price ($)' : 'Giá gốc / Giá nhập ($)'}
+                                label={
+                                    lang === 'en'
+                                        ? 'Original / Cost Price ($)'
+                                        : 'Giá gốc / Giá nhập ($)'
+                                }
                                 type="number"
                                 value={originalPrice}
                                 onChange={(e) => setOriginalPrice(e.target.value)}
@@ -1049,15 +1102,42 @@ export function CreateProductPage() {
                         {Number(price) > 0 && Number(originalPrice) > 0 && (
                             <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-between text-xs">
                                 <span className="text-gray-600">
-                                    {lang === 'en' ? 'Price Margin Analysis:' : 'Phân tích biên độ giá:'}
+                                    {lang === 'en'
+                                        ? 'Price Margin Analysis:'
+                                        : 'Phân tích biên độ giá:'}
                                 </span>
                                 {Number(price) >= Number(originalPrice) ? (
                                     <span className="font-semibold text-emerald-600">
-                                        {lang === 'en' ? 'Gross Markup' : 'Lợi nhuận gộp'}: +{formatCurrency(Number(price) - Number(originalPrice), lang)} (+{(((Number(price) - Number(originalPrice)) / Number(originalPrice)) * 100).toFixed(1)}%)
+                                        {lang === 'en' ? 'Gross Markup' : 'Lợi nhuận gộp'}: +
+                                        {formatCurrency(
+                                            Number(price) - Number(originalPrice),
+                                            lang,
+                                        )}{' '}
+                                        (+
+                                        {(
+                                            ((Number(price) - Number(originalPrice)) /
+                                                Number(originalPrice)) *
+                                            100
+                                        ).toFixed(1)}
+                                        %)
                                     </span>
                                 ) : (
                                     <span className="font-semibold text-amber-600">
-                                        {lang === 'en' ? 'Promotional Discount' : 'Chiết khấu khuyến mãi'}: -{formatCurrency(Number(originalPrice) - Number(price), lang)} (-{(((Number(originalPrice) - Number(price)) / Number(originalPrice)) * 100).toFixed(1)}%)
+                                        {lang === 'en'
+                                            ? 'Promotional Discount'
+                                            : 'Chiết khấu khuyến mãi'}
+                                        : -
+                                        {formatCurrency(
+                                            Number(originalPrice) - Number(price),
+                                            lang,
+                                        )}{' '}
+                                        (-
+                                        {(
+                                            ((Number(originalPrice) - Number(price)) /
+                                                Number(originalPrice)) *
+                                            100
+                                        ).toFixed(1)}
+                                        %)
                                     </span>
                                 )}
                             </div>
@@ -1065,7 +1145,9 @@ export function CreateProductPage() {
 
                         <div className="mt-4">
                             <Input
-                                label={lang === 'en' ? 'Enterprise SKU Code' : 'Mã SKU Doanh nghiệp'}
+                                label={
+                                    lang === 'en' ? 'Enterprise SKU Code' : 'Mã SKU Doanh nghiệp'
+                                }
                                 value={sku}
                                 onChange={(e) => setSku(e.target.value)}
                                 placeholder="VD: TGDD-IP15PM-256G-TITAN hoặc MSI-MOD15-F1MG"
@@ -1103,7 +1185,9 @@ export function CreateProductPage() {
                                 <div className="flex items-center gap-2">
                                     <StatusBadge status="draft" label={tr(lang, 'draft')} />
                                     <span className="text-xs text-gray-500">
-                                        {lang === 'en' ? 'Requires Admin approval' : 'Chờ Admin duyệt'}
+                                        {lang === 'en'
+                                            ? 'Requires Admin approval'
+                                            : 'Chờ Admin duyệt'}
                                     </span>
                                 </div>
                             </div>
@@ -1161,7 +1245,9 @@ export function CreateProductPage() {
                         onClick={save}
                     >
                         {isEdit
-                            ? (lang === 'en' ? 'Update Product' : 'Cập nhật sản phẩm')
+                            ? lang === 'en'
+                                ? 'Update Product'
+                                : 'Cập nhật sản phẩm'
                             : tr(lang, 'save')}
                     </Button>
                     <Button
@@ -1226,7 +1312,9 @@ export function SellerAuctionListPage() {
     )
     // Đồng bộ danh sách sản phẩm vào cache để auction list hiển thị đúng tên/SKU thật
     useEffect(() => {
-        const rawProducts = (sellerProductsEnvRaw as Envelope<ApiProduct[]> | undefined)?.data ?? sellerProductsEnvRaw
+        const rawProducts =
+            (sellerProductsEnvRaw as Envelope<ApiProduct[]> | undefined)?.data ??
+            sellerProductsEnvRaw
         if (!Array.isArray(rawProducts)) return
         rawProducts.forEach((p) => {
             if (!p?.id || !p?.name) return
@@ -1282,7 +1370,11 @@ export function SellerAuctionListPage() {
         setDetailAuction(auction)
         setDetailLoading(true)
         try {
-            const details = await auctionsApi.getAuctionById(auction.id, createdAuctions, auctionReviews)
+            const details = await auctionsApi.getAuctionById(
+                auction.id,
+                createdAuctions,
+                auctionReviews,
+            )
             if (requestId === detailRequestId.current) setDetailAuction(details)
         } catch {
             // Giữ dữ liệu hàng hiện tại nếu endpoint chi tiết tạm lỗi; không thay bằng dữ liệu giả.
@@ -1333,7 +1425,9 @@ export function SellerAuctionListPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to cancel auction' : 'Không thể hủy phiên đấu giá'),
+                message:
+                    err?.message ||
+                    (lang === 'en' ? 'Failed to cancel auction' : 'Không thể hủy phiên đấu giá'),
             })
         } finally {
             setCancelling(false)
@@ -1349,7 +1443,8 @@ export function SellerAuctionListPage() {
                         {
                             id: 'pending_approval',
                             label: lang === 'en' ? 'Pending approval' : 'Chờ duyệt',
-                            count: sellerAuctions.filter((a) => a.status === 'pending_approval').length,
+                            count: sellerAuctions.filter((a) => a.status === 'pending_approval')
+                                .length,
                         },
                         {
                             id: 'scheduled',
@@ -1384,15 +1479,22 @@ export function SellerAuctionListPage() {
                             render: (r: any) => (
                                 <div className="flex items-center gap-3">
                                     <img
-                                        src={r.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        src={
+                                            r.product?.images?.[0] ||
+                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                        }
                                         alt=""
                                         className="w-10 h-10 object-cover rounded-lg"
                                     />
                                     <div>
                                         <p className="text-sm font-semibold line-clamp-1">
-                                            {lang === 'vi' ? r.product?.nameVi || r.product?.name : r.product?.name}
+                                            {lang === 'vi'
+                                                ? r.product?.nameVi || r.product?.name
+                                                : r.product?.name}
                                         </p>
-                                        <p className="text-xs text-gray-400">SKU: {r.product?.sku || 'N/A'}</p>
+                                        <p className="text-xs text-gray-400">
+                                            SKU: {r.product?.sku || 'N/A'}
+                                        </p>
                                     </div>
                                 </div>
                             ),
@@ -1450,8 +1552,12 @@ export function SellerAuctionListPage() {
                             label: tr(lang, 'actions'),
                             render: (r: any) => {
                                 const isBeforeStart = new Date(r.startTime).getTime() > Date.now()
-                                const isEditable = ['pending_approval', 'scheduled', 'draft'].includes(r.status) && isBeforeStart
-                                const isCancellable = ['pending_approval', 'scheduled', 'draft'].includes(r.status) && isBeforeStart
+                                const isEditable =
+                                    ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
+                                    isBeforeStart
+                                const isCancellable =
+                                    ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
+                                    isBeforeStart
 
                                 return (
                                     <div className="flex gap-1 items-center">
@@ -1469,7 +1575,11 @@ export function SellerAuctionListPage() {
                                         </button>
                                         {isEditable && (
                                             <button
-                                                title={lang === 'en' ? 'Edit auction' : 'Chỉnh sửa phiên'}
+                                                title={
+                                                    lang === 'en'
+                                                        ? 'Edit auction'
+                                                        : 'Chỉnh sửa phiên'
+                                                }
                                                 onClick={(e) => {
                                                     e.stopPropagation()
                                                     navigate('seller-create-auction', { id: r.id })
@@ -1481,7 +1591,11 @@ export function SellerAuctionListPage() {
                                         )}
                                         {isCancellable && (
                                             <button
-                                                title={lang === 'en' ? 'Cancel auction' : 'Hủy phiên đấu giá'}
+                                                title={
+                                                    lang === 'en'
+                                                        ? 'Cancel auction'
+                                                        : 'Hủy phiên đấu giá'
+                                                }
                                                 onClick={(e) => {
                                                     e.stopPropagation()
                                                     setCancellingAuctionId(r.id)
@@ -1531,58 +1645,99 @@ export function SellerAuctionListPage() {
                     <div className="space-y-4">
                         <div className="flex items-start gap-3 rounded-xl bg-gray-50 p-4">
                             <img
-                                src={detailAuction.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'}
+                                src={
+                                    detailAuction.product?.images?.[0] ||
+                                    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'
+                                }
                                 alt=""
                                 className="h-16 w-16 rounded-lg border object-cover"
                             />
                             <div className="min-w-0">
                                 <h3 className="font-semibold text-gray-900">
-                                    {lang === 'vi' ? detailAuction.product?.nameVi || detailAuction.product?.name : detailAuction.product?.name}
+                                    {lang === 'vi'
+                                        ? detailAuction.product?.nameVi ||
+                                          detailAuction.product?.name
+                                        : detailAuction.product?.name}
                                 </h3>
                                 <p className="mt-1 text-xs text-gray-500">
-                                    SKU: <span className="font-mono text-gray-700">{detailAuction.product?.sku || 'N/A'}</span>
+                                    SKU:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {detailAuction.product?.sku || 'N/A'}
+                                    </span>
                                 </p>
                                 <div className="mt-2">
-                                    <StatusBadge status={detailAuction.status} label={statusLabel(detailAuction.status)} />
+                                    <StatusBadge
+                                        status={detailAuction.status}
+                                        label={statusLabel(detailAuction.status)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-sm">
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'startingPrice')}</span>
-                                <span className="font-semibold">{formatCurrency(detailAuction.startingPrice, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'startingPrice')}
+                                </span>
+                                <span className="font-semibold">
+                                    {formatCurrency(detailAuction.startingPrice, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'currentBid')}</span>
-                                <span className="font-bold text-auction">{formatCurrency(detailAuction.currentBid, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'currentBid')}
+                                </span>
+                                <span className="font-bold text-auction">
+                                    {formatCurrency(detailAuction.currentBid, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'minIncrement')}</span>
-                                <span className="font-semibold">{formatCurrency(detailAuction.minIncrement, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'minIncrement')}
+                                </span>
+                                <span className="font-semibold">
+                                    {formatCurrency(detailAuction.minIncrement, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'totalBidCount')}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'totalBidCount')}
+                                </span>
                                 <span className="font-semibold">{detailAuction.bidCount}</span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'auctionVisibility')}</span>
-                                <span className="font-semibold capitalize">{detailAuction.visibility}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'auctionVisibility')}
+                                </span>
+                                <span className="font-semibold capitalize">
+                                    {detailAuction.visibility}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'startTime')}</span>
-                                <span className="font-medium">{formatDateTime(detailAuction.startTime, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'startTime')}
+                                </span>
+                                <span className="font-medium">
+                                    {formatDateTime(detailAuction.startTime, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'endTime')}</span>
-                                <span className="font-medium">{formatDateTime(detailAuction.endTime, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'endTime')}
+                                </span>
+                                <span className="font-medium">
+                                    {formatDateTime(detailAuction.endTime, lang)}
+                                </span>
                             </div>
                         </div>
 
                         <section>
                             <h4 className="mb-2 font-semibold">{tr(lang, 'bidHistory')}</h4>
                             {detailLoading ? (
-                                <div className="flex items-center gap-2 py-3 text-sm text-gray-500" role="status">
+                                <div
+                                    className="flex items-center gap-2 py-3 text-sm text-gray-500"
+                                    role="status"
+                                >
                                     <div
                                         className="spinner-border spinner-border-sm text-primary"
                                         style={{ color: '#ee4d2d' }}
@@ -1597,17 +1752,29 @@ export function SellerAuctionListPage() {
                                     <table className="w-full text-sm">
                                         <thead className="bg-gray-50 text-gray-600">
                                             <tr>
-                                                <th className="p-3 text-left">{tr(lang, 'bidAmount')}</th>
-                                                <th className="p-3 text-right">{tr(lang, 'bidTime')}</th>
+                                                <th className="p-3 text-left">
+                                                    {tr(lang, 'bidAmount')}
+                                                </th>
+                                                <th className="p-3 text-right">
+                                                    {tr(lang, 'bidTime')}
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
                                             {[...detailAuction.bids]
-                                                .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                                                .sort(
+                                                    (a, b) =>
+                                                        new Date(b.timestamp).getTime() -
+                                                        new Date(a.timestamp).getTime(),
+                                                )
                                                 .map((bid) => (
                                                     <tr key={bid.id}>
-                                                        <td className="p-3 font-semibold text-auction">{formatCurrency(bid.amount, lang)}</td>
-                                                        <td className="p-3 text-right text-gray-500">{formatDateTime(bid.timestamp, lang)}</td>
+                                                        <td className="p-3 font-semibold text-auction">
+                                                            {formatCurrency(bid.amount, lang)}
+                                                        </td>
+                                                        <td className="p-3 text-right text-gray-500">
+                                                            {formatDateTime(bid.timestamp, lang)}
+                                                        </td>
                                                     </tr>
                                                 ))}
                                         </tbody>
@@ -1647,11 +1814,7 @@ export function SellerAuctionListPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button
-                            variant="danger"
-                            loading={cancelling}
-                            onClick={handleConfirmCancel}
-                        >
+                        <Button variant="danger" loading={cancelling} onClick={handleConfirmCancel}>
                             {tr(lang, 'confirm')}
                         </Button>
                     </>
@@ -1673,7 +1836,9 @@ export function SellerAuctionListPage() {
                         }}
                         error={cancelReasonError}
                         placeholder={
-                            lang === 'en' ? 'Reason for cancellation...' : 'Lý do hủy phiên đấu giá...'
+                            lang === 'en'
+                                ? 'Reason for cancellation...'
+                                : 'Lý do hủy phiên đấu giá...'
                         }
                     />
                 </div>
@@ -1824,21 +1989,23 @@ export function CreateAuctionPage() {
     const isSellerUuid = Boolean(
         user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
     )
-    const { data: sellerProductsEnvelope, loading: loadingProducts } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(
-        isSellerUuid ? `/products/seller/${user?.id}` : '/products',
-    )
-    const sellerProductsRaw = (sellerProductsEnvelope as Envelope<ApiProduct[]> | undefined)?.data ?? sellerProductsEnvelope
+    const { data: sellerProductsEnvelope, loading: loadingProducts } = useLoad<
+        Envelope<ApiProduct[]> | ApiProduct[]
+    >(isSellerUuid ? `/products/seller/${user?.id}` : '/products')
+    const sellerProductsRaw =
+        (sellerProductsEnvelope as Envelope<ApiProduct[]> | undefined)?.data ??
+        sellerProductsEnvelope
 
     const apiProducts = Array.isArray(sellerProductsRaw)
         ? sellerProductsRaw
-            .filter((p: any) => p.auctionEnabled !== false)
-            .map((product) => ({
-                id: product.id,
-                name: product.name,
-                nameVi: product.name,
-                sku: product.skus?.[0]?.skuCode || '',
-                skuId: product.skus?.[0]?.id || undefined,
-            }))
+              .filter((p: any) => p.auctionEnabled !== false)
+              .map((product) => ({
+                  id: product.id,
+                  name: product.name,
+                  nameVi: product.name,
+                  sku: product.skus?.[0]?.skuCode || '',
+                  skuId: product.skus?.[0]?.id || undefined,
+              }))
         : []
 
     const fallbackCatalog = PRODUCTS.filter((p) => p.enableAuction).map((p) => ({
@@ -1854,7 +2021,12 @@ export function CreateAuctionPage() {
 
     // Xóa productId nếu đang chứa ID rác cũ dạng prod-... hoặc không tồn tại trong danh sách
     useEffect(() => {
-        if (productId && (productId.startsWith('prod-') || (availableProducts.length > 0 && !availableProducts.some((p) => p.id === productId)))) {
+        if (
+            productId &&
+            (productId.startsWith('prod-') ||
+                (availableProducts.length > 0 &&
+                    !availableProducts.some((p) => p.id === productId)))
+        ) {
             setProductId('')
         }
     }, [availableProducts, productId])
@@ -1880,7 +2052,8 @@ export function CreateAuctionPage() {
                 if (!auction) {
                     showToast({
                         type: 'error',
-                        message: lang === 'en' ? 'Auction not found' : 'Không tìm thấy phiên đấu giá',
+                        message:
+                            lang === 'en' ? 'Auction not found' : 'Không tìm thấy phiên đấu giá',
                     })
                     navigate('seller-auctions')
                     return
@@ -1888,7 +2061,10 @@ export function CreateAuctionPage() {
 
                 // Kiểm tra điều kiện chỉnh sửa: chỉ cho phép khi chưa mở (startTime > now) và trạng thái scheduled/draft/pending
                 const isPastStart = new Date(auction.startTime).getTime() <= Date.now()
-                if (['active', 'ended', 'settled', 'cancelled'].includes(auction.status) || isPastStart) {
+                if (
+                    ['active', 'ended', 'settled', 'cancelled'].includes(auction.status) ||
+                    isPastStart
+                ) {
                     setNotEditableError(
                         lang === 'en'
                             ? 'This auction has already started or ended and cannot be edited.'
@@ -1962,9 +2138,7 @@ export function CreateAuctionPage() {
         const minIncNum = Number(minIncrement)
         if (!minIncrement || isNaN(minIncNum) || minIncNum <= 0) {
             errors.minIncrement =
-                lang === 'en'
-                    ? 'Bid increment must be greater than 0'
-                    : 'Bước giá phải lớn hơn 0'
+                lang === 'en' ? 'Bid increment must be greater than 0' : 'Bước giá phải lớn hơn 0'
         } else if (minIncNum < 1000) {
             errors.minIncrement =
                 lang === 'en'
@@ -1974,9 +2148,7 @@ export function CreateAuctionPage() {
 
         if (!startTime) {
             errors.startTime =
-                lang === 'en'
-                    ? 'Please specify start time'
-                    : 'Vui lòng chọn thời gian bắt đầu'
+                lang === 'en' ? 'Please specify start time' : 'Vui lòng chọn thời gian bắt đầu'
         } else {
             const startDate = new Date(startTime)
             if (isNaN(startDate.getTime())) {
@@ -1992,9 +2164,7 @@ export function CreateAuctionPage() {
 
         if (!endTime) {
             errors.endTime =
-                lang === 'en'
-                    ? 'Please specify end time'
-                    : 'Vui lòng chọn thời gian kết thúc'
+                lang === 'en' ? 'Please specify end time' : 'Vui lòng chọn thời gian kết thúc'
         } else if (startTime) {
             const startDate = new Date(startTime)
             const endDate = new Date(endTime)
@@ -2070,7 +2240,10 @@ export function CreateAuctionPage() {
                 const selectedProd = availableProducts.find((p) => p.id === productId)
                 // Chỉ gửi skuId nếu có định dạng UUID hợp lệ; không gửi skuCode chuỗi để tránh lỗi Jackson
                 const isUuidVal = (val?: string | null) =>
-                    Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val))
+                    Boolean(
+                        val &&
+                        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val),
+                    )
                 const validSkuId = isUuidVal((selectedProd as any)?.skuId)
                     ? (selectedProd as any).skuId
                     : undefined
@@ -2170,9 +2343,15 @@ export function CreateAuctionPage() {
                         <Select
                             label={lang === 'en' ? 'Product' : 'Sản phẩm'}
                             value={productId}
-                            disabled={isEdit || Boolean(notEditableError) || (loadingProducts && availableProducts.length === 0)}
+                            disabled={
+                                isEdit ||
+                                Boolean(notEditableError) ||
+                                (loadingProducts && availableProducts.length === 0)
+                            }
                             error={fieldErrors.productId}
-                            onChange={(e) => handleFieldChange('productId', e.target.value, setProductId)}
+                            onChange={(e) =>
+                                handleFieldChange('productId', e.target.value, setProductId)
+                            }
                             options={[
                                 {
                                     value: '',
@@ -2186,7 +2365,9 @@ export function CreateAuctionPage() {
                         />
                         {isEdit && (
                             <p className="text-xs text-gray-400 mt-2">
-                                {lang === 'en' ? 'Product cannot be changed during edit.' : 'Không thể thay đổi sản phẩm khi đang chỉnh sửa phiên.'}
+                                {lang === 'en'
+                                    ? 'Product cannot be changed during edit.'
+                                    : 'Không thể thay đổi sản phẩm khi đang chỉnh sửa phiên.'}
                             </p>
                         )}
                     </div>
@@ -2203,9 +2384,19 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={startingPrice}
                                 error={fieldErrors.startingPrice}
-                                onChange={(e) => handleFieldChange('startingPrice', e.target.value, setStartingPrice)}
+                                onChange={(e) =>
+                                    handleFieldChange(
+                                        'startingPrice',
+                                        e.target.value,
+                                        setStartingPrice,
+                                    )
+                                }
                                 placeholder="100000"
-                                helper={lang === 'en' ? 'Must be greater than 0' : 'Giá khởi điểm phải lớn hơn 0'}
+                                helper={
+                                    lang === 'en'
+                                        ? 'Must be greater than 0'
+                                        : 'Giá khởi điểm phải lớn hơn 0'
+                                }
                             />
                             <Input
                                 label={tr(lang, 'minIncrement')}
@@ -2213,9 +2404,17 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={minIncrement}
                                 error={fieldErrors.minIncrement}
-                                onChange={(e) => handleFieldChange('minIncrement', e.target.value, setMinIncrement)}
+                                onChange={(e) =>
+                                    handleFieldChange(
+                                        'minIncrement',
+                                        e.target.value,
+                                        setMinIncrement,
+                                    )
+                                }
                                 placeholder="1000"
-                                helper={lang === 'en' ? 'Min 1,000 đ' : 'Bước giá tối thiểu 1,000 đ'}
+                                helper={
+                                    lang === 'en' ? 'Min 1,000 đ' : 'Bước giá tối thiểu 1,000 đ'
+                                }
                             />
                             <Input
                                 label={tr(lang, 'startTime')}
@@ -2223,8 +2422,14 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={startTime}
                                 error={fieldErrors.startTime}
-                                onChange={(e) => handleFieldChange('startTime', e.target.value, setStartTime)}
-                                helper={lang === 'en' ? 'Must be after current time' : 'Phải sau thời gian hiện tại'}
+                                onChange={(e) =>
+                                    handleFieldChange('startTime', e.target.value, setStartTime)
+                                }
+                                helper={
+                                    lang === 'en'
+                                        ? 'Must be after current time'
+                                        : 'Phải sau thời gian hiện tại'
+                                }
                             />
                             <Input
                                 label={tr(lang, 'endTime')}
@@ -2232,8 +2437,14 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={endTime}
                                 error={fieldErrors.endTime}
-                                onChange={(e) => handleFieldChange('endTime', e.target.value, setEndTime)}
-                                helper={lang === 'en' ? 'Duration: 1 hour to 7 days' : 'Thời lượng: 1 giờ đến 7 ngày'}
+                                onChange={(e) =>
+                                    handleFieldChange('endTime', e.target.value, setEndTime)
+                                }
+                                helper={
+                                    lang === 'en'
+                                        ? 'Duration: 1 hour to 7 days'
+                                        : 'Thời lượng: 1 giờ đến 7 ngày'
+                                }
                             />
                         </div>
                     </div>
@@ -2248,10 +2459,19 @@ export function CreateAuctionPage() {
                                 setVisibility(e.target.value as 'public' | 'restricted')
                             }
                             options={[
-                                { value: 'public', label: lang === 'en' ? 'Public (All buyers)' : 'Công khai (Tất cả người mua)' },
+                                {
+                                    value: 'public',
+                                    label:
+                                        lang === 'en'
+                                            ? 'Public (All buyers)'
+                                            : 'Công khai (Tất cả người mua)',
+                                },
                                 {
                                     value: 'restricted',
-                                    label: lang === 'en' ? 'Private (Invited only)' : 'Riêng tư (Chỉ người được mời)',
+                                    label:
+                                        lang === 'en'
+                                            ? 'Private (Invited only)'
+                                            : 'Riêng tư (Chỉ người được mời)',
                                 },
                             ]}
                         />
@@ -2779,6 +2999,7 @@ interface SellerSkuOption {
  * 3. Mỗi lần mở modal nhập/điều chỉnh sinh một Idempotency-Key giữ cố định khi bấm Thử lại để tránh tăng/giảm kho hai lần.
  */
 export function SellerInventoryPage() {
+    // Tồn kho lấy theo warehouse/SKU từ Fulfillment; modal giữ Idempotency-Key khi retry, không tăng cache trước ACK.
     const { lang, user, showToast } = useApp()
     const [warehouses, setWarehouses] = useState<WarehouseResponse[]>([])
     const [stocks, setStocks] = useState<InventoryStockResponse[]>([])
@@ -2977,7 +3198,9 @@ export function SellerInventoryPage() {
         const parsedValue = Number(adjustValue)
         const parsedUnavailable = Number(adjustUnavailableDelta || '0')
         if (!Number.isInteger(parsedValue) || !Number.isInteger(parsedUnavailable)) {
-            setAdjustError(lang === 'en' ? 'Quantity must be an integer' : 'Số lượng phải là số nguyên')
+            setAdjustError(
+                lang === 'en' ? 'Quantity must be an integer' : 'Số lượng phải là số nguyên',
+            )
             return
         }
         if (!adjustReason.trim()) {
@@ -3129,8 +3352,7 @@ export function SellerInventoryPage() {
                         </span>
                         <span className="text-xs text-gray-500">
                             {reconciliations.filter((r) => r.matched).length}/
-                            {reconciliations.length}{' '}
-                            {lang === 'en' ? 'matched' : 'bản ghi khớp'}
+                            {reconciliations.length} {lang === 'en' ? 'matched' : 'bản ghi khớp'}
                         </span>
                     </div>
                     <div className="p-4 grid gap-2 text-xs">
@@ -3171,11 +3393,7 @@ export function SellerInventoryPage() {
                     <span className="font-bold">
                         {lang === 'en' ? 'Inventory by SKU & Warehouse' : 'Tồn kho theo SKU & Kho'}
                     </span>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setReloadTick((t) => t + 1)}
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => setReloadTick((t) => t + 1)}>
                         {lang === 'en' ? 'Refresh' : 'Tải lại'}
                     </Button>
                 </div>
@@ -3283,7 +3501,10 @@ export function SellerInventoryPage() {
                                 setMovementFilter(e.target.value as '' | LedgerMovementType)
                             }
                             options={[
-                                { value: '', label: lang === 'en' ? 'All movements' : 'Tất cả loại' },
+                                {
+                                    value: '',
+                                    label: lang === 'en' ? 'All movements' : 'Tất cả loại',
+                                },
                                 { value: 'INBOUND', label: 'INBOUND' },
                                 { value: 'OUTBOUND', label: 'OUTBOUND' },
                                 { value: 'RESERVE', label: 'RESERVE' },
