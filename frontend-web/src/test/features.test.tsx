@@ -10,8 +10,9 @@ import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
 import { CartPage, CheckoutPage, SandboxPaymentPage } from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
-import { readSession } from '../api/client'
+import { readSession, ApiClientError } from '../api/client'
 import { ordersApi } from '../api/orders'
+import * as paymentsApi from '../api/payments'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
@@ -272,6 +273,53 @@ describe('profile and category writes', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Đổi mật khẩu' }))
         await waitFor(() => expect(holder.current.navigate).toHaveBeenCalledWith('login'))
         expect(holder.current.setUser).toHaveBeenCalledWith(null)
+    })
+    /**
+     * Tình huống nghiệp vụ và lỗi hồi quy:
+     * Khi backend trả thông tin tài khoản bọc trong ApiResponse { success: true, data: { ... } } theo Envelope Pattern v2,
+     * trang ProfilePage phải trích xuất đúng data và điền sẵn toàn bộ thông tin đăng ký trước đó
+     * (Họ tên, Email, Số điện thoại, Số giấy tờ, Ngày sinh, Giới tính, Địa chỉ) thay vì để các trường trống trơn.
+     */
+    it('hiển thị đầy đủ thông tin người dùng đã đăng ký khi BE trả về bọc trong ApiResponse Envelope', async () => {
+        vi.mocked(fetch).mockImplementation(async (input: string | URL | Request) => {
+            const path = String(input)
+            if (path.includes('/users/me/activity-history')) {
+                return new Response(JSON.stringify({ success: true, data: { content: [] } }))
+            }
+            if (path.includes('/users/me')) {
+                return new Response(
+                    JSON.stringify({
+                        success: true,
+                        data: {
+                            id: 'user-envelope-1',
+                            fullName: 'Trần Quốc Huy',
+                            email: 'huy.tq@example.com',
+                            phone: '0988776655',
+                            identifyNumber: '079203001234',
+                            dateOfBirth: '1998-05-20',
+                            gender: 'MALE',
+                            address: '123 Đường Lê Lợi, Q1, TP.HCM',
+                            status: 'ACTIVE',
+                            roles: ['ROLE_BUYER'],
+                        },
+                    }),
+                )
+            }
+            return new Response(JSON.stringify({ message: 'OK' }))
+        })
+
+        render(<ProfilePage />)
+
+        // Kiểm tra tất cả các trường đã được điền sẵn thông tin đăng ký
+        expect(await screen.findByDisplayValue('Trần Quốc Huy')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('huy.tq@example.com')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('0988776655')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('079203001234')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('1998-05-20')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('123 Đường Lê Lợi, Q1, TP.HCM')).toBeInTheDocument()
+
+        const genderSelect = screen.getByLabelText('Giới tính') as HTMLSelectElement
+        expect(genderSelect.value).toBe('MALE')
     })
     it('persists category edits and handles cancellation and failed deletion', async () => {
         render(<AdminCategoriesPage />)
@@ -605,7 +653,7 @@ describe('Cart, Checkout và Payment Result', () => {
         )
     })
 
-    it('CheckoutPage: đặt hàng với phương thức VNPAY và chuyển hướng tới sandbox-payment (Accept Criteria 1, 3, 4)', async () => {
+    it('CheckoutPage: đặt hàng với phương thức VNPAY và tiếp tục Payment Attempt và chuyển tới VNPAY thật', async () => {
         // Cô lập kiểm tra điều hướng UI bằng response fixture; VNPAY production không còn fallback URL mock.
         const createSpy = vi.spyOn(ordersApi, 'createOrder').mockResolvedValueOnce({
             id: 'test-order',
@@ -616,8 +664,18 @@ describe('Cart, Checkout và Payment Result', () => {
             discount: 0,
             total: 100,
             paymentMethod: 'VNPAY',
-            paymentUrl: '/sandbox-payment?provider=vnpay',
         })
+        // Contract mới: Create Order không trả URL; FE phải lấy URL từ Payment Attempt.
+        const attemptSpy = vi.spyOn(paymentsApi, 'createPaymentAttempt').mockResolvedValueOnce({
+            paymentId: 'attempt',
+            orderId: 'test-order',
+            status: 'PENDING',
+            amount: 100,
+            currency: 'VND',
+            paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=attempt',
+            expiresAt: '',
+        })
+        const redirectSpy = vi.spyOn(paymentsApi, 'redirectToGateway').mockImplementation(() => {})
         render(<CheckoutPage />)
         // Bước 1 -> Bước 2
         fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
@@ -640,13 +698,21 @@ describe('Cart, Checkout và Payment Result', () => {
         // Bấm Đặt hàng
         fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
 
-        // Chuyển hướng sang sandbox-payment
-        await waitFor(() => {
-            expect(holder.current.navigate).toHaveBeenCalledWith(
-                'sandbox-payment',
-                expect.objectContaining({ provider: 'vnpay' }),
-            )
-        })
+        await waitFor(() =>
+            expect(redirectSpy).toHaveBeenCalledWith(
+                'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=attempt',
+            ),
+        )
+        expect(attemptSpy).toHaveBeenCalledWith(
+            'test-order',
+            expect.stringMatching(/^[0-9a-f-]{36}$/i),
+        )
+        expect(holder.current.navigate).not.toHaveBeenCalledWith(
+            'sandbox-payment',
+            expect.anything(),
+        )
+        attemptSpy.mockRestore()
+        redirectSpy.mockRestore()
         createSpy.mockRestore()
     })
 
@@ -674,6 +740,57 @@ describe('Cart, Checkout và Payment Result', () => {
         })
         expect(holder.current.showToast).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'error', message: 'Gateway connection timeout' }),
+        )
+        spy.mockRestore()
+    })
+
+    it('CheckoutPage: xử lý lỗi 401 hết hạn phiên, lưu nháp đơn hàng và hiển thị nút đăng nhập lại', async () => {
+        /**
+         * Chức năng: Kiểm thử xử lý lỗi 401 Unauthorized khi tạo đơn hàng trên CheckoutPage.
+         * Tình huống: Người dùng bị hết hạn token xác thực 15 phút từ Backend Keycloak.
+         * Kết quả mong đợi:
+         *   - Bắt lỗi 401, hiển thị banner cảnh báo hết phiên thân thiện.
+         *   - Hiển thị hộp thông báo kèm nút Đăng nhập ngay.
+         *   - Lưu nháp shippingData vào sessionStorage để không làm mất thông tin người dùng.
+         *   - Khi bấm Đăng nhập ngay, điều hướng sang màn hình login kèm tham số redirect='checkout'.
+         */
+        const spy = vi
+            .spyOn(ordersApi, 'createOrder')
+            .mockRejectedValueOnce(
+                new ApiClientError(
+                    'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)',
+                    'AUTH_UNAUTHORIZED',
+                    401,
+                ),
+            )
+        render(<CheckoutPage />)
+        // 1 -> 2 -> 3 -> 4
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
+        )
+
+        // Bấm Đặt hàng
+        fireEvent.click(screen.getByRole('button', { name: /place order|đặt hàng/i }))
+
+        // Banner thông báo lỗi 401 và nút Đăng nhập ngay xuất hiện
+        const loginBtn = await screen.findByRole('button', { name: /log in now|đăng nhập ngay/i })
+        expect(loginBtn).toBeVisible()
+
+        // Kiểm tra dữ liệu form đã được lưu nháp vào sessionStorage
+        const savedDraft = sessionStorage.getItem('nexus.checkout-draft')
+        expect(savedDraft).toBeTruthy()
+        expect(JSON.parse(savedDraft!)).toHaveProperty('shippingData')
+
+        // Bấm Đăng nhập ngay
+        fireEvent.click(loginBtn)
+        expect(holder.current.navigate).toHaveBeenCalledWith(
+            'login',
+            expect.objectContaining({ redirect: 'checkout' }),
         )
         spy.mockRestore()
     })

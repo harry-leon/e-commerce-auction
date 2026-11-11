@@ -279,6 +279,7 @@ const SEED_ORDER_IDS = new Set(SEED_ORDERS.map((o) => o.id))
  */
 export function writeLocalMockOrders(orders: Order[]): void {
     try {
+        localStorage.setItem(MOCK_VERSION_KEY, MOCK_DATA_VERSION)
         localStorage.setItem(STORAGE_KEY, JSON.stringify(orders))
     } catch {
         // LocalStorage có thể bị giới hạn hoặc vô hiệu hóa trong môi trường ẩn danh
