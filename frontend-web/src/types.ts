@@ -127,6 +127,14 @@ export interface Auction {
     visibility: 'public' | 'restricted'
     cancelReason?: string
     settledAt?: string
+    /** Số lần phiên đấu giá đã được gia hạn tự động do quy tắc Anti-sniping */
+    extensionCount?: number
+    /** Đánh dấu phiên đấu giá đã từng được gia hạn thời gian */
+    isExtended?: boolean
+    /** Mức giá bảo lưu tối thiểu người bán đặt ra để phiên có người thắng */
+    reservePrice?: number
+    /** Mã đơn hàng được tạo tự động khi người thắng hoàn tất thanh toán theo hợp đồng đấu giá */
+    orderId?: string
 }
 
 export interface OrderItem {
@@ -191,6 +199,7 @@ export interface Order {
     disputeStatus?: DisputeStatus
     disputeReason?: string
     isAuctionOrder?: boolean
+    sourceType?: 'REGULAR' | 'AUCTION'
     auctionId?: string
     paymentDeadline?: string
     reviewed?: boolean

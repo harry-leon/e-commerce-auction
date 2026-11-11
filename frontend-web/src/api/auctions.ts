@@ -1041,7 +1041,16 @@ export const auctionsApi = {
             timestamp: new Date().toISOString(),
         }
 
+        let extended = false
+        let newEndTime = targetAuction?.endTime
         if (targetAuction) {
+            const timeLeftMs = new Date(targetAuction.endTime).getTime() - Date.now()
+            // Anti-sniping rule (BR-AUC-09): Nếu đặt giá trong 5 phút cuối (hoặc <= 300s), gia hạn thêm 5 phút (tối đa 5 lần)
+            const currentExtensions = targetAuction.extensionCount || 0
+            if (timeLeftMs > 0 && timeLeftMs <= 5 * 60 * 1000 && currentExtensions < 5) {
+                extended = true
+                newEndTime = new Date(new Date(targetAuction.endTime).getTime() + 5 * 60 * 1000).toISOString()
+            }
             const updatedBids = [newBid, ...targetAuction.bids]
             const updatedAuction: Auction = {
                 ...targetAuction,
@@ -1050,6 +1059,9 @@ export const auctionsApi = {
                 bids: updatedBids,
                 winnerId: bidderId,
                 winnerName: bidderName,
+                endTime: newEndTime || targetAuction.endTime,
+                extensionCount: extended ? currentExtensions + 1 : currentExtensions,
+                isExtended: extended || targetAuction.isExtended,
             }
             localAuctionsStore[targetIndex] = updatedAuction
             persistStoredAuctions(localAuctionsStore)
@@ -1059,7 +1071,92 @@ export const auctionsApi = {
             bid: newBid,
             currentBid: amount,
             bidCount: targetAuction ? targetAuction.bidCount + 1 : 1,
+            endTime: newEndTime,
+            extended,
         }
+    },
+
+    /**
+     * Chức năng: Kích hoạt gia hạn thời gian cho phiên đấu giá (Anti-sniping extension).
+     * Đầu vào: auctionId (mã phiên), extensionMinutes (số phút gia hạn, mặc định 5 phút).
+     * Kết quả: Đối tượng Auction với mốc endTime mới được kéo dài thêm.
+     * Luồng xử lý:
+     *   1. Tra cứu phiên trong kho localAuctionsStore.
+     *   2. Lấy mốc thời gian lớn hơn giữa Date.now() và endTime hiện tại, cộng thêm extensionMinutes.
+     *   3. Tăng extensionCount, đánh dấu isExtended = true và lưu vào localStorage.
+     * Quy tắc: Không gia hạn nếu phiên đã kết thúc hoặc hủy; tối đa 5 lần gia hạn.
+     */
+    async extendAuction(auctionId: string, extensionMinutes = 5): Promise<Auction> {
+        const targetIndex = localAuctionsStore.findIndex((a) => a.id === auctionId)
+        if (targetIndex < 0) {
+            throw new ApiClientError('Không tìm thấy phiên đấu giá', 'AUCTION_NOT_FOUND', 404)
+        }
+        const current = localAuctionsStore[targetIndex]
+        const baseTime = Math.max(Date.now(), new Date(current.endTime).getTime())
+        const newEndTime = new Date(baseTime + extensionMinutes * 60 * 1000).toISOString()
+        const updated: Auction = {
+            ...current,
+            endTime: newEndTime,
+            extensionCount: (current.extensionCount || 0) + 1,
+            isExtended: true,
+            status: 'active',
+        }
+        localAuctionsStore[targetIndex] = updated
+        persistStoredAuctions(localAuctionsStore)
+        return updated
+    },
+
+    /**
+     * Chức năng: Chốt kết quả quyết toán (Settlement) và kết thúc phiên đấu giá.
+     * Đầu vào: auctionId.
+     * Kết quả: Đối tượng Auction chuyển sang trạng thái 'ended', xác định winnerId/winnerName chính xác.
+     * Luồng xử lý:
+     *   1. Gửi POST /api/v1/auctions/{id}/settle lên backend nếu có kết nối.
+     *   2. Nếu offline/mock, duyệt danh sách bids để chọn ra mức giá cao nhất.
+     *   3. Kiểm tra điều kiện giá sàn (reservePrice nếu có); nếu thỏa mãn, gán winner.
+     *   4. Chuyển trạng thái sang 'ended' và lưu vào kho local.
+     */
+    async settleAuction(auctionId: string): Promise<Auction> {
+        const targetIndex = localAuctionsStore.findIndex((a) => a.id === auctionId)
+        if (targetIndex < 0) {
+            throw new ApiClientError('Không tìm thấy phiên đấu giá', 'AUCTION_NOT_FOUND', 404)
+        }
+        const current = localAuctionsStore[targetIndex]
+
+        try {
+            const envelope = await post<ApiResponse<any>>(`/auctions/${auctionId}/settle`, {})
+            if (envelope?.data) {
+                const data = envelope.data
+                const updated: Auction = {
+                    ...current,
+                    status: 'ended',
+                    settledAt: data.settledAt || new Date().toISOString(),
+                    winnerId: data.winnerId || undefined,
+                    winnerName: data.winnerName || current.winnerName,
+                    currentBid: data.finalPrice ? Number(data.finalPrice) : current.currentBid,
+                    orderId: data.orderId || current.orderId,
+                }
+                localAuctionsStore[targetIndex] = updated
+                persistStoredAuctions(localAuctionsStore)
+                return updated
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+        }
+
+        const highestBid = current.bids.length > 0 ? current.bids[0] : null
+        const isReserveMet = !current.reservePrice || current.currentBid >= current.reservePrice
+        const hasWinner = highestBid && isReserveMet
+        const updated: Auction = {
+            ...current,
+            status: 'ended',
+            settledAt: new Date().toISOString(),
+            winnerId: hasWinner ? highestBid.bidderId : undefined,
+            winnerName: hasWinner ? highestBid.bidderName : undefined,
+        }
+        localAuctionsStore[targetIndex] = updated
+        persistStoredAuctions(localAuctionsStore)
+        return updated
     },
 
     /**
@@ -1517,6 +1614,15 @@ export const auctionsApi = {
     addCreatedAuction(auction: Auction) {
         localAuctionsStore = [auction, ...localAuctionsStore]
         persistStoredAuctions(localAuctionsStore)
+    },
+
+    /**
+     * Chức năng: Tra cứu đồng bộ phiên đấu giá từ kho cục bộ (hỗ trợ render tức thì không giật layout).
+     * Đầu vào: id (mã phiên đấu giá).
+     * Kết quả: Auction hoặc undefined nếu không tìm thấy.
+     */
+    getStoredAuctionById(id: string): Auction | undefined {
+        return localAuctionsStore.find((a) => a.id === id)
     },
 
     /**

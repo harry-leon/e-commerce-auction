@@ -231,11 +231,22 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     const isSuccess = response.ok && payload.success !== false && payload.status !== false
     if (!isSuccess) {
         const errorObj: Partial<ErrorDetail> = payload.error || {}
+        /**
+         * Chức năng: Chuẩn hóa thông báo lỗi phản hồi từ API Backend.
+         * Đầu vào: Dữ liệu payload JSON lỗi từ server hoặc mã trạng thái HTTP.
+         * Kết quả: Chuỗi thông báo lỗi rõ ràng, có ý nghĩa cho người dùng UI.
+         * Quy tắc: Nếu server trả 401 mà không có body JSON (ví dụ Spring Security chặn trực tiếp ở Gateway),
+         *          hiển thị thông báo phiên hết hạn kèm mã (401) thay vì chuỗi kỹ thuật "Request failed (401)".
+         */
+        const defaultMsg =
+            response.status === 401
+                ? 'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)'
+                : `Request failed (${response.status})`
         const msg =
             errorObj.message ||
             payload.message ||
             payload.detail ||
-            `Request failed (${response.status})`
+            defaultMsg
         const code =
             errorObj.code ||
             (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
