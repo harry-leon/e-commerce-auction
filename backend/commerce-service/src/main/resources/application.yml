@@ -61,6 +61,13 @@ management:
     sampling:
       probability: 1.0
 
+# DEBUG web/JDBC có thể in query IPN hoặc bind payment_url chứa hash; không ghi request body/token/chữ ký vào log.
+logging:
+  level:
+    org.springframework.web: INFO
+    org.springframework.jdbc.core: INFO
+    org.hibernate.orm.jdbc.bind: "OFF"
+
 springdoc:
   api-docs:
     path: /v3/api-docs

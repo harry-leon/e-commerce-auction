@@ -41,6 +41,7 @@ import { getEffectivePaymentStatus } from '../../payment'
 import { calculateEstimatedPricing } from '../../utils/pricingEngine'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
+import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import type { Auction, Order, Product } from '../../types'
 import { ordersApi, type CreateOrderRequest, type CreateOrderResponse, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
@@ -3412,6 +3413,10 @@ export function OrderDetailPage() {
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'payment')}</h3>
                         <p className="text-sm text-gray-700">{order.paymentMethod}</p>
+                        {/* Winner dùng orderId từ API, server quyết định quyền/hạn/kho và không lấy giá từ màn hình. */}
+                        {order.isAuctionOrder && order.status === 'PENDING_PAYMENT' && (
+                            <WinnerPaymentButton orderId={order.id} />
+                        )}
                         <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
                             <span className="text-xs text-gray-500">
                                 {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}

@@ -1010,8 +1010,9 @@ class InventoryServiceTest {
                 expiredTime
         );
 
-        when(reservationRepository.findByStatusAndExpiresAtBefore(eq(ReservationStatus.PENDING), any(Instant.class)))
-                .thenReturn(List.of(expiredReservation));
+        // Sweeper chỉ nạp ID trước khi khóa, để nhận trạng thái mới nhất nếu callback vừa commit kho.
+        when(reservationRepository.findExpiredIds(eq(ReservationStatus.PENDING), any(Instant.class)))
+                .thenReturn(List.of(reservationId));
         when(reservationRepository.findByIdForUpdate(reservationId)).thenReturn(Optional.of(expiredReservation));
         when(inventoryRepository.findByIdForUpdate(inventory.getId())).thenReturn(Optional.of(inventory));
 
