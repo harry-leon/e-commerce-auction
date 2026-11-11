@@ -1298,7 +1298,8 @@ export function AuctionPaymentPage() {
      */
     async function handleCheckout() {
         if (checkoutBusy) return
-        if (!settlement || expired || !isWinner) return
+        // Chặn checkout khi settlement DEFAULTED (winner không thanh toán đúng hạn, kho đã nhả)
+        if (!settlement || expired || !isWinner || settlement.result === 'DEFAULTED') return
 
         let orderId: string | null = settlement.orderId || null
         const trimmedName = recipientName.trim()
@@ -1386,6 +1387,14 @@ export function AuctionPaymentPage() {
                     </div>
                 ) : loadError || !settlement ? (
                     <AlertBanner type="error" message={tr(lang, 'settlementUnavailable')} />
+                ) : settlement.result === 'DEFAULTED' ? (
+                    // Trạng thái DEFAULTED: winner đã thắng nhưng không thanh toán đúng hạn.
+                    // BE (KH-S2-3) đổi result từ SUCCESS → DEFAULTED sau khi hủy đơn, nhả kho và trừ điểm uy tín.
+                    // FE hiển thị thông báo rõ ràng; không cho phép thanh toán lại vì kho đã được nhả.
+                    <AlertBanner
+                        type="error"
+                        message="Phiên đấu giá này đã bị hủy thanh toán. Người thắng không hoàn tất thanh toán trong thời hạn, kho đã được giải phóng và điểm uy tín đã bị trừ."
+                    />
                 ) : settlement.result === 'FAILED' || !settlement.winnerId ? (
                     <AlertBanner type="info" message={tr(lang, 'settlementHasNoWinner')} />
                 ) : !isWinner ? (
