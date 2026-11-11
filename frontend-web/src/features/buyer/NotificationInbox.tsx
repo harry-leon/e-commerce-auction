@@ -3,6 +3,7 @@ import { BuyerLayout } from '../../components/Layout'
 import { useApp } from '../../context'
 import { getNotifications, readNotification, type Inbox } from '../../api/notifications'
 import { errorMessage } from '../../api/client'
+import { NOTIFICATIONS_CHANGED } from '../../api/notificationStream'
 
 /** Hộp thư IN_APP thật; hủy request cũ khi đổi user/trang, giữ lỗi rõ ràng và không thay bằng dữ liệu demo. */
 export function NotificationInbox() {
@@ -15,7 +16,7 @@ export function NotificationInbox() {
     )
 }
 
-/** Đọc trang 20 tin và refresh thủ công; chỉ hỗ trợ IN_APP cho ba sự kiện Sprint 1, chưa có email/push/preferences. */
+/** Đọc 20 tin từ REST; push/reconnect chỉ kích hoạt tải lại để lấy trạng thái READ và unread chính xác từ DB. */
 function InboxContent({
     userId,
     navigate,
@@ -29,6 +30,14 @@ function InboxContent({
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
+
+    // Không tin payload push để ghi đè hộp thư; listener được dọn khi đổi tài khoản hoặc rời trang.
+    useEffect(() => {
+        if (!userId) return
+        const refresh = () => setRevision((value) => value + 1)
+        window.addEventListener(NOTIFICATIONS_CHANGED, refresh)
+        return () => window.removeEventListener(NOTIFICATIONS_CHANGED, refresh)
+    }, [userId])
 
     useEffect(() => {
         if (!userId) return
@@ -67,7 +76,8 @@ function InboxContent({
         <section className="max-w-3xl mx-auto nexus-card p-5">
             <h1 className="text-2xl font-bold mb-3">Thông báo đơn hàng và thanh toán</h1>
             <p className="text-sm text-gray-500 mb-4">
-                Thông báo trong ứng dụng (IN_APP). Email và push chưa được hỗ trợ.
+                Thông báo mới tự cập nhật khi đang kết nối. Bạn có thể tải lại hộp thư bất cứ lúc
+                nào.
             </p>
             {!userId ? (
                 <button onClick={() => navigate('login')}>Đăng nhập để xem thông báo</button>

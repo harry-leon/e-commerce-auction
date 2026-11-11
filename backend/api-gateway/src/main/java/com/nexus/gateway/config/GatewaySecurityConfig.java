@@ -20,7 +20,7 @@ import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
  * Bảo vệ HTTP tại Gateway bằng JWT Keycloak và CORS theo origin được cấu hình.
  * Luồng: CookieAuthenticationFilter đổi cookie thành bearer → chain xác minh JWKS/issuer/thời hạn
  * → chỉ các route public được bỏ qua JWT → Gateway chuyển tiếp request đã làm sạch header định danh.
- * GET /ws/auctions chỉ mở transport; Auction vẫn bắt buộc CONNECT và phân quyền từng frame.
+ * Hai endpoint WS chỉ mở transport; service đích xác minh CONNECT và từng frame.
  * CORS không thay thế CSRF: request ghi dùng cookie vẫn phải có X-Nexus-Request: 1.
  */
 @Configuration
@@ -57,8 +57,9 @@ public class GatewaySecurityConfig {
                 .pathMatchers("/v3/api-docs/**", "/swagger-ui/**",
                     "/swagger-ui.html").permitAll()
                 .pathMatchers("/api/v1/ping").permitAll()
-                // Chỉ mở transport GET; Auction xác minh CONNECT trước mọi SEND/SUBSCRIBE.
-                .pathMatchers(HttpMethod.GET, "/ws/auctions").permitAll()
+                // Service đích xác minh CONNECT trước SEND/SUBSCRIBE.
+                .pathMatchers(HttpMethod.GET, "/ws/auctions",
+                    "/ws/notifications").permitAll()
                 // VNPAY dùng HMAC tại Commerce, các API khác vẫn cần JWT.
                 .pathMatchers(HttpMethod.GET,
                     "/api/v1/payments/vnpay/ipn").permitAll()

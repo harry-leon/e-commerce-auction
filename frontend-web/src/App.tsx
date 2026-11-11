@@ -1,7 +1,8 @@
-import { Component, type ReactNode, type ErrorInfo } from 'react'
+import { Component, useEffect, type ReactNode, type ErrorInfo } from 'react'
 import { AppProvider, useApp } from './context'
 import { ToastContainer } from './components/UI'
 import { AppRouter } from './routes/AppRouter'
+import { connectNotificationStream, NOTIFICATIONS_CHANGED } from './api/notificationStream'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
     state = { error: null }
@@ -85,8 +86,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 function AppInner() {
-    // Chỉ render route và thông báo; bỏ bộ đổi vai trò demo để phiên đăng nhập thật không bị thay bằng user giả.
-    const { toasts, dismissToast } = useApp()
+    const { toasts, dismissToast, user, showToast } = useApp()
+    // Một socket theo phiên UI; đổi tài khoản/logout dọn socket cũ, không dùng token/profile demo làm xác thực.
+    useEffect(() => {
+        if (!user?.id || !/^[0-9a-f-]{36}$/i.test(user.id)) return
+        const refreshInbox = () => window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
+        return connectNotificationStream((event) => {
+            showToast({ type: 'info', message: event.title })
+            refreshInbox()
+        }, refreshInbox)
+    }, [user?.id, showToast])
     return (
         <>
             <AppRouter />

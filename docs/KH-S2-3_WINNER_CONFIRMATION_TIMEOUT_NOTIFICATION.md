@@ -34,6 +34,20 @@ Nhánh triển khai: `feature/winner-confirmation-timeout-notification` (tách t
 
 ## Migration & Keycloak
 
+### Sửa lỗi review: JWT expiry, migration nhiều schema và đường push
+
+- Transport Notification đóng socket mã 1008 trong tối đa một giây sau JWT hết hạn, kể cả client im lặng. Socket chưa CONNECT bị đóng sau 10 giây; disconnect/shutdown hủy timer.
+- Web đi cùng origin qua nginx/Vite → Gateway /ws/notifications → Notification. Compose đặt NOTIFICATION_WS_URL=lb:ws://notification-service; chạy riêng mặc định ws://localhost:8086.
+- Browser dùng cookie HttpOnly cho handshake, không đọc JWT và không đưa token vào URL. Kênh /user/queue/notifications do Spring resolve theo principal JWT; topic cũ được giữ để tương thích.
+- Push chỉ phát sau commit DB. Frontend hiện toast và tải lại inbox qua REST; reconnect kiểm tra cookie bằng HTTP client, resync dữ liệu và backoff tối đa 30 giây. Logout/đổi tài khoản hủy request, timer và socket cũ.
+- Push là tín hiệu best-effort, không bảo đảm giao tới browser khi offline; inbox DB và nút tải lại vẫn là nguồn dữ liệu bền vững. Simple broker chỉ phù hợp một Notification instance.
+- V12 resolve constraint bằng OID của bảng trong search_path Flyway, tránh chọn nhầm schema cùng tên. Test PostgreSQL tạo hai schema để bảo vệ ca một schema đã V12 trong khi schema khác nâng từ V11.
+- Khi web dùng cổng riêng như 3001, cấu hình WEB_ALLOWED_ORIGINS phải chứa đúng origin đó cho Gateway/Notification.
+
+**Kiểm chứng lượt sửa review (11/11/2026):** Commerce 381 test và Notification 56 test qua với PostgreSQL 16 tạm riêng, không skip; cả hai qua verify/coverage gate/Checkstyle. Gateway verify qua 22 test. Frontend qua build, lint, 287 test, coverage dòng 73,72% và 6 test Playwright cho push/cookie/payment-return; REST/WS trong browser test dùng fixture, chưa thay nghiệm thu toàn bộ service với Keycloak thật.
+
+nginx -t và Compose config qua. Prettier chỉ các file frontend thay đổi đều qua; format:check toàn repo còn báo 68 file hiện có (nhiều file checkout CRLF trên Windows). Gateway chưa có Checkstyle riêng trong pom nên gọi checkstyle:check mặc định dùng Sun rules và còn báo lỗi ở code nền; không thay toàn bộ quy ước/format service trong bản sửa này.
+
 - **Commerce:** [V12__auction_timeout_reputation_notifications.sql](../backend/commerce-service/src/main/resources/db/migration/V12__auction_timeout_reputation_notifications.sql)
 - **Notification:** [V5__auction_notification_push.sql](../backend/notification-service/src/main/resources/db/migration/V5__auction_notification_push.sql)
 - **Keycloak realm (`deploy/keycloak/nexus-realm.json`):** Bổ sung quyền dịch vụ `REPUTATION.PENALTY`, `AUCTION.SETTLEMENT_SYNC`, `USER.INTERNAL_READ` cho `nexus-commerce-service`.
