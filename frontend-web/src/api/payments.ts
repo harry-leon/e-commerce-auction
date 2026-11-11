@@ -27,7 +27,11 @@ export async function getPayment(id: string): Promise<PaymentResult> {
     return response.data
 }
 
-/** Khởi tạo/replay payment cho đơn server; chỉ gửi orderId, backend tự xác minh winner, giá, hạn và kho. */
+/**
+ * Khởi tạo hoặc lấy lại URL thanh toán VNPAY sandbox cho đơn hàng.
+ * POST /api/v1/payments với body { orderId }.
+ * Backend tự kiểm tra quyền sở hữu đơn hàng, winner, giá và tính hợp lệ trước khi sinh paymentUrl sandbox.
+ */
 export async function startPayment(orderId: string): Promise<PaymentResult> {
     const response = await api<ApiResponse<PaymentResult>>('/payments', {
         method: 'POST',
