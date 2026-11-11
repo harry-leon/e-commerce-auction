@@ -63,7 +63,11 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
         setRetrying(true)
         setRetryError(null)
         try {
-            const attempt = await createPaymentAttempt(current.orderId)
+            const retryKey =
+                typeof crypto !== 'undefined' && crypto.randomUUID
+                    ? crypto.randomUUID()
+                    : undefined
+            const attempt = await createPaymentAttempt(current.orderId, retryKey)
             if (attempt.paymentUrl) {
                 redirectToGateway(attempt.paymentUrl)
                 return
@@ -148,7 +152,7 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                         {lang === 'vi' ? 'Kiểm tra lại' : 'Check again'}
                     </Button>
                 )}
-                {(failed || expired) && current?.orderId && (
+                {failed && !review && current?.orderId && (
                     <Button variant="primary" loading={retrying} onClick={handleRetry}>
                         {lang === 'vi' ? 'Thử lại thanh toán' : 'Retry Payment'}
                     </Button>

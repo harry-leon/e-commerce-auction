@@ -1061,17 +1061,19 @@ export function CheckoutPage() {
         }
     })
 
-    // Dữ liệu biểu mẫu thanh toán (Step 3) - khôi phục từ bản nháp sessionStorage nếu có
+    // Dữ liệu biểu mẫu thanh toán (Step 3) - chỉ khôi phục phương thức thanh toán từ bản nháp sessionStorage (không lưu/khôi phục thông tin thẻ vì bảo mật)
     const [paymentData, setPaymentData] = useState<PaymentFormData>(() => {
+        let restoredMethod: 'CARD' | 'VNPAY' | 'COD' = 'CARD'
         try {
             const rawDraft = sessionStorage.getItem('nexus.checkout-draft')
             if (rawDraft) {
                 const parsed = JSON.parse(rawDraft)
-                if (parsed.paymentData) return parsed.paymentData
+                if (parsed.paymentMethod) restoredMethod = parsed.paymentMethod
+                else if (parsed.paymentData?.method) restoredMethod = parsed.paymentData.method
             }
         } catch {}
         return {
-            method: 'CARD',
+            method: restoredMethod,
             cardNumber: '4242 4242 4242 4242',
             cardHolder: 'MINH TRAN',
             expiryDate: '12/28',
@@ -1095,7 +1097,8 @@ export function CheckoutPage() {
     // State lưu dữ liệu xem trước tính giá từ Backend (POST /api/v1/orders/checkout/preview)
     const [previewData, setPreviewData] = useState<CheckoutPreviewResponse | null>(null)
     const [priceMismatchNotice, setPriceMismatchNotice] = useState<string | null>(null)
-    const [previewLoading, setPreviewLoading] = useState(false)
+    // Giữ đơn hàng đã tạo thành công khi bước tiếp theo (Payment Attempt) gặp lỗi để có thể thử lại đúng đơn đó
+    const [createdOrder, setCreatedOrder] = useState<CreateOrderResponse | null>(null)
 
     /**
      * Kiểm tra tính giá thực tế và điều kiện đặt hàng từ Backend (POST /api/v1/orders/checkout/preview).
@@ -1115,7 +1118,6 @@ export function CheckoutPage() {
         const hasLocalId = cartItems.some((item) => !item.id || item.id.startsWith('guest-item-'))
         const itemIds = hasLocalId ? undefined : cartItems.map((item) => item.id)
 
-        setPreviewLoading(true)
         try {
             const preview = await ordersApi.checkoutPreview({
                 shippingAddress: fullAddress,
@@ -1140,8 +1142,6 @@ export function CheckoutPage() {
             }
         } catch {
             // Không chặn form nếu preview lỗi mạng
-        } finally {
-            setPreviewLoading(false)
         }
     }, [shippingData, cartItems, lang])
 
@@ -1423,18 +1423,28 @@ export function CheckoutPage() {
 
             // Gửi thông tin Checkout đến Backend (Accept Criteria 1)
             let response: CreateOrderResponse
-            try {
-                response = await ordersApi.createOrder(orderPayload, idempotencyKey)
-            } catch (createErr: unknown) {
-                // Tuyệt đối không âm thầm tạo COD hoặc chuyển sang thanh toán mô phỏng khi VNPAY lỗi;
-                // ném trực tiếp lỗi ra ngoài để người dùng thấy đúng mã lỗi từ Backend.
-                throw createErr
+            if (createdOrder) {
+                // Tái sử dụng đơn hàng đã tạo thành công trước đó nếu bước tạo attempt bị lỗi, tránh gọi lại createOrder làm mất giỏ hàng
+                response = createdOrder
+            } else {
+                try {
+                    response = await ordersApi.createOrder(orderPayload, idempotencyKey)
+                    setCreatedOrder(response)
+                } catch (createErr: unknown) {
+                    // Tuyệt đối không âm thầm tạo COD hoặc chuyển sang thanh toán mô phỏng khi VNPAY lỗi;
+                    // ném trực tiếp lỗi ra ngoài để người dùng thấy đúng mã lỗi từ Backend.
+                    throw createErr
+                }
             }
 
             // Nối tạo đơn → Payment Attempt nếu phương thức thanh toán là VNPAY mà chưa có paymentUrl
             if (paymentData.method === 'VNPAY' && !response.paymentUrl && response.id) {
                 try {
-                    const attempt = await createPaymentAttempt(response.id)
+                    const attemptKey =
+                        typeof crypto !== 'undefined' && crypto.randomUUID
+                            ? crypto.randomUUID()
+                            : undefined
+                    const attempt = await createPaymentAttempt(response.id, attemptKey)
                     if (attempt?.paymentUrl) {
                         response = {
                             ...response,
@@ -1530,14 +1540,13 @@ export function CheckoutPage() {
              * Chức năng: Nhận diện và chuẩn hóa lỗi xác thực / hết phiên 401 khi đặt hàng.
              * Đầu vào: Đối tượng lỗi err bắt được từ ordersApi.createOrder().
              * Kết quả: Chuyển đổi mã lỗi kỹ thuật 401 thành câu thông báo tiếng Việt có ý nghĩa,
-             *          lưu nháp form thanh toán và dọn dẹp profile giả lập ở navbar.
-             * Quy tắc: Không để thông báo thô "Request failed (401)" làm người dùng bối rối.
+             *          lưu nháp an toàn (chỉ lưu thông tin giao hàng và method, không lưu số thẻ) và xóa session.
+             * Quy tắc: Phải dựa trên HTTP status 401 hoặc mã lỗi xác thực, tuyệt đối không bắt chuỗi "hết hạn" chung chung
+             *          vì lỗi hết hạn giữ kho / hết hạn thanh toán là lỗi nghiệp vụ, không được xóa phiên đăng nhập của người dùng.
              */
             const isAuthError =
-                (err instanceof ApiClientError && (err.status === 401 || err.code === 'AUTH_UNAUTHORIZED')) ||
-                msg.includes('401') ||
-                msg.toLowerCase().includes('unauthorized') ||
-                msg.toLowerCase().includes('hết hạn')
+                (err instanceof ApiClientError && (err.status === 401 || err.code === 'AUTH_UNAUTHORIZED' || err.code === 'UNAUTHORIZED')) ||
+                (err instanceof Error && (err.message.includes('401') || err.message.toLowerCase().includes('unauthorized')))
 
             if (isAuthError) {
                 msg =
@@ -1547,7 +1556,10 @@ export function CheckoutPage() {
                 try {
                     sessionStorage.setItem(
                         'nexus.checkout-draft',
-                        JSON.stringify({ shippingData, paymentData })
+                        JSON.stringify({
+                            shippingData,
+                            paymentMethod: paymentData.method,
+                        })
                     )
                 } catch {
                     // Bỏ qua lỗi storage
@@ -2030,9 +2042,9 @@ export function CheckoutPage() {
                                 <div className="space-y-3">
                                     <AlertBanner type="error" message={checkoutError} />
                                     {(checkoutError.includes('401') ||
-                                        checkoutError.includes('hết hạn') ||
-                                        checkoutError.includes('expired') ||
-                                        checkoutError.includes('đăng nhập')) && (
+                                        checkoutError.toLowerCase().includes('unauthorized') ||
+                                        checkoutError.includes('Phiên đăng nhập') ||
+                                        checkoutError.includes('Session has expired')) && (
                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
                                             <div>
                                                 <p className="font-bold text-amber-900">
@@ -2052,7 +2064,10 @@ export function CheckoutPage() {
                                                     try {
                                                         sessionStorage.setItem(
                                                             'nexus.checkout-draft',
-                                                            JSON.stringify({ shippingData, paymentData })
+                                                            JSON.stringify({
+                                                                shippingData,
+                                                                paymentMethod: paymentData.method,
+                                                            })
                                                         )
                                                     } catch {
                                                         // Bỏ qua lỗi storage
@@ -2129,7 +2144,11 @@ export function CheckoutPage() {
                                     onClick={placeOrder}
                                     className="flex-1"
                                 >
-                                    {tr(lang, 'placeOrder')}
+                                    {createdOrder
+                                        ? lang === 'vi'
+                                            ? 'Thử lại thanh toán'
+                                            : 'Retry Payment'
+                                        : tr(lang, 'placeOrder')}
                                 </Button>
                             </div>
                         </div>

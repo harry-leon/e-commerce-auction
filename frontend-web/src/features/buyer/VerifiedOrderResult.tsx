@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ordersApi, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
+import { ordersApi } from '../../api/orders'
 import { useApp } from '../../context'
 import { Button, CheckCircle, Package } from '../../components/UI'
 import type { Order } from '../../types'

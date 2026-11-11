@@ -34,14 +34,7 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         // Khởi tạo phiên người mua hợp lệ để gọi API giỏ hàng và đơn hàng có JWT
         saveSession({
-            user: {
-                id: 'u1',
-                fullName: 'Minh Tran',
-                email: 'buyer@nexus.vn',
-                roles: ['BUYER'],
-                status: 'ACTIVE',
-                createdAt: '2026-10-20T00:00:00Z',
-            },
+            user: DEMO_BUYER,
         })
 
         contextHolder.current = {
@@ -404,7 +397,7 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         await waitFor(() => {
             expect(createSpy).toHaveBeenCalled()
-            expect(attemptSpy).toHaveBeenCalledWith('real-order-uuid')
+            expect(attemptSpy).toHaveBeenCalledWith('real-order-uuid', expect.any(String))
             expect(redirectSpy).toHaveBeenCalledWith(
                 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_Amount=55500000',
             )
@@ -453,7 +446,7 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         fireEvent.click(retryBtn)
 
         await waitFor(() => {
-            expect(attemptSpy).toHaveBeenCalledWith('order-retry-uuid')
+            expect(attemptSpy).toHaveBeenCalledWith('order-retry-uuid', expect.any(String))
             expect(redirectSpy).toHaveBeenCalledWith(
                 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=txn-new-002',
             )
@@ -477,5 +470,189 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         // Không hiển thị "Thanh toán thành công"
         expect(await screen.findByRole('alert')).toBeVisible()
         expect(screen.queryByText(/Thanh toán thành công/i)).not.toBeInTheDocument()
+    })
+
+    /**
+     * Tình huống 8: Tạo đơn thành công nhưng attempt lỗi -> lưu đơn đã tạo; bấm lại sẽ tiếp tục trên đúng đơn đó
+     * thay vì gọi createOrder lần hai làm mất giỏ hàng.
+     */
+    it('CheckoutPage: khi tạo attempt lỗi, giữ đơn đã tạo và tiếp tục thanh toán trên đúng đơn đó mà không tạo đơn mới', async () => {
+        vi.spyOn(cartApi, 'getActiveCart').mockResolvedValueOnce({
+            cartId: 'cart-1',
+            userId: 'user-1',
+            status: 'ACTIVE',
+            items: [
+                {
+                    id: 'item-1',
+                    skuId: 'sku-1',
+                    skuCode: 'NK-AF1',
+                    productName: 'Nike Air Force',
+                    thumbnailUrl: '/nike.png',
+                    unitPrice: 500000,
+                    quantity: 1,
+                    stockAvailable: 5,
+                    isAvailable: true,
+                    subtotal: 500000,
+                },
+            ],
+            totalItems: 1,
+            totalQuantity: 1,
+            subtotal: 500000,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            totalAmount: 500000,
+            expiresAt: null,
+        })
+
+        const createSpy = vi.spyOn(ordersApi, 'createOrder').mockResolvedValueOnce({
+            id: 'order-first-success-uuid',
+            orderNo: 'ORD-SUCCESS-001',
+            status: 'PENDING_PAYMENT',
+            subtotal: 500000,
+            shippingFee: 55000,
+            discount: 0,
+            total: 555000,
+            paymentMethod: 'VNPAY',
+        })
+
+        // Lần 1: attempt ném lỗi
+        // Lần 2: attempt thành công
+        const attemptSpy = vi
+            .spyOn(paymentsApi, 'createPaymentAttempt')
+            .mockRejectedValueOnce(new Error('Mạng thanh toán tạm bận'))
+            .mockResolvedValueOnce({
+                paymentId: 'txn-second-001',
+                orderId: 'order-first-success-uuid',
+                status: 'PENDING',
+                amount: 555000,
+                currency: 'VND',
+                paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=txn-second-001',
+                expiresAt: '2026-11-10T12:00:00Z',
+            })
+
+        const redirectSpy = vi.spyOn(paymentsApi, 'redirectToGateway').mockImplementation(() => {})
+
+        render(<CheckoutPage />)
+        await screen.findByText('Nike Air Force')
+
+        // Bước 1 -> 2
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+
+        // Bước 2 -> 3
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
+
+        // Chọn VNPAY
+        fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await waitFor(() => expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible())
+
+        // Bấm đặt hàng lần 1 -> attempt lỗi
+        fireEvent.click(screen.getByRole('button', { name: /đặt hàng|place order/i }))
+        expect(await screen.findByText('Mạng thanh toán tạm bận')).toBeVisible()
+        expect(createSpy).toHaveBeenCalledTimes(1)
+        expect(attemptSpy).toHaveBeenCalledTimes(1)
+
+        // Nút chuyển thành "Thử lại thanh toán"
+        const retryBtn = screen.getByRole('button', { name: /thử lại thanh toán|retry payment/i })
+        expect(retryBtn).toBeVisible()
+
+        // Bấm thử lại -> chỉ gọi tiếp createPaymentAttempt trên order-first-success-uuid, KHÔNG gọi createOrder lần 2!
+        fireEvent.click(retryBtn)
+
+        await waitFor(() => {
+            expect(createSpy).toHaveBeenCalledTimes(1)
+            expect(attemptSpy).toHaveBeenCalledTimes(2)
+            expect(attemptSpy).toHaveBeenLastCalledWith('order-first-success-uuid', expect.any(String))
+            expect(redirectSpy).toHaveBeenCalledWith(
+                'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_TxnRef=txn-second-001',
+            )
+        })
+
+        createSpy.mockRestore()
+        attemptSpy.mockRestore()
+        redirectSpy.mockRestore()
+    })
+
+    /**
+     * Tình huống 9: Lỗi nghiệp vụ có từ "hết hạn" (ví dụ đơn hết hạn giữ kho) không được hiểu nhầm thành 401 hết phiên đăng nhập.
+     * Phiên đăng nhập người dùng phải được giữ nguyên.
+     */
+    it('CheckoutPage: lỗi nghiệp vụ hết hạn thanh toán không làm xóa session đăng nhập', async () => {
+        vi.spyOn(cartApi, 'getActiveCart').mockResolvedValueOnce({
+            cartId: 'cart-1',
+            userId: 'user-1',
+            status: 'ACTIVE',
+            items: [
+                {
+                    id: 'item-1',
+                    skuId: 'sku-1',
+                    skuCode: 'NK-AF1',
+                    productName: 'Nike Air Force',
+                    thumbnailUrl: '/nike.png',
+                    unitPrice: 500000,
+                    quantity: 1,
+                    stockAvailable: 5,
+                    isAvailable: true,
+                    subtotal: 500000,
+                },
+            ],
+            totalItems: 1,
+            totalQuantity: 1,
+            subtotal: 500000,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            totalAmount: 500000,
+            expiresAt: null,
+        })
+
+        vi.spyOn(ordersApi, 'createOrder').mockRejectedValueOnce(
+            new ApiClientError('Thời gian giữ kho đã hết hạn, vui lòng đặt lại', 'BUSINESS_ERROR', 400),
+        )
+
+        render(<CheckoutPage />)
+        await screen.findByText('Nike Air Force')
+
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await waitFor(() => expect(screen.getByText('Thẻ quốc tế')).toBeVisible())
+        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await waitFor(() => expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible())
+
+        fireEvent.click(screen.getByRole('button', { name: /đặt hàng|place order/i }))
+
+        // Hiển thị lỗi nghiệp vụ, nhưng KHÔNG hiển thị modal cảnh báo "Phiên đăng nhập đã hết hạn"
+        expect(await screen.findByText('Thời gian giữ kho đã hết hạn, vui lòng đặt lại')).toBeVisible()
+        expect(screen.queryByText('Phiên đăng nhập đã hết hạn')).not.toBeInTheDocument()
+        expect(sessionStorage.getItem('nexus.session')).not.toBeNull()
+    })
+
+    /**
+     * Tình huống 10: VnpayPaymentResult không hiển thị nút Thử lại thanh toán khi trạng thái là EXPIRED.
+     */
+    it('VnpayPaymentResult: không hiển thị nút Thử lại thanh toán khi attempt ở trạng thái EXPIRED', async () => {
+        contextHolder.current.pageParams = { vnp_TxnRef: 'txn-expired-001' }
+
+        vi.spyOn(paymentsApi, 'getPayment').mockResolvedValueOnce({
+            paymentId: 'txn-expired-001',
+            orderId: 'order-expired-uuid',
+            status: 'EXPIRED',
+            amount: 500000,
+            currency: 'VND',
+            paymentUrl: null,
+            expiresAt: '2026-11-10T12:00:00Z',
+        })
+
+        render(<PaymentResultPage />)
+
+        expect(await screen.findByText('Liên kết thanh toán đã hết hạn')).toBeVisible()
+        // Không được có nút "Thử lại thanh toán"
+        expect(screen.queryByRole('button', { name: /thử lại thanh toán|retry payment/i })).not.toBeInTheDocument()
+        // Phải có nút "Lịch sử đơn hàng"
+        expect(screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i })).toBeVisible()
     })
 })

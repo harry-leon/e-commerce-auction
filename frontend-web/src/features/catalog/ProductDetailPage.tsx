@@ -259,7 +259,6 @@ export function ProductDetailPage() {
      */
     const handleBuyNow = async () => {
         const targetSku = selectedSku || product.skus?.[0]
-        const skuId = targetSku?.id || product.id
         if (!targetSku?.id && product.skus && product.skus.length > 0) {
             showToast({
                 type: 'error',
@@ -762,7 +761,7 @@ export function ProductDetailPage() {
                     {activeTab === 'specifications' && (
                         <div className="grid grid-cols-2 gap-3">
                             {[
-                                ['SKU', product.sku],
+                                ['SKU', currentSkuCode],
                                 ['Weight', `${product.weight || 1.24} kg`],
                                 ['Category', product.category || 'General'],
                                 ['Status', 'In Stock'],
