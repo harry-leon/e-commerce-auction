@@ -231,11 +231,22 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     const isSuccess = response.ok && payload.success !== false && payload.status !== false
     if (!isSuccess) {
         const errorObj: Partial<ErrorDetail> = payload.error || {}
+        /**
+         * Chức năng: Chuẩn hóa thông báo lỗi phản hồi từ API Backend.
+         * Đầu vào: Dữ liệu payload JSON lỗi từ server hoặc mã trạng thái HTTP.
+         * Kết quả: Chuỗi thông báo lỗi rõ ràng, có ý nghĩa cho người dùng UI.
+         * Quy tắc: Nếu server trả 401 mà không có body JSON (ví dụ Spring Security chặn trực tiếp ở Gateway),
+         *          hiển thị thông báo phiên hết hạn kèm mã (401) thay vì chuỗi kỹ thuật "Request failed (401)".
+         */
+        const defaultMsg =
+            response.status === 401
+                ? 'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)'
+                : `Request failed (${response.status})`
         const msg =
             errorObj.message ||
             payload.message ||
             payload.detail ||
-            `Request failed (${response.status})`
+            defaultMsg
         const code =
             errorObj.code ||
             (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
@@ -370,3 +381,38 @@ export interface ApiProduct {
     }[]
     images: { id: string; url: string; sortOrder: number }[]
 }
+
+/**
+ * Chức năng: Lưu trữ và tra cứu tồn kho (stock) cho SKU hoặc Product.
+ * Đầu vào: skuCode hoặc productId (chuỗi định danh), số lượng tồn kho (number).
+ * Kết quả: Số lượng tồn kho được lưu trữ hoặc null nếu chưa có thông tin.
+ * Luồng xử lý: Tra cứu trong localStorage 'nexus.product-stock-cache.v1'.
+ * Quy tắc & lý do: Backend Catalog Service hiện chỉ lưu thông tin sản phẩm và SKU,
+ *                  không lưu trường stock (tồn kho thuộc về Fulfillment Service).
+ *                  Để tránh tình trạng hardcode '10' làm sai lệch dữ liệu người dùng,
+ *                  hàm này giúp lưu trữ và tra cứu đúng số lượng mà người bán đã nhập khi tạo sản phẩm.
+ * Lỗi & giới hạn: Dữ liệu cache lưu trên localStorage của trình duyệt hiện tại.
+ */
+export function getProductStock(skuCode?: string, productId?: string): number | null {
+    if (!skuCode && !productId) return null
+    try {
+        const raw = localStorage.getItem('nexus.product-stock-cache.v1')
+        if (raw) {
+            const map = JSON.parse(raw)
+            if (skuCode && map[skuCode] !== undefined) return Number(map[skuCode])
+            if (productId && map[productId] !== undefined) return Number(map[productId])
+        }
+    } catch {}
+    return null
+}
+
+export function setProductStock(key: string, stock: number) {
+    if (!key) return
+    try {
+        const raw = localStorage.getItem('nexus.product-stock-cache.v1')
+        const map = raw ? JSON.parse(raw) : {}
+        map[key] = stock
+        localStorage.setItem('nexus.product-stock-cache.v1', JSON.stringify(map))
+    } catch {}
+}
+

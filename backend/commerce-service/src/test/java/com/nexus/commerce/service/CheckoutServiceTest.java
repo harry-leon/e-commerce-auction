@@ -106,8 +106,12 @@ class CheckoutServiceTest {
         CartItem other = CartItem.builder().id(UUID.randomUUID()).skuId(UUID.randomUUID()).cart(cart).quantity(1).build();
         cart.getItems().add(other);
         var result = service.create(buyer, key, request(List.of(item.getId()), "123 Lê Lợi", "COD", null, null), "jwt");
-        assertEquals(new BigDecimal("200.26"), result.subtotal());
-        assertEquals(new BigDecimal("205.26"), result.total());
+        // COD vẫn giữ kho nhưng chỉ có giá dự kiến cho tới lúc backend xác nhận đã thu tiền.
+        org.junit.jupiter.api.Assertions.assertNull(result.subtotal());
+        org.junit.jupiter.api.Assertions.assertNull(result.total());
+        assertEquals(new BigDecimal("200.26"), result.estimatedSubtotal());
+        assertEquals(new BigDecimal("205.26"), result.estimatedTotal());
+        assertFalse(result.priceFinalized());
         assertEquals("COD", result.paymentMethod());
         assertEquals("PENDING_PAYMENT", result.status());
         ArgumentCaptor<Order> saved = ArgumentCaptor.forClass(Order.class);

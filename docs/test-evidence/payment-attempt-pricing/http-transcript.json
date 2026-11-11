@@ -1,0 +1,1116 @@
+{
+  "scope": "Real Commerce HTTP/JWT/Flyway/PostgreSQL; Catalog/Fulfillment/OAuth/VNPAY fixtures. Not merchant payment.",
+  "assertions": {
+    "committedExactlyOnce": true,
+    "releasedOldAttemptOnly": true,
+    "finalAmount": 340000,
+    "catalogPriceAfterUrl": 990000,
+    "duplicateIpnCode": "02",
+    "reviewedPendingUrlSuppressed": true,
+    "codExpiredStockRequiresReview": true,
+    "codFundsPreserved": true
+  },
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/api/v1/cart/items",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "cartId": "ccc590e2-970b-489d-829c-454c7a2cc234",
+          "userId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "status": "ACTIVE",
+          "items": [
+            {
+              "id": "7dde36bd-4813-459c-b6b6-cc6c0b2d6203",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "skuCode": "AO-M",
+              "productName": "Ao thun demo",
+              "thumbnailUrl": null,
+              "unitPrice": 150000,
+              "quantity": 2,
+              "stockAvailable": null,
+              "isAvailable": true,
+              "subtotal": 300000
+            }
+          ],
+          "totalItems": 1,
+          "totalQuantity": 2,
+          "subtotal": 300000,
+          "discountAmount": 0,
+          "shippingFee": 0,
+          "taxAmount": 0,
+          "totalAmount": 300000,
+          "expiresAt": "2026-11-18T09:19:00.520776600Z"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_6d2032d6",
+          "timestamp": "2026-11-11T09:19:00.549Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/orders",
+      "status": 201,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "orderNo": "ORD-1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "PENDING_PAYMENT",
+          "subtotal": null,
+          "shippingFee": null,
+          "discount": null,
+          "total": null,
+          "paymentMethod": "VNPAY",
+          "paymentUrl": null,
+          "estimatedSubtotal": 300000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 300000,
+          "priceFinalized": false
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_805822f4",
+          "timestamp": "2026-11-11T09:19:00.713Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "3db5a68d-d25d-43d7-a9a0-c81266b892c4",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "PENDING",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": "[signed sandbox URL omitted]",
+          "expiresAt": "2026-11-11T09:34:03Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "3db5a68d-d25d-43d7-a9a0-c81266b892c4"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_722a9255",
+          "timestamp": "2026-11-11T09:19:03.919Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/vnpay/ipn [signed fixture query omitted]",
+      "response": {
+        "RspCode": "00",
+        "Message": "Confirm Success"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/3db5a68d-d25d-43d7-a9a0-c81266b892c4",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "3db5a68d-d25d-43d7-a9a0-c81266b892c4",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "FAILED",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": null,
+          "expiresAt": "2026-11-11T09:34:03Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "3db5a68d-d25d-43d7-a9a0-c81266b892c4"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_59bbe715",
+          "timestamp": "2026-11-11T09:19:03.977Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "65cb7ac3-db25-40a8-9327-1da35628e309",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "PENDING",
+          "amount": 340000,
+          "currency": "VND",
+          "paymentUrl": "[signed sandbox URL omitted]",
+          "expiresAt": "2026-11-11T09:34:05Z",
+          "priceSnapshot": {
+            "subtotal": 340000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 340000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 170000,
+                "itemTotal": 340000
+              }
+            ]
+          },
+          "inventoryRefId": "65cb7ac3-db25-40a8-9327-1da35628e309"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_15394f93",
+          "timestamp": "2026-11-11T09:19:05.616Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "65cb7ac3-db25-40a8-9327-1da35628e309",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "PENDING",
+          "amount": 340000,
+          "currency": "VND",
+          "paymentUrl": "[signed sandbox URL omitted]",
+          "expiresAt": "2026-11-11T09:34:05Z",
+          "priceSnapshot": {
+            "subtotal": 340000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 340000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 170000,
+                "itemTotal": 340000
+              }
+            ]
+          },
+          "inventoryRefId": "65cb7ac3-db25-40a8-9327-1da35628e309"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_6faca505",
+          "timestamp": "2026-11-11T09:19:05.632Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/vnpay/ipn [signed fixture query omitted]",
+      "response": {
+        "RspCode": "00",
+        "Message": "Confirm Success"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/vnpay/ipn [signed fixture query omitted]",
+      "response": {
+        "RspCode": "02",
+        "Message": "Order already confirmed"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/65cb7ac3-db25-40a8-9327-1da35628e309",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "65cb7ac3-db25-40a8-9327-1da35628e309",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "PROCESSING",
+          "amount": 340000,
+          "currency": "VND",
+          "paymentUrl": null,
+          "expiresAt": "2026-11-11T09:34:05Z",
+          "priceSnapshot": {
+            "subtotal": 340000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 340000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 170000,
+                "itemTotal": 340000
+              }
+            ]
+          },
+          "inventoryRefId": "65cb7ac3-db25-40a8-9327-1da35628e309"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_4ce1c164",
+          "timestamp": "2026-11-11T09:19:05.673Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/65cb7ac3-db25-40a8-9327-1da35628e309",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "65cb7ac3-db25-40a8-9327-1da35628e309",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "SUCCESS",
+          "amount": 340000,
+          "currency": "VND",
+          "paymentUrl": null,
+          "expiresAt": "2026-11-11T09:34:05Z",
+          "priceSnapshot": {
+            "subtotal": 340000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 340000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 170000,
+                "itemTotal": 340000
+              }
+            ]
+          },
+          "inventoryRefId": "65cb7ac3-db25-40a8-9327-1da35628e309"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_8594c55d",
+          "timestamp": "2026-11-11T09:19:05.999Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "orderNo": "ORD-1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "PAID",
+          "subtotal": 340000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 340000,
+          "shippingAddress": "123 Demo Street",
+          "createdAt": "2026-11-11T09:19:00.685677Z",
+          "items": [
+            {
+              "id": "a163f261-edee-44ea-b571-345210b14a6a",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "productName": "Ao thun demo",
+              "skuCode": "AO-M",
+              "unitPrice": 170000,
+              "quantity": 2,
+              "subtotal": 340000,
+              "estimatedUnitPrice": 150000,
+              "estimatedSubtotal": 300000
+            }
+          ],
+          "statusHistory": [
+            {
+              "id": "260c4525-78c8-4289-bd78-7a145996cb2b",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "PAID",
+              "reason": "[SYSTEM] VNPAY_INVENTORY_CONFIRMED",
+              "changedAt": "2026-11-11T09:19:05.836741Z",
+              "actor": "SYSTEM"
+            }
+          ],
+          "estimatedSubtotal": 300000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 300000,
+          "priceFinalized": true,
+          "fulfillmentStatus": null
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_0b60c592",
+          "timestamp": "2026-11-11T09:19:06.012Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/vnpay/ipn [signed fixture query omitted]",
+      "response": {
+        "RspCode": "00",
+        "Message": "Funds recorded for reconciliation"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/3db5a68d-d25d-43d7-a9a0-c81266b892c4",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "3db5a68d-d25d-43d7-a9a0-c81266b892c4",
+          "orderId": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "status": "REQUIRES_REVIEW",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": null,
+          "expiresAt": "2026-11-11T09:34:03Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "a163f261-edee-44ea-b571-345210b14a6a",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "3db5a68d-d25d-43d7-a9a0-c81266b892c4"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_f95dad76",
+          "timestamp": "2026-11-11T09:19:07.681Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "orderNo": "ORD-1cd3f3fa-a6d8-4d87-84f7-aaae1757c2d9",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "PAID",
+          "subtotal": 340000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 340000,
+          "shippingAddress": "123 Demo Street",
+          "createdAt": "2026-11-11T09:19:00.685677Z",
+          "items": [
+            {
+              "id": "a163f261-edee-44ea-b571-345210b14a6a",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "productName": "Ao thun demo",
+              "skuCode": "AO-M",
+              "unitPrice": 170000,
+              "quantity": 2,
+              "subtotal": 340000,
+              "estimatedUnitPrice": 150000,
+              "estimatedSubtotal": 300000
+            }
+          ],
+          "statusHistory": [
+            {
+              "id": "260c4525-78c8-4289-bd78-7a145996cb2b",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "PAID",
+              "reason": "[SYSTEM] VNPAY_INVENTORY_CONFIRMED",
+              "changedAt": "2026-11-11T09:19:05.836741Z",
+              "actor": "SYSTEM"
+            }
+          ],
+          "estimatedSubtotal": 300000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 300000,
+          "priceFinalized": true,
+          "fulfillmentStatus": null
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_a758e89b",
+          "timestamp": "2026-11-11T09:19:07.693Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/cart/items",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "cartId": "7d2e08e7-d6e5-40ba-b986-f24844e51d29",
+          "userId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "status": "ACTIVE",
+          "items": [
+            {
+              "id": "fd693dcc-c730-41fa-956b-d2e886c5e66d",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "skuCode": "AO-M",
+              "productName": "Ao thun demo",
+              "thumbnailUrl": null,
+              "unitPrice": 160000,
+              "quantity": 2,
+              "stockAvailable": null,
+              "isAvailable": true,
+              "subtotal": 320000
+            }
+          ],
+          "totalItems": 1,
+          "totalQuantity": 2,
+          "subtotal": 320000,
+          "discountAmount": 0,
+          "shippingFee": 0,
+          "taxAmount": 0,
+          "totalAmount": 320000,
+          "expiresAt": "2026-11-18T09:19:09.207885100Z"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_13ff3a5f",
+          "timestamp": "2026-11-11T09:19:09.222Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/orders",
+      "status": 201,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "ba0bb1b7-3f4d-4f7a-b8d5-e4d6f9d7839b",
+          "orderNo": "ORD-ba0bb1b7-3f4d-4f7a-b8d5-e4d6f9d7839b",
+          "status": "PENDING_PAYMENT",
+          "subtotal": null,
+          "shippingFee": null,
+          "discount": null,
+          "total": null,
+          "paymentMethod": "VNPAY",
+          "paymentUrl": null,
+          "estimatedSubtotal": 320000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 320000,
+          "priceFinalized": false
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_88086d83",
+          "timestamp": "2026-11-11T09:19:09.249Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "0a99cc02-8e8e-4169-a70a-dd3b308b9c51",
+          "orderId": "ba0bb1b7-3f4d-4f7a-b8d5-e4d6f9d7839b",
+          "status": "PENDING",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": "[signed sandbox URL omitted]",
+          "expiresAt": "2026-11-11T09:34:09Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "19f30afb-c244-4a89-a4c2-36193148955b",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "0a99cc02-8e8e-4169-a70a-dd3b308b9c51"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_42fbe46c",
+          "timestamp": "2026-11-11T09:19:09.275Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/vnpay/ipn [signed fixture query omitted]",
+      "response": {
+        "RspCode": "00",
+        "Message": "Confirm Success"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "aefad0fb-66c0-4add-bb31-b7b4ae9efe9e",
+          "orderId": "ba0bb1b7-3f4d-4f7a-b8d5-e4d6f9d7839b",
+          "status": "PENDING",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": "[signed sandbox URL omitted]",
+          "expiresAt": "2026-11-11T09:34:09Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "19f30afb-c244-4a89-a4c2-36193148955b",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "aefad0fb-66c0-4add-bb31-b7b4ae9efe9e"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_8f8aa593",
+          "timestamp": "2026-11-11T09:19:09.314Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/vnpay/ipn [signed fixture query omitted]",
+      "response": {
+        "RspCode": "00",
+        "Message": "Funds recorded for reconciliation"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/aefad0fb-66c0-4add-bb31-b7b4ae9efe9e",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "aefad0fb-66c0-4add-bb31-b7b4ae9efe9e",
+          "orderId": "ba0bb1b7-3f4d-4f7a-b8d5-e4d6f9d7839b",
+          "status": "REQUIRES_REVIEW",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": null,
+          "expiresAt": "2026-11-11T09:34:09Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "19f30afb-c244-4a89-a4c2-36193148955b",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "aefad0fb-66c0-4add-bb31-b7b4ae9efe9e"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_9f222eb0",
+          "timestamp": "2026-11-11T09:19:09.339Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "paymentId": "aefad0fb-66c0-4add-bb31-b7b4ae9efe9e",
+          "orderId": "ba0bb1b7-3f4d-4f7a-b8d5-e4d6f9d7839b",
+          "status": "REQUIRES_REVIEW",
+          "amount": 320000,
+          "currency": "VND",
+          "paymentUrl": null,
+          "expiresAt": "2026-11-11T09:34:09Z",
+          "priceSnapshot": {
+            "subtotal": 320000,
+            "shippingFee": 0,
+            "discount": 0,
+            "total": 320000,
+            "items": [
+              {
+                "orderItemId": "19f30afb-c244-4a89-a4c2-36193148955b",
+                "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+                "quantity": 2,
+                "unitPrice": 160000,
+                "itemTotal": 320000
+              }
+            ]
+          },
+          "inventoryRefId": "aefad0fb-66c0-4add-bb31-b7b4ae9efe9e"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_7cf605d8",
+          "timestamp": "2026-11-11T09:19:09.355Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "status": 409,
+      "response": {
+        "success": false,
+        "data": null,
+        "error": {
+          "code": "PAYMENT_REQUIRES_REVIEW",
+          "message": "Đơn có tiền cần đối soát, không thanh toán thêm",
+          "details": null
+        },
+        "meta": {
+          "requestId": "req_7f629cbe",
+          "timestamp": "2026-11-11T09:19:09.377Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/cart/items",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "cartId": "0e633f01-13ea-43eb-b40d-2f037629dee8",
+          "userId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "status": "ACTIVE",
+          "items": [
+            {
+              "id": "0f9bb6eb-27c0-4012-8a84-0cb021cec9e9",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "skuCode": "AO-M",
+              "productName": "Ao thun demo",
+              "thumbnailUrl": null,
+              "unitPrice": 25000,
+              "quantity": 1,
+              "stockAvailable": null,
+              "isAvailable": true,
+              "subtotal": 25000
+            }
+          ],
+          "totalItems": 1,
+          "totalQuantity": 1,
+          "subtotal": 25000,
+          "discountAmount": 0,
+          "shippingFee": 0,
+          "taxAmount": 0,
+          "totalAmount": 25000,
+          "expiresAt": "2026-11-18T09:19:10.819927600Z"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_afc8fa1e",
+          "timestamp": "2026-11-11T09:19:10.825Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/orders",
+      "status": 201,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "orderNo": "ORD-c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "status": "PENDING_PAYMENT",
+          "subtotal": null,
+          "shippingFee": null,
+          "discount": null,
+          "total": null,
+          "paymentMethod": "COD",
+          "paymentUrl": null,
+          "estimatedSubtotal": 25000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 25000,
+          "priceFinalized": false
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_6c350239",
+          "timestamp": "2026-11-11T09:19:10.865Z"
+        }
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/orders/c91d0245-a633-473e-bc3e-c753fa2615e1/status",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "orderNo": "ORD-c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "PENDING_PAYMENT",
+          "subtotal": 25000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 25000,
+          "shippingAddress": "123 COD Street",
+          "createdAt": "2026-11-11T09:19:10.847970Z",
+          "items": [
+            {
+              "id": "bea7990e-e5af-4f89-bc8b-f35d318a0bc3",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "productName": "Ao thun demo",
+              "skuCode": "AO-M",
+              "unitPrice": 25000,
+              "quantity": 1,
+              "subtotal": 25000,
+              "estimatedUnitPrice": 25000,
+              "estimatedSubtotal": 25000
+            }
+          ],
+          "statusHistory": [],
+          "estimatedSubtotal": 25000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 25000,
+          "priceFinalized": true,
+          "fulfillmentStatus": "PENDING"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_bc8a76bf",
+          "timestamp": "2026-11-11T09:19:10.892Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/c91d0245-a633-473e-bc3e-c753fa2615e1",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "orderNo": "ORD-c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "PENDING_PAYMENT",
+          "subtotal": 25000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 25000,
+          "shippingAddress": "123 COD Street",
+          "createdAt": "2026-11-11T09:19:10.847970Z",
+          "items": [
+            {
+              "id": "bea7990e-e5af-4f89-bc8b-f35d318a0bc3",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "productName": "Ao thun demo",
+              "skuCode": "AO-M",
+              "unitPrice": 25000,
+              "quantity": 1,
+              "subtotal": 25000,
+              "estimatedUnitPrice": 25000,
+              "estimatedSubtotal": 25000
+            }
+          ],
+          "statusHistory": [
+            {
+              "id": "956726b3-7950-446f-b484-e64a6f4533a4",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "PENDING_PAYMENT",
+              "reason": "[ADMIN] COD_FUNDS_RECEIVED_PENDING_INVENTORY",
+              "changedAt": "2026-11-11T09:19:10.889863Z",
+              "actor": "ADMIN"
+            }
+          ],
+          "estimatedSubtotal": 25000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 25000,
+          "priceFinalized": true,
+          "fulfillmentStatus": "PENDING"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_ad5fd2a2",
+          "timestamp": "2026-11-11T09:19:10.905Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/c91d0245-a633-473e-bc3e-c753fa2615e1",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "orderNo": "ORD-c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "CANCELLED",
+          "subtotal": 25000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 25000,
+          "shippingAddress": "123 COD Street",
+          "createdAt": "2026-11-11T09:19:10.847970Z",
+          "items": [
+            {
+              "id": "bea7990e-e5af-4f89-bc8b-f35d318a0bc3",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "productName": "Ao thun demo",
+              "skuCode": "AO-M",
+              "unitPrice": 25000,
+              "quantity": 1,
+              "subtotal": 25000,
+              "estimatedUnitPrice": 25000,
+              "estimatedSubtotal": 25000
+            }
+          ],
+          "statusHistory": [
+            {
+              "id": "956726b3-7950-446f-b484-e64a6f4533a4",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "PENDING_PAYMENT",
+              "reason": "[ADMIN] COD_FUNDS_RECEIVED_PENDING_INVENTORY",
+              "changedAt": "2026-11-11T09:19:10.889863Z",
+              "actor": "ADMIN"
+            },
+            {
+              "id": "8cd36c57-0eac-4f8d-a1d6-8aeadaed61e4",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "CANCELLED",
+              "reason": "[SYSTEM] COD_FUNDS_RECEIVED_INVENTORY_UNAVAILABLE",
+              "changedAt": "2026-11-11T09:19:11.033023Z",
+              "actor": "SYSTEM"
+            }
+          ],
+          "estimatedSubtotal": 25000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 25000,
+          "priceFinalized": true,
+          "fulfillmentStatus": "REVIEW"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_64df1f72",
+          "timestamp": "2026-11-11T09:19:11.226Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/c91d0245-a633-473e-bc3e-c753fa2615e1",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "orderNo": "ORD-c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "CANCELLED",
+          "subtotal": 25000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 25000,
+          "shippingAddress": "123 COD Street",
+          "createdAt": "2026-11-11T09:19:10.847970Z",
+          "items": [
+            {
+              "id": "bea7990e-e5af-4f89-bc8b-f35d318a0bc3",
+              "skuId": "7194e811-f094-4487-8a80-733b6955d67b",
+              "productName": "Ao thun demo",
+              "skuCode": "AO-M",
+              "unitPrice": 25000,
+              "quantity": 1,
+              "subtotal": 25000,
+              "estimatedUnitPrice": 25000,
+              "estimatedSubtotal": 25000
+            }
+          ],
+          "statusHistory": [
+            {
+              "id": "956726b3-7950-446f-b484-e64a6f4533a4",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "PENDING_PAYMENT",
+              "reason": "[ADMIN] COD_FUNDS_RECEIVED_PENDING_INVENTORY",
+              "changedAt": "2026-11-11T09:19:10.889863Z",
+              "actor": "ADMIN"
+            },
+            {
+              "id": "8cd36c57-0eac-4f8d-a1d6-8aeadaed61e4",
+              "fromStatus": "PENDING_PAYMENT",
+              "toStatus": "CANCELLED",
+              "reason": "[SYSTEM] COD_FUNDS_RECEIVED_INVENTORY_UNAVAILABLE",
+              "changedAt": "2026-11-11T09:19:11.033023Z",
+              "actor": "SYSTEM"
+            }
+          ],
+          "estimatedSubtotal": 25000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 25000,
+          "priceFinalized": true,
+          "fulfillmentStatus": "REVIEW"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_56d488c3",
+          "timestamp": "2026-11-11T09:19:11.236Z"
+        }
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/orders/c91d0245-a633-473e-bc3e-c753fa2615e1/status",
+      "status": 409,
+      "response": {
+        "success": false,
+        "data": null,
+        "error": {
+          "code": "ORDER_STATUS_INVALID",
+          "message": "Đơn chưa được kho xác nhận hoặc cần đối soát",
+          "details": null
+        },
+        "meta": {
+          "requestId": "req_ceb4361f",
+          "timestamp": "2026-11-11T09:19:11.247Z"
+        }
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/orders/c91d0245-a633-473e-bc3e-c753fa2615e1/status",
+      "status": 200,
+      "response": {
+        "success": true,
+        "data": {
+          "id": "c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "orderNo": "ORD-c91d0245-a633-473e-bc3e-c753fa2615e1",
+          "buyerId": "4e080b9c-a50b-426d-894c-102e1f90b0bd",
+          "sellerId": "5d580d45-beb8-44fd-a1f7-1e5f9ca574fd",
+          "sourceType": "REGULAR",
+          "auctionId": null,
+          "voucherId": null,
+          "status": "CANCELLED",
+          "subtotal": 25000,
+          "shippingFee": 0,
+          "discount": 0,
+          "total": 25000,
+          "shippingAddress": "123 COD Street",
+          "createdAt": "2026-11-11T09:19:10.847970Z",
+          "items": [],
+          "statusHistory": [],
+          "estimatedSubtotal": 25000,
+          "estimatedShippingFee": 0,
+          "estimatedDiscount": 0,
+          "estimatedTotal": 25000,
+          "priceFinalized": true,
+          "fulfillmentStatus": "REVIEW"
+        },
+        "error": null,
+        "meta": {
+          "requestId": "req_f4130629",
+          "timestamp": "2026-11-11T09:19:11.256Z"
+        }
+      }
+    }
+  ]
+}
