@@ -3,6 +3,9 @@ package com.nexus.commerce.service;
 import com.nexus.commerce.client.InventoryClient;
 import com.nexus.commerce.client.InventoryServiceToken;
 import com.nexus.common.exception.ApiException;
+import com.nexus.commerce.enums.OrderStatus;
+import com.nexus.commerce.repository.OrderRepository;
+import com.nexus.commerce.repository.PaymentRepository;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -22,13 +25,20 @@ public class PaymentInventoryWorker {
     private final InventoryClient inventory;
     private final InventoryServiceToken tokens;
     private final TransactionTemplate transaction;
+    private final OrderRepository orders;
+    private final PaymentRepository payments;
+    private final NotificationOutbox notifications;
 
     public PaymentInventoryWorker(JdbcTemplate jdbc, InventoryClient inventory, InventoryServiceToken tokens,
-                                    PlatformTransactionManager manager) {
+                                    PlatformTransactionManager manager, OrderRepository orders,
+                                    PaymentRepository payments, NotificationOutbox notifications) {
         this.jdbc = jdbc;
         this.inventory = inventory;
         this.tokens = tokens;
         transaction = new TransactionTemplate(manager);
+        this.orders = orders;
+        this.payments = payments;
+        this.notifications = notifications;
     }
 
     /** Mỗi tick xử lý tối đa 10 tác vụ, từng transaction riêng; thiếu config không đánh dấu hoàn thành giả. */
@@ -49,8 +59,13 @@ public class PaymentInventoryWorker {
         UUID id = (UUID) row.get("id");
         try {
             String token = tokens.get();
-            if ("CONFIRM".equals(row.get("action"))) { inventory.confirm((UUID) row.get("target_id"), token); }
-            else { inventory.release((UUID) row.get("order_id"), token); }
+            if ("COMMIT".equals(row.get("action"))) {
+                completePaidOrder((UUID) row.get("order_id"), (UUID) row.get("target_id"), token);
+            }
+            else if ("COD_COMMIT".equals(row.get("action"))) { completeCodOrder((UUID) row.get("order_id"), token); }
+            else if ("CONFIRM".equals(row.get("action"))) { inventory.confirm((UUID) row.get("target_id"), token); }
+            else if ("RELEASE".equals(row.get("action"))) { inventory.release((UUID) row.get("target_id"), token); }
+            else { throw new IllegalStateException("Tác vụ kho không hợp lệ"); }
             jdbc.update("UPDATE payment_inventory_tasks SET done=true, attempts=attempts+1 WHERE id=?", id);
         } catch (RuntimeException error) {
             if (error instanceof ApiException api && api.getHttpStatus().value() == 401) { tokens.invalidate(); }
@@ -60,5 +75,83 @@ public class PaymentInventoryWorker {
             log.warn("Outbox kho chưa hoàn tất: task={}, order={}, errorType={}; cần theo dõi attempts", id, row.get("order_id"), error.getClass().getSimpleName());
         }
         return true;
+    }
+
+    /**
+     * COD đã xác nhận thu tiền chỉ PAID sau commit kho nguyên tử; timeout giữ PENDING để retry đúng ref.
+     * Phiếu hết hạn/không tồn tại là lỗi vĩnh viễn: lưu REVIEW, đóng tác vụ thay vì retry vô hạn hoặc giả hoàn tiền.
+     * Giá chính thức được giữ để đối soát tiền đã thu; Order lock tuần tự hóa với command lặp và thao tác giao hàng.
+     */
+    private void completeCodOrder(UUID orderId, String token) {
+        var order = orders.findForPaymentWithItems(orderId).orElseThrow();
+        if (!"COD".equals(order.getPaymentMethod()) || !order.isPriceFinalized()) {
+            throw new IllegalStateException("Task COD chưa có xác nhận thu tiền");
+        }
+        if ("CONFIRMED".equals(order.getFulfillmentStatus()) || "REVIEW".equals(order.getFulfillmentStatus())) { return; }
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            order.setFulfillmentStatus("REVIEW");
+            return;
+        }
+        try {
+            inventory.commitOrder(orderId, java.util.List.copyOf(order.getReservationIds()), token);
+        } catch (ApiException error) {
+            if (!java.util.Set.of("INVENTORY_RESERVATION_EXPIRED", "INVENTORY_RESERVATION_NOT_FOUND").contains(error.getCode())) {
+                throw error;
+            }
+            order.setFulfillmentStatus("REVIEW");
+            order.setStatus(OrderStatus.CANCELLED);
+            history(orderId, "CANCELLED", "COD_FUNDS_RECEIVED_INVENTORY_UNAVAILABLE");
+            return;
+        }
+        order.setFulfillmentStatus("CONFIRMED");
+        order.setStatus(OrderStatus.PAID);
+        history(orderId, "PAID", "COD_INVENTORY_CONFIRMED");
+        notifications.enqueue(order, "PAYMENT_SUCCESS");
+    }
+
+    /**
+     * Giữ khóa Order xuyên suốt commit kho; Fulfillment dùng khóa phiếu chung với sweeper để chọn đúng một kết quả.
+     * Mất response/rollback Commerce được retry bằng cùng orderId; phiếu CONFIRMED không bị sweeper hoặc release nhả lại.
+     * Áp dụng cho REGULAR và AUCTION; tiền đã thu nhưng kho EXPIRED/RELEASED lưu REVIEW và yêu cầu đối soát thủ công.
+     */
+    private void completePaidOrder(UUID orderId, UUID targetId, String token) {
+        var order = orders.findForPaymentWithItems(orderId).orElseThrow();
+        // Task mới target=paymentId; task AUCTION đã tồn tại trước migration target=orderId vẫn được tiếp tục.
+        var payment = targetId.equals(orderId)
+                ? payments.findFirstByOrderIdAndProviderOrderByCreatedAtDescIdDesc(orderId, "VNPAY").orElseThrow()
+                : payments.findById(targetId).orElseThrow();
+        if (!orderId.equals(payment.getOrderId())) { throw new IllegalStateException("Task không khớp đơn thanh toán"); }
+        if (!"SUCCESS".equals(payment.getStatus())) { throw new IllegalStateException("Chưa có IPN thu tiền hợp lệ"); }
+        if ("CONFIRMED".equals(payment.getInventoryStatus()) || "REVIEW".equals(payment.getInventoryStatus())) { return; }
+        // Tiền thu muộn từ attempt cũ yêu cầu đối soát toàn đơn trước khi tiếp tục giao hàng tự động.
+        if (payments.existsByOrderIdAndInventoryStatus(orderId, "REVIEW")) {
+            payment.setInventoryStatus("REVIEW");
+            return;
+        }
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            payment.setInventoryStatus("REVIEW");
+            return;
+        }
+        try {
+            // Snapshot collection khi session còn mở; không chuyển proxy JPA ra HTTP client hoặc lưu qua lần retry.
+            inventory.commitOrder(payment.getInventoryRefId(), java.util.List.copyOf(order.getReservationIds()), token);
+        } catch (ApiException error) {
+            if (!"INVENTORY_RESERVATION_EXPIRED".equals(error.getCode())) { throw error; }
+            payment.setInventoryStatus("REVIEW");
+            order.setStatus(OrderStatus.CANCELLED);
+            history(orderId, "CANCELLED", "VNPAY_FUNDS_RECEIVED_INVENTORY_UNAVAILABLE");
+            return;
+        }
+        payment.setInventoryStatus("CONFIRMED");
+        order.setStatus(OrderStatus.PAID);
+        history(orderId, "PAID", "VNPAY_INVENTORY_CONFIRMED");
+        notifications.enqueue(order, "PAYMENT_SUCCESS");
+    }
+
+    /** Lịch sử do worker tạo phải ghi SYSTEM và timestamp UTC, tránh bị suy luận thành buyer hủy hoặc lệch giờ DB. */
+    private void history(UUID orderId, String status, String reason) {
+        jdbc.update("INSERT INTO order_status_history(id,order_id,from_status,to_status,reason,changed_at) "
+                + "VALUES (?,?,'PENDING_PAYMENT',?,?,(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'))",
+                UUID.randomUUID(), orderId, status, "[SYSTEM] " + reason);
     }
 }

@@ -133,7 +133,7 @@ public final class OrderTestFixtures {
                         item.getSkuCode(),
                         item.getUnitPrice(),
                         item.getQuantity(),
-                        subtotal
+                        subtotal, item.getEstimatedUnitPrice(), null
                 ));
             }
         }

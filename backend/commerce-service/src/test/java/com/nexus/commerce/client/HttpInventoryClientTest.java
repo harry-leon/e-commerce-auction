@@ -17,6 +17,25 @@ import org.junit.jupiter.api.Test;
 
 /** Wire test bằng HTTP server thật: đúng refId/timeout/token, lỗi thiếu hàng và response hỏng không được coi là thành công. */
 class HttpInventoryClientTest {
+    /** Receipt commit phải đúng đơn, trạng thái và tập phiếu; HTTP 200 rỗng không chứng minh đã giữ hàng. */
+    @Test
+    void commitOrderValidatesReceiptAndPreservesExpiryError() {
+        UUID order = UUID.randomUUID();
+        UUID reservation = UUID.randomUUID();
+        body = "{\"success\":true,\"data\":null}";
+        assertThrows(ApiException.class, () -> client.commitOrder(order, List.of(reservation), "unused"));
+        body = "{\"success\":true,\"data\":{\"refType\":\"ORDER\",\"refId\":\"" + order
+                + "\",\"status\":\"CONFIRMED\",\"items\":[{\"reservationId\":\"" + reservation
+                + "\",\"status\":\"CONFIRMED\",\"quantity\":1}]}}";
+        client.commitOrder(order, List.of(reservation), "unused");
+        assertEquals("/api/v1/inventory/orders/" + order + "/commit", path);
+        assertEquals("Bearer service-token", authorization);
+        assertThrows(ApiException.class, () -> client.commitOrder(UUID.randomUUID(), List.of(reservation), "unused"));
+        status = 409;
+        body = "{\"success\":false,\"error\":{\"code\":\"INVENTORY_RESERVATION_EXPIRED\",\"message\":\"Hết hạn\"}}";
+        assertEquals("INVENTORY_RESERVATION_EXPIRED", assertThrows(ApiException.class,
+                () -> client.commitOrder(order, List.of(reservation), "unused")).getCode());
+    }
     private HttpServer server;
     private HttpInventoryClient client;
     private final InventoryServiceToken tokens = org.mockito.Mockito.mock(InventoryServiceToken.class);

@@ -8,11 +8,10 @@
  *   1. Gọi HTTP client (api()) tới API Gateway tại prefix /api/v1/auctions.
  *   2. Nhận ApiResponse envelope, bóc tách payload data.
  *   3. Kiểm tra tính toàn vẹn (validateAndNormalizeAuction) để lọc bỏ dữ liệu rác/lỗi từ server.
- *   4. Trong trường hợp Backend Auction Service chưa sẵn sàng (404/503) hoặc người dùng duyệt ẩn danh (401),
- *      tự động fallback về kho dữ liệu mock phong phú có áp dụng đầy đủ bộ lọc, sắp xếp và phân trang.
+ *   4. Khi API lỗi tạm thời, chỉ giữ bản ghi mới do người dùng tạo cục bộ; không biến fixture thành đấu giá thật.
  * Quy tắc & lý do: Đảm bảo giao diện luôn hiển thị mượt mà, không bị gián đoạn hay crash khi dữ liệu API
  *                  thiếu trường, sai kiểu dữ liệu (NaN, null, negative price) hoặc khi server mất kết nối.
- * Lỗi & giới hạn: Dữ liệu đặt giá ở chế độ fallback được đồng bộ cục bộ trong phiên làm việc.
+ * Lỗi & giới hạn: Dữ liệu phiên mới tạo có thể chỉ nằm cục bộ cho tới khi API đồng bộ thành công.
  */
 
 import { api, post, ApiClientError, type ApiProduct, type ApiResponse, type Envelope } from './client'
@@ -224,6 +223,71 @@ const AUCTIONS_STORAGE_KEY = 'nexus.auction-portal-store.v2'
 const LEGACY_AUCTIONS_STORAGE_KEY = 'nexus.mock-auctions-store'
 const AUCTION_REVIEWS_STORAGE_KEY = 'nexus.auction-reviews-store'
 
+/**
+ * Chức năng: Cache ánh xạ productId → thông tin sản phẩm (tên, SKU, ảnh).
+ * Mục đích: Khi Auction Service chỉ trả productId (UUID) mà không kèm productName/sku,
+ *           ta tra cứu cache này để hiển thị đúng tên/SKU thật thay vì fallback.
+ * Luồng: Seller tạo auction → gọi cacheAuctionProduct → cache được lưu vào localStorage.
+ *        validateAndNormalizeAuction → tra cứu cache trước khi tạo placeholder.
+ * Lỗi & giới hạn: Cache chỉ có hiệu lực trong cùng browser profile; xóa cache thì phiên
+ *                 mới cần reload lại danh sách sản phẩm mới có tên đúng.
+ */
+const AUCTION_PRODUCTS_CACHE_KEY = 'nexus.auction-products-cache.v1'
+
+interface AuctionProductCacheEntry {
+    name: string
+    nameVi?: string
+    sku?: string
+    images?: string[]
+}
+
+/** Nạp cache ánh xạ productId → metadata sản phẩm từ localStorage */
+function loadAuctionProductCache(): Map<string, AuctionProductCacheEntry> {
+    try {
+        const raw = localStorage.getItem(AUCTION_PRODUCTS_CACHE_KEY)
+        const parsed = raw ? JSON.parse(raw) : null
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return new Map(Object.entries(parsed))
+        }
+    } catch {}
+    return new Map()
+}
+
+/** Lưu cache ánh xạ productId → metadata sản phẩm vào localStorage */
+function persistAuctionProductCache(cache: Map<string, AuctionProductCacheEntry>) {
+    try {
+        const obj = Object.fromEntries(cache.entries())
+        localStorage.setItem(AUCTION_PRODUCTS_CACHE_KEY, JSON.stringify(obj))
+    } catch {}
+}
+
+/** Bộ nhớ in-memory + localStorage; được khởi tạo một lần khi module load */
+let auctionProductCache: Map<string, AuctionProductCacheEntry> = loadAuctionProductCache()
+
+/**
+ * Chức năng: Lưu thông tin sản phẩm vào cache để auction hiển thị đúng tên/SKU.
+ * Đầu vào: productId (UUID từ Catalog Service) và metadata { name, nameVi, sku, images }.
+ * Luồng: Gọi sau khi Seller chọn sản phẩm để tạo auction; hoặc khi load danh sách sản phẩm.
+ * Quy tắc: Chỉ ghi đè nếu entry mới có nhiều thông tin hơn entry cũ.
+ */
+export function cacheAuctionProduct(
+    productId: string,
+    entry: AuctionProductCacheEntry,
+) {
+    if (!productId || !entry.name) return
+    const existing = auctionProductCache.get(productId)
+    // Ưu tiên giữ bản có đầy đủ thông tin hơn
+    if (!existing || (entry.sku && !existing.sku)) {
+        auctionProductCache.set(productId, entry)
+        persistAuctionProductCache(auctionProductCache)
+    }
+}
+
+/** ID dạng auc-{timestamp} chỉ được sinh khi API lỗi; backend dùng UUID nên không được coi các bản ghi này là phiên thật. */
+function isLocalFallbackAuction(auction: Pick<Auction, 'id'>): boolean {
+    return /^auc-\d+$/.test(auction.id)
+}
+
 type StoredAuctionReview = { status: 'scheduled' | 'rejected'; reason?: string; reviewedAt: string }
 
 /** Khôi phục quyết định Admin để API list trả DRAFT cũ không làm phiên đã duyệt quay lại hàng chờ sau reload. */
@@ -259,7 +323,10 @@ function loadStoredAuctions(): Auction[] {
             if (Array.isArray(parsed)) {
                 const demoIds = new Set(AUCTIONS.map((auction) => auction.id))
                 const storedAuctions = parsed.filter((auction): auction is Auction =>
-                    Boolean(auction && typeof auction.id === 'string' && !demoIds.has(auction.id)),
+                    Boolean(
+                        auction && typeof auction.id === 'string' &&
+                        !demoIds.has(auction.id) && !isLocalFallbackAuction(auction),
+                    ),
                 )
                 localStorage.setItem(AUCTIONS_STORAGE_KEY, JSON.stringify(storedAuctions))
                 localStorage.removeItem(LEGACY_AUCTIONS_STORAGE_KEY)
@@ -403,7 +470,7 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
         status = 'rejected'
     } else if (['FAILED'].includes(rawStatus)) {
         status = 'failed'
-    } else if (['DRAFT'].includes(rawStatus)) {
+    } else if (['DRAFT', 'PENDING', 'PENDING_APPROVAL'].includes(rawStatus)) {
         status = 'pending_approval'
     }
 
@@ -456,20 +523,39 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
                 'Sản phẩm đấu giá cao cấp',
         }
     } else {
-        // Tìm sản phẩm khớp từ kho Catalog hoặc tạo placeholder
+        // Tìm sản phẩm khớp từ kho mock (test) hoặc tra cache productId → metadata sản phẩm thật
         const existing = PRODUCTS.find((p) => p.id === productId)
         if (existing) {
             product = existing
         } else {
+            // Tra cache được lưu khi Seller chọn sản phẩm để tạo auction (cacheAuctionProduct)
+            const cached = auctionProductCache.get(productId)
+
             const fallbackName =
-                item.productName || item.product_name || `Phiên đấu giá #${id.slice(0, 8)}`
-            const fallbackNameVi = item.productNameVi || item.product_name_vi || fallbackName
+                item.productName ||
+                item.product_name ||
+                cached?.name ||
+                'Auction Product'
+            const fallbackNameVi =
+                item.productNameVi ||
+                item.product_name_vi ||
+                cached?.nameVi ||
+                cached?.name ||
+                'Sản phẩm đấu giá'
+            const fallbackSku =
+                item.product?.sku ||
+                cached?.sku ||
+                'N/A'
+            const fallbackImages =
+                cached?.images ||
+                (Array.isArray(item.productImages || item.product_images)
+                    ? (item.productImages || item.product_images)!
+                    : null)
             const fallbackImage =
                 item.productImage ||
                 item.product_image ||
-                (Array.isArray(item.productImages || item.product_images)
-                    ? (item.productImages || item.product_images)![0]
-                    : 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80')
+                (fallbackImages ? fallbackImages[0] : null) ||
+                'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'
 
             product = {
                 id: productId,
@@ -478,23 +564,24 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
                 price: startingPrice,
                 originalPrice: startingPrice,
                 rating: 5,
-                reviewCount: 12,
+                reviewCount: 0,
                 images: [fallbackImage],
                 category: 'Collectibles',
                 categoryId: 'c6',
                 location: 'ho-chi-minh',
-                sku: `AUC-${id.slice(0, 6)}`,
+                // Dùng SKU thật từ cache; không tạo giả dạng AUC-{id} gây nhầm lẫn
+                sku: fallbackSku,
                 status: 'active',
                 description:
                     item.productDescription ||
                     item.product_description ||
-                    'Sản phẩm đấu giá độc bản tại Project Nexus.',
+                    '',
                 descriptionVi:
                     item.productDescriptionVi ||
                     item.product_description_vi ||
-                    'Sản phẩm đấu giá độc bản tại Project Nexus.',
+                    '',
                 sellerId: String(item.sellerId || item.seller_id || 'u-seller'),
-                sellerName: item.sellerName || item.seller_name || 'Nexus Verified Seller',
+                sellerName: item.sellerName || item.seller_name || 'Nexus Seller',
                 sellerTrust: 'gold',
                 sellerRating: 5,
                 weight: 1,
@@ -611,7 +698,7 @@ export const auctionsApi = {
      * Luồng:
      *   1. Xây dựng Query String từ params.
      *   2. Gọi GET /api/v1/auctions qua API Gateway.
-     *   3. Chuẩn hóa dữ liệu; nếu Backend lỗi mạng hoặc 404/503, tự động fallback sang kho mock in-memory.
+     *   3. Chuẩn hóa dữ liệu; nếu Backend lỗi mạng hoặc 404/503, chỉ dùng bản ghi người dùng tạo được lưu cục bộ.
      */
     async getAuctions(params: AuctionQueryParams = {}): Promise<AuctionListResponse> {
         const {
@@ -662,6 +749,8 @@ export const auctionsApi = {
                     Boolean(sellerName && [auction.sellerName, auction.sellerAccountName]
                         .some((name) => name?.trim().toLowerCase() === sellerName.trim().toLowerCase()))
                 const localCreated = [...extraAuctions, ...localAuctionsStore].filter((auction, index, source) => {
+                    // Chỉ ẩn bản ghi offline khi khách Buyer vãng lai xem danh sách công khai; Seller và Admin vẫn theo dõi được phiên vừa tạo.
+                    if (isLocalFallbackAuction(auction) && (!sellerId && !includePending) && !submittedIds.has(auction.id)) return false
                     if (excludeDemoData && seededIds.has(auction.id) && !submittedIds.has(auction.id)) return false
                     if ((seededIds.has(auction.id) && !submittedIds.has(auction.id)) || serverIds.has(auction.id)) return false
                     if (source.findIndex((candidate) => candidate.id === auction.id) !== index) return false
@@ -731,14 +820,15 @@ export const auctionsApi = {
             }
         }
 
-        // Luồng fallback sang dữ liệu in-memory/mock khi backend chưa sẵn sàng hoặc offline
+        // Khi API không khả dụng, chỉ giữ phiên do người dùng tạo trong browser; fixture không đại diện cho dữ liệu đấu giá thật.
         const combined = [...extraAuctions, ...localAuctionsStore]
         const seen = new Set<string>()
         const submittedIds = new Set(extraAuctions.map((auction) => auction.id))
         const seededIds = new Set(AUCTIONS.map((auction) => auction.id))
         let filtered = combined
             .filter((a) => {
-                if (excludeDemoData && AUCTIONS.some((demo) => demo.id === a.id) && !submittedIds.has(a.id)) return false
+                if (seededIds.has(a.id) && !submittedIds.has(a.id)) return false
+                if (isLocalFallbackAuction(a) && (!sellerId && !includePending) && !submittedIds.has(a.id)) return false
                 if (seen.has(a.id)) return false
                 seen.add(a.id)
                 return true
@@ -816,6 +906,35 @@ export const auctionsApi = {
         }
     },
 
+    /** Tải lịch sử bid phân trang từ Auction Service và chuẩn hóa về AuctionBid cho các màn chi tiết. */
+    async getBidHistory(auctionId: string, page = 1, limit = 100): Promise<AuctionBid[]> {
+        const envelope = await api<ApiResponse<unknown> | unknown[]>(
+            `/auctions/${encodeURIComponent(auctionId)}/bids?page=${page}&limit=${limit}&sortBy=placedAt&sortDir=DESC`,
+        )
+        const rawData = envelope && typeof envelope === 'object' && 'data' in envelope
+            ? (envelope as ApiResponse<unknown>).data
+            : envelope
+        if (!Array.isArray(rawData)) return []
+        return rawData.flatMap((value, index) => {
+            if (!value || typeof value !== 'object') return []
+            const bid = value as RawApiBid
+            const id = String(bid.id || bid.bidId || bid.bid_id || `bid-${auctionId}-${index}`)
+            const amount = Number(bid.amount)
+            if (!Number.isFinite(amount) || amount <= 0) return []
+            const placedAt = bid.placedAt || bid.placed_at || bid.timestamp
+            const timestamp = placedAt && !Number.isNaN(new Date(placedAt).getTime())
+                ? new Date(placedAt).toISOString()
+                : new Date().toISOString()
+            return [{
+                id,
+                bidderId: String(bid.bidderId || bid.bidder_id || 'bidder-unknown'),
+                bidderName: bid.bidderName || bid.bidder_name || `User ***${id.slice(-3)}`,
+                amount,
+                timestamp,
+            }]
+        })
+    },
+
     /**
      * Chức năng: Lấy thông tin chi tiết của một phiên đấu giá theo ID.
      * Đầu vào: auctionId, extraAuctions, reviews từ Context.
@@ -833,7 +952,6 @@ export const auctionsApi = {
         if (!id || typeof id !== 'string') {
             throw new ApiClientError('Mã phiên đấu giá không hợp lệ', 'INVALID_AUCTION_ID', 400)
         }
-
         try {
             const envelope = await api<ApiResponse<unknown> | unknown>(`/auctions/${id}`)
             const rawData =
@@ -843,8 +961,11 @@ export const auctionsApi = {
 
             const validated = validateAndNormalizeAuction(rawData)
             if (validated) {
+                // Endpoint lịch sử là nguồn chuẩn mới được bổ sung; giữ detail hoạt động nếu route bid tạm lỗi.
+                const bids = await this.getBidHistory(id).catch(() => validated.bids)
                 return {
                     ...validated,
+                    bids,
                     status: resolveAuctionStatus(validated.id, validated.status, reviews),
                 }
             }
@@ -855,7 +976,8 @@ export const auctionsApi = {
         }
 
         // Fallback tra cứu trong kho local
-        const found = [...extraAuctions, ...localAuctionsStore].find((a) => a.id === id)
+        const found = extraAuctions.find((auction) => auction.id === id) ||
+            localAuctionsStore.find((auction) => auction.id === id && !isLocalFallbackAuction(auction))
         if (found) {
             return {
                 ...found,
@@ -943,7 +1065,7 @@ export const auctionsApi = {
     /**
      * Chức năng: Người bán khởi tạo phiên đấu giá mới cho sản phẩm/SKU.
      * Đầu vào: CreateAuctionPayload (productId, skuId, startingPrice, minIncrement, startTime, endTime, visibility).
-     * Kết quả: Đối tượng Auction vừa được khởi tạo với trạng thái 'scheduled' (hoặc 'pending_approval').
+     * Kết quả: Đối tượng Auction đã lưu ở Auction Service, trạng thái khởi tạo 'scheduled'.
      * Luồng xử lý:
      *   1. Kiểm tra validation nghiêm ngặt theo SRS §3.5 và AC của SPRINT2:
      *      - Giá khởi điểm > 0.
@@ -952,8 +1074,8 @@ export const auctionsApi = {
      *      - Thời gian kết thúc phải lớn hơn thời gian bắt đầu.
      *      - Thời lượng phiên tối thiểu 1 giờ (60 phút) và tối đa 7 ngày (168 giờ).
      *   2. Gọi POST /api/v1/auctions qua API Gateway.
-     *   3. Nếu Backend trả về thành công, chuẩn hóa và lưu trữ cục bộ.
-     *   4. Nếu Backend offline hoặc 404/503, tự động tạo bản ghi mock và lưu vào localStorage.
+     *   3. Chỉ trả thành công khi Backend trả về bản ghi đã lưu; chuẩn hóa response cho Seller/Admin/Buyer cùng đọc.
+     *   4. Nếu đăng nhập, API hoặc response lỗi, ném lỗi để UI không báo thành công giả hoặc tạo phiên chỉ ở browser.
      * Quy tắc & lý do: Đảm bảo dữ liệu phiên đấu giá đáp ứng đầy đủ nghiệp vụ trước khi mở bán;
      *                  không cho phép các mốc thời gian sai lệch hay giá khởi điểm âm/bằng 0.
      * Lỗi & giới hạn: Trả về lỗi 422 kèm danh sách chi tiết lỗi trường dữ liệu khi validation thất bại.
@@ -1037,102 +1159,56 @@ export const auctionsApi = {
 
         const session = readSession()
 
-        try {
-            const apiPayload = {
-                productId: payload.productId,
-                skuId: payload.skuId || null,
-                startPrice,
-                bidIncrement: minIncrement,
-                startTime: parsedStart.toISOString(),
-                endTime: parsedEnd.toISOString(),
-                visibility: payload.visibility === 'restricted' ? 'PRIVATE' : 'PUBLIC',
-            }
-            const envelope = await post<ApiResponse<RawApiAuction>>('/auctions', apiPayload)
-            if (envelope?.data) {
-                const normalized = validateAndNormalizeAuction(envelope.data)
-                if (normalized) {
-                    // Bổ sung chủ phiên từ session khi response create không trả sellerId/sellerName để Seller filter nhận đúng phiên.
-                    const rawSellerId = envelope.data.sellerId || envelope.data.seller_id
-                    const sellerId = rawSellerId || session?.user?.id || normalized.sellerId
-                    const sellerName =
-                        envelope.data.sellerName ||
-                        envelope.data.seller_name ||
-                        (sellerId === session?.user?.id ? session?.user?.fullName : normalized.sellerName)
-                    const createdAuction: Auction = {
-                        ...normalized,
-                        sellerId,
-                        sellerName,
-                        sellerAccountName:
-                            envelope.data.sellerFullName ||
-                            envelope.data.seller_full_name ||
-                            envelope.data.sellerAccountName ||
-                            envelope.data.seller_account_name ||
-                            (sellerId === session?.user?.id ? session?.user?.fullName : undefined),
-                        sellerEmail: envelope.data.sellerEmail || envelope.data.seller_email || session?.user?.email,
-                        product: { ...normalized.product, sellerId, sellerName },
-                    }
-                    localAuctionsStore = [createdAuction, ...localAuctionsStore]
-                    persistStoredAuctions(localAuctionsStore)
-                    return createdAuction
-                }
-            }
-        } catch (error) {
-            if (!canFallbackToMock(error)) {
-                throw error
-            }
-        }
+        // Kiểm tra định dạng UUID cho skuId để tránh lỗi Jackson HttpMessageNotReadableException
+        const isUuidPattern = (val?: string | null) =>
+            Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val))
 
-        // Tạo bản ghi mock an toàn khi offline/sandbox
-        const foundProduct =
-            PRODUCTS.find((p) => p.id === payload.productId) || {
-                id: payload.productId,
-                name: 'Sản phẩm đấu giá mới',
-                nameVi: 'Sản phẩm đấu giá mới',
-                description: 'Sản phẩm mới được người bán đưa vào phiên đấu giá.',
-                descriptionVi: 'Sản phẩm mới được người bán đưa vào phiên đấu giá.',
-                price: startPrice,
-                originalPrice: startPrice,
-                rating: 5,
-                reviewCount: 0,
-                images: ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'],
-                category: 'Collectibles',
-                categoryId: 'c6',
-                location: 'ho-chi-minh',
-                sku: payload.skuId || 'AUC-SKU-NEW',
-                status: 'active' as const,
-                sellerId: session?.user?.id || 'u2',
-                sellerName: session?.user?.fullName || 'TechZone Store',
-                sellerTrust: 'gold' as const,
-                sellerRating: 5,
-                weight: 1,
-                enableAuction: true,
-                stock: 1,
-                createdAt: new Date().toISOString(),
-            }
-
-        const newAuction: Auction = {
-            id: `auc-${Date.now()}`,
+        const apiPayload = {
             productId: payload.productId,
-            product: foundProduct,
-            sellerId: session?.user?.id || foundProduct.sellerId || 'u2',
-            sellerName: session?.user?.fullName || foundProduct.sellerName || 'TechZone Store',
-            sellerAccountName: session?.user?.fullName,
-            sellerEmail: session?.user?.email,
-            // Bản ghi fallback mô phỏng đúng luồng Seller gửi yêu cầu và chờ Admin duyệt.
-            status: 'pending_approval',
-            startingPrice: startPrice,
-            currentBid: startPrice,
-            minIncrement,
+            skuId: isUuidPattern(payload.skuId) ? payload.skuId : null,
+            startPrice,
+            bidIncrement: minIncrement,
             startTime: parsedStart.toISOString(),
             endTime: parsedEnd.toISOString(),
-            bidCount: 0,
-            bids: [],
-            visibility: payload.visibility || 'public',
+            visibility: payload.visibility === 'restricted' ? 'PRIVATE' : 'PUBLIC',
         }
 
-        localAuctionsStore = [newAuction, ...localAuctionsStore]
-        persistStoredAuctions(localAuctionsStore)
-        return newAuction
+        // Gửi yêu cầu khởi tạo phiên lên Auction Core Service
+        const envelope = await post<ApiResponse<RawApiAuction>>('/auctions', apiPayload)
+        if (envelope?.data) {
+            const normalized = validateAndNormalizeAuction(envelope.data)
+            if (normalized) {
+                const rawSellerId = envelope.data.sellerId || envelope.data.seller_id
+                const sellerId = rawSellerId || session?.user?.id || normalized.sellerId
+                const sellerName =
+                    envelope.data.sellerName ||
+                    envelope.data.seller_name ||
+                    (sellerId === session?.user?.id ? session?.user?.fullName : normalized.sellerName)
+                const createdAuction: Auction = {
+                    ...normalized,
+                    sellerId,
+                    sellerName,
+                    sellerAccountName:
+                        envelope.data.sellerFullName ||
+                        envelope.data.seller_full_name ||
+                        envelope.data.sellerAccountName ||
+                        envelope.data.seller_account_name ||
+                        (sellerId === session?.user?.id ? session?.user?.fullName : undefined),
+                    sellerEmail: envelope.data.sellerEmail || envelope.data.seller_email || session?.user?.email,
+                    product: { ...normalized.product, sellerId, sellerName },
+                }
+                localAuctionsStore = [createdAuction, ...localAuctionsStore.filter((auction) => auction.id !== createdAuction.id)]
+                persistStoredAuctions(localAuctionsStore)
+                return createdAuction
+            }
+        }
+
+        // Báo lỗi dứt khoát nếu backend không trả về bản ghi hợp lệ, tuyệt đối không tạo mock giả lập
+        throw new ApiClientError(
+            'Không nhận được dữ liệu hợp lệ từ máy chủ khi tạo phiên đấu giá',
+            'INVALID_AUCTION_RESPONSE',
+            500,
+        )
     },
 
     /**

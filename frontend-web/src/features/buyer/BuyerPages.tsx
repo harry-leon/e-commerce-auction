@@ -38,8 +38,10 @@ import {
 import { PRODUCTS, AUCTIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
+import { calculateEstimatedPricing } from '../../utils/pricingEngine'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
+import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import type { Auction, Order, Product } from '../../types'
 import { ordersApi, type CreateOrderRequest, type CreateOrderResponse, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
@@ -92,27 +94,33 @@ export function HomePage() {
     useEffect(() => {
         let mounted = true
         setLoadingAuctions(true)
-        auctionsApi.getAuctions({
-            status: 'all',
-            sortBy: 'ending-soon',
-            limit: 8,
-            extraAuctions: createdAuctions,
-            reviews: auctionReviews,
-        })
-            .then((response) => {
-                if (!mounted) return
-                setHomeAuctions(response.items.filter((auction) =>
-                    ['active', 'scheduled'].includes(auction.status) && auction.product?.images?.[0],
-                ))
+        const refreshAuctions = () => {
+            auctionsApi.getAuctions({
+                status: 'all',
+                sortBy: 'ending-soon',
+                limit: 8,
+                extraAuctions: createdAuctions,
+                reviews: auctionReviews,
             })
-            .catch(() => {
-                if (mounted) setHomeAuctions([])
-            })
-            .finally(() => {
-                if (mounted) setLoadingAuctions(false)
-            })
+                .then((response) => {
+                    if (!mounted) return
+                    setHomeAuctions(response.items.filter((auction) =>
+                        ['active', 'scheduled'].includes(auction.status) && auction.product?.images?.[0],
+                    ))
+                })
+                .catch(() => {
+                    if (mounted) setHomeAuctions([])
+                })
+                .finally(() => {
+                    if (mounted) setLoadingAuctions(false)
+                })
+        }
+        refreshAuctions()
+        // Trang chủ dùng cùng Auction API và làm mới status theo chu kỳ scheduler.
+        const refreshTimer = window.setInterval(refreshAuctions, 5000)
         return () => {
             mounted = false
+            window.clearInterval(refreshTimer)
         }
     }, [auctionReviews, createdAuctions])
 
@@ -374,7 +382,13 @@ export function HomePage() {
                     {loadingAuctions ? (
                         <div className="nexus-card py-10 text-center text-sm text-gray-500" role="status">
                             <div className="flex justify-center mb-2">
-                                <Spinner size={18} color="#64748b" />
+                                <div
+                                    className="spinner-border text-primary"
+                                    style={{ width: '2rem', height: '2rem', color: '#ee4d2d' }}
+                                    role="status"
+                                >
+                                    <span className="visually-hidden">Loading...</span>
+                                </div>
                             </div>
                             {tr(lang, 'loadingAuctions')}
                         </div>
@@ -673,7 +687,13 @@ export function CartPage() {
         return (
             <BuyerLayout>
                 <div className="flex flex-col items-center justify-center py-24 space-y-4">
-                    <Spinner size={36} color="#ee4d2d" />
+                    <div
+                        className="spinner-border text-primary"
+                        style={{ width: '2.5rem', height: '2.5rem', color: '#ee4d2d' }}
+                        role="status"
+                    >
+                        <span className="visually-hidden">Loading...</span>
+                    </div>
                     <p className="text-gray-500 text-sm font-medium animate-pulse">
                         {lang === 'en'
                             ? 'Loading cart from server...'
@@ -730,13 +750,20 @@ export function CartPage() {
         )
     }
 
-    // Tính toán tổng tiền an toàn dựa trên API response (Accept Criteria 3)
+    // Chức năng: Động cơ tính giá tạm tính phía Frontend (Client-side Estimated Pricing)
+    // - Tính chiết khấu mua số lượng cùng một nhà bán/nhà sản xuất (Merchant Bulk Discount)
+    // - Tính khuyến mãi nhóm ngành hàng (ví dụ: mua cua giảm 10%, tôm giảm 15%)
+    // - Kiểm tra phụ phí / điều phối giờ cao điểm (Peak-hour surcharge)
+    // - Áp dụng Voucher toàn sàn
+    // Quy tắc: FE chỉ tính tạm để hiển thị, BE sẽ tính toán độc lập tại thời điểm thanh toán
     const items = cart?.items || []
-    const subtotal = cart?.subtotal || 0
-    const discount = appliedVoucher ? subtotal * 0.1 : cart?.discountAmount || 0
-    const shipping = cart?.shippingFee || (subtotal >= 100 ? 0 : 8.99)
-    const tax = cart?.taxAmount || (subtotal - discount) * 0.08
-    const total = subtotal - discount + shipping + tax
+    const pricing = calculateEstimatedPricing(items, appliedVoucher)
+    const subtotal = pricing.baseSubtotal || cart?.subtotal || 0
+    const discount = pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
+    const shipping = cart?.shippingFee !== undefined && cart.shippingFee > 0 ? cart.shippingFee : pricing.estimatedShipping
+    const tax = pricing.estimatedTax
+    const peakHourFee = pricing.peakHourFee
+    const total = Math.max(0, subtotal - discount + shipping + tax + peakHourFee)
 
     return (
         <BuyerLayout>
@@ -857,6 +884,18 @@ export function CartPage() {
                         <div className="space-y-2.5 text-sm">
                             {[
                                 [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
+                                ...(pricing.merchantVolumeDiscount > 0
+                                    ? [[lang === 'en' ? 'Shop Bulk Discount' : 'Ưu đãi mua nhiều cùng Shop', `-${formatCurrency(pricing.merchantVolumeDiscount, lang)}`]]
+                                    : []),
+                                ...(pricing.categoryDiscount > 0
+                                    ? [[lang === 'en' ? 'Category Promotion' : 'Khuyến mãi ngành hàng', `-${formatCurrency(pricing.categoryDiscount, lang)}`]]
+                                    : []),
+                                ...(pricing.voucherDiscount > 0
+                                    ? [[tr(lang, 'discount') + ' (Voucher)', `-${formatCurrency(pricing.voucherDiscount, lang)}`]]
+                                    : []),
+                                ...(peakHourFee > 0
+                                    ? [[lang === 'en' ? 'Peak Hour Surcharge' : 'Phụ phí giờ cao điểm', `+${formatCurrency(peakHourFee, lang)}`]]
+                                    : []),
                                 [
                                     tr(lang, 'shipping'),
                                     shipping === 0
@@ -864,9 +903,6 @@ export function CartPage() {
                                         : formatCurrency(shipping, lang),
                                 ],
                                 [tr(lang, 'tax'), formatCurrency(tax, lang)],
-                                ...(discount > 0
-                                    ? [[tr(lang, 'discount'), `-${formatCurrency(discount, lang)}`]]
-                                    : []),
                             ].map(([k, v]) => (
                                 <div key={k} className="flex justify-between text-gray-600">
                                     <span>{k}</span>
@@ -874,7 +910,9 @@ export function CartPage() {
                                         className={
                                             String(v).startsWith('-')
                                                 ? 'text-success font-semibold'
-                                                : ''
+                                                : String(v).startsWith('+')
+                                                  ? 'text-amber-600 font-semibold'
+                                                  : ''
                                         }
                                     >
                                         {v}
@@ -886,6 +924,14 @@ export function CartPage() {
                                 <span className="text-primary">{formatCurrency(total, lang)}</span>
                             </div>
                         </div>
+
+                        {/* Banner thông báo giờ cao điểm (nếu có) */}
+                        {pricing.isPeakHour && (
+                            <div className="mt-3 p-2 bg-amber-50 border border-amber-200/60 rounded-lg text-[11px] text-amber-800 flex items-center gap-1.5">
+                                <Clock size={12} className="text-amber-600 shrink-0" />
+                                <span>{pricing.peakHourMessage}</span>
+                            </div>
+                        )}
                     </div>
 
                     <div className="nexus-card p-4">
@@ -2066,10 +2112,8 @@ export function CheckoutPage() {
                     </div>
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
                         {(() => {
-                            const subtotal = cartItems.reduce(
-                                (acc, i) => acc + i.unitPrice * i.quantity,
-                                0,
-                            )
+                            const pricing = calculateEstimatedPricing(cartItems, null)
+                            const subtotal = pricing.baseSubtotal
                             const shippingFee =
                                 shipping === 'GHN'
                                     ? lang === 'vi'
@@ -2078,18 +2122,33 @@ export function CheckoutPage() {
                                     : lang === 'vi'
                                       ? 35000
                                       : 2.49
-                            const total = subtotal > 0 ? subtotal + shippingFee : 0
+                            const discount = pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
+                            const total = Math.max(0, subtotal - discount + shippingFee + pricing.estimatedTax + pricing.peakHourFee)
+
                             return [
                                 [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
+                                ...(pricing.merchantVolumeDiscount > 0
+                                    ? [[lang === 'en' ? 'Shop Bulk Discount' : 'Ưu đãi mua nhiều cùng Shop', `-${formatCurrency(pricing.merchantVolumeDiscount, lang)}`]]
+                                    : []),
+                                ...(pricing.categoryDiscount > 0
+                                    ? [[lang === 'en' ? 'Category Promotion' : 'Khuyến mãi ngành hàng', `-${formatCurrency(pricing.categoryDiscount, lang)}`]]
+                                    : []),
+                                ...(pricing.voucherDiscount > 0
+                                    ? [[tr(lang, 'discount'), `-${formatCurrency(pricing.voucherDiscount, lang)}`]]
+                                    : []),
+                                ...(pricing.peakHourFee > 0
+                                    ? [[lang === 'en' ? 'Peak Hour Surcharge' : 'Phụ phí giờ cao điểm', `+${formatCurrency(pricing.peakHourFee, lang)}`]]
+                                    : []),
                                 [tr(lang, 'shipping'), formatCurrency(shippingFee, lang)],
+                                [tr(lang, 'tax'), formatCurrency(pricing.estimatedTax, lang)],
                                 [tr(lang, 'total'), formatCurrency(total, lang)],
-                            ].map(([k, v], i) => (
+                            ].map(([k, v], i, arr) => (
                                 <div
                                     key={k}
-                                    className={`flex justify-between ${i === 2 ? 'font-bold text-base border-t border-border pt-2 mt-2 text-primary' : 'text-gray-600'}`}
+                                    className={`flex justify-between ${i === arr.length - 1 ? 'font-bold text-base border-t border-border pt-2 mt-2 text-primary' : 'text-gray-600'}`}
                                 >
                                     <span>{k}</span>
-                                    <span>{v}</span>
+                                    <span className={String(v).startsWith('-') ? 'text-success font-medium' : ''}>{v}</span>
                                 </div>
                             ))
                         })()}
@@ -2736,7 +2795,13 @@ export function OrderHistoryPage() {
                 <div className="p-4 sm:p-6">
                     {loading ? (
                         <div className="py-12 text-center text-gray-400">
-                            <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-2" />
+                            <div
+                                className="spinner-border text-primary mb-2"
+                                style={{ color: '#ee4d2d' }}
+                                role="status"
+                            >
+                                <span className="visually-hidden">Loading...</span>
+                            </div>
                             <p>
                                 {lang === 'en'
                                     ? 'Loading orders...'
@@ -2977,7 +3042,13 @@ export function OrderDetailPage() {
         return (
             <BuyerLayout>
                 <div className="py-20 text-center text-gray-500">
-                    <div className="inline-block animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mb-3" />
+                    <div
+                        className="spinner-border text-primary mb-3"
+                        style={{ color: '#ee4d2d' }}
+                        role="status"
+                    >
+                        <span className="visually-hidden">Loading...</span>
+                    </div>
                     <p>
                         {lang === 'en'
                             ? 'Loading order details...'
@@ -3342,6 +3413,10 @@ export function OrderDetailPage() {
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'payment')}</h3>
                         <p className="text-sm text-gray-700">{order.paymentMethod}</p>
+                        {/* Winner dùng orderId từ API, server quyết định quyền/hạn/kho và không lấy giá từ màn hình. */}
+                        {order.isAuctionOrder && order.status === 'PENDING_PAYMENT' && (
+                            <WinnerPaymentButton orderId={order.id} />
+                        )}
                         <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
                             <span className="text-xs text-gray-500">
                                 {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}

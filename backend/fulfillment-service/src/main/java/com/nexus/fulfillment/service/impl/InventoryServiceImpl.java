@@ -1050,7 +1050,8 @@ public class InventoryServiceImpl implements InventoryService {
     @Transactional
     public int autoReleaseExpiredReservations() {
         Instant now = Instant.now();
-        List<InventoryReservation> expiredList = reservationRepository.findByStatusAndExpiresAtBefore(
+        // Chỉ đọc ID trước khóa: entity PENDING nạp sớm có thể bị cache và nhả nhầm phiếu callback vừa CONFIRMED.
+        List<UUID> expiredList = reservationRepository.findExpiredIds(
                 ReservationStatus.PENDING,
                 now
         );
@@ -1062,10 +1063,10 @@ public class InventoryServiceImpl implements InventoryService {
         log.info("Phát hiện {} phiếu giữ hàng quá hạn, tiến hành tự động hoàn kho...", expiredList.size());
         int count = 0;
 
-        for (InventoryReservation reservation : expiredList) {
+        for (UUID reservationId : expiredList) {
             try {
                 // Khóa lại dòng phiếu để tránh xung đột với request thanh toán đồng thời
-                InventoryReservation lockedRes = reservationRepository.findByIdForUpdate(reservation.getId())
+                InventoryReservation lockedRes = reservationRepository.findByIdForUpdate(reservationId)
                         .orElse(null);
 
                 if (lockedRes != null && lockedRes.getStatus() == ReservationStatus.PENDING) {
@@ -1073,7 +1074,7 @@ public class InventoryServiceImpl implements InventoryService {
                     count++;
                 }
             } catch (Exception ex) {
-                log.error("Lỗi khi tự động hoàn kho phiếu giữ hàng {}: {}", reservation.getId(), ex.getMessage(), ex);
+                log.error("Lỗi khi tự động hoàn kho phiếu giữ hàng {}: errorType={}", reservationId, ex.getClass().getSimpleName());
             }
         }
 

@@ -1,7 +1,7 @@
 import { api } from './client'
 import type { ApiResponse } from './client'
 
-/** Kết quả DB sau IPN; EXPIRED do backend tính theo hạn URL, chưa phải kết luận thất bại/đã thu tiền. */
+/** Kết quả DB sau IPN; PROCESSING chờ kho, REQUIRES_REVIEW đã thu tiền nhưng cần đối soát, không được thanh toán lại. */
 export interface PaymentResult {
     paymentId: string
     orderId: string
@@ -27,11 +27,8 @@ export async function getPayment(id: string): Promise<PaymentResult> {
     return response.data
 }
 
-/**
- * Khởi tạo hoặc lấy lại URL thanh toán VNPAY sandbox cho đơn hàng.
- * POST /api/v1/payments với body { orderId }.
- * Backend tự kiểm tra quyền sở hữu đơn hàng, winner, giá và tính hợp lệ trước khi sinh paymentUrl sandbox.
- */
+/** Khởi tạo/replay payment cho đơn server; chỉ gửi orderId, backend tự xác minh winner, giá, hạn và kho. */
+
 export async function startPayment(orderId: string): Promise<PaymentResult> {
     const response = await api<ApiResponse<PaymentResult>>('/payments', {
         method: 'POST',

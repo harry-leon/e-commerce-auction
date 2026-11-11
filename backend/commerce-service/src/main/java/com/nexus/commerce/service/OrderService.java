@@ -1,7 +1,9 @@
 package com.nexus.commerce.service;
 
 import com.nexus.commerce.dto.request.CancelOrderRequest;
+import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
+import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
 import com.nexus.commerce.dto.response.OrderSummaryResponse;
 import com.nexus.commerce.enums.OrderStatus;
@@ -238,4 +240,32 @@ public interface OrderService {
             UUID currentUserId,
             List<String> userRoles
     );
+
+    /**
+     * Khởi tạo đơn hàng từ kết quả quyết toán phiên đấu giá thành công (SRS §3.5.3 & §3.4.3).
+     *
+     * <p>Chức năng:
+     * <ul>
+     *   <li>Nhận dữ liệu bàn giao từ Auction Service (winnerId, sellerId, finalPrice, skuId, auctionId).</li>
+     *   <li>Lưu trữ snapshot thông tin sản phẩm và giá trúng đấu giá tại thời điểm chốt phiên.</li>
+     *   <li>Tạo đơn hàng sourceType = AUCTION, status = PENDING_PAYMENT, hạn thanh toán 24h.</li>
+     *   <li>Đảm bảo tính lũy nghiệm (Idempotency) tuyệt đối theo auctionId: chỉ tạo đúng 1 order cho 1 phiên thắng.</li>
+     * </ul>
+     *
+     * @param request dữ liệu yêu cầu tạo đơn từ Auction Service
+     * @return kết quả thông tin đơn hàng AuctionOrderResponse
+     */
+    AuctionOrderResponse createAuctionOrder(CreateAuctionOrderRequest request);
+
+    /**
+     * Gắn danh sách mã phiếu giữ kho (reservation IDs) vào đơn hàng.
+     *
+     * <p>Chức năng:
+     * - Lưu các reservationId đã chuyển tiếp từ Fulfillment Service vào bảng liên kết order_reservations.
+     * - Cung cấp dữ liệu cho PaymentService kiểm tra trước khi mở URL VNPAY và cho PaymentInventoryWorker xuất kho.
+     *
+     * @param orderId        Mã đơn hàng Commerce cần gắn phiếu kho
+     * @param reservationIds Danh sách mã phiếu giữ kho từ Fulfillment Service
+     */
+    void attachReservations(UUID orderId, List<UUID> reservationIds);
 }

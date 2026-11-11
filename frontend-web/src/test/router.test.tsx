@@ -75,12 +75,13 @@ it('clears user session on header logout without navigating away from current pa
     expect(holder.current.navigate).not.toHaveBeenCalledWith('login')
 })
 
-it('opens a dashboard directly in the frontend demo without creating a real login session', async () => {
+it('requires a real login when opening a dashboard directly', () => {
     holder.current.user = null
     holder.current.page = 'seller-dashboard'
     holder.current.pageParams = {}
     render(<AppRouter />)
-    await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_SELLER))
+    expect(screen.getByRole('button', { name: 'Login' })).toBeVisible()
+    expect(holder.current.setUser).not.toHaveBeenCalledWith(DEMO_SELLER)
 })
 
 /**
@@ -105,6 +106,14 @@ it('opens Buyer Home with buyer mock user when demo=buyer is requested', async (
     holder.current.pageParams = { demo: 'buyer' }
     render(<AppRouter />)
     await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_BUYER))
+})
+
+it('opens a seller dashboard demo only when demo=seller is explicitly requested', async () => {
+    holder.current.user = null
+    holder.current.page = 'seller-dashboard'
+    holder.current.pageParams = { demo: 'seller' }
+    render(<AppRouter />)
+    await waitFor(() => expect(holder.current.setUser).toHaveBeenCalledWith(DEMO_SELLER))
 })
 
 const pages = [
