@@ -70,10 +70,11 @@ app:
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.
+# Cấu hình eureka.client.service-url.defaultZone để client kết nối đúng Eureka Server trong mạng Docker.
 eureka:
   client:
     enabled: ${EUREKA_ENABLED:false}
-  service-url:
-    defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
   instance:
     prefer-ip-address: true
