@@ -127,4 +127,25 @@ describe('API integration', () => {
         expect(fetcher).toHaveBeenCalledTimes(1)
         expect(fetcher.mock.calls[0][1].headers.has('Authorization')).toBe(false)
     })
+    /**
+     * Tình huống: Khách chưa có phiên (chưa đăng nhập hoặc refresh đã thất bại với 400 AUTH_REFRESH_TOKEN_EXPIRED).
+     * Bảo vệ: Khi các request nền (như polling đấu giá định kỳ) gặp 401, không liên tục gọi POST /auth/refresh
+     * gây tràn log lỗi ở Console và tăng tải Gateway vô ích.
+     */
+    it('does not repeatedly attempt token refresh when a guest has no active session', async () => {
+        saveSession(null)
+        const fetcher = vi
+            .fn()
+            .mockResolvedValue(
+                new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 401 }),
+            )
+        vi.stubGlobal('fetch', fetcher)
+        await expect(api('/auctions?sort=ending_soon')).rejects.toThrow()
+        await expect(api('/auctions?sort=ending_soon')).rejects.toThrow()
+        // Mỗi lần gọi api chỉ tạo đúng 1 request tới endpoint chính, tuyệt đối không gọi tới /auth/refresh
+        expect(fetcher).toHaveBeenCalledTimes(2)
+        expect(fetcher.mock.calls.every(([url]) => !String(url).includes('/auth/refresh'))).toBe(
+            true,
+        )
+    })
 })
