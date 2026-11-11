@@ -686,29 +686,81 @@ export function AlertBanner({
 }
 
 // ─── CountdownTimer ───────────────────────────────────────────────────────────
-export function CountdownTimer({ endTime, large }: { endTime: string; large?: boolean }) {
-    const [remaining, setRemaining] = useState(0)
+/**
+ * Component đếm ngược thời gian phiên đấu giá (CountdownTimer).
+ * Chức năng: Đếm ngược từng giây đến mốc endTime; tự động cập nhật mốc đếm khi phiên được gia hạn
+ *            (anti-sniping extension), dừng đếm khi hết giờ và kích hoạt callback onEnd.
+ * Đầu vào:
+ *   - endTime: Chuỗi ISO-8601 thời điểm kết thúc phiên đấu giá.
+ *   - large: Hiển thị dạng thẻ số to (màn hình chi tiết) hay định dạng nhỏ gọn (danh sách).
+ *   - onEnd: Callback kích hoạt khi thời gian còn lại chạm mốc 0.
+ * Kết quả: Render khối thời gian trực quan (Ngày, Giờ, Phút, Giây) tự động đếm lùi mỗi 1000ms.
+ * Luồng xử lý:
+ *   1. Tính toán số giây còn lại: (endTime - Date.now()) / 1000.
+ *   2. Chạy setInterval 1000ms để cập nhật state remaining.
+ *   3. Khi remaining <= 0: Dừng interval, chốt 0 và kích hoạt onEnd duy nhất một lần.
+ *   4. Khi prop endTime thay đổi: Hủy interval cũ, tính toán mốc mới và tiếp tục đếm lùi.
+ * Quy tắc: Không hiển thị số âm (Math.max(0, ...)); tự động pad số có 2 chữ số.
+ * Lỗi & giới hạn: Phụ thuộc vào đồng hồ hệ thống client; backend vẫn là nguồn chân lý chốt phiên.
+ */
+export function CountdownTimer({
+    endTime,
+    large,
+    onEnd,
+}: {
+    endTime: string
+    large?: boolean
+    onEnd?: () => void
+}) {
+    const [remaining, setRemaining] = useState(() =>
+        Math.max(0, Math.floor((new Date(endTime).getTime() - Date.now()) / 1000)),
+    )
+    const onEndRef = useRef(onEnd)
+    onEndRef.current = onEnd
+    const hasEndedRef = useRef(false)
+
     useEffect(() => {
-        const update = () =>
-            setRemaining(Math.max(0, Math.floor((new Date(endTime).getTime() - Date.now()) / 1000)))
+        hasEndedRef.current = false
+        const update = () => {
+            const diff = Math.max(0, Math.floor((new Date(endTime).getTime() - Date.now()) / 1000))
+            setRemaining(diff)
+            if (diff <= 0) {
+                if (!hasEndedRef.current) {
+                    hasEndedRef.current = true
+                    onEndRef.current?.()
+                }
+            }
+        }
         update()
         const t = setInterval(update, 1000)
         return () => clearInterval(t)
     }, [endTime])
-    const h = Math.floor(remaining / 3600),
-        m = Math.floor((remaining % 3600) / 60),
-        s = remaining % 60
+
+    const d = Math.floor(remaining / 86400)
+    const h = Math.floor((remaining % 86400) / 3600)
+    const m = Math.floor((remaining % 3600) / 60)
+    const s = remaining % 60
     const pad = (n: number) => String(n).padStart(2, '0')
+
     if (large) {
+        const units =
+            d > 0
+                ? [
+                      { v: d, l: 'd' },
+                      { v: h, l: 'h' },
+                      { v: m, l: 'm' },
+                      { v: s, l: 's' },
+                  ]
+                : [
+                      { v: h, l: 'h' },
+                      { v: m, l: 'm' },
+                      { v: s, l: 's' },
+                  ]
         return (
             <div className="flex items-center gap-2">
-                {[
-                    { v: h, l: 'h' },
-                    { v: m, l: 'm' },
-                    { v: s, l: 's' },
-                ].map(({ v, l }, i) => (
+                {units.map(({ v, l }, i) => (
                     <span key={i} className="flex flex-col items-center">
-                        <span className="countdown-digits text-auction bg-auction-light rounded-lg px-3 py-1">
+                        <span className="countdown-digits text-auction bg-auction-light rounded-lg px-3 py-1 font-mono font-bold text-lg">
                             {pad(v)}
                         </span>
                         <span className="text-xs text-gray-500 mt-1">{l}</span>
@@ -719,6 +771,7 @@ export function CountdownTimer({ endTime, large }: { endTime: string; large?: bo
     }
     return (
         <span className="text-auction font-bold text-sm font-mono">
+            {d > 0 ? `${d}d ` : ''}
             {pad(h)}:{pad(m)}:{pad(s)}
         </span>
     )

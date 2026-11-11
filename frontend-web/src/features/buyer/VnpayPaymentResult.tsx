@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getPayment, type PaymentResult } from '../../api/payments'
+import { getPayment, createPaymentAttempt, redirectToGateway, type PaymentResult } from '../../api/payments'
 import { useApp } from '../../context'
 import { Button } from '../../components/UI'
 
@@ -8,12 +8,15 @@ import { Button } from '../../components/UI'
  * Poll tối đa 10 lần, chờ 2 giây giữa các lần; unmount/đổi ID hủy timer và bỏ response cũ.
  * Chỉ hiển thị thành công khi backend đã lưu SUCCESS từ IPN; lỗi mạng/401 không bị đổi thành success giả.
  * EXPIRED dừng poll tự động, báo link hết hạn nhưng vẫn cho kiểm tra IPN đến chậm; không tự hướng dẫn trả tiền lần hai.
+ * Cung cấp tính năng Thử lại thanh toán (Retry Payment) thông qua API backend thật (POST /api/v1/payments).
  */
 export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const { lang, navigate } = useApp()
     const [result, setResult] = useState<PaymentResult | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [refresh, setRefresh] = useState(0)
+    const [retrying, setRetrying] = useState(false)
+    const [retryError, setRetryError] = useState<string | null>(null)
     useEffect(() => {
         let cancelled = false
         let timer: ReturnType<typeof setTimeout> | undefined
@@ -45,6 +48,42 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const success = current?.status === 'SUCCESS'
     const failed = current?.status === 'FAILED' || current?.status === 'CANCELLED'
     const expired = current?.status === 'EXPIRED'
+
+    /**
+     * Thử lại thanh toán qua API backend thật (POST /api/v1/payments).
+     * 1. Chức năng: Khởi tạo hoặc lấy lại URL thanh toán cho đơn hàng hiện tại nếu còn hiệu lực giữ kho.
+     * 2. Đầu vào & kết quả: current.orderId; điều hướng sang cổng paymentUrl thật hoặc hiển thị lỗi từ BE.
+     * 3. Luồng xử lý: Gọi createPaymentAttempt(orderId) -> nhận paymentUrl -> chuyển hướng trình duyệt.
+     * 4. Quy tắc: Không giả lập chuyển trạng thái thành công; mọi kết quả đều theo máy trạng thái backend.
+     */
+    const handleRetry = async () => {
+        if (!current?.orderId) return
+        setRetrying(true)
+        setRetryError(null)
+        try {
+            const attempt = await createPaymentAttempt(current.orderId)
+            if (attempt.paymentUrl) {
+                redirectToGateway(attempt.paymentUrl)
+                return
+            }
+            setRetryError(
+                lang === 'vi'
+                    ? 'Không nhận được đường dẫn thanh toán từ máy chủ.'
+                    : 'Payment gateway URL not received from server.',
+            )
+        } catch (err: unknown) {
+            setRetryError(
+                err instanceof Error
+                    ? err.message
+                    : lang === 'vi'
+                      ? 'Không thể thử lại thanh toán. Đơn hàng có thể đã hết hạn giữ kho.'
+                      : 'Unable to retry payment. Order reservation may have expired.',
+            )
+        } finally {
+            setRetrying(false)
+        }
+    }
+
     return (
         <div className="max-w-lg mx-auto text-center py-12">
             <h1 className="text-2xl font-bold mb-4">
@@ -82,14 +121,26 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                     {error}
                 </p>
             )}
-            {!success && !failed && (
-                <Button variant="primary" onClick={() => setRefresh((value) => value + 1)}>
-                    {lang === 'vi' ? 'Kiểm tra lại' : 'Check again'}
-                </Button>
+            {retryError && (
+                <p role="alert" className="mb-4 text-sm text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
+                    {retryError}
+                </p>
             )}
-            <Button variant="outline" onClick={() => navigate('order-history')}>
-                {lang === 'vi' ? 'Lịch sử đơn hàng' : 'Order history'}
-            </Button>
+            <div className="flex justify-center gap-3 flex-wrap">
+                {!success && !failed && (
+                    <Button variant="primary" onClick={() => setRefresh((value) => value + 1)}>
+                        {lang === 'vi' ? 'Kiểm tra lại' : 'Check again'}
+                    </Button>
+                )}
+                {(failed || expired) && current?.orderId && (
+                    <Button variant="primary" loading={retrying} onClick={handleRetry}>
+                        {lang === 'vi' ? 'Thử lại thanh toán' : 'Retry Payment'}
+                    </Button>
+                )}
+                <Button variant="outline" onClick={() => navigate('order-history')}>
+                    {lang === 'vi' ? 'Lịch sử đơn hàng' : 'Order history'}
+                </Button>
+            </div>
         </div>
     )
 }

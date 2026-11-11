@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
@@ -22,10 +22,15 @@ import {
     Search,
     Filter,
     X,
+    CircleX,
+    CheckCircle,
+    Shield,
+    TrendingUp,
 } from '../../components/UI'
 import { AUCTIONS } from '../../mockData'
 import { auctionsApi } from '../../api/auctions'
-import type { Auction } from '../../types'
+import { readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
+import type { Auction, Order } from '../../types'
 
 // ─── Auction List Page ─────────────────────────────────────────────────────────
 /**
@@ -410,6 +415,10 @@ export function AuctionDetailPage() {
     const [bidError, setBidError] = useState('')
     const [placing, setPlacing] = useState(false)
     const [selectedImageIndex, setSelectedImageIndex] = useState(0)
+    const [isOffline, setIsOffline] = useState(() =>
+        typeof navigator !== 'undefined' ? !navigator.onLine : false,
+    )
+    const [reconnecting, setReconnecting] = useState(false)
 
     // Tải thông tin chi tiết qua API Adapter
     const loadAuctionDetail = useCallback(async () => {
@@ -440,6 +449,123 @@ export function AuctionDetailPage() {
     useEffect(() => {
         loadAuctionDetail()
     }, [loadAuctionDetail])
+
+    /**
+     * Chức năng: Giám sát kết nối mạng (online/offline) và tự động đồng bộ dữ liệu phiên đấu giá khi phục hồi.
+     * Đầu vào: Sự kiện 'online' và 'offline' từ window.
+     * Kết quả: Cập nhật cờ isOffline, đồng bộ lại dữ liệu phiên đấu giá từ server không cần người dùng reload.
+     * Luồng:
+     *   1. Bắt 'offline': Cập nhật state isOffline = true, hiển thị cảnh báo và khóa thao tác đặt giá.
+     *   2. Bắt 'online': Cập nhật state isOffline = false, gọi loadAuctionDetail() để kéo giá chốt và lịch sử mới nhất.
+     */
+    useEffect(() => {
+        const handleOffline = () => {
+            setIsOffline(true)
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'Network connection lost. Live bidding paused.'
+                        : 'Mất kết nối mạng. Đặt giá thầu tạm thời bị tạm dừng.',
+                duration: 5000,
+            })
+        }
+
+        const handleOnline = async () => {
+            setIsOffline(false)
+            setReconnecting(true)
+            showToast({
+                type: 'info',
+                message:
+                    lang === 'en'
+                        ? 'Connection restored. Resyncing latest auction data...'
+                        : 'Đã khôi phục mạng. Đang kết nối lại và đồng bộ dữ liệu...',
+            })
+            try {
+                await loadAuctionDetail()
+                showToast({
+                    type: 'success',
+                    message:
+                        lang === 'en'
+                            ? 'Auction data resynced successfully!'
+                            : 'Đồng bộ dữ liệu phiên đấu giá thành công!',
+                })
+            } finally {
+                setReconnecting(false)
+            }
+        }
+
+        window.addEventListener('offline', handleOffline)
+        window.addEventListener('online', handleOnline)
+        return () => {
+            window.removeEventListener('offline', handleOffline)
+            window.removeEventListener('online', handleOnline)
+        }
+    }, [loadAuctionDetail, lang, showToast])
+
+    /**
+     * Chức năng: Tìm đơn hàng (Order) đã tồn tại nếu người thắng cuộc đã hoàn tất thanh toán cho phiên.
+     * Đầu vào: auction?.id hoặc auction?.orderId từ kho lưu trữ đơn hàng.
+     * Kết quả: Trả về đối tượng Order nếu có hoặc null.
+     */
+    const existingOrder = useMemo(() => {
+        if (!auction) return null
+        const orders = readLocalMockOrders()
+        return orders.find((o) => o.auctionId === auction.id || o.id === auction.orderId) || null
+    }, [auction])
+
+    /**
+     * Chức năng: Xác định mức giá cao nhất mà tài khoản hiện tại đã tham gia đặt giá trong phiên.
+     * Đầu vào: auction?.bids và thông tin tài khoản user.
+     * Kết quả: Mức giá đặt cao nhất dạng number (hoặc 0 nếu chưa từng tham gia).
+     */
+    const userHighestBid = useMemo(() => {
+        if (!auction || !user) return 0
+        const myBids = auction.bids.filter(
+            (b) =>
+                (user.id && b.bidderId === user.id) ||
+                (user.fullName && b.bidderName.toLowerCase() === user.fullName.toLowerCase()),
+        )
+        if (myBids.length === 0) return 0
+        return Math.max(...myBids.map((b) => b.amount))
+    }, [auction, user])
+
+    /**
+     * Chức năng: Xử lý sự kiện khi đồng hồ đếm ngược kết thúc (Countdown Ends).
+     * Luồng xử lý:
+     *   1. Kiểm tra trạng thái nếu đang 'active' thì chuyển sang quyết toán kết thúc phiên.
+     *   2. Gọi auctionsApi.settleAuction(auction.id) để xác định người thắng và trạng thái chốt.
+     *   3. Cập nhật state auction ngay lập tức mà không yêu cầu reload trang.
+     */
+    const handleCountdownEnd = useCallback(async () => {
+        if (!auction || auction.status !== 'active') return
+        try {
+            const settled = await auctionsApi.settleAuction(auction.id)
+            setAuction(settled)
+            showToast({
+                type: 'info',
+                message:
+                    lang === 'en'
+                        ? 'Auction countdown reached zero. Auction settled!'
+                        : 'Phiên đấu giá đã kết thúc và được quyết toán!',
+            })
+        } catch {
+            // Fallback khi settle API gặp sự cố: cập nhật state ended tại client
+            setAuction((prev) => {
+                if (!prev) return prev
+                const sortedBids = [...prev.bids].sort((a, b) => b.amount - a.amount)
+                const highest = sortedBids[0]
+                const reserveMet =
+                    !prev.reservePrice || (highest && highest.amount >= prev.reservePrice)
+                return {
+                    ...prev,
+                    status: 'ended',
+                    winnerId: reserveMet && highest ? highest.bidderId : undefined,
+                    winnerName: reserveMet && highest ? highest.bidderName : undefined,
+                }
+            })
+        }
+    }, [auction, lang, showToast])
 
     // Nếu đang loading, hiển thị skeleton loading state
     if (loading) {
@@ -517,15 +643,71 @@ export function AuctionDetailPage() {
     const isActive = auction.status === 'active'
     const isScheduled = auction.status === 'scheduled'
     const isEnded = ['ended', 'settled', 'cancelled', 'failed'].includes(auction.status)
-    const isWinner = auction.winnerId === user?.id
-    const isHighestBidder = bidPlaced || auction.winnerId === user?.id
     const isSeller = Boolean(user?.id && auction.sellerId === user.id)
 
-    // Đặt giá thầu qua API Adapter
+    // Người dùng đã từng trả giá trong phiên này
+    const hasUserParticipated = bidPlaced || userHighestBid > 0
+
+    // Người dùng hiện tại là người chiến thắng chung cuộc
+    const isWinner =
+        isEnded &&
+        Boolean(
+            user?.id &&
+                (auction.winnerId === user.id ||
+                    (auction.winnerName &&
+                        user.fullName &&
+                        auction.winnerName.toLowerCase() === user.fullName.toLowerCase()) ||
+                    (bidPlaced && !auction.winnerId)),
+        )
+
+    // Người dùng tham gia đặt giá nhưng không thắng (Loser State)
+    const isLoser = isEnded && hasUserParticipated && !isWinner
+
+    // Phiên kết thúc mà không phát sinh bất kỳ lượt đặt giá nào
+    const isNoBids = isEnded && auction.bids.length === 0 && !auction.winnerId
+
+    // Phiên kết thúc nhưng mức giá chưa đạt giá sàn (Reserve Price Not Met)
+    const isReserveNotMet =
+        isEnded &&
+        !isNoBids &&
+        Boolean(auction.reservePrice && auction.currentBid < auction.reservePrice)
+
+    // Người dùng hiện đang dẫn đầu trong lúc phiên đang active
+    const isHighestBidder = bidPlaced || (isActive && Boolean(user?.id && auction.winnerId === user.id))
+
+    /**
+     * Chức năng: Đặt giá thầu cho phiên đấu giá (Place Bid) có tích hợp Anti-sniping.
+     * Luồng:
+     *   1. Validate quyền: Người bán không được tự đặt giá (chk_seller_not_bidder).
+     *   2. Validate giá tối thiểu (minBid) và điểm uy tín người dùng.
+     *   3. Gửi auctionsApi.placeBid(); nếu bid rơi vào cửa sổ phút chót (<=5 phút),
+     *      phiên được tự động gia hạn (res.extended = true, new endTime).
+     *   4. Cập nhật state thời gian kết thúc mới và thông báo toast cảnh báo Anti-sniping.
+     */
     const placeBid = async (amount: number) => {
         if (!isActive) return
 
-        // 1. Kiểm tra không được là người bán của phiên (chk_seller_not_bidder)
+        // 1. Kiểm tra trạng thái mạng: Không cho phép đặt giá khi đang ngoại tuyến
+        if (isOffline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+            setBidError(
+                lang === 'en'
+                    ? 'Cannot place bid while offline. Please check your internet connection.'
+                    : 'Không thể đặt giá khi đang mất mạng. Vui lòng kiểm tra lại kết nối Internet.',
+            )
+            return
+        }
+
+        // 2. Kiểm tra xác thực: Bắt buộc đăng nhập tài khoản trước khi tham gia đấu giá
+        if (!user) {
+            setBidError(
+                lang === 'en'
+                    ? 'Please log in to participate in bidding.'
+                    : 'Vui lòng đăng nhập để tham gia đặt giá.',
+            )
+            return
+        }
+
+        // 3. Kiểm tra không được là người bán của phiên (chk_seller_not_bidder)
         if (isSeller) {
             setBidError(
                 lang === 'en'
@@ -535,7 +717,7 @@ export function AuctionDetailPage() {
             return
         }
 
-        // 2. Kiểm tra mức giá tối thiểu
+        // 4. Kiểm tra mức giá tối thiểu
         if (amount < minBid) {
             setBidError(
                 lang === 'en'
@@ -545,8 +727,8 @@ export function AuctionDetailPage() {
             return
         }
 
-        // 3. Kiểm tra điểm uy tín
-        if ((user?.reputationScore || 0) < 30 && (user?.reputationScore !== undefined)) {
+        // 5. Kiểm tra điểm uy tín
+        if ((user?.reputationScore || 0) < 30 && user?.reputationScore !== undefined) {
             setBidError(tr(lang, 'insufficientReputation'))
             return
         }
@@ -557,7 +739,7 @@ export function AuctionDetailPage() {
         try {
             const res = await auctionsApi.placeBid(auction.id, amount)
             setBidPlaced(true)
-            // Cập nhật state chi tiết phiên đấu giá với lượt bid mới
+            // Cập nhật state chi tiết phiên đấu giá với lượt bid mới và thông tin gia hạn Anti-sniping
             setAuction((prev) => {
                 if (!prev) return prev
                 return {
@@ -567,6 +749,11 @@ export function AuctionDetailPage() {
                     bids: [res.bid, ...prev.bids],
                     winnerId: user?.id || prev.winnerId,
                     winnerName: user?.fullName || prev.winnerName,
+                    endTime: res.endTime || prev.endTime,
+                    extensionCount: res.extended
+                        ? (prev.extensionCount || 0) + 1
+                        : prev.extensionCount,
+                    isExtended: res.extended ? true : prev.isExtended,
                 }
             })
             setCustomBid(String(res.currentBid + auction.minIncrement))
@@ -577,7 +764,16 @@ export function AuctionDetailPage() {
                         ? `Bid of ${formatCurrency(amount, lang)} placed successfully!`
                         : `Đã đặt giá ${formatCurrency(amount, lang)} thành công!`,
             })
-            showToast({ type: 'warning', message: tr(lang, 'antiSniping'), duration: 5000 })
+            if (res.extended) {
+                showToast({
+                    type: 'warning',
+                    message:
+                        lang === 'en'
+                            ? 'Anti-sniping triggered! Auction extended by 5 minutes.'
+                            : 'Kích hoạt Anti-Sniping! Phiên đấu giá được gia hạn thêm 5 phút.',
+                    duration: 6000,
+                })
+            }
         } catch (err) {
             setBidError(
                 err instanceof Error
@@ -785,8 +981,8 @@ export function AuctionDetailPage() {
                 <div className="space-y-4">
                     {/* Trạng thái phiên LIVE */}
                     {isActive && (
-                        <div className="nexus-card p-6 border-orange-200 bg-white shadow-sm">
-                            <div className="flex items-center justify-between gap-2 mb-4">
+                        <div className="nexus-card p-6 border-orange-200 bg-white shadow-sm space-y-4">
+                            <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
                                     <span className="badge badge-orange auction-live">LIVE</span>
                                     <span className="text-sm font-semibold text-gray-700">
@@ -800,7 +996,26 @@ export function AuctionDetailPage() {
                                 </span>
                             </div>
 
-                            <div className="mb-4 bg-orange-50/60 p-4 rounded-xl border border-orange-100">
+                            {/* Banner cảnh báo phiên đã được kích hoạt Anti-sniping gia hạn thêm thời gian */}
+                            {auction.isExtended && (
+                                <div className="p-3 bg-amber-50 rounded-xl border border-amber-300 text-amber-900 flex items-start gap-2.5 text-xs">
+                                    <Clock size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="font-bold">
+                                            {lang === 'en'
+                                                ? `Auction Extended (+${auction.extensionCount || 1} time${(auction.extensionCount || 1) > 1 ? 's' : ''})`
+                                                : `Phiên đã được gia hạn (+${auction.extensionCount || 1} lần)`}
+                                        </p>
+                                        <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                                            {lang === 'en'
+                                                ? 'Anti-sniping protection extended the end time to ensure fair bidding.'
+                                                : 'Quy tắc chống bắn tỉa phút chót đã tự động gia hạn thời gian kết thúc.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="bg-orange-50/60 p-4 rounded-xl border border-orange-100">
                                 <p className="text-xs text-gray-500 font-medium">
                                     {tr(lang, 'currentBid')}
                                 </p>
@@ -814,11 +1029,23 @@ export function AuctionDetailPage() {
                                 </p>
                             </div>
 
-                            <div className="mb-5">
-                                <p className="text-xs text-gray-500 mb-1.5 font-medium">
-                                    {tr(lang, 'timeLeft')}
-                                </p>
-                                <CountdownTimer endTime={auction.endTime} large />
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <p className="text-xs text-gray-500 font-medium">
+                                        {tr(lang, 'timeLeft')}
+                                    </p>
+                                    {auction.isExtended && (
+                                        <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                                            {lang === 'en' ? 'Extended' : 'Đã gia hạn'}
+                                        </span>
+                                    )}
+                                </div>
+                                {/* CountdownTimer tự động cập nhật mỗi giây và gọi onEnd khi hết giờ mà không cần reload */}
+                                <CountdownTimer
+                                    endTime={auction.endTime}
+                                    large
+                                    onEnd={handleCountdownEnd}
+                                />
                             </div>
 
                             {isHighestBidder && (
@@ -862,63 +1089,259 @@ export function AuctionDetailPage() {
                         </div>
                     )}
 
-                    {/* Trạng thái ENDED */}
+                    {/* Trạng thái ENDED: Xử lý hiển thị Winner / Loser / No Bids / Reserve Not Met & Summary */}
                     {isEnded && (
-                        <div className="nexus-card p-6 shadow-sm">
-                            <div className="text-center py-4 space-y-3">
-                                {isWinner ? (
-                                    <>
-                                        <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-                                            <Trophy size={28} />
-                                        </div>
-                                        <h3 className="font-bold text-emerald-700 text-lg">
-                                            {lang === 'en' ? 'Congratulations! You won!' : 'Chúc mừng! Bạn đã thắng phiên đấu giá!'}
+                        <div className="nexus-card p-6 shadow-sm space-y-4">
+                            {/* 1. WINNER STATE: Người dùng thắng đấu giá */}
+                            {isWinner && (
+                                <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-50 to-emerald-100/60 border-2 border-emerald-300 text-center space-y-3">
+                                    <div className="w-16 h-16 bg-emerald-500 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
+                                        <Trophy size={32} />
+                                    </div>
+                                    <div>
+                                        <span className="badge badge-green text-xs font-bold px-3 py-1">
+                                            {lang === 'en' ? 'WINNER' : 'CHIẾN THẮNG'}
+                                        </span>
+                                        <h3 className="font-black text-emerald-950 text-xl mt-2">
+                                            {lang === 'en'
+                                                ? 'Congratulations! You Won This Auction!'
+                                                : 'Chúc mừng! Bạn đã thắng phiên đấu giá!'}
                                         </h3>
-                                        <p className="text-2xl font-black text-gray-900">
-                                            {formatCurrency(auction.currentBid, lang)}
+                                        <p className="text-xs text-emerald-800 mt-1">
+                                            {lang === 'en'
+                                                ? 'You placed the winning bid for this product.'
+                                                : 'Bạn đã đưa ra mức giá trả cao nhất và giành chiến thắng.'}
                                         </p>
+                                    </div>
+
+                                    <div className="bg-white/90 backdrop-blur rounded-xl p-3 border border-emerald-200">
+                                        <span className="text-xs text-emerald-800 font-medium block">
+                                            {lang === 'en' ? 'Winning Final Bid' : 'Giá thắng chung cuộc'}
+                                        </span>
+                                        <span className="text-3xl font-black text-emerald-700 tracking-tight">
+                                            {formatCurrency(auction.currentBid, lang)}
+                                        </span>
+                                    </div>
+
+                                    {/* Điều hướng tạo Order hoặc xem Order đã có theo contract */}
+                                    {existingOrder ? (
+                                        <div className="space-y-2 pt-1">
+                                            <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-800 font-semibold">
+                                                <CheckCircle size={14} className="text-emerald-600" />
+                                                <span>
+                                                    {lang === 'en'
+                                                        ? `Order Created (${existingOrder.orderNo || existingOrder.id})`
+                                                        : `Đơn hàng đã được tạo (${existingOrder.orderNo || existingOrder.id})`}
+                                                </span>
+                                            </div>
+                                            <Button
+                                                variant="primary"
+                                                size="lg"
+                                                className="w-full bg-emerald-600 hover:bg-emerald-700 font-bold shadow-md"
+                                                onClick={() =>
+                                                    navigate('order-detail', { id: existingOrder.id })
+                                                }
+                                            >
+                                                {lang === 'en' ? 'View Order Details' : 'Xem chi tiết đơn hàng'}
+                                            </Button>
+                                        </div>
+                                    ) : (
                                         <Button
                                             variant="primary"
                                             size="lg"
-                                            className="mt-3 w-full bg-emerald-600 hover:bg-emerald-700 font-bold"
+                                            className="w-full bg-emerald-600 hover:bg-emerald-700 font-bold shadow-md"
                                             onClick={() =>
                                                 navigate('auction-payment', {
                                                     auctionId: auction.id,
                                                 })
                                             }
                                         >
-                                            {lang === 'en' ? 'Proceed to Checkout' : 'Thanh toán đơn hàng ngay'}
+                                            {lang === 'en' ? 'Proceed to Order & Checkout' : 'Tiến hành đặt hàng & Thanh toán'}
                                         </Button>
-                                    </>
-                                ) : auction.winnerId ? (
-                                    <>
-                                        <div className="w-12 h-12 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mx-auto">
-                                            <Gavel size={24} />
-                                        </div>
-                                        <h3 className="font-bold text-gray-800">
-                                            {tr(lang, 'auctionEnded')}
-                                        </h3>
-                                        <p className="text-xs text-gray-500">
+                                    )}
+                                </div>
+                            )}
+
+                            {/* 2. LOSER STATE: Người dùng đã tham gia trả giá nhưng bị outbid */}
+                            {isLoser && (
+                                <div className="p-5 rounded-2xl bg-rose-50/70 border border-rose-200 text-center space-y-3">
+                                    <div className="w-14 h-14 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+                                        <CircleX size={28} />
+                                    </div>
+                                    <div>
+                                        <span className="badge badge-red text-xs font-bold px-3 py-1">
+                                            {lang === 'en' ? 'NOT WON' : 'KHÔNG TRÚNG ĐẤU GIÁ'}
+                                        </span>
+                                        <h3 className="font-bold text-gray-900 text-lg mt-2">
                                             {lang === 'en'
-                                                ? `Won by ${auction.winnerName || 'Winner'}`
-                                                : `Người thắng cuộc: ${auction.winnerName || 'Ẩn danh'}`}
-                                        </p>
-                                        <p className="text-2xl font-black text-auction mt-1">
-                                            {formatCurrency(auction.currentBid, lang)}
-                                        </p>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="w-12 h-12 bg-gray-100 text-gray-500 rounded-full flex items-center justify-center mx-auto">
-                                            <AlertTriangle size={24} />
-                                        </div>
-                                        <h3 className="font-bold text-gray-700">
-                                            {lang === 'en'
-                                                ? 'Auction ended — no bids'
-                                                : 'Phiên kết thúc — không có người đặt giá'}
+                                                ? 'You did not win this auction'
+                                                : 'Rất tiếc! Bạn không thắng phiên đấu giá này'}
                                         </h3>
-                                    </>
-                                )}
+                                        <p className="text-xs text-gray-600 mt-1">
+                                            {lang === 'en'
+                                                ? 'Another bidder placed a higher bid before the auction ended.'
+                                                : 'Đã có người tham gia khác đặt mức giá cao hơn trước khi phiên kết thúc.'}
+                                        </p>
+                                    </div>
+
+                                    {/* So sánh giá cao nhất của bạn vs giá chốt */}
+                                    <div className="grid grid-cols-2 gap-2 bg-white p-3 rounded-xl border border-rose-100 text-xs text-left">
+                                        <div>
+                                            <span className="text-gray-500 block">
+                                                {lang === 'en' ? 'Your highest bid' : 'Giá cao nhất của bạn'}
+                                            </span>
+                                            <span className="font-bold text-gray-800 text-sm">
+                                                {formatCurrency(userHighestBid, lang)}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="text-gray-500 block">
+                                                {lang === 'en' ? 'Winning bid' : 'Giá thắng chung cuộc'}
+                                            </span>
+                                            <span className="font-bold text-rose-600 text-sm">
+                                                {formatCurrency(auction.currentBid, lang)}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-[11px] text-gray-500 italic">
+                                        {lang === 'en'
+                                            ? 'Any security deposit or pre-auth hold will be released automatically.'
+                                            : 'Tiền ký quỹ/đặt cọc của bạn (nếu có) sẽ được hoàn trả tự động theo quy chế.'}
+                                    </p>
+
+                                    <Button
+                                        variant="outline"
+                                        size="md"
+                                        className="w-full"
+                                        onClick={() => navigate('auction-list')}
+                                    >
+                                        {lang === 'en' ? 'Explore Other Auctions' : 'Duyệt các phiên đấu giá khác'}
+                                    </Button>
+                                </div>
+                            )}
+
+                            {/* 3. NO BIDS STATE: Phiên kết thúc mà không có ai đặt giá */}
+                            {isNoBids && (
+                                <div className="p-5 rounded-2xl bg-gray-50 border border-gray-200 text-center space-y-3">
+                                    <div className="w-12 h-12 bg-gray-200 text-gray-500 rounded-full flex items-center justify-center mx-auto">
+                                        <AlertTriangle size={24} />
+                                    </div>
+                                    <div>
+                                        <span className="badge badge-gray text-xs font-bold px-3 py-1">
+                                            {lang === 'en' ? 'NO WINNER' : 'CHƯA CÓ NGƯỜI THẮNG'}
+                                        </span>
+                                        <h3 className="font-bold text-gray-800 text-base mt-2">
+                                            {lang === 'en'
+                                                ? 'Auction ended — no bids placed'
+                                                : 'Phiên kết thúc — chưa có người đặt giá'}
+                                        </h3>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {lang === 'en'
+                                                ? 'No valid bids were recorded for this item.'
+                                                : 'Không có lượt trả giá hợp lệ nào trước khi phiên đấu giá khép lại.'}
+                                        </p>
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        size="md"
+                                        className="w-full"
+                                        onClick={() => navigate('auction-list')}
+                                    >
+                                        {lang === 'en' ? 'Browse Live Auctions' : 'Xem các phiên đang diễn ra'}
+                                    </Button>
+                                </div>
+                            )}
+
+                            {/* 4. RESERVE NOT MET STATE: Chưa đạt giá sàn của người bán */}
+                            {isReserveNotMet && (
+                                <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-200 text-center space-y-3">
+                                    <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
+                                        <Shield size={24} />
+                                    </div>
+                                    <div>
+                                        <span className="badge badge-yellow text-xs font-bold px-3 py-1">
+                                            {lang === 'en' ? 'RESERVE NOT MET' : 'CHƯA ĐẠT GIÁ SÀN'}
+                                        </span>
+                                        <h3 className="font-bold text-amber-900 text-base mt-2">
+                                            {lang === 'en'
+                                                ? 'Reserve price was not reached'
+                                                : 'Chưa đạt mức giá sàn của người bán'}
+                                        </h3>
+                                        <p className="text-xs text-amber-800 mt-1">
+                                            {lang === 'en'
+                                                ? 'The highest bid did not meet the seller minimum reserve price.'
+                                                : 'Mức giá đấu cao nhất chưa đạt mức giá bảo lưu tối thiểu đã cam kết.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 5. PUBLIC ENDED STATE: Khách vãng lai / Người dùng không tham gia đặt giá */}
+                            {!isWinner && !isLoser && !isNoBids && !isReserveNotMet && (
+                                <div className="p-5 rounded-2xl bg-gray-50 border border-gray-200 text-center space-y-2">
+                                    <div className="w-12 h-12 bg-gray-200 text-gray-700 rounded-full flex items-center justify-center mx-auto">
+                                        <Gavel size={24} />
+                                    </div>
+                                    <h3 className="font-bold text-gray-900 text-base">
+                                        {tr(lang, 'auctionEnded')}
+                                    </h3>
+                                    <p className="text-xs text-gray-500">
+                                        {lang === 'en'
+                                            ? `Won by ${auction.winnerName || 'Winner'}`
+                                            : `Người thắng cuộc: ${auction.winnerName || 'Ẩn danh'}`}
+                                    </p>
+                                    <p className="text-2xl font-black text-auction mt-1">
+                                        {formatCurrency(auction.currentBid, lang)}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* 6. BẢNG TỔNG KẾT KẾT QUẢ ĐẤU GIÁ (Auction Result Summary) */}
+                            <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/50 space-y-2.5">
+                                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center justify-between">
+                                    <span>{lang === 'en' ? 'Auction Result Summary' : 'Tổng kết kết quả đấu giá'}</span>
+                                    <span className="text-[10px] text-gray-400 font-mono">
+                                        #{auction.id}
+                                    </span>
+                                </h4>
+                                <div className="divide-y divide-gray-100 text-xs">
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Starting Price' : 'Giá khởi điểm'}</span>
+                                        <span className="font-semibold text-gray-800">{formatCurrency(auction.startingPrice, lang)}</span>
+                                    </div>
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Final Price' : 'Giá chốt phiên'}</span>
+                                        <span className="font-bold text-auction">{formatCurrency(auction.currentBid, lang)}</span>
+                                    </div>
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Growth' : 'Mức tăng'}</span>
+                                        <span className="font-bold text-emerald-600 flex items-center gap-1">
+                                            <TrendingUp size={12} />
+                                            +{Math.max(0, (((auction.currentBid - auction.startingPrice) / (auction.startingPrice || 1)) * 100)).toFixed(1)}%
+                                        </span>
+                                    </div>
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Total Bids' : 'Tổng số lượt đặt giá'}</span>
+                                        <span className="font-semibold text-gray-800">{auction.bidCount}</span>
+                                    </div>
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Extensions (Anti-sniping)' : 'Số lần gia hạn'}</span>
+                                        <span className="font-semibold text-gray-800">{auction.extensionCount || 0}</span>
+                                    </div>
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Ended At' : 'Thời gian kết thúc'}</span>
+                                        <span className="font-semibold text-gray-800">
+                                            {new Date(auction.endTime).toLocaleTimeString()} · {new Date(auction.endTime).toLocaleDateString()}
+                                        </span>
+                                    </div>
+                                    <div className="py-1.5 flex justify-between">
+                                        <span className="text-gray-500">{lang === 'en' ? 'Winner' : 'Người thắng'}</span>
+                                        <span className="font-bold text-gray-900">
+                                            {auction.winnerName || (lang === 'en' ? 'No winner' : 'Không có người thắng')}
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -926,7 +1349,47 @@ export function AuctionDetailPage() {
                     {/* Bảng nhập đặt giá thầu (Chỉ hiện khi ACTIVE) */}
                     {isActive && (
                         <div className="nexus-card p-6 shadow-sm space-y-4">
-                            <h3 className="font-bold text-gray-900 text-base">{tr(lang, 'placeBid')}</h3>
+                            <div className="flex items-center justify-between gap-2">
+                                <h3 className="font-bold text-gray-900 text-base">{tr(lang, 'placeBid')}</h3>
+                                {/* Chỉ báo trạng thái kết nối mạng (Live Sync Indicator) */}
+                                <div className="flex items-center gap-1.5 text-xs font-medium">
+                                    {isOffline ? (
+                                        <span className="flex items-center gap-1.5 text-red-600 bg-red-50 border border-red-200 px-2.5 py-0.5 rounded-full">
+                                            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                            <span>{lang === 'en' ? 'Offline' : 'Ngoại tuyến'}</span>
+                                        </span>
+                                    ) : reconnecting ? (
+                                        <span className="flex items-center gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                                            <span>{lang === 'en' ? 'Syncing...' : 'Đang đồng bộ...'}</span>
+                                        </span>
+                                    ) : (
+                                        <span className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                            <span>{lang === 'en' ? 'Live Connected' : 'Kết nối trực tuyến'}</span>
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Cảnh báo khi người dùng ngoại tuyến (Mất mạng) */}
+                            {isOffline && (
+                                <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-red-800 text-xs flex items-start gap-2">
+                                    <AlertTriangle size={15} className="shrink-0 text-red-600 mt-0.5" />
+                                    <div className="flex-1">
+                                        <p className="font-bold">
+                                            {lang === 'en'
+                                                ? 'Network connection lost'
+                                                : 'Mất kết nối mạng Internet'}
+                                        </p>
+                                        <p className="text-[11px] text-red-700 mt-0.5">
+                                            {lang === 'en'
+                                                ? 'Bidding is disabled until connection is restored.'
+                                                : 'Thao tác đặt giá tạm thời bị khóa cho đến khi kết nối mạng được khôi phục.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
 
                             {bidError && (
                                 <AlertBanner
@@ -950,6 +1413,7 @@ export function AuctionDetailPage() {
                                         <button
                                             key={mult}
                                             type="button"
+                                            disabled={isSeller || isOffline}
                                             onClick={() =>
                                                 setCustomBid(
                                                     String(
@@ -958,7 +1422,7 @@ export function AuctionDetailPage() {
                                                     ),
                                                 )
                                             }
-                                            className="py-2 rounded-xl border border-auction/30 bg-orange-50/50 text-auction text-xs font-bold hover:bg-orange-100/70 transition-colors"
+                                            className="py-2 rounded-xl border border-auction/30 bg-orange-50/50 text-auction text-xs font-bold hover:bg-orange-100/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             +{formatCurrency(auction.minIncrement * mult, lang)}
                                         </button>
@@ -970,6 +1434,7 @@ export function AuctionDetailPage() {
                                     type="number"
                                     value={customBid}
                                     onChange={(e) => setCustomBid(e.target.value)}
+                                    disabled={isSeller || isOffline}
                                     helper={
                                         lang === 'en'
                                             ? `Minimum required: ${formatCurrency(minBid, lang)}`
@@ -978,25 +1443,109 @@ export function AuctionDetailPage() {
                                 />
                             </div>
 
-                            <Button
-                                variant="auction"
-                                size="lg"
-                                className="w-full font-bold shadow-md"
-                                loading={placing}
-                                disabled={isSeller}
-                                onClick={() => placeBid(Number(customBid))}
-                            >
-                                <Gavel size={16} />
-                                {tr(lang, 'placeBid')} – {formatCurrency(Number(customBid) || minBid, lang)}
-                            </Button>
-
-                            {isSeller && (
-                                <p className="text-xs text-red-500 text-center">
+                            {/* Kiểm tra và hiển thị nút đặt giá theo vai trò và quyền hạn người dùng */}
+                            {!user ? (
+                                <Button
+                                    variant="primary"
+                                    size="lg"
+                                    className="w-full font-bold shadow-md"
+                                    onClick={() =>
+                                        navigate('login', {
+                                            redirect: 'auction-detail',
+                                            id: auction.id,
+                                        })
+                                    }
+                                >
                                     {lang === 'en'
-                                        ? 'You own this auction and cannot place bids.'
-                                        : 'Bạn là chủ phiên đấu giá này nên không thể tự đặt giá.'}
-                                </p>
+                                        ? 'Log in to Place Bid'
+                                        : 'Đăng nhập để tham gia đặt giá'}
+                                </Button>
+                            ) : isSeller ? (
+                                <div className="space-y-1.5">
+                                    <Button
+                                        variant="auction"
+                                        size="lg"
+                                        className="w-full font-bold shadow-md opacity-60 cursor-not-allowed"
+                                        disabled
+                                    >
+                                        <Gavel size={16} />
+                                        {tr(lang, 'placeBid')} – {formatCurrency(Number(customBid) || minBid, lang)}
+                                    </Button>
+                                    <p className="text-xs text-red-500 text-center font-medium">
+                                        {lang === 'en'
+                                            ? 'You own this auction and cannot place bids (chk_seller_not_bidder).'
+                                            : 'Bạn là người bán của phiên đấu giá này nên không thể tự đặt giá.'}
+                                    </p>
+                                </div>
+                            ) : isOffline ? (
+                                <Button
+                                    variant="auction"
+                                    size="lg"
+                                    className="w-full font-bold shadow-md opacity-60 cursor-not-allowed"
+                                    disabled
+                                >
+                                    <Gavel size={16} />
+                                    {lang === 'en' ? 'Offline — Bidding Paused' : 'Ngoại tuyến — Tạm dừng đặt giá'}
+                                </Button>
+                            ) : (user?.reputationScore || 0) < 30 && user?.reputationScore !== undefined ? (
+                                <div className="space-y-1.5">
+                                    <Button
+                                        variant="auction"
+                                        size="lg"
+                                        className="w-full font-bold shadow-md opacity-60 cursor-not-allowed"
+                                        disabled
+                                    >
+                                        <Gavel size={16} />
+                                        {tr(lang, 'placeBid')} – {formatCurrency(Number(customBid) || minBid, lang)}
+                                    </Button>
+                                    <p className="text-xs text-red-500 text-center font-medium">
+                                        {tr(lang, 'insufficientReputation')}
+                                    </p>
+                                </div>
+                            ) : (
+                                <Button
+                                    variant="auction"
+                                    size="lg"
+                                    className="w-full font-bold shadow-md"
+                                    loading={placing}
+                                    onClick={() => placeBid(Number(customBid))}
+                                >
+                                    <Gavel size={16} />
+                                    {tr(lang, 'placeBid')} – {formatCurrency(Number(customBid) || minBid, lang)}
+                                </Button>
                             )}
+
+                            {/* Nút hỗ trợ đồng bộ thủ công */}
+                            <div className="flex items-center justify-between pt-1 border-t border-gray-100 text-xs text-gray-500">
+                                <span className="text-[11px]">
+                                    {lang === 'en'
+                                        ? 'Real-time synchronization active'
+                                        : 'Đồng bộ trực tuyến theo thời gian thực'}
+                                </span>
+                                <button
+                                    type="button"
+                                    disabled={reconnecting}
+                                    onClick={async () => {
+                                        setReconnecting(true)
+                                        try {
+                                            await loadAuctionDetail()
+                                            setIsOffline(
+                                                typeof navigator !== 'undefined'
+                                                    ? !navigator.onLine
+                                                    : false,
+                                            )
+                                        } finally {
+                                            setReconnecting(false)
+                                        }
+                                    }}
+                                    className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                >
+                                    <span className={reconnecting ? 'animate-spin' : ''}>↻</span>
+                                    <span>
+                                        {lang === 'en' ? 'Sync Prices' : 'Đồng bộ giá'}
+                                    </span>
+                                </button>
+                            </div>
 
                             {/* Thông báo Anti-sniping */}
                             <div className="p-3 bg-amber-50 rounded-xl border border-amber-200/60 text-xs text-amber-800 space-y-1">
@@ -1172,22 +1721,109 @@ export function MyBidsPage() {
 }
 
 // ─── Auction Payment Page ──────────────────────────────────────────────────────
+/**
+ * Chức năng: Màn hình thanh toán và tạo đơn hàng cho phiên đấu giá trúng giải (Auction Settlement Payment).
+ * Đầu vào: pageParams.auctionId, user context, app context.
+ * Kết quả: Tạo bản ghi Order có sourceType: 'AUCTION' và liên kết auctionId, lưu vào hệ thống và chuyển hướng.
+ * Luồng xử lý:
+ *   1. Tìm hoặc tải thông tin phiên đấu giá thắng giải.
+ *   2. Tính toán tổng tiền thanh toán: Winning Bid + Phí vận chuyển + Thuế.
+ *   3. Kiểm tra hạn chót thanh toán (paymentDeadline); nếu quá hạn áp dụng chế tài trừ điểm uy tín.
+ *   4. Khi người dùng bấm "Complete Payment":
+ *      - Tạo bản ghi Order trúng đấu giá đầy đủ.
+ *      - Lưu vào mock store đơn hàng qua writeLocalMockOrders.
+ *      - Điều hướng người dùng sang trang chi tiết đơn hàng (order-detail) hoặc lịch sử đơn (order-history).
+ * Quy tắc & lý do: Đảm bảo tính toàn vẹn contract đấu giá, chuyển hóa quyền trúng đấu giá thành đơn hàng thực tế.
+ */
 export function AuctionPaymentPage() {
-    const { lang, navigate, pageParams, showToast } = useApp()
-    const auction = AUCTIONS.find((a) => a.id === pageParams?.auctionId) || AUCTIONS[3]
+    const { lang, navigate, pageParams, showToast, user } = useApp()
+    const targetAuctionId = String(pageParams?.auctionId || '')
+    const [auction, setAuction] = useState<Auction>(() => {
+        return (
+            auctionsApi.getStoredAuctionById(targetAuctionId) ||
+            AUCTIONS.find((a) => a.id === targetAuctionId) ||
+            AUCTIONS[3]
+        )
+    })
     const deadline = new Date(Date.now() + 3600000 * 20).toISOString()
     const [paying, setPaying] = useState(false)
     const [expired, setExpired] = useState(false)
 
+    // Tải thông tin phiên đấu giá mới nhất từ API Adapter nếu có mã phiên
+    useEffect(() => {
+        if (!targetAuctionId) return
+        auctionsApi.getAuctionById(targetAuctionId).then((data) => {
+            if (data) setAuction(data)
+        }).catch(() => {
+            // Sử dụng fallback nếu không tìm thấy
+        })
+    }, [targetAuctionId])
+
+    /**
+     * Chức năng: Thực hiện quyết toán và hoàn tất đặt hàng phiên đấu giá.
+     * Luồng:
+     *   1. Khởi tạo mã đơn hàng mới ORD-AUC-XXXXXX.
+     *   2. Đóng gói Order với sourceType: 'AUCTION', isAuctionOrder: true, auctionId.
+     *   3. Ghi vào kho đơn hàng localStorage thông qua writeLocalMockOrders.
+     *   4. Điều hướng trực tiếp đến trang chi tiết đơn hàng (order-detail).
+     */
     const pay = async () => {
         setPaying(true)
-        await new Promise((r) => setTimeout(r, 1200))
+        await new Promise((r) => setTimeout(r, 900))
+
+        const newOrderId = `ORD-AUC-${Date.now().toString().slice(-6)}`
+        const finalPrice = auction.currentBid
+        const shippingFee = 5.99
+        const taxFee = Number((finalPrice * 0.08).toFixed(2))
+        const total = Number((finalPrice + shippingFee + taxFee).toFixed(2))
+
+        const auctionOrder: Order = {
+            id: newOrderId,
+            orderNo: newOrderId,
+            buyerId: user?.id || 'usr-buyer-01',
+            buyerName: user?.fullName || 'Winner',
+            sellerId: auction.sellerId,
+            sellerName: auction.sellerName,
+            items: [
+                {
+                    productId: auction.product.id,
+                    productName: lang === 'vi' ? auction.product.nameVi : auction.product.name,
+                    quantity: 1,
+                    unitPrice: finalPrice,
+                    subtotal: finalPrice,
+                    image: auction.product.images?.[0] || '',
+                },
+            ],
+            subtotal: finalPrice,
+            tax: taxFee,
+            discount: 0,
+            shipping: shippingFee,
+            total,
+            status: 'PAID',
+            refundStatus: 'none',
+            paymentStatus: 'held',
+            paymentMethod: 'Credit Card (Auction Settlement)',
+            shippingAddress: '123 Nguyen Hue Street, District 1, Ho Chi Minh City',
+            isAuctionOrder: true,
+            sourceType: 'AUCTION',
+            auctionId: auction.id,
+            paymentDeadline: deadline,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        }
+
+        const currentOrders = readLocalMockOrders()
+        writeLocalMockOrders([auctionOrder, ...currentOrders])
+
         setPaying(false)
         showToast({
             type: 'success',
-            message: lang === 'en' ? 'Payment successful!' : 'Thanh toán thành công!',
+            message:
+                lang === 'en'
+                    ? 'Payment successful! Order has been created.'
+                    : 'Thanh toán thành công! Đơn hàng đấu giá đã được khởi tạo.',
         })
-        navigate('order-history')
+        navigate('order-detail', { id: newOrderId })
     }
 
     return (

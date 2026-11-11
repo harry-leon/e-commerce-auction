@@ -53,8 +53,8 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                 }
             })
             .catch(async () => {
-                // Bước 2: Khi Backend trả lỗi (ví dụ mã đơn mock ORD-... hoặc mạng chậm),
-                // fallback tìm kiếm trong kho lưu trữ cục bộ (localStorage)
+                // Bước 2: Khi Backend trả lỗi (ví dụ mã đơn mock ORD-... trong môi trường dev cục bộ),
+                // fallback tìm kiếm đơn đã lưu trong kho cục bộ
                 try {
                     const fallbackOrder = await ordersApi.getOrderById(orderId)
                     if (!cancelled && fallbackOrder) {
@@ -66,73 +66,9 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                     // Bỏ qua lỗi tìm kiếm cục bộ
                 }
 
-                // Bước 3: Nếu là đơn sandbox ORD-... và URL mang cờ status=success / 00
+                // Tuyệt đối không tự động sinh đơn PAID giả lập khi URL mang cờ status=success/00;
+                // chỉ hiển thị kết quả theo đúng trạng thái đơn hàng đã được xác thực từ Backend.
                 if (!cancelled) {
-                    if (
-                        orderId.startsWith('ORD-') &&
-                        (queryStatus === 'success' || queryStatus === '00')
-                    ) {
-                        const syntheticOrder: Order = {
-                            id: orderId,
-                            orderNo: orderId,
-                            buyerId: user?.id || 'u1',
-                            buyerName: user?.fullName || 'Minh Tran',
-                            sellerId: 'u2',
-                            sellerName: 'TechZone Store',
-                            items: [
-                                {
-                                    productId: 'p1',
-                                    productName:
-                                        lang === 'vi'
-                                            ? 'Đơn hàng mua sắm trực tuyến'
-                                            : 'Online Purchase Order',
-                                    image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100',
-                                    quantity: 1,
-                                    unitPrice: 0,
-                                    subtotal: 0,
-                                },
-                            ],
-                            subtotal: 0,
-                            tax: 0,
-                            discount: 0,
-                            shipping: 0,
-                            total: 0,
-                            status: 'PAID',
-                            refundStatus: 'none',
-                            paymentStatus: 'held',
-                            shippingAddress: '123 Nguyen Hue, District 1, Ho Chi Minh City',
-                            paymentMethod: 'VNPAY Sandbox',
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                            disputeStatus: 'none',
-                            reviewed: false,
-                        }
-                        try {
-                            const localOrders = readLocalMockOrders()
-                            const existingIdx = localOrders.findIndex(
-                                (o) => o.id === orderId || (o as any).orderNo === orderId,
-                            )
-                            if (existingIdx === -1) {
-                                localOrders.unshift(syntheticOrder)
-                            } else {
-                                localOrders[existingIdx].status = 'PAID'
-                                localOrders[existingIdx].paymentStatus = 'held'
-                                if (
-                                    !localOrders[existingIdx].items ||
-                                    localOrders[existingIdx].items.length === 0
-                                ) {
-                                    localOrders[existingIdx].items = syntheticOrder.items
-                                }
-                            }
-                            writeLocalMockOrders(localOrders)
-                        } catch {
-                            // Bỏ qua
-                        }
-                        setOrder(syntheticOrder)
-                        setError(false)
-                        return
-                    }
-
                     setError(true)
                 }
             })

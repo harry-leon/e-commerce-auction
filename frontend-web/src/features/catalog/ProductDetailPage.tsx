@@ -106,6 +106,28 @@ export function ProductDetailPage() {
     const [lightboxOpen, setLightboxOpen] = useState(false)
     const [qty, setQty] = useState(1)
     const [activeTab, setActiveTab] = useState('description')
+    const [selectedSkuId, setSelectedSkuId] = useState<string>('')
+
+    // Tự động chọn SKU đầu tiên còn hoạt động khi dữ liệu sản phẩm tải xong, giữ nguyên SKU đã chọn nếu còn hợp lệ
+    useEffect(() => {
+        if (apiProduct?.skus && apiProduct.skus.length > 0) {
+            setSelectedSkuId((prev) => {
+                if (prev && apiProduct.skus.some((s) => s.id === prev)) {
+                    return prev
+                }
+                const activeSku = apiProduct.skus.find((s) => s.status !== 'INACTIVE') || apiProduct.skus[0]
+                return activeSku?.id || ''
+            })
+        } else {
+            setSelectedSkuId('')
+        }
+    }, [apiProduct])
+
+    // SKU đang được người dùng lựa chọn; fallback về SKU đầu tiên nếu có
+    const selectedSku = (product.skus || []).find((s) => s.id === selectedSkuId) || product.skus?.[0]
+    const currentPrice = selectedSku?.price ?? product.price
+    const currentOriginalPrice = selectedSku?.originalPrice ?? product.originalPrice
+    const currentSkuCode = selectedSku?.skuCode ?? product.sku
 
     // Tải danh sách sản phẩm khác từ Catalog Service backend để làm gợi ý liên quan
     const { data: allProductsEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
@@ -165,14 +187,26 @@ export function ProductDetailPage() {
     const [addingToCart, setAddingToCart] = useState(false)
 
     /**
-     * Thêm sản phẩm vào giỏ hàng:
-     * - Chức năng: Thêm SKU và số lượng đang chọn vào giỏ hàng của Buyer.
-     * - Luồng: Gọi API POST /api/v1/cart/items nếu người dùng đã đăng nhập và có skuId.
-     * - Kết quả: Cập nhật cartCount theo tổng số lượng từ CartResponse, hiển thị toast thông báo.
-     * - Dự phòng: Nếu offline hoặc chưa đăng nhập, cập nhật cartCount cục bộ để duy trì trải nghiệm.
+     * Thêm SKU sản phẩm vào giỏ hàng:
+     * - Chức năng: Thêm đúng SKU được người dùng lựa chọn và số lượng đang chọn vào giỏ hàng của Buyer.
+     * - Đầu vào & kết quả: targetSku.id và số lượng qty; cập nhật số lượng badge giỏ hàng toàn cục (cartCount) và hiển thị toast.
+     * - Luồng xử lý: Nếu đã có session đăng nhập -> gọi API POST /api/v1/cart/items để lưu vào DB Commerce; nếu khách vãng lai -> lưu vào guestCart.
+     * - Quy tắc: Phải chọn đúng SKU biến thể mong muốn (Size/Màu sắc), không ép buộc lấy SKU đầu tiên khi có nhiều SKU.
+     * - Lỗi & giới hạn: Bắt lỗi tồn kho hoặc lỗi mạng từ backend và hiển thị toast thông báo cho người dùng.
      */
     const addToCart = async () => {
-        const skuId = product.skus?.[0]?.id
+        const targetSku = selectedSku || product.skus?.[0]
+        const skuId = targetSku?.id
+        if (!skuId && product.skus && product.skus.length > 0) {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'Please select a product variant (SKU)'
+                        : 'Vui lòng chọn phân loại sản phẩm (SKU)',
+            })
+            return
+        }
         const session = readSession()
         if (session && skuId) {
             try {
@@ -187,18 +221,25 @@ export function ProductDetailPage() {
                             : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
                 })
                 return
-            } catch {
-                // Fallback nếu server lỗi hoặc không phản hồi
+            } catch (err) {
+                showToast({
+                    type: 'error',
+                    message:
+                        lang === 'en'
+                            ? `Failed to add to cart: ${err instanceof Error ? err.message : String(err)}`
+                            : `Thêm vào giỏ hàng thất bại: ${err instanceof Error ? err.message : String(err)}`,
+                })
+                return
             } finally {
                 setAddingToCart(false)
             }
         }
         const guestCart = addGuestCartItem({
             skuId: skuId || product.id,
-            skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
+            skuCode: targetSku?.skuCode || `SKU-${product.id}`,
             productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: productImages[0],
-            unitPrice: product.price,
+            unitPrice: currentPrice,
             quantity: qty,
         })
         setCartCount(guestCart.totalQuantity)
@@ -210,36 +251,52 @@ export function ProductDetailPage() {
     }
 
     /**
-     * Chức năng: Mua ngay sản phẩm đang xem, thêm vào giỏ và chuyển thẳng sang màn hình Thanh toán.
-     */
-    /**
-     * Chức năng: Mua ngay sản phẩm đang xem, đồng bộ vào giỏ hàng backend thật nếu đã đăng nhập và chuyển sang màn hình Checkout.
-     * Đầu vào và kết quả: skuId từ biến thể SKU sản phẩm, số lượng qty; điều hướng sang trang checkout.
+     * Chức năng: Mua ngay sản phẩm và SKU đang xem, đồng bộ vào giỏ hàng backend thật nếu đã đăng nhập và chuyển sang màn hình Checkout.
+     * Đầu vào và kết quả: targetSku.id từ biến thể SKU sản phẩm, số lượng qty; điều hướng sang trang checkout.
      * Luồng xử lý: Nếu đã đăng nhập -> gọi addItemToCart đồng bộ vào Database -> xóa guestCart -> chuyển sang checkout.
      * Quy tắc: Bắt buộc tạo giỏ hàng thật trên server trước khi Checkout để tránh lỗi CART_ITEM_NOT_FOUND.
+     * Lỗi & giới hạn: Bắt lỗi nếu SKU không khả dụng hoặc hết hàng từ Catalog Service.
      */
     const handleBuyNow = async () => {
-        const skuId = product.skus?.[0]?.id || product.id
+        const targetSku = selectedSku || product.skus?.[0]
+        const skuId = targetSku?.id || product.id
+        if (!targetSku?.id && product.skus && product.skus.length > 0) {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? 'Please select a product variant (SKU)'
+                        : 'Vui lòng chọn phân loại sản phẩm (SKU)',
+            })
+            return
+        }
         const session = readSession()
-        if (session && skuId) {
+        if (session && targetSku?.id) {
             try {
                 setAddingToCart(true)
-                await addItemToCart(skuId, qty)
+                await addItemToCart(targetSku.id, qty)
                 clearGuestCart()
                 navigate('checkout')
                 return
-            } catch {
-                // Fallback xuống guestCart nếu API backend lỗi tạm thời
+            } catch (err) {
+                showToast({
+                    type: 'error',
+                    message:
+                        lang === 'en'
+                            ? `Cannot proceed to checkout: ${err instanceof Error ? err.message : String(err)}`
+                            : `Không thể chuyển sang thanh toán: ${err instanceof Error ? err.message : String(err)}`,
+                })
+                return
             } finally {
                 setAddingToCart(false)
             }
         }
         addGuestCartItem({
-            skuId: skuId || product.id,
-            skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
+            skuId: targetSku?.id || product.id,
+            skuCode: targetSku?.skuCode || `SKU-${product.id}`,
             productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: productImages[0],
-            unitPrice: product.price,
+            unitPrice: currentPrice,
             quantity: qty,
         })
         navigate('checkout')
@@ -448,20 +505,56 @@ export function ProductDetailPage() {
 
                     <div className="flex items-baseline gap-3 mb-6">
                         <span className="text-4xl font-black text-primary">
-                            {formatCurrency(product.price, lang)}
+                            {formatCurrency(currentPrice, lang)}
                         </span>
-                        {product.originalPrice && product.originalPrice > product.price && (
+                        {currentOriginalPrice && currentOriginalPrice > currentPrice && (
                             <>
                                 <span className="text-xl text-gray-400 line-through">
-                                    {formatCurrency(product.originalPrice, lang)}
+                                    {formatCurrency(currentOriginalPrice, lang)}
                                 </span>
                                 <span className="badge badge-red">
-                                    -{Math.round((1 - product.price / product.originalPrice) * 100)}
+                                    -{Math.round((1 - currentPrice / currentOriginalPrice) * 100)}
                                     %
                                 </span>
                             </>
                         )}
                     </div>
+
+                    {/* Lựa chọn phân loại SKU sản phẩm khi có nhiều biến thể */}
+                    {product.skus && product.skus.length > 1 && (
+                        <div className="nexus-card p-4 bg-gray-50 mb-5 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm font-semibold text-gray-700">
+                                    {lang === 'en' ? 'Select SKU Variant:' : 'Chọn phân loại hàng (SKU):'}
+                                </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2 pt-1" role="radiogroup" aria-label="SKU variants">
+                                {product.skus.map((s) => {
+                                    const isSelected = (selectedSku?.id || product.skus[0]?.id) === s.id
+                                    return (
+                                        <button
+                                            key={s.id}
+                                            type="button"
+                                            onClick={() => setSelectedSkuId(s.id)}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                                isSelected
+                                                    ? 'border-primary bg-primary text-white shadow-sm'
+                                                    : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+                                            }`}
+                                            aria-checked={isSelected}
+                                            role="radio"
+                                        >
+                                            <span className="font-semibold">{s.attributes || s.skuCode}</span>
+                                            <span className={`text-[11px] ${isSelected ? 'text-white/80' : 'text-gray-500'}`}>
+                                                ({formatCurrency(s.price, lang)})
+                                            </span>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                    )}
+
 
                     {/* Hộp mua hàng: Số lượng, nút Mua ngay, Thêm vào giỏ */}
                     <div className="nexus-card p-5 bg-gray-50 mb-6 space-y-4">

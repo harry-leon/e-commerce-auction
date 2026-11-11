@@ -41,12 +41,22 @@ import { getEffectivePaymentStatus } from '../../payment'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
+import { createPaymentAttempt, redirectToGateway } from '../../api/payments'
 import type { Auction, Order, Product } from '../../types'
-import { ordersApi, type CreateOrderRequest, type CreateOrderResponse, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
+import {
+    ordersApi,
+    type CreateOrderRequest,
+    type CreateOrderResponse,
+    type CheckoutPreviewResponse,
+    readLocalMockOrders,
+    writeLocalMockOrders,
+} from '../../api/orders'
 import { auctionsApi } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
 import {
     readSession,
+    saveSession,
+    ApiClientError,
     errorMessage,
     type ApiCategory,
     type ApiProduct,
@@ -986,23 +996,41 @@ export function CheckoutPage() {
     const [shipping, setShipping] = useState<'GHN' | 'GHTK'>('GHN')
     const [loading, setLoading] = useState(false)
 
-    // Dữ liệu biểu mẫu giao hàng (Step 1)
-    const [shippingData, setShippingData] = useState<ShippingFormData>({
-        fullName: 'Minh Tran',
-        phone: '0901234567',
-        street: '123 Nguyen Hue Street',
-        city: 'Ho Chi Minh City',
-        district: 'District 1',
-        ward: 'Ben Nghe',
+    // Dữ liệu biểu mẫu giao hàng (Step 1) - khôi phục từ bản nháp sessionStorage nếu có
+    const [shippingData, setShippingData] = useState<ShippingFormData>(() => {
+        try {
+            const rawDraft = sessionStorage.getItem('nexus.checkout-draft')
+            if (rawDraft) {
+                const parsed = JSON.parse(rawDraft)
+                if (parsed.shippingData) return parsed.shippingData
+            }
+        } catch {}
+        return {
+            fullName: 'Minh Tran',
+            phone: '0901234567',
+            street: '123 Nguyen Hue Street',
+            city: 'Ho Chi Minh City',
+            district: 'District 1',
+            ward: 'Ben Nghe',
+        }
     })
 
-    // Dữ liệu biểu mẫu thanh toán (Step 3)
-    const [paymentData, setPaymentData] = useState<PaymentFormData>({
-        method: 'CARD',
-        cardNumber: '4242 4242 4242 4242',
-        cardHolder: 'MINH TRAN',
-        expiryDate: '12/28',
-        cvv: '123',
+    // Dữ liệu biểu mẫu thanh toán (Step 3) - khôi phục từ bản nháp sessionStorage nếu có
+    const [paymentData, setPaymentData] = useState<PaymentFormData>(() => {
+        try {
+            const rawDraft = sessionStorage.getItem('nexus.checkout-draft')
+            if (rawDraft) {
+                const parsed = JSON.parse(rawDraft)
+                if (parsed.paymentData) return parsed.paymentData
+            }
+        } catch {}
+        return {
+            method: 'CARD',
+            cardNumber: '4242 4242 4242 4242',
+            cardHolder: 'MINH TRAN',
+            expiryDate: '12/28',
+            cvv: '123',
+        }
     })
 
     // State lưu lỗi kiểm tra dữ liệu biểu mẫu (Accept Criteria 4)
@@ -1018,6 +1046,64 @@ export function CheckoutPage() {
     // Ref chặn click đúp / gửi request lặp ngoài ý muốn (Accept Criteria 4)
     const isSubmittingRef = useRef(false)
     const [cartItems, setCartItems] = useState<CartItemResponse[]>([])
+    // State lưu dữ liệu xem trước tính giá từ Backend (POST /api/v1/orders/checkout/preview)
+    const [previewData, setPreviewData] = useState<CheckoutPreviewResponse | null>(null)
+    const [priceMismatchNotice, setPriceMismatchNotice] = useState<string | null>(null)
+    const [previewLoading, setPreviewLoading] = useState(false)
+
+    /**
+     * Kiểm tra tính giá thực tế và điều kiện đặt hàng từ Backend (POST /api/v1/orders/checkout/preview).
+     * 1. Chức năng: Gửi danh sách SKU và địa chỉ để Commerce Backend tính lại giá live mới nhất từ Catalog DB và kiểm tra tồn kho.
+     * 2. Đầu vào & kết quả: shippingAddress, selectedItemIds; cập nhật previewData (subtotal, shippingFee, tax, total, warnings).
+     * 3. Luồng xử lý:
+     *    - Gọi ordersApi.checkoutPreview().
+     *    - So sánh tổng tạm tính do BE tính toán với tổng tạm tính client đang hiển thị.
+     *    - Nếu có sự chênh lệch hoặc BE trả về warnings (giá SKU thay đổi), hiển thị thông báo giá mới cho Buyer.
+     * 4. Quy tắc & lý do: Không gửi tổng tiền để BE tin tưởng; giá chốt luôn do Catalog và Commerce Backend tính.
+     * 5. Lỗi & giới hạn: Bắt lỗi nếu mạng chậm hoặc endpoint gặp sự cố; không chặn người dùng nhập liệu.
+     */
+    const fetchCheckoutPreview = useCallback(async () => {
+        const fullAddress = `${shippingData.street.trim()}, ${shippingData.ward.trim()}, ${shippingData.district.trim()}, ${shippingData.city.trim()}`
+        if (!fullAddress.trim() || fullAddress.trim().length < 5) return
+
+        const hasLocalId = cartItems.some((item) => !item.id || item.id.startsWith('guest-item-'))
+        const itemIds = hasLocalId ? undefined : cartItems.map((item) => item.id)
+
+        setPreviewLoading(true)
+        try {
+            const preview = await ordersApi.checkoutPreview({
+                shippingAddress: fullAddress,
+                itemIds,
+            })
+            setPreviewData(preview)
+
+            const clientSubtotal = cartItems.reduce((acc, i) => acc + i.unitPrice * i.quantity, 0)
+            const isDiff = Math.abs(preview.subtotal - clientSubtotal) > 0.01
+            const warnings = preview.warnings || []
+
+            if (isDiff || warnings.length > 0) {
+                const warningMsg =
+                    warnings.length > 0
+                        ? warnings.join('; ')
+                        : lang === 'vi'
+                          ? `Giá sản phẩm đã được tính toán lại từ hệ thống: Tạm tính hiển thị (${formatCurrency(clientSubtotal, lang)}) khác với giá hệ thống tính (${formatCurrency(preview.subtotal, lang)}). Đơn hàng sẽ áp dụng giá mới nhất.`
+                          : `Price updated by system: Displayed subtotal (${formatCurrency(clientSubtotal, lang)}) differs from backend calculated price (${formatCurrency(preview.subtotal, lang)}). Latest price will be applied.`
+                setPriceMismatchNotice(warningMsg)
+            } else {
+                setPriceMismatchNotice(null)
+            }
+        } catch {
+            // Không chặn form nếu preview lỗi mạng
+        } finally {
+            setPreviewLoading(false)
+        }
+    }, [shippingData, cartItems, lang])
+
+    useEffect(() => {
+        if (step === 4 && cartItems.length > 0) {
+            void fetchCheckoutPreview()
+        }
+    }, [step, cartItems, fetchCheckoutPreview])
 
     /**
      * Chức năng: Nạp và tự động đồng bộ giỏ hàng trước khi thực hiện Checkout.
@@ -1293,124 +1379,28 @@ export function CheckoutPage() {
             let response: CreateOrderResponse
             try {
                 response = await ordersApi.createOrder(orderPayload, idempotencyKey)
-            } catch (createErr: any) {
-                /**
-                 * Chức năng: Xử lý fallback khi Backend chưa cấu hình merchant VNPAY sandbox
-                 *            (HTTP 503 / PAYMENT_NOT_CONFIGURED / "Chưa cấu hình merchant VNPAY sandbox hợp lệ")
-                 *            hoặc chưa hỗ trợ thanh toán thẻ CARD.
-                 * Đầu vào: orderPayload hiện tại của khách hàng và lỗi createErr từ backend.
-                 * Kết quả: Tạo đơn hàng thực tế vào database thông qua phương thức COD để bảo toàn
-                 *          tồn kho và xóa giỏ hàng, đồng thời chuyển hướng tới Cổng thanh toán Sandbox (/sandbox-payment).
-                 * Luồng xử lý:
-                 *   1. Kiểm tra mã lỗi backend nếu liên quan đến thiếu cấu hình VNPAY hoặc chưa hỗ trợ CARD.
-                 *   2. Thử gọi lại createOrder với paymentMethod 'COD' để hệ thống backend lưu đơn thật, trừ kho thật.
-                 *   3. Trả về paymentUrl dẫn đến '/sandbox-payment' giả lập để Buyer hoàn tất thử nghiệm thanh toán.
-                 *   4. Nếu gọi COD cũng lỗi (ví dụ backend sập), sinh đơn mock nội bộ cho sandbox.
-                 * Quy tắc: Giữ nguyên trải nghiệm người dùng kiểm thử không bị gián đoạn bởi thiếu credential nhà cung cấp.
-                 * Lỗi & giới hạn: Chế độ fallback này phục vụ môi trường dev/staging khi chưa đăng ký merchant VNPAY thật.
-                 */
-                const errMessage = String(createErr?.message || '')
-                const isVnpayUnconfigured =
-                    paymentData.method === 'VNPAY' &&
-                    (createErr?.status === 503 ||
-                        errMessage.includes('Chưa cấu hình') ||
-                        errMessage.includes('PAYMENT_NOT_CONFIGURED') ||
-                        errMessage.includes('merchant'))
+            } catch (createErr: unknown) {
+                // Tuyệt đối không âm thầm tạo COD hoặc chuyển sang thanh toán mô phỏng khi VNPAY lỗi;
+                // ném trực tiếp lỗi ra ngoài để người dùng thấy đúng mã lỗi từ Backend.
+                throw createErr
+            }
 
-                const isCardUnsupported =
-                    paymentData.method === 'CARD' &&
-                    (errMessage.includes('PAYMENT_METHOD_UNSUPPORTED') ||
-                        createErr?.status === 422 ||
-                        createErr?.status === 400)
-
-                if (isVnpayUnconfigured || isCardUnsupported) {
-                    const fallbackKey = typeof crypto !== 'undefined' && crypto.randomUUID
-                        ? crypto.randomUUID()
-                        : 'c0000000-0000-4000-8000-' + String(Date.now()).padStart(12, '0')
-                    try {
-                        const fallbackResponse = await ordersApi.createOrder(
-                            { ...orderPayload, paymentMethod: 'COD' },
-                            fallbackKey,
-                        )
-                        const orderRef = fallbackResponse.id || fallbackResponse.orderNo
-                        const orderTotal = fallbackResponse.total
+            // Nối tạo đơn → Payment Attempt nếu phương thức thanh toán là VNPAY mà chưa có paymentUrl
+            if (paymentData.method === 'VNPAY' && !response.paymentUrl && response.id) {
+                try {
+                    const attempt = await createPaymentAttempt(response.id)
+                    if (attempt?.paymentUrl) {
                         response = {
-                            ...fallbackResponse,
-                            paymentMethod: paymentData.method,
-                            paymentUrl:
-                                paymentData.method === 'VNPAY'
-                                    ? `/sandbox-payment?orderId=${encodeURIComponent(orderRef)}&amount=${orderTotal}&provider=vnpay`
-                                    : undefined,
-                        }
-                    } catch {
-                        // Nếu backend COD cũng không thành công, tạo đơn sandbox đầy đủ để lưu vào LocalStorage
-                        const nowStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-                        const orderRef = `ORD-${nowStr}-${String(Date.now()).slice(-4)}`
-                        const total = cartItems.reduce(
-                            (acc, i) => acc + i.unitPrice * i.quantity,
-                            0,
-                        )
-                        const shippingVal = shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
-                        const currentBuyerId = session?.user?.id || 'u1'
-                        const currentBuyerName = session?.user?.fullName || shippingData.fullName || 'Minh Tran'
-
-                        const fullMockOrder: Order = {
-                            id: orderRef,
-                            orderNo: orderRef,
-                            buyerId: currentBuyerId,
-                            buyerName: currentBuyerName,
-                            sellerId: 'u2',
-                            sellerName: 'TechZone Store',
-                            items: cartItems.map((item) => ({
-                                productId: item.skuId || item.id,
-                                productName: item.productName || 'Sản phẩm',
-                                image: item.thumbnailUrl || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
-                                quantity: Number(item.quantity) || 1,
-                                unitPrice: Number(item.unitPrice) || 0,
-                                subtotal: (Number(item.unitPrice) || 0) * (Number(item.quantity) || 1),
-                            })),
-                            subtotal: total,
-                            tax: 0,
-                            discount: 0,
-                            shipping: shippingVal,
-                            total: total + shippingVal,
-                            status: 'PENDING_PAYMENT',
-                            refundStatus: 'none',
-                            paymentStatus: 'held',
-                            shippingAddress: fullAddress,
-                            paymentMethod: paymentData.method === 'CARD' ? 'Credit Card' : paymentData.method,
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                            disputeStatus: 'none',
-                            reviewed: false,
-                        }
-
-                        // Lưu vào localStorage để cả Buyer Order History lẫn Admin Orders Page đều đọc được
-                        const existingMockOrders = readLocalMockOrders()
-                        existingMockOrders.unshift(fullMockOrder)
-                        writeLocalMockOrders(existingMockOrders)
-
-                        response = {
-                            id: orderRef,
-                            orderNo: orderRef,
-                            status: 'PENDING_PAYMENT',
-                            subtotal: total,
-                            shippingFee: shippingVal,
-                            discount: 0,
-                            total: total + shippingVal,
-                            paymentMethod: paymentData.method,
-                            paymentUrl:
-                                paymentData.method === 'VNPAY'
-                                    ? `/sandbox-payment?orderId=${encodeURIComponent(orderRef)}&amount=${total}&provider=vnpay`
-                                    : undefined,
+                            ...response,
+                            paymentUrl: attempt.paymentUrl,
                         }
                     }
-                } else {
-                    throw createErr
+                } catch (attemptErr: unknown) {
+                    throw attemptErr
                 }
             }
 
-            // Dọn sạch giỏ sau khi đặt hàng thành công
+            // Dọn sạch giỏ và bản nháp checkout sau khi đặt hàng thành công
             if (session) {
                 try {
                     await clearCart()
@@ -1420,6 +1410,11 @@ export function CheckoutPage() {
             }
             clearGuestCart()
             setCartCount(0)
+            try {
+                sessionStorage.removeItem('nexus.checkout-draft')
+            } catch {
+                // Bỏ qua lỗi storage
+            }
 
             // Chuyển hướng đến cổng thanh toán sandbox khi Backend trả về URL hợp lệ (Accept Criteria 3)
             if (paymentData.method === 'VNPAY' || response.paymentUrl) {
@@ -1452,8 +1447,8 @@ export function CheckoutPage() {
                 })
 
                 if (isExternal) {
-                    // Chuyển hướng tới cổng sandbox ngoài (VNPAY sandbox)
-                    window.location.assign(url)
+                    // Chuyển hướng tới cổng sandbox ngoài (VNPAY sandbox) qua redirectToGateway
+                    redirectToGateway(url)
                     return
                 }
 
@@ -1478,12 +1473,42 @@ export function CheckoutPage() {
             })
         } catch (err: unknown) {
             // Xử lý và hiển thị phản hồi Checkout thất bại rõ ràng (Accept Criteria 2 & 5)
-            const msg =
+            let msg =
                 err instanceof Error
                     ? err.message
                     : lang === 'en'
                       ? 'Failed to process checkout. Please try again.'
                       : 'Đặt hàng thất bại. Vui lòng thử lại.'
+
+            /**
+             * Chức năng: Nhận diện và chuẩn hóa lỗi xác thực / hết phiên 401 khi đặt hàng.
+             * Đầu vào: Đối tượng lỗi err bắt được từ ordersApi.createOrder().
+             * Kết quả: Chuyển đổi mã lỗi kỹ thuật 401 thành câu thông báo tiếng Việt có ý nghĩa,
+             *          lưu nháp form thanh toán và dọn dẹp profile giả lập ở navbar.
+             * Quy tắc: Không để thông báo thô "Request failed (401)" làm người dùng bối rối.
+             */
+            const isAuthError =
+                (err instanceof ApiClientError && (err.status === 401 || err.code === 'AUTH_UNAUTHORIZED')) ||
+                msg.includes('401') ||
+                msg.toLowerCase().includes('unauthorized') ||
+                msg.toLowerCase().includes('hết hạn')
+
+            if (isAuthError) {
+                msg =
+                    lang === 'vi'
+                        ? 'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401). Vui lòng đăng nhập lại để hoàn tất đặt hàng.'
+                        : 'Session has expired or is unauthorized (401). Please sign in again to complete checkout.'
+                try {
+                    sessionStorage.setItem(
+                        'nexus.checkout-draft',
+                        JSON.stringify({ shippingData, paymentData })
+                    )
+                } catch {
+                    // Bỏ qua lỗi storage
+                }
+                saveSession(null)
+            }
+
             setCheckoutError(msg)
             showToast({
                 type: 'error',
@@ -1933,11 +1958,35 @@ export function CheckoutPage() {
                                 {tr(lang, 'confirmation')}
                             </h2>
 
+                            {/* Cảnh báo khi giá BE tính khác với giá đang hiển thị */}
+                            {priceMismatchNotice && (
+                                <div className="space-y-2">
+                                    <AlertBanner type="warning" message={priceMismatchNotice} />
+                                </div>
+                            )}
+
+                            {/* Cảnh báo khi Backend thông báo không đủ điều kiện đặt hàng */}
+                            {previewData && !previewData.isOrderable && (
+                                <div className="space-y-2">
+                                    <AlertBanner
+                                        type="error"
+                                        message={
+                                            lang === 'vi'
+                                                ? 'Đơn hàng hiện không đủ điều kiện đặt (hết tồn kho hoặc SKU không khả dụng).'
+                                                : 'Order cannot be placed (insufficient stock or SKU unavailable).'
+                                        }
+                                    />
+                                </div>
+                            )}
+
                             {/* Hiển thị lỗi rõ ràng khi đặt hàng hoặc chuyển hướng thất bại (Accept Criteria 2 & 5) */}
                             {checkoutError && (
                                 <div className="space-y-3">
                                     <AlertBanner type="error" message={checkoutError} />
-                                    {checkoutError.includes('401') && (
+                                    {(checkoutError.includes('401') ||
+                                        checkoutError.includes('hết hạn') ||
+                                        checkoutError.includes('expired') ||
+                                        checkoutError.includes('đăng nhập')) && (
                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
                                             <div>
                                                 <p className="font-bold text-amber-900">
@@ -1945,15 +1994,25 @@ export function CheckoutPage() {
                                                 </p>
                                                 <p className="text-amber-700 mt-0.5">
                                                     {lang === 'vi'
-                                                        ? 'Token xác thực đã hết hạn (15 phút). Vui lòng đăng nhập lại bằng buyer@nexus.vn / Nexus123@ để hoàn tất thanh toán.'
-                                                        : 'Your authentication token has expired. Please sign in again with buyer@nexus.vn / Nexus123@ to complete your payment.'}
+                                                        ? 'Token xác thực đã hết hạn hoặc bạn chưa đăng nhập. Vui lòng đăng nhập lại (tài khoản: buyer@nexus.vn / Nexus123@) để hoàn tất thanh toán mà không mất thông tin đơn hàng.'
+                                                        : 'Your authentication token has expired or you are not signed in. Please sign in (buyer@nexus.vn / Nexus123@) to complete payment without losing order details.'}
                                                 </p>
                                             </div>
                                             <Button
                                                 variant="primary"
                                                 size="sm"
                                                 className="shrink-0"
-                                                onClick={() => navigate('login')}
+                                                onClick={() => {
+                                                    try {
+                                                        sessionStorage.setItem(
+                                                            'nexus.checkout-draft',
+                                                            JSON.stringify({ shippingData, paymentData })
+                                                        )
+                                                    } catch {
+                                                        // Bỏ qua lỗi storage
+                                                    }
+                                                    navigate('login', { redirect: 'checkout', reason: 'expired' })
+                                                }}
                                             >
                                                 {lang === 'vi' ? 'Đăng nhập ngay' : 'Log in now'}
                                             </Button>
@@ -1981,17 +2040,19 @@ export function CheckoutPage() {
                                     [
                                         tr(lang, 'total'),
                                         formatCurrency(
-                                            cartItems.reduce(
-                                                (acc, i) => acc + i.unitPrice * i.quantity,
-                                                0,
-                                            ) +
-                                                (shipping === 'GHN'
-                                                    ? lang === 'vi'
-                                                        ? 55000
-                                                        : 3.99
-                                                    : lang === 'vi'
-                                                      ? 35000
-                                                      : 2.49),
+                                            previewData
+                                                ? previewData.totalAmount
+                                                : cartItems.reduce(
+                                                      (acc, i) => acc + i.unitPrice * i.quantity,
+                                                      0,
+                                                  ) +
+                                                      (shipping === 'GHN'
+                                                          ? lang === 'vi'
+                                                              ? 55000
+                                                              : 3.99
+                                                          : lang === 'vi'
+                                                            ? 35000
+                                                            : 2.49),
                                             lang,
                                         ),
                                     ],
@@ -2018,7 +2079,7 @@ export function CheckoutPage() {
                                     variant="primary"
                                     size="lg"
                                     loading={loading}
-                                    disabled={loading}
+                                    disabled={loading || (previewData !== null && !previewData.isOrderable)}
                                     onClick={placeOrder}
                                     className="flex-1"
                                 >
@@ -2049,7 +2110,14 @@ export function CheckoutPage() {
                                         <p className="text-xs font-semibold line-clamp-1">
                                             {item.productName}
                                         </p>
-                                        <p className="text-xs text-gray-500">x{item.quantity}</p>
+                                        <p className="text-xs text-gray-500">
+                                            {item.skuCode ? (
+                                                <span className="font-mono text-gray-700 mr-1.5">
+                                                    SKU: {item.skuCode}
+                                                </span>
+                                            ) : null}
+                                            x{item.quantity}
+                                        </p>
                                         <p className="text-sm font-bold text-primary mt-0.5">
                                             {formatCurrency(item.unitPrice, lang)}
                                         </p>
@@ -2066,19 +2134,26 @@ export function CheckoutPage() {
                     </div>
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
                         {(() => {
-                            const subtotal = cartItems.reduce(
-                                (acc, i) => acc + i.unitPrice * i.quantity,
-                                0,
-                            )
-                            const shippingFee =
-                                shipping === 'GHN'
-                                    ? lang === 'vi'
-                                        ? 55000
-                                        : 3.99
-                                    : lang === 'vi'
-                                      ? 35000
-                                      : 2.49
-                            const total = subtotal > 0 ? subtotal + shippingFee : 0
+                            const subtotal = previewData
+                                ? previewData.subtotal
+                                : cartItems.reduce(
+                                      (acc, i) => acc + i.unitPrice * i.quantity,
+                                      0,
+                                  )
+                            const shippingFee = previewData
+                                ? previewData.shippingFee
+                                : shipping === 'GHN'
+                                  ? lang === 'vi'
+                                      ? 55000
+                                      : 3.99
+                                  : lang === 'vi'
+                                    ? 35000
+                                    : 2.49
+                            const total = previewData
+                                ? previewData.totalAmount
+                                : subtotal > 0
+                                  ? subtotal + shippingFee
+                                  : 0
                             return [
                                 [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
                                 [tr(lang, 'shipping'), formatCurrency(shippingFee, lang)],
