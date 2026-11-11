@@ -35,9 +35,17 @@ public interface InventoryReservationRepository extends JpaRepository<InventoryR
      */
     List<InventoryReservation> findByStatusAndExpiresAtBefore(ReservationStatus status, Instant cutoffTime);
 
-    /** Chỉ lấy ID ứng viên; không đưa entity PENDING vào persistence context trước khi chờ khóa của callback commit. */
+    /**
+     * Chỉ lấy ID ứng viên quá hạn trước khi khóa; tránh nạp sớm entity PENDING vào JPA cache rồi nhả nhầm phiếu vừa CONFIRMED.
+     */
     @Query("SELECT r.id FROM InventoryReservation r WHERE r.status = :status AND r.expiresAt < :cutoff ORDER BY r.id")
     List<UUID> findExpiredIds(@Param("status") ReservationStatus status, @Param("cutoff") Instant cutoff);
+
+    /**
+     * Tính tổng số lượng đang bị giữ (PENDING) theo inventory_id phục vụ đối soát khớp sổ cái và tồn kho.
+     */
+    @Query("SELECT COALESCE(SUM(r.quantity), 0) FROM InventoryReservation r WHERE r.inventory.id = :inventoryId AND r.status = com.nexus.fulfillment.enums.ReservationStatus.PENDING")
+    Integer sumPendingQuantityByInventoryId(@Param("inventoryId") UUID inventoryId);
 
     /**
      * Tra cứu và khóa dòng một phiếu giữ hàng theo ID để tránh việc nhiều tiến trình cùng release hoặc confirm một lúc.

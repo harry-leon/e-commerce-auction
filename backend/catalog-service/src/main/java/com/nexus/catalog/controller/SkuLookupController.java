@@ -20,4 +20,11 @@ public class SkuLookupController {
     public ApiResponse<SkuLookupService.SkuSnapshot> get(@PathVariable UUID id) {
         return ApiResponse.ok(service.get(id));
     }
+
+    /** Tra cứu snapshot SKU theo mã skuCode phục vụ đối soát kho và quyền sở hữu seller từ Fulfillment. */
+    @Operation(summary = "Lấy SKU snapshot theo mã skuCode")
+    @GetMapping("/api/v1/products/skus/code/{skuCode}")
+    public ApiResponse<SkuLookupService.SkuSnapshot> getByCode(@PathVariable String skuCode) {
+        return ApiResponse.ok(service.getByCode(skuCode));
+    }
 }

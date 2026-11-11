@@ -368,7 +368,7 @@ class InventoryControllerTest {
         UUID warehouseId = UUID.randomUUID();
         InventoryStockResponse stock = new InventoryStockResponse(skuId, warehouseId, "WH_001", 50, 50, 0, 0);
 
-        when(inventoryService.inboundStock(any())).thenReturn(stock);
+        when(inventoryService.inboundStock(any(), any())).thenReturn(stock);
 
         StockInboundRequest req = new StockInboundRequest(skuId, warehouseId, 50, UUID.randomUUID());
 
@@ -398,7 +398,7 @@ class InventoryControllerTest {
         );
         Page<InventoryLedgerResponse> page = new PageImpl<>(List.of(item), PageRequest.of(0, 10), 1);
 
-        when(inventoryService.getLedger(any(), any(), any())).thenReturn(page);
+        when(inventoryService.getLedger(any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(page);
 
         mockMvc.perform(get("/api/v1/inventory/ledger")
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))

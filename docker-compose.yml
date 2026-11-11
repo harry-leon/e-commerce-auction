@@ -222,6 +222,8 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: fulfillment-service
+      # Fulfillment tra cứu snapshot SKU qua HTTP Catalog để kiểm tra quyền sở hữu seller, không đọc chéo DB Catalog.
+      CATALOG_SERVICE_URL: http://catalog-service:8080
       # Dùng Supabase khi cấu hình FULFILLMENT_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${FULFILLMENT_DB_URL:-jdbc:postgresql://postgres:5432/nexus_fulfillment}
       DB_USERNAME: ${FULFILLMENT_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
