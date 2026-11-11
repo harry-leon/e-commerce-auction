@@ -59,7 +59,11 @@ export interface PricingBreakdown {
  * Kiểm tra xem thời điểm hiện tại có thuộc khung giờ cao điểm (Peak Hours) hay không.
  * Khung giờ cao điểm: 11:30 - 13:00 (giờ trưa) và 18:00 - 20:30 (giờ tối).
  */
-export function checkPeakHour(date: Date = new Date()): { isPeak: boolean; label: string; surcharge: number } {
+export function checkPeakHour(date: Date = new Date()): {
+    isPeak: boolean
+    label: string
+    surcharge: number
+} {
     const hours = date.getHours()
     const minutes = date.getMinutes()
     const timeVal = hours * 60 + minutes
@@ -220,11 +224,16 @@ export function calculateEstimatedPricing(
     const estimatedShipping = baseSubtotal >= FREE_SHIP_THRESHOLD_VND ? 0 : 35_000
 
     // 7. Thuế ước tính: BE coi giá đã gồm VAT → FE không cộng thêm thuế (estimatedTax = 0)
-    const netSubtotal = Math.max(0, baseSubtotal - merchantVolumeDiscount - categoryDiscount - voucherDiscount)
+    const netSubtotal = Math.max(
+        0,
+        baseSubtotal - merchantVolumeDiscount - categoryDiscount - voucherDiscount,
+    )
     const estimatedTax = 0
 
     // 8. Tổng thanh toán tạm tính
-    const estimatedTotal = Number((netSubtotal + estimatedShipping + estimatedTax + peakHourFee).toFixed(2))
+    const estimatedTotal = Number(
+        (netSubtotal + estimatedShipping + estimatedTax + peakHourFee).toFixed(2),
+    )
 
     return {
         baseSubtotal,
@@ -240,4 +249,3 @@ export function calculateEstimatedPricing(
         appliedPromotions,
     }
 }
-

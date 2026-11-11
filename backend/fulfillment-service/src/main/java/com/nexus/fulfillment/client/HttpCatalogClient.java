@@ -2,6 +2,7 @@ package com.nexus.fulfillment.client;
 
 import com.nexus.common.exception.ApiException;
 import com.nexus.common.response.ApiResponse;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -17,9 +18,9 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 /**
- * Cài đặt RestClient gọi Catalog Service với timeout hữu hạn (5 giây).
- * Luồng: gọi GET /api/v1/products/skus/{id} hoặc /skus/code/{skuCode} hoặc /products/seller/{sellerId}.
- * Quy tắc: 404 trả Optional.empty(); lỗi mạng hoặc 5xx trả 502 BAD_GATEWAY để tránh bỏ qua kiểm tra quyền sở hữu.
+ * Cài đặt RestClient thống nhất gọi Catalog Service với timeout hữu hạn (5 giây).
+ * Luồng: gọi GET /api/v1/products/skus/{id} hoặc GET /api/v1/products/seller/{sellerId}.
+ * Quy tắc: 404 trả Optional.empty(); response thiếu sellerId hoặc 5xx/lỗi mạng trả 502 BAD_GATEWAY để tránh bỏ qua kiểm tra chủ sở hữu.
  */
 @Component
 public class HttpCatalogClient implements CatalogClient {
@@ -66,14 +67,6 @@ public class HttpCatalogClient implements CatalogClient {
     }
 
     @Override
-    public Optional<SkuOwnershipInfo> findSkuByCode(String skuCode) {
-        if (skuCode == null || skuCode.isBlank()) {
-            return Optional.empty();
-        }
-        return fetchSnapshot("/api/v1/products/skus/code/{skuCode}", skuCode.trim());
-    }
-
-    @Override
     public List<SkuOwnershipInfo> findSkusBySeller(UUID sellerId) {
         if (sellerId == null) {
             return List.of();
@@ -109,8 +102,10 @@ public class HttpCatalogClient implements CatalogClient {
                             boolean active = productActive && "ACTIVE".equalsIgnoreCase(sku.status());
                             collected.add(new SkuOwnershipInfo(
                                     sku.id(),
-                                    sku.skuCode(),
+                                    product.id(),
                                     product.name(),
+                                    sku.price(),
+                                    sku.originalPrice(),
                                     ownerId,
                                     active
                             ));
@@ -139,10 +134,11 @@ public class HttpCatalogClient implements CatalogClient {
                     .uri(uriTemplate, param)
                     .retrieve()
                     .body(new ParameterizedTypeReference<ApiResponse<SkuOwnershipInfo>>() { });
-            if (response == null || !response.success()) {
+            if (response == null || !response.success()
+                    || response.data() == null || response.data().sellerId() == null) {
                 throw catalogInvalidResponse();
             }
-            return Optional.ofNullable(response.data());
+            return Optional.of(response.data());
         } catch (HttpClientErrorException.NotFound ignored) {
             return Optional.empty();
         } catch (RestClientException ex) {
@@ -171,6 +167,6 @@ public class HttpCatalogClient implements CatalogClient {
     private record ProductPayload(UUID id, UUID sellerId, String name, String status, List<SkuPayload> skus) {
     }
 
-    private record SkuPayload(UUID id, String skuCode, String status) {
+    private record SkuPayload(UUID id, BigDecimal price, BigDecimal originalPrice, String status) {
     }
 }

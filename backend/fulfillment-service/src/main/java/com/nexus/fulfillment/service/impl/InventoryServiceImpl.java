@@ -19,14 +19,18 @@ import com.nexus.fulfillment.dto.response.InventoryReconciliationResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
 import com.nexus.fulfillment.entity.Inventory;
 import com.nexus.fulfillment.entity.InventoryLedger;
 import com.nexus.fulfillment.entity.InventoryReservation;
+import com.nexus.fulfillment.entity.SellerSku;
 import com.nexus.fulfillment.entity.Warehouse;
 import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import com.nexus.fulfillment.event.InventoryCheckedEvent;
 import com.nexus.fulfillment.event.InventoryCommittedEvent;
 import com.nexus.fulfillment.event.InventoryReleasedEvent;
@@ -36,9 +40,12 @@ import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.InventoryLedgerSearchRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
+import com.nexus.fulfillment.repository.SellerSkuRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
 import com.nexus.fulfillment.security.InventoryAccessPolicy;
+import com.nexus.fulfillment.service.FulfillmentEventOutboxService;
 import com.nexus.fulfillment.service.InventoryService;
+import com.nexus.fulfillment.service.SellerSkuRegistrar;
 import jakarta.persistence.criteria.Predicate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -50,19 +57,28 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Cài đặt nghiệp vụ quản trị tồn kho, phân quyền seller và vòng đời giữ hàng Checkout / Đấu giá (SRS §3.6.1).
@@ -81,6 +97,11 @@ public class InventoryServiceImpl implements InventoryService {
 
     private static final Logger log = LoggerFactory.getLogger(InventoryServiceImpl.class);
 
+    // Danh sách thuộc tính sắp xếp hợp lệ của entity SellerSku nhằm ngăn lỗi 500 từ Swagger hoặc sort không hợp lệ
+    private static final Set<String> ALLOWED_SELLER_SKU_SORTS = Set.of(
+            "id", "sellerId", "skuId", "skuCode", "status", "createdAt", "updatedAt"
+    );
+
     private final InventoryRepository inventoryRepository;
     private final InventoryReservationRepository reservationRepository;
     private final InventoryLedgerRepository ledgerRepository;
@@ -89,10 +110,12 @@ public class InventoryServiceImpl implements InventoryService {
     private final ApplicationEventPublisher eventPublisher;
     private final CatalogClient catalogClient;
     private final InventoryAccessPolicy accessPolicy;
+    private final SellerSkuRepository sellerSkuRepository;
+    private final SellerSkuRegistrar sellerSkuRegistrar;
+    private final FulfillmentEventOutboxService outboxService;
+    private final TransactionTemplate transactionTemplate;
 
-    /**
-     * Constructor mặc định cho unit test không cần cấu hình CatalogClient hay Spring Security.
-     */
+    /** Constructor 6 tham số mặc định cho unit test không cần CatalogClient, bảo mật seller hoặc outbox. */
     public InventoryServiceImpl(
             InventoryRepository inventoryRepository,
             InventoryReservationRepository reservationRepository,
@@ -109,7 +132,38 @@ public class InventoryServiceImpl implements InventoryService {
                 properties,
                 eventPublisher,
                 emptyCatalogClient(),
-                new InventoryAccessPolicy(emptyCatalogClient())
+                new InventoryAccessPolicy(emptyCatalogClient()),
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    /** Constructor 8 tham số giữ tương thích cho unit test tiêm CatalogClient và InventoryAccessPolicy giả lập. */
+    public InventoryServiceImpl(
+            InventoryRepository inventoryRepository,
+            InventoryReservationRepository reservationRepository,
+            InventoryLedgerRepository ledgerRepository,
+            WarehouseRepository warehouseRepository,
+            FulfillmentProperties properties,
+            ApplicationEventPublisher eventPublisher,
+            CatalogClient catalogClient,
+            InventoryAccessPolicy accessPolicy
+    ) {
+        this(
+                inventoryRepository,
+                reservationRepository,
+                ledgerRepository,
+                warehouseRepository,
+                properties,
+                eventPublisher,
+                catalogClient,
+                accessPolicy,
+                null,
+                null,
+                null,
+                null
         );
     }
 
@@ -125,7 +179,11 @@ public class InventoryServiceImpl implements InventoryService {
             FulfillmentProperties properties,
             ApplicationEventPublisher eventPublisher,
             ObjectProvider<CatalogClient> catalogClientProvider,
-            ObjectProvider<InventoryAccessPolicy> accessPolicyProvider
+            ObjectProvider<InventoryAccessPolicy> accessPolicyProvider,
+            ObjectProvider<SellerSkuRepository> sellerSkuRepositoryProvider,
+            ObjectProvider<SellerSkuRegistrar> sellerSkuRegistrarProvider,
+            ObjectProvider<FulfillmentEventOutboxService> outboxServiceProvider,
+            ObjectProvider<PlatformTransactionManager> transactionManagerProvider
     ) {
         this(
                 inventoryRepository,
@@ -135,13 +193,15 @@ public class InventoryServiceImpl implements InventoryService {
                 properties,
                 eventPublisher,
                 catalogClientProvider != null ? catalogClientProvider.getIfAvailable(InventoryServiceImpl::emptyCatalogClient) : emptyCatalogClient(),
-                accessPolicyProvider != null ? accessPolicyProvider.getIfAvailable() : null
+                accessPolicyProvider != null ? accessPolicyProvider.getIfAvailable() : null,
+                sellerSkuRepositoryProvider != null ? sellerSkuRepositoryProvider.getIfAvailable() : null,
+                sellerSkuRegistrarProvider != null ? sellerSkuRegistrarProvider.getIfAvailable() : null,
+                outboxServiceProvider != null ? outboxServiceProvider.getIfAvailable() : null,
+                transactionManagerProvider != null ? transactionManagerProvider.getIfAvailable() : null
         );
     }
 
-    /**
-     * Constructor mở rộng cho phép test tiêm trực tiếp CatalogClient và InventoryAccessPolicy giả lập.
-     */
+    /** Constructor đầy đủ tham số cho unit test kiểm tra trọn vẹn seller_skus, quyền seller và outbox. */
     public InventoryServiceImpl(
             InventoryRepository inventoryRepository,
             InventoryReservationRepository reservationRepository,
@@ -150,7 +210,11 @@ public class InventoryServiceImpl implements InventoryService {
             FulfillmentProperties properties,
             ApplicationEventPublisher eventPublisher,
             CatalogClient catalogClient,
-            InventoryAccessPolicy accessPolicy
+            InventoryAccessPolicy accessPolicy,
+            @Nullable SellerSkuRepository sellerSkuRepository,
+            @Nullable SellerSkuRegistrar sellerSkuRegistrar,
+            @Nullable FulfillmentEventOutboxService outboxService,
+            @Nullable PlatformTransactionManager transactionManager
     ) {
         this.inventoryRepository = inventoryRepository;
         this.reservationRepository = reservationRepository;
@@ -160,17 +224,16 @@ public class InventoryServiceImpl implements InventoryService {
         this.eventPublisher = eventPublisher;
         this.catalogClient = (catalogClient != null) ? catalogClient : emptyCatalogClient();
         this.accessPolicy = (accessPolicy != null) ? accessPolicy : new InventoryAccessPolicy(this.catalogClient);
+        this.sellerSkuRepository = sellerSkuRepository;
+        this.sellerSkuRegistrar = sellerSkuRegistrar;
+        this.outboxService = outboxService;
+        this.transactionTemplate = transactionManager != null ? new TransactionTemplate(transactionManager) : null;
     }
 
     private static CatalogClient emptyCatalogClient() {
         return new CatalogClient() {
             @Override
             public Optional<SkuOwnershipInfo> findSkuById(UUID skuId) {
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<SkuOwnershipInfo> findSkuByCode(String skuCode) {
                 return Optional.empty();
             }
 
@@ -192,35 +255,48 @@ public class InventoryServiceImpl implements InventoryService {
                 .orElse(null);
 
         if (inventory == null) {
-            return new InventoryStockResponse(skuId, warehouse.getId(), warehouse.getCode(), warehouse.getName(), null, 0, 0, 0, 0);
-        }
-        return toStockResponse(inventory, null);
-    }
-
-    /**
-     * Tra cứu tồn kho của SKU theo mã doanh nghiệp skuCode tại kho chỉ định hoặc kho mặc định.
-     */
-    @Override
-    @Transactional(readOnly = true)
-    public InventoryStockResponse getStockBySkuCode(String skuCode, UUID warehouseId) {
-        CatalogClient.SkuOwnershipInfo sku = resolveSkuByCodeOrThrow(skuCode);
-        Warehouse warehouse = resolveWarehouse(warehouseId);
-        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseId(sku.skuId(), warehouse.getId())
-                .orElse(null);
-        if (inventory == null) {
+            SellerSku ss = (sellerSkuRepository != null) ? sellerSkuRepository.findBySkuId(skuId).orElse(null) : null;
             return new InventoryStockResponse(
-                    sku.skuId(),
+                    skuId,
+                    ss != null ? ss.getId() : null,
+                    ss != null ? ss.getSkuCode() : null,
                     warehouse.getId(),
                     warehouse.getCode(),
                     warehouse.getName(),
-                    sku.skuCode(),
                     0,
                     0,
                     0,
                     0
             );
         }
-        return toStockResponse(inventory, sku.skuCode());
+        return toStockResponse(inventory, null);
+    }
+
+    /**
+     * Tra cứu tồn kho của SKU theo mã nội bộ skuCode (từ seller_skus) tại kho chỉ định hoặc kho mặc định.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public InventoryStockResponse getStockBySkuCode(String skuCode, UUID warehouseId) {
+        SellerSku sellerSku = resolveSellerSkuByCodeOrThrow(skuCode);
+        Warehouse warehouse = resolveWarehouse(warehouseId);
+        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseId(sellerSku.getSkuId(), warehouse.getId())
+                .orElse(null);
+        if (inventory == null) {
+            return new InventoryStockResponse(
+                    sellerSku.getSkuId(),
+                    sellerSku.getId(),
+                    sellerSku.getSkuCode(),
+                    warehouse.getId(),
+                    warehouse.getCode(),
+                    warehouse.getName(),
+                    0,
+                    0,
+                    0,
+                    0
+            );
+        }
+        return toStockResponse(inventory, sellerSku.getSkuCode());
     }
 
     /**
@@ -246,12 +322,28 @@ public class InventoryServiceImpl implements InventoryService {
         for (Inventory row : rows) {
             bySkuId.put(row.getSkuId(), row);
         }
+        Map<UUID, SellerSku> sellerSkusBySkuId = (sellerSkuRepository != null && !distinctSkuIds.isEmpty())
+                ? sellerSkuRepository.findBySkuIdIn(distinctSkuIds).stream()
+                        .collect(Collectors.toMap(SellerSku::getSkuId, ss -> ss, (a, b) -> a))
+                : Map.of();
 
         List<InventoryStockResponse> responses = new ArrayList<>(distinctSkuIds.size());
         for (UUID skuId : distinctSkuIds) {
             Inventory inv = bySkuId.get(skuId);
             if (inv == null) {
-                responses.add(new InventoryStockResponse(skuId, warehouse.getId(), warehouse.getCode(), warehouse.getName(), null, 0, 0, 0, 0));
+                SellerSku ss = sellerSkusBySkuId.get(skuId);
+                responses.add(new InventoryStockResponse(
+                        skuId,
+                        ss != null ? ss.getId() : null,
+                        ss != null ? ss.getSkuCode() : null,
+                        warehouse.getId(),
+                        warehouse.getCode(),
+                        warehouse.getName(),
+                        0,
+                        0,
+                        0,
+                        0
+                ));
             } else {
                 responses.add(toStockResponse(inv, null));
             }
@@ -260,7 +352,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     /**
-     * Liệt kê và lọc tồn kho có phân trang theo SKU, mã skuCode, kho hàng và phạm vi seller.
+     * Liệt kê và lọc tồn kho có phân trang theo SKU, mã skuCode (seller_skus), kho hàng và phạm vi seller.
      * Quy tắc: Seller chỉ nhìn thấy bản ghi tồn kho thuộc các SKU của chính mình; Admin/Support xem toàn hệ thống.
      */
     @Override
@@ -275,14 +367,14 @@ public class InventoryServiceImpl implements InventoryService {
         UUID resolvedSkuId = skuId;
         String resolvedSkuCode = null;
         if (resolvedSkuId == null && skuCode != null && !skuCode.isBlank()) {
-            Optional<CatalogClient.SkuOwnershipInfo> skuOpt = catalogClient.findSkuByCode(skuCode.trim());
+            Optional<SellerSku> skuOpt = findSellerSkuByCode(skuCode);
             if (skuOpt.isEmpty()) {
                 // Kiểm tra phạm vi quyền trước khi trả rỗng để Seller không đoán được thông tin sellerId khác.
                 accessPolicy.resolveReadableSellerSkuScope(sellerId, null);
                 return Page.empty(pageable);
             }
-            resolvedSkuId = skuOpt.get().skuId();
-            resolvedSkuCode = skuOpt.get().skuCode();
+            resolvedSkuId = skuOpt.get().getSkuId();
+            resolvedSkuCode = skuOpt.get().getSkuCode();
         }
 
         List<UUID> allowedSkuIds = accessPolicy.resolveReadableSellerSkuScope(sellerId, resolvedSkuId);
@@ -918,80 +1010,109 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     /**
-     * Nhập thêm hàng hóa vào kho cho SKU và ghi sổ cái INBOUND.
+     * Nhập hàng hóa vào kho theo quy trình HG-S2-6:
+     * xác thực quyền + tồn tại SKU bên Catalog qua HTTP, sinh/tái sử dụng mã skuCode (FSKU-XXXXXXXX) trên seller_skus,
+     * cộng tồn kho tại kho chỉ định, ghi sổ cái INBOUND và lưu sự kiện outbox InventoryInboundCompleted.
+     * Giao tiếp Catalog và đăng ký seller_skus chạy ngoài transaction chính để tránh giữ khóa DB lâu khi gọi mạng
+     * và tránh làm hỏng transaction khi xử lý race condition tạo seller_skus đồng thời.
+     */
+    /**
+     * Nhập thêm hàng hóa vào kho cho SKU và cấp/tái sử dụng skuCode trong seller_skus.
+     * Chạy ngoài transaction tổng để xác thực Catalog trước khi ghi DB và chịu được tranh chấp tạo seller_skus đồng thời.
      */
     @Override
-    @Transactional
     public InventoryStockResponse inboundStock(StockInboundRequest request) {
         return inboundStock(request, null);
     }
 
     /**
-     * Nhập thêm hàng hóa vào kho hỗ trợ kiểm tra quyền sở hữu seller và chống lặp qua idempotencyKey / refId.
+     * Nhập thêm hàng hóa vào kho hỗ trợ kiểm tra quyền sở hữu seller, cấp phát/tái sử dụng seller_skus
+     * và chống lặp qua idempotencyKey / refId.
      *
      * Luồng xử lý:
-     * 1. Phân giải skuId (trực tiếp hoặc qua skuCode từ Catalog Service).
-     * 2. Xác minh quyền thao tác và sở hữu SKU của seller (Admin bỏ qua, Seller bắt buộc sở hữu SKU).
-     * 3. Xác định khóa chống lặp (Idempotency-Key từ header hoặc body, hoặc refId).
-     * 4. Nếu đã có bản ghi INBOUND khớp khóa và số lượng → trả về tồn kho hiện tại, không cộng dồn hai lần.
-     * 5. Nếu cùng khóa nhưng khác SKU/kho/số lượng → từ chối với HTTP 409 ORDER_IDEMPOTENCY_CONFLICT.
-     * 6. Khóa dòng tồn kho, tăng total_qty và ghi nhận sổ cái INBOUND bất biến.
+     * 1. Phân giải skuId (ưu tiên skuId; nếu chỉ có skuCode thì tra cứu trong seller_skus nội bộ).
+     * 2. Xác minh quyền thao tác và sở hữu SKU của seller qua InventoryAccessPolicy + CatalogClient (ngoài transaction DB).
+     * 3. Nếu trùng Idempotency-Key đã lưu trước đó -> trả về tồn kho hiện tại (hoặc 409 nếu sai tham số).
+     * 4. Nếu là lần nhập kho đầu tiên cho skuId -> đăng ký seller_skus qua REQUIRES_NEW (FSKU-XXXXXXXX).
+     * 5. Trong transaction kho: khóa dòng Inventory, tăng total_qty, ghi ledger INBOUND và đẩy outbox InventoryInboundCompleted.
      */
     @Override
-    @Transactional
     public InventoryStockResponse inboundStock(StockInboundRequest request, String headerIdempotencyKey) {
-        ResolvedSku sku = resolveSkuForMutation(request.skuId(), request.skuCode());
-        InventoryAccessPolicy.ActorContext actor = accessPolicy.verifyWriteAccessAndOwnership(sku.skuId());
+        if (sellerSkuRepository == null || sellerSkuRegistrar == null) {
+            throw new IllegalStateException("Chưa cấu hình đầy đủ thành phần seller_skus cho luồng nhập kho");
+        }
+
+        SellerSku existingSellerSku;
+        UUID targetSkuId;
+        if (request.skuId() != null) {
+            targetSkuId = request.skuId();
+            existingSellerSku = sellerSkuRepository.findBySkuId(targetSkuId).orElse(null);
+        } else {
+            existingSellerSku = resolveSellerSkuByCodeOrThrow(request.skuCode());
+            targetSkuId = existingSellerSku.getSkuId();
+        }
+
+        InventoryAccessPolicy.ActorContext actor = accessPolicy.verifyWriteAccessAndOwnership(targetSkuId);
+        UUID ownerSellerId = null;
+        if (existingSellerSku == null) {
+            if (actor.isSellerScoped()) {
+                ownerSellerId = actor.actorId();
+            } else {
+                CatalogClient.SkuOwnershipInfo catalogSku = catalogClient.findSkuById(targetSkuId)
+                        .orElseThrow(() -> new BusinessException(
+                                ErrorCode.SKU_NOT_FOUND,
+                                "Không tìm thấy SKU " + targetSkuId + " trong hệ thống Catalog"
+                        ));
+                ownerSellerId = catalogSku.sellerId();
+            }
+        }
+
         Warehouse warehouse = resolveWarehouse(request.warehouseId());
         String ledgerIdempotencyKey = buildOperationIdempotencyKey("INBOUND", headerIdempotencyKey, request.idempotencyKey());
-
-        if (ledgerIdempotencyKey != null) {
-            Optional<InventoryLedger> existingByKey = ledgerRepository.findByIdempotencyKey(ledgerIdempotencyKey);
-            if (existingByKey.isPresent()) {
-                return verifyInboundReplay(existingByKey.get(), sku.skuId(), warehouse.getId(), request.quantity(), sku.skuCode());
-            }
-        }
-
-        Inventory existingInventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(sku.skuId(), warehouse.getId())
-                .orElse(null);
-
-        if (existingInventory != null && ledgerIdempotencyKey == null && request.refId() != null) {
-            Optional<InventoryLedger> existingByRef = ledgerRepository.findFirstByInventoryIdAndMovementTypeAndRefId(
-                    existingInventory.getId(),
-                    LedgerMovementType.INBOUND,
-                    request.refId()
-            );
-            if (existingByRef.isPresent()) {
-                return verifyInboundReplay(existingByRef.get(), sku.skuId(), warehouse.getId(), request.quantity(), sku.skuCode());
-            }
-        }
-
-        Inventory inventory = (existingInventory != null)
-                ? existingInventory
-                : new Inventory(UUID.randomUUID(), sku.skuId(), warehouse, 0, 0, 0);
-
-        inventory.setTotalQty(inventory.getTotalQty() + request.quantity());
-        inventory = inventoryRepository.save(inventory);
-
         String reason = (request.reason() != null && !request.reason().isBlank())
                 ? request.reason().trim()
                 : "Nhập kho hàng hóa";
 
-        InventoryLedger ledger = new InventoryLedger(
-                UUID.randomUUID(),
-                inventory,
-                LedgerMovementType.INBOUND,
-                request.quantity(),
-                "INBOUND",
-                request.refId(),
-                Instant.now(),
-                ledgerIdempotencyKey,
-                reason,
-                actor.actorId()
-        );
-        ledgerRepository.save(ledger);
+        if (ledgerIdempotencyKey != null) {
+            InventoryStockResponse replay = findInboundReplayIfPresent(
+                    ledgerIdempotencyKey,
+                    targetSkuId,
+                    warehouse.getId(),
+                    request.quantity(),
+                    existingSellerSku != null ? existingSellerSku.getSkuCode() : null
+            );
+            if (replay != null) {
+                return replay;
+            }
+        }
 
-        return toStockResponse(inventory, sku.skuCode());
+        SellerSku sellerSku;
+        boolean firstInbound;
+        if (existingSellerSku != null) {
+            sellerSku = existingSellerSku;
+            firstInbound = false;
+        } else {
+            try {
+                SellerSkuRegistrar.RegistrationResult registration =
+                        sellerSkuRegistrar.registerIfAbsent(targetSkuId, ownerSellerId);
+                sellerSku = registration.sellerSku();
+                firstInbound = registration.newlyCreated();
+            } catch (DataIntegrityViolationException ex) {
+                // Nếu luồng đồng thời vừa tạo seller_skus trước cho cùng skuId, đọc lại bản ghi đã commit.
+                sellerSku = sellerSkuRepository.findBySkuId(targetSkuId)
+                        .orElseThrow(() -> ex);
+                firstInbound = false;
+            }
+        }
+
+        try {
+            return executeInboundInTransaction(
+                    request, sellerSku, warehouse, firstInbound, ledgerIdempotencyKey, reason, actor.actorId());
+        } catch (DataIntegrityViolationException ex) {
+            // Hai luồng đồng thời cùng nhập kho lần đầu tại cùng warehouse: thử lại để khóa dòng inventories đã commit.
+            return executeInboundInTransaction(
+                    request, sellerSku, warehouse, false, ledgerIdempotencyKey, reason, actor.actorId());
+        }
     }
 
     /**
@@ -1130,12 +1251,12 @@ public class InventoryServiceImpl implements InventoryService {
     ) {
         UUID resolvedSkuId = skuId;
         if (resolvedSkuId == null && skuCode != null && !skuCode.isBlank()) {
-            Optional<CatalogClient.SkuOwnershipInfo> skuOpt = catalogClient.findSkuByCode(skuCode.trim());
+            Optional<SellerSku> skuOpt = findSellerSkuByCode(skuCode);
             if (skuOpt.isEmpty()) {
                 accessPolicy.resolveReadableSellerSkuScope(null, null);
                 return Page.empty(pageable);
             }
-            resolvedSkuId = skuOpt.get().skuId();
+            resolvedSkuId = skuOpt.get().getSkuId();
         }
 
         List<UUID> allowedSkuIds = accessPolicy.resolveReadableSellerSkuScope(null, resolvedSkuId);
@@ -1250,6 +1371,162 @@ public class InventoryServiceImpl implements InventoryService {
         return results;
     }
 
+    /**
+     * Tra cứu danh sách seller_skus và tổng tồn kho từ tất cả kho trực thuộc.
+     * Seller chỉ được xem danh sách của chính mình; Admin/vận hành kho có thể lọc theo sellerId bất kỳ.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<SellerSkuResponse> getSellerSkus(
+            String keyword,
+            SellerSkuStatus status,
+            UUID sellerId,
+            Pageable pageable
+    ) {
+        if (sellerSkuRepository == null) {
+            throw new IllegalStateException("Chưa cấu hình SellerSkuRepository trong InventoryServiceImpl");
+        }
+
+        InventoryAccessPolicy.ActorContext actor = accessPolicy.currentActor();
+        UUID effectiveSellerId;
+        if (actor.internalSystem() || actor.adminManager()) {
+            effectiveSellerId = sellerId;
+        } else if (actor.seller()) {
+            if (actor.actorId() == null) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_UNAUTHORIZED,
+                        "Yêu cầu định danh người bán hợp lệ để xem danh sách SKU kho"
+                );
+            }
+            if (sellerId != null && !sellerId.equals(actor.actorId())) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_FORBIDDEN,
+                        "Bạn không có quyền xem tồn kho của người bán khác"
+                );
+            }
+            effectiveSellerId = actor.actorId();
+        } else {
+            throw new BusinessException(
+                    ErrorCode.AUTH_FORBIDDEN,
+                    "Bạn không có quyền xem danh sách SKU kho"
+            );
+        }
+
+        String normalizedKeyword = (keyword != null && !keyword.isBlank()) ? keyword.trim() : null;
+        Pageable safePageable = sanitizeSellerSkuPageable(pageable);
+        // Dùng Criteria Specification chỉ ghép điều kiện khác null để tránh lỗi suy diễn kiểu null bytea trên PostgreSQL
+        Specification<SellerSku> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (effectiveSellerId != null) {
+                predicates.add(cb.equal(root.get("sellerId"), effectiveSellerId));
+            }
+            if (status != null) {
+                predicates.add(cb.equal(root.get("status"), status));
+            }
+            if (normalizedKeyword != null) {
+                String escaped = normalizedKeyword.toLowerCase(Locale.ROOT)
+                        .replace("\\", "\\\\")
+                        .replace("%", "\\%")
+                        .replace("_", "\\_");
+                String pattern = "%" + escaped + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("skuCode")), pattern, '\\'),
+                        cb.like(cb.lower(root.get("skuId").as(String.class)), pattern, '\\')
+                ));
+            }
+            return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(Predicate[]::new));
+        };
+        Page<SellerSku> page = sellerSkuRepository.findAll(spec, safePageable);
+
+        List<UUID> sellerSkuIds = page.getContent().stream().map(SellerSku::getId).toList();
+        Map<UUID, List<Inventory>> inventoriesBySellerSku = sellerSkuIds.isEmpty()
+                ? Map.of()
+                : inventoryRepository.findBySellerSkuIdInWithWarehouse(sellerSkuIds).stream()
+                        .collect(Collectors.groupingBy(inv -> inv.getSellerSku().getId()));
+
+        return page.map(sellerSku -> {
+            List<Inventory> invs = inventoriesBySellerSku.getOrDefault(sellerSku.getId(), List.of());
+            int totalQty = invs.stream().mapToInt(Inventory::getTotalQty).sum();
+            int availableQty = invs.stream().mapToInt(Inventory::getAvailableQty).sum();
+            int reservedQty = invs.stream().mapToInt(Inventory::getReservedQty).sum();
+            int unavailableQty = invs.stream().mapToInt(Inventory::getUnavailableQty).sum();
+            return new SellerSkuResponse(
+                    sellerSku.getId(),
+                    sellerSku.getId(),
+                    sellerSku.getSellerId(),
+                    sellerSku.getSkuId(),
+                    sellerSku.getSkuCode(),
+                    sellerSku.getStatus(),
+                    totalQty,
+                    availableQty,
+                    reservedQty,
+                    unavailableQty,
+                    invs.size(),
+                    sellerSku.getCreatedAt(),
+                    sellerSku.getUpdatedAt()
+            );
+        });
+    }
+
+    /**
+     * Tra cứu chi tiết một bản ghi seller_skus theo id hoặc skuId, kèm danh sách tồn kho theo từng kho hàng.
+     * Seller chỉ được xem chi tiết SKU thuộc quyền sở hữu của mình.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public SellerSkuDetailResponse getSellerSkuDetail(UUID id) {
+        if (sellerSkuRepository == null) {
+            throw new IllegalStateException("Chưa cấu hình SellerSkuRepository trong InventoryServiceImpl");
+        }
+
+        SellerSku sellerSku = sellerSkuRepository.findByIdOrSkuId(id, id)
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND,
+                        "Không tìm thấy mã SKU kho với ID " + id
+                ));
+
+        InventoryAccessPolicy.ActorContext actor = accessPolicy.currentActor();
+        if (!actor.internalSystem() && !actor.adminManager()) {
+            if (!actor.seller() || actor.actorId() == null) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_UNAUTHORIZED,
+                        "Yêu cầu định danh người bán hợp lệ để xem chi tiết SKU kho"
+                );
+            }
+            if (!actor.actorId().equals(sellerSku.getSellerId())) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_FORBIDDEN,
+                        "Bạn không có quyền xem chi tiết SKU kho của người bán khác"
+                );
+            }
+        }
+
+        List<Inventory> inventories = inventoryRepository.findBySellerSkuIdInWithWarehouse(List.of(sellerSku.getId()));
+        List<InventoryStockResponse> warehouses = inventories.stream()
+                .map(this::toStockResponse)
+                .toList();
+        int totalQty = inventories.stream().mapToInt(Inventory::getTotalQty).sum();
+        int availableQty = inventories.stream().mapToInt(Inventory::getAvailableQty).sum();
+        int reservedQty = inventories.stream().mapToInt(Inventory::getReservedQty).sum();
+        int unavailableQty = inventories.stream().mapToInt(Inventory::getUnavailableQty).sum();
+
+        return new SellerSkuDetailResponse(
+                sellerSku.getId(),
+                sellerSku.getId(),
+                sellerSku.getSellerId(),
+                sellerSku.getSkuId(),
+                sellerSku.getSkuCode(),
+                sellerSku.getStatus(),
+                totalQty,
+                availableQty,
+                reservedQty,
+                unavailableQty,
+                warehouses,
+                sellerSku.getCreatedAt(),
+                sellerSku.getUpdatedAt()
+        );
+    }
+
     // ==========================================
     // Các phương thức trợ giúp nội bộ (Helpers)
     // ==========================================
@@ -1265,15 +1542,22 @@ public class InventoryServiceImpl implements InventoryService {
             String normalizedCode = (skuCode != null && !skuCode.isBlank()) ? skuCode.trim() : null;
             return new ResolvedSku(skuId, normalizedCode);
         }
-        CatalogClient.SkuOwnershipInfo info = resolveSkuByCodeOrThrow(skuCode);
-        return new ResolvedSku(info.skuId(), info.skuCode());
+        SellerSku sellerSku = resolveSellerSkuByCodeOrThrow(skuCode);
+        return new ResolvedSku(sellerSku.getSkuId(), sellerSku.getSkuCode());
     }
 
-    private CatalogClient.SkuOwnershipInfo resolveSkuByCodeOrThrow(String skuCode) {
+    private Optional<SellerSku> findSellerSkuByCode(String skuCode) {
+        if (sellerSkuRepository == null || skuCode == null || skuCode.isBlank()) {
+            return Optional.empty();
+        }
+        return sellerSkuRepository.findBySkuCodeIgnoreCase(skuCode.trim());
+    }
+
+    private SellerSku resolveSellerSkuByCodeOrThrow(String skuCode) {
         if (skuCode == null || skuCode.isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Mã skuCode không được để trống");
         }
-        return catalogClient.findSkuByCode(skuCode.trim())
+        return findSellerSkuByCode(skuCode)
                 .orElseThrow(() -> new BusinessException(
                         ErrorCode.SKU_NOT_FOUND,
                         "Không tìm thấy SKU với mã " + skuCode.trim()
@@ -1490,6 +1774,139 @@ public class InventoryServiceImpl implements InventoryService {
         }
     }
 
+    // Chạy kiểm tra idempotency trong transaction ngắn trước khi cấp phát seller_skus để tránh LazyInitializationException.
+    private InventoryStockResponse findInboundReplayIfPresent(
+            String ledgerIdempotencyKey,
+            UUID skuId,
+            UUID warehouseId,
+            int requestedQty,
+            String skuCode
+    ) {
+        if (transactionTemplate != null) {
+            return transactionTemplate.execute(status -> ledgerRepository.findByIdempotencyKey(ledgerIdempotencyKey)
+                    .map(existing -> verifyInboundReplay(existing, skuId, warehouseId, requestedQty, skuCode))
+                    .orElse(null));
+        }
+        return ledgerRepository.findByIdempotencyKey(ledgerIdempotencyKey)
+                .map(existing -> verifyInboundReplay(existing, skuId, warehouseId, requestedQty, skuCode))
+                .orElse(null);
+    }
+
+    private InventoryStockResponse executeInboundInTransaction(
+            StockInboundRequest request,
+            SellerSku sellerSku,
+            Warehouse warehouse,
+            boolean firstInbound,
+            String ledgerIdempotencyKey,
+            String reason,
+            UUID actorId
+    ) {
+        if (transactionTemplate != null) {
+            return transactionTemplate.execute(status -> persistInbound(
+                    request, sellerSku, warehouse, firstInbound, ledgerIdempotencyKey, reason, actorId));
+        }
+        return persistInbound(request, sellerSku, warehouse, firstInbound, ledgerIdempotencyKey, reason, actorId);
+    }
+
+    private InventoryStockResponse persistInbound(
+            StockInboundRequest request,
+            SellerSku sellerSku,
+            Warehouse warehouse,
+            boolean firstInbound,
+            String ledgerIdempotencyKey,
+            String reason,
+            UUID actorId
+    ) {
+        if (ledgerIdempotencyKey != null) {
+            Optional<InventoryLedger> existingByKey = ledgerRepository.findByIdempotencyKey(ledgerIdempotencyKey);
+            if (existingByKey.isPresent()) {
+                return verifyInboundReplay(
+                        existingByKey.get(),
+                        sellerSku.getSkuId(),
+                        warehouse.getId(),
+                        request.quantity(),
+                        sellerSku.getSkuCode()
+                );
+            }
+        }
+
+        Inventory existingInventory = inventoryRepository
+                .findBySellerSkuIdAndWarehouseIdForUpdate(sellerSku.getId(), warehouse.getId())
+                .or(() -> inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(sellerSku.getSkuId(), warehouse.getId()))
+                .orElse(null);
+
+        if (existingInventory != null && ledgerIdempotencyKey == null && request.refId() != null) {
+            Optional<InventoryLedger> existingByRef = ledgerRepository.findFirstByInventoryIdAndMovementTypeAndRefId(
+                    existingInventory.getId(),
+                    LedgerMovementType.INBOUND,
+                    request.refId()
+            );
+            if (existingByRef.isPresent()) {
+                return verifyInboundReplay(
+                        existingByRef.get(),
+                        sellerSku.getSkuId(),
+                        warehouse.getId(),
+                        request.quantity(),
+                        sellerSku.getSkuCode()
+                );
+            }
+        }
+
+        Inventory inventory = (existingInventory != null)
+                ? existingInventory
+                : new Inventory(UUID.randomUUID(), sellerSku.getSkuId(), warehouse, 0, 0, 0);
+        if (inventory.getSellerSku() == null) {
+            inventory.setSellerSku(sellerSku);
+        }
+
+        inventory.setTotalQty(inventory.getTotalQty() + request.quantity());
+        inventory = inventoryRepository.save(inventory);
+
+        // Ghi sổ cái INBOUND kèm idempotencyKey, reason và actorId.
+        InventoryLedger ledger = new InventoryLedger(
+                UUID.randomUUID(),
+                inventory,
+                LedgerMovementType.INBOUND,
+                request.quantity(),
+                "INBOUND",
+                request.refId(),
+                Instant.now(),
+                ledgerIdempotencyKey,
+                reason,
+                actorId
+        );
+        ledgerRepository.save(ledger);
+
+        // Ghi sự kiện InventoryInboundCompleted vào bảng Transactional Outbox cùng transaction khi service khả dụng.
+        if (outboxService != null) {
+            outboxService.enqueueInboundCompleted(sellerSku, inventory, request.quantity(), firstInbound);
+        }
+        return toStockResponse(inventory, sellerSku.getSkuCode());
+    }
+
+    /**
+     * Chuẩn hóa Pageable cho truy vấn seller_skus: lọc bỏ trường sort không hợp lệ (ví dụ placeholder Swagger '["string"]')
+     * và giới hạn pageSize trong khoảng [1, 100] để tránh lỗi InvalidDataAccessApiUsageException hoặc tải trang quá lớn.
+     */
+    private Pageable sanitizeSellerSkuPageable(Pageable pageable) {
+        if (pageable == null || pageable.isUnpaged()) {
+            return PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "createdAt"));
+        }
+        List<Sort.Order> validOrders = pageable.getSort().stream()
+                .filter(order -> ALLOWED_SELLER_SKU_SORTS.contains(order.getProperty()))
+                .toList();
+        boolean hadInvalidSort = validOrders.size() != (int) pageable.getSort().stream().count();
+        int safePage = Math.max(pageable.getPageNumber(), 0);
+        int safeSize = Math.min(Math.max(pageable.getPageSize(), 1), 100);
+        if (!hadInvalidSort && safePage == pageable.getPageNumber() && safeSize == pageable.getPageSize()) {
+            return pageable;
+        }
+        Sort safeSort = validOrders.isEmpty()
+                ? (pageable.getSort().isSorted() ? Sort.by(Sort.Direction.DESC, "createdAt") : Sort.unsorted())
+                : Sort.by(validOrders);
+        return PageRequest.of(safePage, safeSize, safeSort);
+    }
+
     private String buildOperationIdempotencyKey(String operationPrefix, String headerKey, String bodyKey) {
         String raw = (headerKey != null && !headerKey.isBlank()) ? headerKey.trim() : (bodyKey != null ? bodyKey.trim() : null);
         if (raw == null || raw.isBlank()) {
@@ -1574,13 +1991,23 @@ public class InventoryServiceImpl implements InventoryService {
         return new ReservationResponse(refType, refId, reservations.get(0).getStatus(), items, latestExpiresAt);
     }
 
+    /** Chuyển Inventory sang DTO tồn kho, ưu tiên skuCode đã tra cứu sẵn hoặc lấy từ SellerSku liên kết. */
+    private InventoryStockResponse toStockResponse(Inventory inv) {
+        return toStockResponse(inv, null);
+    }
+
     private InventoryStockResponse toStockResponse(Inventory inv, String skuCode) {
+        SellerSku sellerSku = inv.getSellerSku();
+        String resolvedSkuCode = (skuCode != null && !skuCode.isBlank())
+                ? skuCode
+                : (sellerSku != null ? sellerSku.getSkuCode() : null);
         return new InventoryStockResponse(
                 inv.getSkuId(),
+                sellerSku != null ? sellerSku.getId() : null,
+                resolvedSkuCode,
                 inv.getWarehouse().getId(),
                 inv.getWarehouse().getCode(),
                 inv.getWarehouse().getName(),
-                skuCode,
                 inv.getTotalQty(),
                 inv.getAvailableQty(),
                 inv.getReservedQty(),

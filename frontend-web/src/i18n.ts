@@ -86,7 +86,8 @@ const en = {
     liveAuctionsEmpty: 'No live or upcoming auctions right now. Please check back soon.',
     loadingAuctions: 'Loading live auctions...',
     homeHeroTagline: 'Explore Nexus · Shop, sell & bid',
-    homeHeroDescription: 'Find products you love, discover unique items, and join exciting auctions on Nexus.',
+    homeHeroDescription:
+        'Find products you love, discover unique items, and join exciting auctions on Nexus.',
     shopNow: 'Shop Now',
     auctionNow: 'Bid Now',
     viewAuctionDetails: 'View details',
@@ -142,9 +143,11 @@ const en = {
     paymentTimedOut: 'The payment deadline has passed. Checkout is no longer available.',
     winnerOnly: 'This settlement belongs to another bidder.',
     settlementHasNoWinner: 'This auction did not produce a winning settlement.',
-    settlementUnavailable: 'Could not load the official auction settlement. Please try again later.',
+    settlementUnavailable:
+        'Could not load the official auction settlement. Please try again later.',
     loadingSettlement: 'Loading auction settlement…',
-    checkoutIntegrationPending: 'Sandbox checkout will be available when the auction order API is connected.',
+    checkoutIntegrationPending:
+        'Sandbox checkout will be available when the auction order API is connected.',
     checkoutCreatingOrder: 'Creating your order…',
     checkoutRedirectingPayment: 'Redirecting to payment gateway…',
     checkoutFormIncomplete: 'Please fill in all shipping information before continuing.',
@@ -414,10 +417,12 @@ const vi: typeof en = {
     timeLeft: 'Thời gian còn lại',
     endingSoon: 'Sắp kết thúc',
     liveAuctions: 'Đang diễn ra & Sắp diễn ra',
-    liveAuctionsEmpty: 'Hiện chưa có phiên đấu giá đang diễn ra hoặc sắp diễn ra. Vui lòng quay lại sau.',
+    liveAuctionsEmpty:
+        'Hiện chưa có phiên đấu giá đang diễn ra hoặc sắp diễn ra. Vui lòng quay lại sau.',
     loadingAuctions: 'Đang tải phiên đấu giá...',
     homeHeroTagline: 'Khám phá Nexus · Mua sắm, bán hàng & đấu giá',
-    homeHeroDescription: 'Tìm sản phẩm yêu thích, khám phá những món đồ độc đáo và tham gia đấu giá ngay trên Nexus.',
+    homeHeroDescription:
+        'Tìm sản phẩm yêu thích, khám phá những món đồ độc đáo và tham gia đấu giá ngay trên Nexus.',
     shopNow: 'Mua sắm ngay',
     auctionNow: 'Đấu giá ngay',
     viewAuctionDetails: 'Xem chi tiết',
@@ -474,7 +479,8 @@ const vi: typeof en = {
     settlementHasNoWinner: 'Phiên đấu giá này không có settlement người thắng cuộc.',
     settlementUnavailable: 'Không thể tải settlement chính thức. Vui lòng thử lại sau.',
     loadingSettlement: 'Đang tải settlement đấu giá…',
-    checkoutIntegrationPending: 'Checkout Sandbox sẽ khả dụng khi API đơn hàng đấu giá được kết nối.',
+    checkoutIntegrationPending:
+        'Checkout Sandbox sẽ khả dụng khi API đơn hàng đấu giá được kết nối.',
     checkoutCreatingOrder: 'Đang tạo đơn hàng…',
     checkoutRedirectingPayment: 'Đang chuyển đến cổng thanh toán…',
     checkoutFormIncomplete: 'Vui lòng điền đầy đủ thông tin giao hàng trước khi tiếp tục.',

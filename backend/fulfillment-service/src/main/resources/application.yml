@@ -18,6 +18,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Cho phép bỏ qua khoảng trống version khi kết hợp migration trên Supabase (đã có V5) và môi trường mới.
+    out-of-order: true
+    ignore-migration-patterns: "*:missing,*:future"
 
 server:
   port: ${SERVER_PORT:8080}

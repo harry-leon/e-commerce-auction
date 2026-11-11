@@ -44,7 +44,12 @@ import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import { createPaymentAttempt, redirectToGateway } from '../../api/payments'
-import { readCheckoutCommand, recoverOrCreateOrder, checkoutAttemptKey, clearCheckoutCommand } from './checkoutRecovery'
+import {
+    readCheckoutCommand,
+    recoverOrCreateOrder,
+    checkoutAttemptKey,
+    clearCheckoutCommand,
+} from './checkoutRecovery'
 import type { Auction, Order, Product } from '../../types'
 import {
     ordersApi,
@@ -57,6 +62,7 @@ import {
 import { auctionsApi } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
 import {
+    formatSkuDisplay,
     readSession,
     saveSession,
     ApiClientError,
@@ -106,18 +112,23 @@ export function HomePage() {
         let mounted = true
         setLoadingAuctions(true)
         const refreshAuctions = () => {
-            auctionsApi.getAuctions({
-                status: 'all',
-                sortBy: 'ending-soon',
-                limit: 8,
-                extraAuctions: createdAuctions,
-                reviews: auctionReviews,
-            })
+            auctionsApi
+                .getAuctions({
+                    status: 'all',
+                    sortBy: 'ending-soon',
+                    limit: 8,
+                    extraAuctions: createdAuctions,
+                    reviews: auctionReviews,
+                })
                 .then((response) => {
                     if (!mounted) return
-                    setHomeAuctions(response.items.filter((auction) =>
-                        ['active', 'scheduled'].includes(auction.status) && auction.product?.images?.[0],
-                    ))
+                    setHomeAuctions(
+                        response.items.filter(
+                            (auction) =>
+                                ['active', 'scheduled'].includes(auction.status) &&
+                                auction.product?.images?.[0],
+                        ),
+                    )
                 })
                 .catch(() => {
                     if (mounted) setHomeAuctions([])
@@ -175,7 +186,7 @@ export function HomePage() {
             categoryId: p.categoryId,
             price: sku?.price || 0,
             originalPrice: sku?.originalPrice,
-            sku: sku?.skuCode || '',
+            sku: formatSkuDisplay(sku?.id, sku?.skuCode),
             skuId: sku?.id,
             images:
                 p.images && p.images.length > 0
@@ -253,7 +264,9 @@ export function HomePage() {
                                 </>
                             )}
                         </h1>
-                        <p className="text-white/80 text-lg mb-8 max-w-md">{tr(lang, 'homeHeroDescription')}</p>
+                        <p className="text-white/80 text-lg mb-8 max-w-md">
+                            {tr(lang, 'homeHeroDescription')}
+                        </p>
                         <div className="flex gap-3">
                             <Button
                                 variant="primary"
@@ -373,7 +386,10 @@ export function HomePage() {
                 <section aria-labelledby="home-live-auctions-heading">
                     <div className="flex items-center justify-between mb-5">
                         <div className="flex items-center gap-3">
-                            <h2 id="home-live-auctions-heading" className="text-2xl font-bold text-gray-900">
+                            <h2
+                                id="home-live-auctions-heading"
+                                className="text-2xl font-bold text-gray-900"
+                            >
                                 {tr(lang, 'liveAuctions')}
                             </h2>
                             {homeAuctions.some((auction) => auction.status === 'active') && (
@@ -391,7 +407,10 @@ export function HomePage() {
                         </Button>
                     </div>
                     {loadingAuctions ? (
-                        <div className="nexus-card py-10 text-center text-sm text-gray-500" role="status">
+                        <div
+                            className="nexus-card py-10 text-center text-sm text-gray-500"
+                            role="status"
+                        >
                             <div className="flex justify-center mb-2">
                                 <div
                                     className="spinner-border text-primary"
@@ -770,8 +789,12 @@ export function CartPage() {
     const items = cart?.items || []
     const pricing = calculateEstimatedPricing(items, appliedVoucher)
     const subtotal = pricing.baseSubtotal || cart?.subtotal || 0
-    const discount = pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
-    const shipping = cart?.shippingFee !== undefined && cart.shippingFee > 0 ? cart.shippingFee : pricing.estimatedShipping
+    const discount =
+        pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
+    const shipping =
+        cart?.shippingFee !== undefined && cart.shippingFee > 0
+            ? cart.shippingFee
+            : pricing.estimatedShipping
     const tax = pricing.estimatedTax
     const peakHourFee = pricing.peakHourFee
     const total = Math.max(0, subtotal - discount + shipping + tax + peakHourFee)
@@ -843,7 +866,7 @@ export function CartPage() {
                                             <p className="text-xs text-gray-500 mt-0.5">
                                                 SKU:{' '}
                                                 <span className="font-mono text-gray-700">
-                                                    {item.skuCode}
+                                                    {formatSkuDisplay(item.skuId, item.skuCode)}
                                                 </span>
                                             </p>
                                         </div>
@@ -901,16 +924,42 @@ export function CartPage() {
                             {[
                                 [tr(lang, 'subtotal'), formatCurrency(subtotal, lang)],
                                 ...(pricing.merchantVolumeDiscount > 0
-                                    ? [[lang === 'en' ? 'Shop Bulk Discount' : 'Ưu đãi mua nhiều cùng Shop', `-${formatCurrency(pricing.merchantVolumeDiscount, lang)}`]]
+                                    ? [
+                                          [
+                                              lang === 'en'
+                                                  ? 'Shop Bulk Discount'
+                                                  : 'Ưu đãi mua nhiều cùng Shop',
+                                              `-${formatCurrency(pricing.merchantVolumeDiscount, lang)}`,
+                                          ],
+                                      ]
                                     : []),
                                 ...(pricing.categoryDiscount > 0
-                                    ? [[lang === 'en' ? 'Category Promotion' : 'Khuyến mãi ngành hàng', `-${formatCurrency(pricing.categoryDiscount, lang)}`]]
+                                    ? [
+                                          [
+                                              lang === 'en'
+                                                  ? 'Category Promotion'
+                                                  : 'Khuyến mãi ngành hàng',
+                                              `-${formatCurrency(pricing.categoryDiscount, lang)}`,
+                                          ],
+                                      ]
                                     : []),
                                 ...(pricing.voucherDiscount > 0
-                                    ? [[tr(lang, 'discount') + ' (Voucher)', `-${formatCurrency(pricing.voucherDiscount, lang)}`]]
+                                    ? [
+                                          [
+                                              tr(lang, 'discount') + ' (Voucher)',
+                                              `-${formatCurrency(pricing.voucherDiscount, lang)}`,
+                                          ],
+                                      ]
                                     : []),
                                 ...(peakHourFee > 0
-                                    ? [[lang === 'en' ? 'Peak Hour Surcharge' : 'Phụ phí giờ cao điểm', `+${formatCurrency(peakHourFee, lang)}`]]
+                                    ? [
+                                          [
+                                              lang === 'en'
+                                                  ? 'Peak Hour Surcharge'
+                                                  : 'Phụ phí giờ cao điểm',
+                                              `+${formatCurrency(peakHourFee, lang)}`,
+                                          ],
+                                      ]
                                     : []),
                                 [
                                     tr(lang, 'shipping'),
@@ -2320,7 +2369,9 @@ export function SandboxPaymentPage() {
                 // Cập nhật trạng thái đơn hàng mock trong localStorage
                 try {
                     const localOrders = readLocalMockOrders()
-                    const idx = localOrders.findIndex((o) => o.id === orderId || (o as any).orderNo === orderId)
+                    const idx = localOrders.findIndex(
+                        (o) => o.id === orderId || (o as any).orderNo === orderId,
+                    )
                     if (idx !== -1) {
                         localOrders[idx].status = 'PAID'
                         localOrders[idx].paymentStatus = 'held'
@@ -2370,9 +2421,7 @@ export function SandboxPaymentPage() {
         showToast({
             type: 'info',
             message:
-                lang === 'en'
-                    ? 'Payment transaction cancelled.'
-                    : 'Đã hủy giao dịch thanh toán.',
+                lang === 'en' ? 'Payment transaction cancelled.' : 'Đã hủy giao dịch thanh toán.',
         })
         navigate('payment-result', { status: 'cancelled', orderId })
     }
@@ -2407,17 +2456,19 @@ export function SandboxPaymentPage() {
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="flex items-center">
-                            <span className="text-2xl font-black text-[#005baa] tracking-tight">VN</span>
-                            <span className="text-2xl font-black text-[#e11b22] tracking-tight">PAY</span>
+                            <span className="text-2xl font-black text-[#005baa] tracking-tight">
+                                VN
+                            </span>
+                            <span className="text-2xl font-black text-[#e11b22] tracking-tight">
+                                PAY
+                            </span>
                         </div>
                         <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                         <div className="hidden sm:block">
                             <div className="text-xs font-bold text-slate-700 uppercase tracking-wide">
                                 CỔNG THANH TOÁN ĐIỆN TỬ
                             </div>
-                            <div className="text-[10px] text-slate-400">
-                                VNPAY Payment Gateway
-                            </div>
+                            <div className="text-[10px] text-slate-400">VNPAY Payment Gateway</div>
                         </div>
                     </div>
 
@@ -2461,7 +2512,9 @@ export function SandboxPaymentPage() {
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm divide-y divide-slate-200">
                             <div className="flex justify-between items-center pb-2.5">
                                 <span className="text-slate-500">Đơn vị chấp nhận thanh toán:</span>
-                                <span className="font-semibold text-slate-800">NEXUS E-COMMERCE</span>
+                                <span className="font-semibold text-slate-800">
+                                    NEXUS E-COMMERCE
+                                </span>
                             </div>
                             <div className="flex justify-between items-center py-2.5">
                                 <span className="text-slate-500">Mã đơn hàng:</span>
@@ -2470,7 +2523,9 @@ export function SandboxPaymentPage() {
                                 </span>
                             </div>
                             <div className="flex justify-between items-center pt-2.5">
-                                <span className="text-slate-500 font-medium">Số tiền thanh toán:</span>
+                                <span className="text-slate-500 font-medium">
+                                    Số tiền thanh toán:
+                                </span>
                                 <span className="text-2xl font-black text-[#e11b22]">
                                     {displayAmount}
                                 </span>
@@ -2562,7 +2617,8 @@ export function SandboxPaymentPage() {
                                             onClick={handleFillTestCard}
                                             className="w-full text-xs font-semibold text-[#005baa] bg-blue-50 hover:bg-blue-100 p-2.5 rounded-xl border border-blue-200 transition-colors flex items-center justify-center gap-1.5"
                                         >
-                                            ⚡ Bấm vào đây để tự động điền thẻ test VNPAY Sandbox (NCB)
+                                            ⚡ Bấm vào đây để tự động điền thẻ test VNPAY Sandbox
+                                            (NCB)
                                         </button>
 
                                         {/* Form nhập thẻ */}
@@ -2576,7 +2632,9 @@ export function SandboxPaymentPage() {
                                             <Input
                                                 label="Tên in trên thẻ *"
                                                 value={cardHolder}
-                                                onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+                                                onChange={(e) =>
+                                                    setCardHolder(e.target.value.toUpperCase())
+                                                }
                                                 placeholder="NGUYEN VAN A"
                                             />
                                             <Input
@@ -2594,7 +2652,10 @@ export function SandboxPaymentPage() {
                                             loading={simulating}
                                             onClick={handleSimulateSuccess}
                                         >
-                                            ✓ {lang === 'en' ? 'Simulate Success' : 'Xác nhận thanh toán thành công (Simulate Success)'}
+                                            ✓{' '}
+                                            {lang === 'en'
+                                                ? 'Simulate Success'
+                                                : 'Xác nhận thanh toán thành công (Simulate Success)'}
                                         </Button>
                                     </>
                                 ) : (
@@ -2608,7 +2669,8 @@ export function SandboxPaymentPage() {
                                                 Xác thực giao dịch OTP ({selectedBank})
                                             </h3>
                                             <p className="text-xs text-slate-500">
-                                                Mã OTP bảo mật được gửi đến SĐT đăng ký của chủ thẻ {cardHolder}.
+                                                Mã OTP bảo mật được gửi đến SĐT đăng ký của chủ thẻ{' '}
+                                                {cardHolder}.
                                             </p>
                                         </div>
 
@@ -2654,30 +2716,159 @@ export function SandboxPaymentPage() {
                                             viewBox="0 0 100 100"
                                             fill="currentColor"
                                         >
-                                            <rect x="5" y="5" width="28" height="28" rx="3" fill="#005baa" />
-                                            <rect x="9" y="9" width="20" height="20" rx="2" fill="#fff" />
-                                            <rect x="13" y="13" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="5"
+                                                y="5"
+                                                width="28"
+                                                height="28"
+                                                rx="3"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="9"
+                                                y="9"
+                                                width="20"
+                                                height="20"
+                                                rx="2"
+                                                fill="#fff"
+                                            />
+                                            <rect
+                                                x="13"
+                                                y="13"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
-                                            <rect x="67" y="5" width="28" height="28" rx="3" fill="#005baa" />
-                                            <rect x="71" y="9" width="20" height="20" rx="2" fill="#fff" />
-                                            <rect x="75" y="13" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="67"
+                                                y="5"
+                                                width="28"
+                                                height="28"
+                                                rx="3"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="71"
+                                                y="9"
+                                                width="20"
+                                                height="20"
+                                                rx="2"
+                                                fill="#fff"
+                                            />
+                                            <rect
+                                                x="75"
+                                                y="13"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
-                                            <rect x="5" y="67" width="28" height="28" rx="3" fill="#005baa" />
-                                            <rect x="9" y="71" width="20" height="20" rx="2" fill="#fff" />
-                                            <rect x="13" y="75" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="5"
+                                                y="67"
+                                                width="28"
+                                                height="28"
+                                                rx="3"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="9"
+                                                y="71"
+                                                width="20"
+                                                height="20"
+                                                rx="2"
+                                                fill="#fff"
+                                            />
+                                            <rect
+                                                x="13"
+                                                y="75"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
-                                            <rect x="38" y="10" width="8" height="20" fill="#005baa" />
-                                            <rect x="50" y="24" width="12" height="8" fill="#005baa" />
-                                            <rect x="38" y="72" width="14" height="8" fill="#005baa" />
-                                            <rect x="56" y="64" width="8" height="16" fill="#005baa" />
-                                            <rect x="70" y="70" width="16" height="16" fill="#005baa" />
-                                            <rect x="70" y="44" width="10" height="10" fill="#005baa" />
-                                            <rect x="44" y="44" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="38"
+                                                y="10"
+                                                width="8"
+                                                height="20"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="50"
+                                                y="24"
+                                                width="12"
+                                                height="8"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="38"
+                                                y="72"
+                                                width="14"
+                                                height="8"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="56"
+                                                y="64"
+                                                width="8"
+                                                height="16"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="70"
+                                                y="70"
+                                                width="16"
+                                                height="16"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="70"
+                                                y="44"
+                                                width="10"
+                                                height="10"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="44"
+                                                y="44"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
                                             {/* Logo VNPAY trung tâm QR */}
-                                            <rect x="35" y="35" width="30" height="30" rx="6" fill="#fff" stroke="#005baa" strokeWidth="2" />
-                                            <text x="37" y="52" fontFamily="Arial, sans-serif" fontWeight="900" fontSize="9" fill="#005baa">VN</text>
-                                            <text x="51" y="52" fontFamily="Arial, sans-serif" fontWeight="900" fontSize="9" fill="#e11b22">PAY</text>
+                                            <rect
+                                                x="35"
+                                                y="35"
+                                                width="30"
+                                                height="30"
+                                                rx="6"
+                                                fill="#fff"
+                                                stroke="#005baa"
+                                                strokeWidth="2"
+                                            />
+                                            <text
+                                                x="37"
+                                                y="52"
+                                                fontFamily="Arial, sans-serif"
+                                                fontWeight="900"
+                                                fontSize="9"
+                                                fill="#005baa"
+                                            >
+                                                VN
+                                            </text>
+                                            <text
+                                                x="51"
+                                                y="52"
+                                                fontFamily="Arial, sans-serif"
+                                                fontWeight="900"
+                                                fontSize="9"
+                                                fill="#e11b22"
+                                            >
+                                                PAY
+                                            </text>
                                         </svg>
                                     </div>
 
@@ -2685,7 +2876,8 @@ export function SandboxPaymentPage() {
                                         Quét mã để thanh toán bằng ứng dụng Ngân hàng hoặc ví VNPAY
                                     </p>
                                     <p className="text-[11px] text-slate-500 mt-1 text-center max-w-sm">
-                                        Hỗ trợ VCB Digibank, BIDV SmartBanking, VietinBank iPay, Agribank, MB Bank, App VNPAY...
+                                        Hỗ trợ VCB Digibank, BIDV SmartBanking, VietinBank iPay,
+                                        Agribank, MB Bank, App VNPAY...
                                     </p>
                                 </div>
 
@@ -2705,7 +2897,8 @@ export function SandboxPaymentPage() {
                         {tab === 'intl' && (
                             <div className="space-y-4 pt-1">
                                 <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 border border-slate-200">
-                                    ℹ️ Chấp nhận thẻ Visa, MasterCard, JCB phát hành trong nước và quốc tế.
+                                    ℹ️ Chấp nhận thẻ Visa, MasterCard, JCB phát hành trong nước và
+                                    quốc tế.
                                 </div>
                                 <Input
                                     label="Số thẻ quốc tế *"
@@ -2713,7 +2906,11 @@ export function SandboxPaymentPage() {
                                     placeholder="4242 4242 4242 4242"
                                 />
                                 <div className="grid grid-cols-2 gap-3">
-                                    <Input label="Hết hạn (MM/YY) *" defaultValue="12/28" placeholder="MM/YY" />
+                                    <Input
+                                        label="Hết hạn (MM/YY) *"
+                                        defaultValue="12/28"
+                                        placeholder="MM/YY"
+                                    />
                                     <Input label="CVV/CVC *" defaultValue="123" placeholder="123" />
                                 </div>
                                 <Button
@@ -2755,9 +2952,13 @@ export function SandboxPaymentPage() {
 
             {/* Footer Cổng thanh toán độc lập */}
             <footer className="bg-white border-t border-slate-200 py-4 px-4 text-center text-[11px] text-slate-500 space-y-1">
-                <div>Cổng thanh toán điện tử VNPAY thuộc Công ty Cổ phần Giải pháp Thanh toán Việt Nam (VNPAY)</div>
+                <div>
+                    Cổng thanh toán điện tử VNPAY thuộc Công ty Cổ phần Giải pháp Thanh toán Việt
+                    Nam (VNPAY)
+                </div>
                 <div className="text-slate-400">
-                    Hotline hỗ trợ: 1900 55 55 77 | Email: hotro@vnpay.vn | Môi trường thử nghiệm Sandbox
+                    Hotline hỗ trợ: 1900 55 55 77 | Email: hotro@vnpay.vn | Môi trường thử nghiệm
+                    Sandbox
                 </div>
             </footer>
         </div>
@@ -2968,7 +3169,9 @@ export function OrderHistoryPage() {
                                             </p>
                                         )}
                                         <div className="space-y-3">
-                                            {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
+                                            {order.items &&
+                                            Array.isArray(order.items) &&
+                                            order.items.length > 0 ? (
                                                 order.items.map((item, idx) => (
                                                     <div
                                                         key={item.productId || idx}
@@ -3001,7 +3204,10 @@ export function OrderHistoryPage() {
                                             ) : (
                                                 <div className="flex items-center justify-between py-2.5 px-3.5 bg-gray-50/80 rounded-lg text-xs text-gray-600 border border-gray-100">
                                                     <div className="flex items-center gap-2">
-                                                        <Package size={16} className="text-gray-400" />
+                                                        <Package
+                                                            size={16}
+                                                            className="text-gray-400"
+                                                        />
                                                         <span>
                                                             {lang === 'en'
                                                                 ? `${(order as any).itemCount || 1} product(s) in this order`

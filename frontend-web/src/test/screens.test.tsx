@@ -82,7 +82,9 @@ for (const [area, pages, user] of groups) {
 it('shows a clear empty state instead of default live auction fixtures', async () => {
     render(<Buyer.HomePage />)
 
-    expect(await screen.findByText('No live or upcoming auctions right now. Please check back soon.')).toBeInTheDocument()
+    expect(
+        await screen.findByText('No live or upcoming auctions right now. Please check back soon.'),
+    ).toBeInTheDocument()
     expect(screen.queryByText(AUCTIONS[0].product.name)).not.toBeInTheDocument()
     expect(screen.queryByText(AUCTIONS[1].product.name)).not.toBeInTheDocument()
 })
@@ -99,7 +101,9 @@ it('shows upcoming scheduled auctions on the home page', async () => {
     render(<Buyer.HomePage />)
 
     expect(await screen.findAllByText(AUCTIONS[2].product.name)).not.toHaveLength(0)
-    expect(screen.queryByText('No live or upcoming auctions right now. Please check back soon.')).not.toBeInTheDocument()
+    expect(
+        screen.queryByText('No live or upcoming auctions right now. Please check back soon.'),
+    ).not.toBeInTheDocument()
     expect(getAuctions).toHaveBeenCalledWith(expect.objectContaining({ status: 'all' }))
 })
 

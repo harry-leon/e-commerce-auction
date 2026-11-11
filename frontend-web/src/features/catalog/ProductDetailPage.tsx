@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { readSession, type ApiProduct, type Envelope } from '../../api/client'
+import { formatSkuDisplay, readSession, type ApiProduct, type Envelope } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
 import { addGuestCartItem, clearGuestCart } from '../buyer/guestCart'
 import { useApp } from '../../context'
@@ -54,7 +54,7 @@ export function ProductDetailPage() {
               categoryId: apiProduct.categoryId,
               price: apiProduct.skus?.[0]?.price ?? 0,
               originalPrice: apiProduct.skus?.[0]?.originalPrice,
-              sku: apiProduct.skus?.[0]?.skuCode ?? '',
+              sku: formatSkuDisplay(apiProduct.skus?.[0]?.id, apiProduct.skus?.[0]?.skuCode),
               images:
                   apiProduct.images && apiProduct.images.length > 0
                       ? apiProduct.images.map((img) => img.url)
@@ -115,7 +115,8 @@ export function ProductDetailPage() {
                 if (prev && apiProduct.skus.some((s) => s.id === prev)) {
                     return prev
                 }
-                const activeSku = apiProduct.skus.find((s) => s.status !== 'INACTIVE') || apiProduct.skus[0]
+                const activeSku =
+                    apiProduct.skus.find((s) => s.status !== 'INACTIVE') || apiProduct.skus[0]
                 return activeSku?.id || ''
             })
         } else {
@@ -124,7 +125,8 @@ export function ProductDetailPage() {
     }, [apiProduct])
 
     // SKU đang được người dùng lựa chọn; fallback về SKU đầu tiên nếu có
-    const selectedSku = (product.skus || []).find((s) => s.id === selectedSkuId) || product.skus?.[0]
+    const selectedSku =
+        (product.skus || []).find((s) => s.id === selectedSkuId) || product.skus?.[0]
     const currentPrice = selectedSku?.price ?? product.price
     const currentOriginalPrice = selectedSku?.originalPrice ?? product.originalPrice
     const currentSkuCode = selectedSku?.skuCode ?? product.sku
@@ -141,7 +143,7 @@ export function ProductDetailPage() {
             categoryId: p.categoryId,
             price: p.skus?.[0]?.price ?? 0,
             originalPrice: p.skus?.[0]?.originalPrice,
-            sku: p.skus?.[0]?.skuCode ?? '',
+            sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
             images:
                 p.images && p.images.length > 0
                     ? p.images.map((img) => img.url)
@@ -236,7 +238,7 @@ export function ProductDetailPage() {
         }
         const guestCart = addGuestCartItem({
             skuId: skuId || product.id,
-            skuCode: targetSku?.skuCode || `SKU-${product.id}`,
+            skuCode: formatSkuDisplay(targetSku?.id, targetSku?.skuCode) || `SKU-${product.id}`,
             productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: productImages[0],
             unitPrice: currentPrice,
@@ -512,8 +514,7 @@ export function ProductDetailPage() {
                                     {formatCurrency(currentOriginalPrice, lang)}
                                 </span>
                                 <span className="badge badge-red">
-                                    -{Math.round((1 - currentPrice / currentOriginalPrice) * 100)}
-                                    %
+                                    -{Math.round((1 - currentPrice / currentOriginalPrice) * 100)}%
                                 </span>
                             </>
                         )}
@@ -524,12 +525,19 @@ export function ProductDetailPage() {
                         <div className="nexus-card p-4 bg-gray-50 mb-5 space-y-2">
                             <div className="flex items-center justify-between">
                                 <span className="text-sm font-semibold text-gray-700">
-                                    {lang === 'en' ? 'Select SKU Variant:' : 'Chọn phân loại hàng (SKU):'}
+                                    {lang === 'en'
+                                        ? 'Select SKU Variant:'
+                                        : 'Chọn phân loại hàng (SKU):'}
                                 </span>
                             </div>
-                            <div className="flex flex-wrap gap-2 pt-1" role="radiogroup" aria-label="SKU variants">
+                            <div
+                                className="flex flex-wrap gap-2 pt-1"
+                                role="radiogroup"
+                                aria-label="SKU variants"
+                            >
                                 {product.skus.map((s) => {
-                                    const isSelected = (selectedSku?.id || product.skus[0]?.id) === s.id
+                                    const isSelected =
+                                        (selectedSku?.id || product.skus[0]?.id) === s.id
                                     return (
                                         <button
                                             key={s.id}
@@ -543,8 +551,12 @@ export function ProductDetailPage() {
                                             aria-checked={isSelected}
                                             role="radio"
                                         >
-                                            <span className="font-semibold">{s.attributes || s.skuCode}</span>
-                                            <span className={`text-[11px] ${isSelected ? 'text-white/80' : 'text-gray-500'}`}>
+                                            <span className="font-semibold">
+                                                {s.attributes || s.skuCode}
+                                            </span>
+                                            <span
+                                                className={`text-[11px] ${isSelected ? 'text-white/80' : 'text-gray-500'}`}
+                                            >
                                                 ({formatCurrency(s.price, lang)})
                                             </span>
                                         </button>
@@ -553,7 +565,6 @@ export function ProductDetailPage() {
                             </div>
                         </div>
                     )}
-
 
                     {/* Hộp mua hàng: Số lượng, nút Mua ngay, Thêm vào giỏ */}
                     <div className="nexus-card p-5 bg-gray-50 mb-6 space-y-4">
@@ -730,11 +741,13 @@ export function ProductDetailPage() {
                                     <ul className="space-y-1">
                                         {product.skus.map((sku) => (
                                             <li
-                                                key={sku.id || sku.skuCode}
+                                                key={
+                                                    sku.id || formatSkuDisplay(sku.id, sku.skuCode)
+                                                }
                                                 className="text-xs text-gray-600"
                                             >
                                                 <span className="font-semibold text-gray-800">
-                                                    {sku.skuCode}
+                                                    {formatSkuDisplay(sku.id, sku.skuCode)}
                                                 </span>{' '}
                                                 · {Number(sku.price).toLocaleString('vi-VN')} ₫ ·{' '}
                                                 <span className="badge badge-green text-[10px]">

@@ -48,6 +48,7 @@ import {
     ApiClientError,
     mapUser,
     errorMessage,
+    formatSkuDisplay,
     type ApiUser,
     type ApiRole,
     type ApiProduct,
@@ -1619,6 +1620,7 @@ export function AdminAuctionsPage() {
         try {
             await auctionsApi.reviewAuction(id, 'scheduled')
         } catch (err: any) {
+            // Fallback cập nhật context cục bộ nếu backend reviewAuction tạm thời lỗi hoặc chưa bật trên môi trường demo.
             console.warn(
                 'Backend reviewAuction API failed or not implemented; applying local fallback:',
                 err,
@@ -2269,6 +2271,10 @@ export function AdminAuctionsPage() {
                                     SKU:{' '}
                                     <span className="font-mono text-gray-700">
                                         {selectedAuction.product?.sku || 'N/A'}
+                                    </span>{' '}
+                                    · ID:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {selectedAuction.id}
                                     </span>
                                 </p>
                                 <div className="mt-2">
@@ -3004,7 +3010,10 @@ export function AdminProductsPage() {
                             nameVi: p.name,
                             price: p.skus?.[0]?.price || p.price || 0,
                             originalPrice: p.skus?.[0]?.originalPrice || null,
-                            sku: p.skus?.[0]?.skuCode || p.sku || '',
+                            sku:
+                                formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) ||
+                                p.sku ||
+                                '',
                             skuId: p.skus?.[0]?.id || null,
                             category:
                                 p.categoryName ||
@@ -3522,6 +3531,7 @@ export function AdminWarehousesPage() {
 
     // Modal điều chỉnh tồn kho Admin
     const [adjustOpen, setAdjustOpen] = useState(false)
+    // Hợp nhất AdminWarehousesPage thật từ origin/dev với fallback formatSkuDisplay chuẩn HG-S2-6.
     const [adjustTarget, setAdjustTarget] = useState<InventoryStockResponse | null>(null)
     const [adjustMode, setAdjustMode] = useState<'delta' | 'target'>('delta')
     const [adjustValue, setAdjustValue] = useState('0')
@@ -3536,7 +3546,10 @@ export function AdminWarehousesPage() {
     for (const product of prodEnvelope?.data || []) {
         for (const sku of product.skus || []) {
             if (sku?.id) {
-                skuLookup[sku.id] = { skuCode: sku.skuCode, productName: product.name }
+                skuLookup[sku.id] = {
+                    skuCode: formatSkuDisplay(sku.id, sku.skuCode),
+                    productName: product.name,
+                }
             }
         }
     }

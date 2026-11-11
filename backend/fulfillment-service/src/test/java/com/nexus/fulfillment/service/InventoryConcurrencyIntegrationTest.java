@@ -2,9 +2,13 @@ package com.nexus.fulfillment.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.client.CatalogClient;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
@@ -17,19 +21,28 @@ import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Kiểm thử tích hợp Concurrency Control & Chống bán vượt tồn kho (Overselling Prevention).
@@ -63,6 +76,10 @@ class InventoryConcurrencyIntegrationTest {
     @Autowired
     private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
+    @MockitoBean
+    private CatalogClient catalogClient;
+
+    private UUID sellerId;
     private UUID skuId;
     private Warehouse warehouse;
 
@@ -70,7 +87,26 @@ class InventoryConcurrencyIntegrationTest {
     void setUp() {
 // Mỗi test dùng warehouse/SKU riêng vì sổ cái không được xóa hay làm mất tham chiếu.
 
+        sellerId = UUID.randomUUID();
         skuId = UUID.randomUUID();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(
+                        sellerId.toString(),
+                        "n/a",
+                        List.of(new SimpleGrantedAuthority("ROLE_SELLER"))
+                )
+        );
+        when(catalogClient.findSkuById(any(UUID.class))).thenAnswer(inv -> Optional.of(
+                new CatalogClient.SkuOwnershipInfo(
+                        inv.getArgument(0),
+                        UUID.randomUUID(),
+                        "Concurrency Product",
+                        new BigDecimal("100000"),
+                        new BigDecimal("90000"),
+                        sellerId,
+                        true
+                )
+        ));
 
         warehouse = new Warehouse(
                 UUID.randomUUID(),
@@ -89,6 +125,11 @@ class InventoryConcurrencyIntegrationTest {
                 5,
                 UUID.randomUUID()
         ));
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -190,5 +231,75 @@ class InventoryConcurrencyIntegrationTest {
         InventoryStockResponse stockAfter = inventoryService.getStockBySku(skuId, warehouse.getId());
         assertEquals(5, stockAfter.availableQty(), "Tồn khả dụng phải phục hồi về 5");
         assertEquals(0, stockAfter.reservedQty(), "Số lượng đang giữ phải về 0");
+    }
+
+    @Test
+    @DisplayName("Nhập kho lần đầu đồng thời: 5 luồng cùng skuId chỉ sinh đúng 1 seller_skus và cộng dồn đủ số lượng")
+    void testConcurrentFirstInbound_SingleSellerSkuAndCombinedQuantity() throws InterruptedException {
+        UUID raceSkuId = UUID.randomUUID();
+        int threadCount = 5;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch readyLatch = new CountDownLatch(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threadCount);
+
+        Set<String> observedSkuCodes = ConcurrentHashMap.newKeySet();
+        Set<UUID> observedSellerSkuIds = ConcurrentHashMap.newKeySet();
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger errorCount = new AtomicInteger(0);
+
+        for (int i = 0; i < threadCount; i++) {
+            executor.submit(() -> {
+                readyLatch.countDown();
+                try {
+                    SecurityContextHolder.getContext().setAuthentication(
+                            new UsernamePasswordAuthenticationToken(
+                                    sellerId.toString(),
+                                    "n/a",
+                                    List.of(new SimpleGrantedAuthority("ROLE_SELLER"))
+                            )
+                    );
+                    startLatch.await();
+                    InventoryStockResponse res = inventoryService.inboundStock(
+                            new com.nexus.fulfillment.dto.request.StockInboundRequest(
+                                    raceSkuId,
+                                    warehouse.getId(),
+                                    3,
+                                    UUID.randomUUID()
+                            )
+                    );
+                    if (res.skuCode() != null) {
+                        observedSkuCodes.add(res.skuCode());
+                    }
+                    if (res.sellerSkuId() != null) {
+                        observedSellerSkuIds.add(res.sellerSkuId());
+                    }
+                    successCount.incrementAndGet();
+                } catch (Exception ex) {
+                    errorCount.incrementAndGet();
+                } finally {
+                    SecurityContextHolder.clearContext();
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        readyLatch.await();
+        startLatch.countDown();
+        doneLatch.await();
+        executor.shutdown();
+
+        assertEquals(threadCount, successCount.get(), "Cả 5 luồng nhập kho đồng thời phải thành công");
+        assertEquals(0, errorCount.get(), "Không được thất bại do xung đột unique seller_skus/inventories");
+        assertEquals(1, observedSkuCodes.size(), "Tất cả luồng phải dùng chung đúng 1 skuCode FSKU-...");
+        assertEquals(1, observedSellerSkuIds.size(), "Tất cả luồng phải gắn đúng 1 sellerSkuId");
+        assertTrue(observedSkuCodes.iterator().next().startsWith("FSKU-"), "Mã SKU kho phải đúng tiền tố FSKU-");
+        assertEquals(
+                1,
+                jdbc.queryForObject("SELECT count(*) FROM seller_skus WHERE sku_id = ?", Integer.class, raceSkuId),
+                "Chỉ được tồn tại đúng 1 dòng seller_skus cho skuId"
+        );
+        InventoryStockResponse stock = inventoryService.getStockBySku(raceSkuId, warehouse.getId());
+        assertEquals(15, stock.totalQty(), "Tổng tồn kho phải cộng dồn đủ 5 * 3 = 15");
     }
 }

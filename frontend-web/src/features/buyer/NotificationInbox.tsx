@@ -99,7 +99,10 @@ function InboxContent({
                     </div>
                     {error && <p role="alert">{error}</p>}
                     {loading && (
-                        <div className="flex items-center gap-2 py-4 text-sm text-gray-500" role="status">
+                        <div
+                            className="flex items-center gap-2 py-4 text-sm text-gray-500"
+                            role="status"
+                        >
                             <div
                                 className="spinner-border spinner-border-sm text-primary"
                                 style={{ color: '#ee4d2d' }}

@@ -1,8 +1,10 @@
 /**
- * Client API chuẩn hóa cho Quản lý Kho hàng (Warehouses) và Tồn kho (Inventory) của Fulfillment Service.
+ * Client API chuẩn hóa cho Quản lý Kho hàng (Warehouses), SKU kho (seller_skus)
+ * và Tồn kho (Inventory) của Fulfillment Service.
  *
  * Chức năng:
  * - Tra cứu kho hàng, tạo/cập nhật kho hàng (Admin).
+ * - Quản lý danh sách Seller SKU nội bộ (`seller_skus`, mã `FSKU-XXXXXXXX` tách khỏi Catalog).
  * - Đọc danh sách tồn kho phân trang (theo phạm vi Seller trên backend), đọc theo skuId/skuCode và đọc hàng loạt (batch).
  * - Nhập kho (inbound) và điều chỉnh tồn kho (adjust) kèm khóa Idempotency-Key chống lặp thao tác.
  * - Tra cứu sổ cái bất biến (ledger) và đối soát tồn kho (reconcile).
@@ -22,6 +24,9 @@ export type WarehouseType = 'STANDARD' | 'BONDED' | 'RETURN' | 'CROSS_DOCK'
 
 /** Loại biến động trong Sổ cái tồn kho bất biến (Inventory Ledger) */
 export type LedgerMovementType = 'INBOUND' | 'OUTBOUND' | 'RESERVE' | 'RELEASE' | 'ADJUSTMENT'
+
+/** Trạng thái bản ghi SKU nội bộ trong kho Fulfillment (seller_skus) */
+export type SellerSkuStatus = 'ACTIVE' | 'INACTIVE'
 
 /** Thông tin kho hàng vật lý */
 export interface WarehouseResponse {
@@ -50,17 +55,40 @@ export interface UpdateWarehouseRequest {
     active?: boolean
 }
 
-/** Chi tiết 4 trạng thái tồn kho của SKU tại một kho hàng */
+/** Chi tiết 4 trạng thái tồn kho của SKU tại một kho hàng (kèm sellerSkuId và FSKU code) */
 export interface InventoryStockResponse {
     skuId: string
+    sellerSkuId?: string | null
+    skuCode?: string | null
     warehouseId: string
     warehouseCode: string
-    warehouseName: string | null
-    skuCode: string | null
+    warehouseName?: string | null
     totalQty: number
     availableQty: number
     reservedQty: number
     unavailableQty: number
+}
+
+/** Một dòng SKU kho trong danh sách GET /api/v1/inventory/skus (tổng hợp số lượng đa kho) */
+export interface SellerSkuResponse {
+    id: string
+    sellerSkuId: string
+    sellerId: string
+    skuId: string
+    skuCode: string
+    status: SellerSkuStatus
+    totalQty: number
+    availableQty: number
+    reservedQty: number
+    unavailableQty: number
+    warehouseCount: number
+    createdAt: string
+    updatedAt: string
+}
+
+/** Chi tiết một Seller SKU tại GET /api/v1/inventory/skus/{id}, kèm tồn kho từng kho hàng */
+export interface SellerSkuDetailResponse extends SellerSkuResponse {
+    warehouses: InventoryStockResponse[]
 }
 
 /** Yêu cầu đọc tồn kho hàng loạt theo danh sách skuIds */
@@ -69,16 +97,20 @@ export interface BatchStockRequest {
     warehouseId?: string | null
 }
 
-/** Yêu cầu nhập kho hàng hóa (hỗ trợ skuId hoặc skuCode và idempotencyKey chống lặp) */
+/** Yêu cầu nhập kho hàng hóa (hỗ trợ skuId hoặc skuCode nội bộ, unitCost và idempotencyKey) */
 export interface StockInboundRequest {
     skuId?: string | null
     skuCode?: string | null
     warehouseId?: string | null
     quantity: number
     refId?: string | null
+    unitCost?: number | null
     reason?: string | null
     idempotencyKey?: string | null
 }
+
+/** Alias giữ tương thích cho code/test cũ của nhánh HG-S2-6 */
+export type StockInboundPayload = StockInboundRequest
 
 /** Yêu cầu điều chỉnh kiểm kê tồn kho (deltaQty tương đối hoặc targetTotalQty mục tiêu) */
 export interface StockAdjustmentRequest {
@@ -93,18 +125,21 @@ export interface StockAdjustmentRequest {
     idempotencyKey?: string | null
 }
 
+/** Alias giữ tương thích cho code/test cũ của nhánh HG-S2-6 */
+export type StockAdjustmentPayload = StockAdjustmentRequest
+
 /** Bản ghi Sổ cái tồn kho bất biến (chỉ đọc) */
 export interface InventoryLedgerResponse {
     id: string
     skuId: string
     warehouseId: string
-    warehouseCode: string | null
-    movementType: LedgerMovementType
+    warehouseCode?: string | null
+    movementType: LedgerMovementType | string
     quantity: number
-    refType: string | null
-    refId: string | null
-    reason: string | null
-    actorId: string | null
+    refType?: string | null
+    refId?: string | null
+    reason?: string | null
+    actorId?: string | null
     createdAt: string
 }
 
@@ -263,6 +298,51 @@ export async function updateWarehouse(
 }
 
 /**
+ * Tải danh sách SKU kho (seller_skus) của Người bán hiện tại (GET /api/v1/inventory/skus).
+ */
+export async function listSellerSkus(
+    params: {
+        keyword?: string
+        status?: SellerSkuStatus
+        sellerId?: string
+        page?: number
+        size?: number
+    } = {},
+    signal?: AbortSignal,
+): Promise<{ items: SellerSkuResponse[]; total: number }> {
+    const query = buildQuery({
+        keyword: params.keyword?.trim() || undefined,
+        status: params.status,
+        sellerId: params.sellerId,
+        page: params.page ?? 0,
+        size: params.size ?? 50,
+    })
+    const res = await api<ApiResponse<SellerSkuResponse[]>>(`/inventory/skus${query}`, {
+        signal,
+    })
+    const items = Array.isArray(res?.data) ? res.data : []
+    const total = res?.meta?.pagination?.totalElements ?? items.length
+    return { items, total }
+}
+
+/**
+ * Tra cứu chi tiết một bản ghi seller_skus và phân bổ tồn kho theo từng kho (GET /api/v1/inventory/skus/{id}).
+ */
+export async function getSellerSkuDetail(
+    id: string,
+    signal?: AbortSignal,
+): Promise<SellerSkuDetailResponse> {
+    const res = await api<ApiResponse<SellerSkuDetailResponse>>(
+        `/inventory/skus/${encodeURIComponent(id)}`,
+        { signal },
+    )
+    if (!res?.data) {
+        throw new Error('Không tìm thấy thông tin chi tiết SKU kho')
+    }
+    return res.data
+}
+
+/**
  * Liệt kê tồn kho phân trang (GET /api/v1/inventory).
  * Seller chỉ nhận về tồn kho của các SKU mình sở hữu; Admin/Support xem toàn hệ thống.
  */
@@ -348,6 +428,7 @@ export async function getBatchStock(
 
 /**
  * Nhập kho hàng hóa (POST /api/v1/inventory/inbound).
+ * Nếu nhập lần đầu cho skuId, backend tự sinh mã FSKU-XXXXXXXX và trả về trong response.
  * Truyền Idempotency-Key header để retry HTTP không làm tăng kho hai lần.
  */
 export async function inboundStock(
@@ -404,9 +485,7 @@ export async function getInventoryLedger(
     const query = buildQuery({ ...params })
     const response = await api<ApiResponse<InventoryLedgerResponse[]>>(
         `/inventory/ledger${query}`,
-        {
-            signal,
-        },
+        { signal },
     )
     return toPaginatedResult(response, params.page ?? 0, params.size ?? 20)
 }

@@ -31,7 +31,8 @@ import java.util.UUID;
 @Table(
         name = "inventories",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_inventory_sku_warehouse", columnNames = {"sku_id", "warehouse_id"})
+                @UniqueConstraint(name = "uq_inventory_sku_warehouse", columnNames = {"sku_id", "warehouse_id"}),
+                @UniqueConstraint(name = "uq_inventories_seller_sku_warehouse", columnNames = {"seller_sku_id", "warehouse_id"})
         }
 )
 public class Inventory {
@@ -40,8 +41,13 @@ public class Inventory {
     @Column(name = "id", nullable = false)
     private UUID id;
 
+    // Giữ đồng bộ sku_id trong giai đoạn chuyển tiếp cùng khóa ngoại seller_sku_id mới.
     @Column(name = "sku_id", nullable = false)
     private UUID skuId;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "seller_sku_id", nullable = false)
+    private SellerSku sellerSku;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id", nullable = false)
@@ -95,6 +101,17 @@ public class Inventory {
 
     public void setSkuId(UUID skuId) {
         this.skuId = skuId;
+    }
+
+    public SellerSku getSellerSku() {
+        return sellerSku;
+    }
+
+    public void setSellerSku(SellerSku sellerSku) {
+        this.sellerSku = sellerSku;
+        if (sellerSku != null && this.skuId == null) {
+            this.skuId = sellerSku.getSkuId();
+        }
     }
 
     public Warehouse getWarehouse() {

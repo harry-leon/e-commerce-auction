@@ -11,8 +11,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.nexus.common.exception.ApiException;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.client.CatalogClient;
 import com.nexus.fulfillment.config.FulfillmentProperties;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
@@ -26,14 +28,18 @@ import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
 import com.nexus.fulfillment.entity.Inventory;
 import com.nexus.fulfillment.entity.InventoryLedger;
 import com.nexus.fulfillment.entity.InventoryReservation;
+import com.nexus.fulfillment.entity.SellerSku;
 import com.nexus.fulfillment.entity.Warehouse;
 import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import com.nexus.fulfillment.enums.WarehouseType;
 import com.nexus.fulfillment.event.InventoryCheckedEvent;
 import com.nexus.fulfillment.event.InventoryCommittedEvent;
@@ -43,25 +49,37 @@ import com.nexus.fulfillment.event.InventoryReservedEvent;
 import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
+import com.nexus.fulfillment.repository.SellerSkuRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
+import com.nexus.fulfillment.security.InventoryAccessPolicy;
 import com.nexus.fulfillment.service.impl.InventoryServiceImpl;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * Kiểm thử nghiệp vụ lõi Quản lý tồn kho, Khóa giữ hàng Checkout và Vòng đời giữ kho Đấu giá (InventoryService) (SRS §3.6.1).
@@ -95,11 +113,25 @@ class InventoryServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private SellerSkuRepository sellerSkuRepository;
+
+    @Mock
+    private SellerSkuRegistrar sellerSkuRegistrar;
+
+    @Mock
+    private CatalogClient catalogClient;
+
+    @Mock
+    private FulfillmentEventOutboxService outboxService;
+
+    private InventoryAccessPolicy accessPolicy;
     private FulfillmentProperties properties;
     private InventoryServiceImpl inventoryService;
 
     private Warehouse defaultWarehouse;
     private UUID skuId;
+    private UUID sellerId;
 
     @BeforeEach
     void setUp() {
@@ -112,13 +144,20 @@ class InventoryServiceTest {
         properties.setAuctionMinDurationMinutes(60);
         properties.setAuctionMaxDurationHours(168);
 
+        accessPolicy = new InventoryAccessPolicy(catalogClient);
         inventoryService = new InventoryServiceImpl(
                 inventoryRepository,
                 reservationRepository,
                 ledgerRepository,
                 warehouseRepository,
                 properties,
-                eventPublisher
+                eventPublisher,
+                catalogClient,
+                accessPolicy,
+                sellerSkuRepository,
+                sellerSkuRegistrar,
+                outboxService,
+                null
         );
 
         defaultWarehouse = new Warehouse(
@@ -131,6 +170,12 @@ class InventoryServiceTest {
         );
 
         skuId = UUID.randomUUID();
+        sellerId = UUID.randomUUID();
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -1033,28 +1078,310 @@ class InventoryServiceTest {
     }
 
     @Test
-    @DisplayName("Nhập kho (Inbound): Tăng total_qty và ghi sổ cái INBOUND")
+    @DisplayName("Nhập kho lần đầu (Inbound): Xác thực Catalog, cấp phát FSKU-XXXXXXXX, ghi sổ cái INBOUND và Outbox")
     void testInboundStock_Success() {
-        // Given
-        Inventory inventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 50, 0, 0);
+        setSellerAuth(sellerId);
+        SellerSku generatedSellerSku = new SellerSku(
+                UUID.randomUUID(),
+                sellerId,
+                skuId,
+                "FSKU-00000001",
+                SellerSkuStatus.ACTIVE
+        );
+        Inventory existingInventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 50, 0, 0);
+        when(catalogClient.findSkuById(skuId)).thenReturn(Optional.of(new CatalogClient.SkuOwnershipInfo(
+                skuId,
+                UUID.randomUUID(),
+                "Áo khoác Nexus",
+                new BigDecimal("250000"),
+                new BigDecimal("200000"),
+                sellerId,
+                true
+        )));
+        when(sellerSkuRepository.findBySkuId(skuId)).thenReturn(Optional.empty());
+        when(sellerSkuRegistrar.registerIfAbsent(skuId, sellerId))
+                .thenReturn(new SellerSkuRegistrar.RegistrationResult(generatedSellerSku, true));
         when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
-        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId())).thenReturn(Optional.of(inventory));
+        when(inventoryRepository.findBySellerSkuIdAndWarehouseIdForUpdate(
+                generatedSellerSku.getId(),
+                defaultWarehouse.getId()
+        )).thenReturn(Optional.empty());
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId()))
+                .thenReturn(Optional.of(existingInventory));
         when(inventoryRepository.save(any(Inventory.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         StockInboundRequest req = new StockInboundRequest(skuId, null, 25, UUID.randomUUID());
 
-        // When
         InventoryStockResponse res = inventoryService.inboundStock(req);
 
-        // Then
-        assertEquals(75, res.totalQty()); // 50 + 25 = 75
+        assertEquals(75, res.totalQty());
         assertEquals(75, res.availableQty());
+        assertEquals(generatedSellerSku.getId(), res.sellerSkuId());
+        assertEquals("FSKU-00000001", res.skuCode());
 
-        // Kiểm tra ghi sổ cái INBOUND
         ArgumentCaptor<InventoryLedger> ledgerCaptor = ArgumentCaptor.forClass(InventoryLedger.class);
         verify(ledgerRepository, times(1)).save(ledgerCaptor.capture());
         assertEquals(LedgerMovementType.INBOUND, ledgerCaptor.getValue().getMovementType());
         assertEquals(25, ledgerCaptor.getValue().getQuantity());
+        verify(outboxService, times(1)).enqueueInboundCompleted(eq(generatedSellerSku), any(Inventory.class), eq(25), eq(true));
+    }
+
+    @Test
+    @DisplayName("Nhập kho lần hai trở đi: Tái sử dụng đúng skuCode FSKU- đã cấp và phát outbox firstInbound=false")
+    void testInboundStock_RepeatInboundReusesExistingSkuCode() {
+        setSellerAuth(sellerId);
+        SellerSku existingSellerSku = new SellerSku(
+                UUID.randomUUID(),
+                sellerId,
+                skuId,
+                "FSKU-00000007",
+                SellerSkuStatus.ACTIVE
+        );
+        Inventory existingInventory = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 2, 0);
+        existingInventory.setSellerSku(existingSellerSku);
+
+        when(catalogClient.findSkuById(skuId)).thenReturn(Optional.of(new CatalogClient.SkuOwnershipInfo(
+                skuId,
+                UUID.randomUUID(),
+                "Áo khoác Nexus",
+                new BigDecimal("250000"),
+                new BigDecimal("200000"),
+                sellerId,
+                true
+        )));
+        when(sellerSkuRepository.findBySkuId(skuId)).thenReturn(Optional.of(existingSellerSku));
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySellerSkuIdAndWarehouseIdForUpdate(
+                existingSellerSku.getId(),
+                defaultWarehouse.getId()
+        )).thenReturn(Optional.of(existingInventory));
+        when(inventoryRepository.save(any(Inventory.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        InventoryStockResponse res = inventoryService.inboundStock(
+                new StockInboundRequest(skuId, null, 5, UUID.randomUUID())
+        );
+
+        assertEquals("FSKU-00000007", res.skuCode());
+        assertEquals(15, res.totalQty());
+        assertEquals(13, res.availableQty());
+        verify(sellerSkuRegistrar, never()).registerIfAbsent(any(), any());
+        verify(outboxService, times(1)).enqueueInboundCompleted(eq(existingSellerSku), any(Inventory.class), eq(5), eq(false));
+    }
+
+    @Test
+    @DisplayName("Nhập kho đồng thời gặp DataIntegrityViolationException ở seller_skus: Đọc lại bản ghi của luồng thắng")
+    void testInboundStock_ConcurrentRaceRetriesReadFromDb() {
+        setSellerAuth(sellerId);
+        SellerSku winnerSellerSku = new SellerSku(
+                UUID.randomUUID(),
+                sellerId,
+                skuId,
+                "FSKU-00000099",
+                SellerSkuStatus.ACTIVE
+        );
+        when(catalogClient.findSkuById(skuId)).thenReturn(Optional.of(new CatalogClient.SkuOwnershipInfo(
+                skuId,
+                UUID.randomUUID(),
+                "Race Product",
+                new BigDecimal("100000"),
+                new BigDecimal("90000"),
+                sellerId,
+                true
+        )));
+        when(sellerSkuRepository.findBySkuId(skuId))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(winnerSellerSku));
+        when(sellerSkuRegistrar.registerIfAbsent(skuId, sellerId))
+                .thenThrow(new DataIntegrityViolationException("duplicate sku_id"));
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySellerSkuIdAndWarehouseIdForUpdate(
+                winnerSellerSku.getId(),
+                defaultWarehouse.getId()
+        )).thenReturn(Optional.empty());
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId()))
+                .thenReturn(Optional.empty());
+        when(inventoryRepository.save(any(Inventory.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        InventoryStockResponse res = inventoryService.inboundStock(
+                new StockInboundRequest(skuId, null, 8, UUID.randomUUID())
+        );
+
+        assertEquals("FSKU-00000099", res.skuCode());
+        assertEquals(8, res.totalQty());
+        verify(outboxService, times(1)).enqueueInboundCompleted(eq(winnerSellerSku), any(Inventory.class), eq(8), eq(false));
+    }
+
+    @Test
+    @DisplayName("Nhập kho bị từ chối 403 AUTH_FORBIDDEN nếu Seller nhập SKU thuộc Seller khác")
+    void testInboundStock_DifferentSellerForbidden() {
+        UUID otherSellerId = UUID.randomUUID();
+        setSellerAuth(sellerId);
+        when(catalogClient.findSkuById(skuId)).thenReturn(Optional.of(new CatalogClient.SkuOwnershipInfo(
+                skuId,
+                UUID.randomUUID(),
+                "Other Seller Product",
+                new BigDecimal("100000"),
+                new BigDecimal("80000"),
+                otherSellerId,
+                true
+        )));
+
+        BusinessException ex = assertThrows(
+                BusinessException.class,
+                () -> inventoryService.inboundStock(new StockInboundRequest(skuId, null, 5, UUID.randomUUID()))
+        );
+        assertEquals(ErrorCode.AUTH_FORBIDDEN.name(), ex.getCode());
+        verify(sellerSkuRegistrar, never()).registerIfAbsent(any(), any());
+        verify(inventoryRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Admin được phép nhập kho hộ Seller bằng sellerId lấy từ Catalog")
+    void testInboundStock_AdminCanInboundForAnySeller() {
+        setAdminAuth();
+        SellerSku created = new SellerSku(UUID.randomUUID(), sellerId, skuId, "FSKU-00000010", SellerSkuStatus.ACTIVE);
+        when(catalogClient.findSkuById(skuId)).thenReturn(Optional.of(new CatalogClient.SkuOwnershipInfo(
+                skuId,
+                UUID.randomUUID(),
+                "Seller Product",
+                new BigDecimal("100000"),
+                new BigDecimal("90000"),
+                sellerId,
+                true
+        )));
+        when(sellerSkuRepository.findBySkuId(skuId)).thenReturn(Optional.empty());
+        when(sellerSkuRegistrar.registerIfAbsent(skuId, sellerId))
+                .thenReturn(new SellerSkuRegistrar.RegistrationResult(created, true));
+        when(warehouseRepository.findByCode("WH_001")).thenReturn(Optional.of(defaultWarehouse));
+        when(inventoryRepository.findBySellerSkuIdAndWarehouseIdForUpdate(created.getId(), defaultWarehouse.getId()))
+                .thenReturn(Optional.empty());
+        when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, defaultWarehouse.getId()))
+                .thenReturn(Optional.empty());
+        when(inventoryRepository.save(any(Inventory.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        InventoryStockResponse res = inventoryService.inboundStock(
+                new StockInboundRequest(skuId, null, 4, UUID.randomUUID())
+        );
+
+        assertEquals("FSKU-00000010", res.skuCode());
+        assertEquals(4, res.totalQty());
+    }
+
+    @Test
+    @DisplayName("Nhập kho thất bại 404 SKU_NOT_FOUND khi SKU không tồn tại bên Catalog")
+    void testInboundStock_CatalogMissingThrows404() {
+        setSellerAuth(sellerId);
+        when(catalogClient.findSkuById(skuId)).thenReturn(Optional.empty());
+
+        BusinessException ex = assertThrows(
+                BusinessException.class,
+                () -> inventoryService.inboundStock(new StockInboundRequest(skuId, null, 1, null))
+        );
+        assertEquals(ErrorCode.SKU_NOT_FOUND.name(), ex.getCode());
+        verify(inventoryRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Nhập kho thất bại 502 BAD_GATEWAY khi Catalog Service gián đoạn")
+    void testInboundStock_CatalogUnavailableThrows502() {
+        setSellerAuth(sellerId);
+        when(catalogClient.findSkuById(skuId))
+                .thenThrow(new ApiException("CATALOG_UNAVAILABLE", HttpStatus.BAD_GATEWAY, "Down", null));
+
+        ApiException ex = assertThrows(
+                ApiException.class,
+                () -> inventoryService.inboundStock(new StockInboundRequest(skuId, null, 1, null))
+        );
+        assertEquals(HttpStatus.BAD_GATEWAY, ex.getHttpStatus());
+        verify(inventoryRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Tra cứu GET /inventory/skus theo Seller: Tự động scope sellerId và tổng hợp tồn kho đa kho")
+    void testGetSellerSkus_SellerScopedAndAggregatesStock() {
+        setSellerAuth(sellerId);
+        SellerSku s = new SellerSku(UUID.randomUUID(), sellerId, skuId, "FSKU-00000021", SellerSkuStatus.ACTIVE);
+        Warehouse wh2 = new Warehouse(UUID.randomUUID(), "WH_002", "Kho Hà Nội", "Hà Nội", WarehouseType.STANDARD, true);
+        Inventory inv1 = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 10, 2, 1);
+        inv1.setSellerSku(s);
+        Inventory inv2 = new Inventory(UUID.randomUUID(), skuId, wh2, 20, 5, 0);
+        inv2.setSellerSku(s);
+
+        Pageable pageable = PageRequest.of(0, 20);
+        when(sellerSkuRepository.findAll(ArgumentMatchers.<Specification<SellerSku>>any(), eq(pageable)))
+                .thenReturn(new PageImpl<>(List.of(s), pageable, 1));
+        when(inventoryRepository.findBySellerSkuIdInWithWarehouse(List.of(s.getId())))
+                .thenReturn(List.of(inv1, inv2));
+
+        Page<SellerSkuResponse> res = inventoryService.getSellerSkus(" FSKU ", SellerSkuStatus.ACTIVE, null, pageable);
+
+        assertEquals(1, res.getTotalElements());
+        SellerSkuResponse item = res.getContent().get(0);
+        assertEquals("FSKU-00000021", item.skuCode());
+        assertEquals(30, item.totalQty());
+        assertEquals(22, item.availableQty());
+        assertEquals(7, item.reservedQty());
+        assertEquals(1, item.unavailableQty());
+        assertEquals(2, item.warehouseCount());
+    }
+
+    @Test
+    @DisplayName("Seller truyền sellerId của người bán khác khi tra cứu danh sách bị chặn 403 AUTH_FORBIDDEN")
+    void testGetSellerSkus_SellerRequestingOtherSellerForbidden() {
+        setSellerAuth(sellerId);
+        Pageable pageable = PageRequest.of(0, 20);
+        UUID otherSeller = UUID.randomUUID();
+
+        BusinessException ex = assertThrows(
+                BusinessException.class,
+                () -> inventoryService.getSellerSkus(null, null, otherSeller, pageable)
+        );
+        assertEquals(ErrorCode.AUTH_FORBIDDEN.name(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("Chi tiết seller_sku: Chặn Seller xem SKU người khác và trả danh sách kho cho chính chủ")
+    void testGetSellerSkuDetail_SuccessAndForbidden() {
+        SellerSku owned = new SellerSku(UUID.randomUUID(), sellerId, skuId, "FSKU-00000033", SellerSkuStatus.ACTIVE);
+        Inventory inv = new Inventory(UUID.randomUUID(), skuId, defaultWarehouse, 12, 3, 1);
+        inv.setSellerSku(owned);
+
+        when(sellerSkuRepository.findByIdOrSkuId(owned.getId(), owned.getId())).thenReturn(Optional.of(owned));
+        when(inventoryRepository.findBySellerSkuIdInWithWarehouse(List.of(owned.getId()))).thenReturn(List.of(inv));
+
+        setSellerAuth(sellerId);
+        SellerSkuDetailResponse detail = inventoryService.getSellerSkuDetail(owned.getId());
+        assertEquals("FSKU-00000033", detail.skuCode());
+        assertEquals(1, detail.warehouses().size());
+        assertEquals(12, detail.totalQty());
+        assertEquals(8, detail.availableQty());
+
+        setSellerAuth(UUID.randomUUID());
+        BusinessException ex = assertThrows(
+                BusinessException.class,
+                () -> inventoryService.getSellerSkuDetail(owned.getId())
+        );
+        assertEquals(ErrorCode.AUTH_FORBIDDEN.name(), ex.getCode());
+    }
+
+    private void setSellerAuth(UUID callerSellerId) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(
+                        callerSellerId.toString(),
+                        "n/a",
+                        List.of(new SimpleGrantedAuthority("ROLE_SELLER"))
+                )
+        );
+    }
+
+    private void setAdminAuth() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(
+                        UUID.randomUUID().toString(),
+                        "n/a",
+                        List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))
+                )
+        );
     }
 
     @Test
@@ -1098,6 +1425,23 @@ class InventoryServiceTest {
         assertEquals(1, result.getTotalElements());
         assertEquals(LedgerMovementType.INBOUND, result.getContent().get(0).movementType());
         assertEquals(20, result.getContent().get(0).quantity());
+    }
+
+    @Test
+    @DisplayName("Tra cứu GET /inventory/skus chuẩn hóa sort không hợp lệ và giới hạn kích thước trang")
+    void testGetSellerSkus_SanitizesInvalidSortAndOversizedPage() {
+        // Bảo vệ endpoint danh sách seller_skus trước lỗi 500 từ tham số mặc định Swagger sort=["string"] & size lớn
+        setSellerAuth(sellerId);
+        Pageable rawSwaggerPageable = PageRequest.of(0, 500, Sort.by("[\"string\"]"));
+        Pageable expectedSafePageable = PageRequest.of(0, 100, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        when(sellerSkuRepository.findAll(ArgumentMatchers.<Specification<SellerSku>>any(), eq(expectedSafePageable)))
+                .thenReturn(new PageImpl<>(List.of(), expectedSafePageable, 0));
+
+        Page<SellerSkuResponse> res = inventoryService.getSellerSkus(null, null, null, rawSwaggerPageable);
+
+        assertEquals(0, res.getTotalElements());
+        verify(sellerSkuRepository).findAll(ArgumentMatchers.<Specification<SellerSku>>any(), eq(expectedSafePageable));
     }
 
     @Test
@@ -1207,16 +1551,21 @@ class InventoryServiceTest {
                 new com.nexus.fulfillment.config.FulfillmentProperties(),
                 eventPublisher,
                 mockCatalog,
-                mockPolicy
+                mockPolicy,
+                sellerSkuRepository,
+                sellerSkuRegistrar,
+                outboxService,
+                null
         );
 
-        when(mockCatalog.findSkuByCode("SKU-CAM-01")).thenReturn(Optional.of(
-                new com.nexus.fulfillment.client.CatalogClient.SkuOwnershipInfo(skuId, "SKU-CAM-01", "Camera", sellerId, true)));
+        SellerSku camSku = new SellerSku(UUID.randomUUID(), sellerId, skuId, "SKU-CAM-01", SellerSkuStatus.ACTIVE);
+        when(sellerSkuRepository.findBySkuCodeIgnoreCase("SKU-CAM-01")).thenReturn(Optional.of(camSku));
         when(mockPolicy.verifyWriteAccessAndOwnership(skuId)).thenReturn(
                 new com.nexus.fulfillment.security.InventoryAccessPolicy.ActorContext(sellerId, false, false, true, false));
         when(warehouseRepository.findByIdAndIsActiveTrue(warehouseId)).thenReturn(Optional.of(wh));
         when(ledgerRepository.findByIdempotencyKey("INBOUND:key-inb-1")).thenReturn(Optional.empty());
         Inventory inv = new Inventory(UUID.randomUUID(), skuId, wh, 5, 0, 0);
+        inv.setSellerSku(camSku);
         when(inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(skuId, warehouseId)).thenReturn(Optional.of(inv));
         when(inventoryRepository.save(any(Inventory.class))).thenAnswer(i -> i.getArgument(0));
         when(ledgerRepository.save(any(InventoryLedger.class))).thenAnswer(i -> i.getArgument(0));
@@ -1326,7 +1675,11 @@ class InventoryServiceTest {
                 new com.nexus.fulfillment.config.FulfillmentProperties(),
                 eventPublisher,
                 mockCatalog,
-                mockPolicy
+                mockPolicy,
+                sellerSkuRepository,
+                sellerSkuRegistrar,
+                outboxService,
+                null
         );
 
         when(warehouseRepository.findByIdAndIsActiveTrue(warehouseId)).thenReturn(Optional.of(wh));
@@ -1339,8 +1692,9 @@ class InventoryServiceTest {
         assertEquals(12, batch.get(0).totalQty());
         assertEquals(0, batch.get(1).totalQty());
 
-        when(mockCatalog.findSkuByCode("SKU-1")).thenReturn(Optional.of(
-                new com.nexus.fulfillment.client.CatalogClient.SkuOwnershipInfo(sku1, "SKU-1", "SP 1", sellerId, true)));
+        SellerSku sellerSku1 = new SellerSku(UUID.randomUUID(), sellerId, sku1, "SKU-1", SellerSkuStatus.ACTIVE);
+        inv1.setSellerSku(sellerSku1);
+        when(sellerSkuRepository.findBySkuCodeIgnoreCase("SKU-1")).thenReturn(Optional.of(sellerSku1));
         when(inventoryRepository.findBySkuIdAndWarehouseId(sku1, warehouseId)).thenReturn(Optional.of(inv1));
         InventoryStockResponse byCode = scopedService.getStockBySkuCode("SKU-1", warehouseId);
         assertEquals("SKU-1", byCode.skuCode());

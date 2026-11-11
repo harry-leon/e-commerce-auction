@@ -4,9 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.client.CatalogClient;
 import com.nexus.fulfillment.dto.request.BatchStockRequest;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.CreateWarehouseRequest;
@@ -25,10 +28,13 @@ import com.nexus.fulfillment.enums.ReservationStatus;
 import com.nexus.fulfillment.enums.WarehouseType;
 import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +44,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Kiểm thử tích hợp H2/JPA thật cho vòng đời kho hàng, nhập kho/điều chỉnh idempotent,
@@ -59,6 +66,26 @@ class InventoryLifecycleAndReconciliationE2ETest {
 
     @Autowired
     private InventoryLedgerRepository ledgerRepository;
+
+    @MockitoBean
+    private CatalogClient catalogClient;
+
+    @BeforeEach
+    void stubCatalogOwnership() {
+        // Giả lập phản hồi Catalog khi nội bộ nhập kho để đăng ký seller_skus và FSKU code lần đầu.
+        UUID defaultSellerId = UUID.randomUUID();
+        when(catalogClient.findSkuById(any(UUID.class))).thenAnswer(inv -> Optional.of(
+                new CatalogClient.SkuOwnershipInfo(
+                        inv.getArgument(0),
+                        UUID.randomUUID(),
+                        "E2E Lifecycle Product",
+                        new BigDecimal("100000"),
+                        new BigDecimal("90000"),
+                        defaultSellerId,
+                        true
+                )
+        ));
+    }
 
     @AfterEach
     void cleanupSecurityContext() {

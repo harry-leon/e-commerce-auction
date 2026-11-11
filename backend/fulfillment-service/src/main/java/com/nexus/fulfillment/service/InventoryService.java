@@ -13,8 +13,11 @@ import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryReconciliationResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
 import com.nexus.fulfillment.enums.LedgerMovementType;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -170,4 +173,14 @@ public interface InventoryService {
      * Đối soát số dư tồn kho với tổng lịch sử biến động trong sổ cái bất biến và các phiếu giữ hàng PENDING.
      */
     List<InventoryReconciliationResponse> reconcileStock(UUID skuId, UUID warehouseId);
+
+    /**
+     * Tra cứu danh sách seller_skus và tổng tồn kho các kho trực thuộc theo quyền Seller/Admin.
+     */
+    Page<SellerSkuResponse> getSellerSkus(String keyword, SellerSkuStatus status, UUID sellerId, Pageable pageable);
+
+    /**
+     * Tra cứu chi tiết một seller_skus theo id hoặc skuId kèm tồn kho theo từng kho hàng.
+     */
+    SellerSkuDetailResponse getSellerSkuDetail(UUID id);
 }

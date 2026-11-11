@@ -107,7 +107,9 @@ export function PageSpinner({ label = 'Đang tải…', size = 48 }: { label?: s
             >
                 <span className="visually-hidden">Đang tải...</span>
             </div>
-            {label && <span style={{ color: '#6b7280', fontSize: 14, fontWeight: 500 }}>{label}</span>}
+            {label && (
+                <span style={{ color: '#6b7280', fontSize: 14, fontWeight: 500 }}>{label}</span>
+            )}
         </div>
     )
 }

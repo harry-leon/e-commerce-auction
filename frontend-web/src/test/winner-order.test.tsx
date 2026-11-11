@@ -141,7 +141,12 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
     it('từ chối hiển thị form giao hàng khi người dùng không phải người thắng cuộc', async () => {
         holder.current = {
             ...holder.current,
-            user: { id: 'other-user-999', fullName: 'Người khác', role: 'buyer', email: 'other@nexus.com' } as unknown as User,
+            user: {
+                id: 'other-user-999',
+                fullName: 'Người khác',
+                role: 'buyer',
+                email: 'other@nexus.com',
+            } as unknown as User,
         }
 
         render(<AuctionPaymentPage />)
@@ -165,7 +170,9 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
 
         render(<AuctionPaymentPage />)
 
-        expect(await screen.findByText('Đã quá hạn thanh toán. Không thể tiếp tục checkout.')).toBeVisible()
+        expect(
+            await screen.findByText('Đã quá hạn thanh toán. Không thể tiếp tục checkout.'),
+        ).toBeVisible()
 
         // Form giao hàng và nút checkout bị vô hiệu hóa
         const nameInput = screen.getByLabelText('Tên người nhận')
@@ -204,9 +211,13 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
         const phoneInput = screen.getByLabelText('Số điện thoại')
         const addressInput = screen.getByLabelText('Địa chỉ giao hàng')
         fireEvent.change(phoneInput, { target: { value: '0912345678' } })
-        fireEvent.change(addressInput, { target: { value: '456 Hai Bà Trưng, Phường Bến Nghé, Quận 1' } })
+        fireEvent.change(addressInput, {
+            target: { value: '456 Hai Bà Trưng, Phường Bến Nghé, Quận 1' },
+        })
 
-        const submitButton = screen.getByRole('button', { name: /Tiếp tục đến thanh toán Sandbox/i })
+        const submitButton = screen.getByRole('button', {
+            name: /Tiếp tục đến thanh toán Sandbox/i,
+        })
         fireEvent.click(submitButton)
 
         // Không gọi ordersApi.createOrder vì Backend chỉ hỗ trợ đơn REGULAR cho POST /orders
@@ -234,9 +245,13 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
         const phoneInput = screen.getByLabelText('Số điện thoại')
         const addressInput = screen.getByLabelText('Địa chỉ giao hàng')
         fireEvent.change(phoneInput, { target: { value: '0912345678' } })
-        fireEvent.change(addressInput, { target: { value: '456 Hai Bà Trưng, Phường Bến Nghé, Quận 1' } })
+        fireEvent.change(addressInput, {
+            target: { value: '456 Hai Bà Trưng, Phường Bến Nghé, Quận 1' },
+        })
 
-        const submitButton = screen.getByRole('button', { name: /Tiếp tục đến thanh toán Sandbox/i })
+        const submitButton = screen.getByRole('button', {
+            name: /Tiếp tục đến thanh toán Sandbox/i,
+        })
         fireEvent.click(submitButton)
 
         expect(await screen.findByText(/Đơn hàng đang được hệ thống tạo tự động/)).toBeVisible()
@@ -258,7 +273,9 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
 
         render(<AuctionPaymentPage />)
 
-        expect(await screen.findByText(/Đơn hàng đã được liên kết với settlement này/)).toBeVisible()
+        expect(
+            await screen.findByText(/Đơn hàng đã được liên kết với settlement này/),
+        ).toBeVisible()
         expect(screen.getByText('ORD-PREVIOUSLY-CREATED-888')).toBeVisible()
 
         // Nhấn nút thanh toán lại
@@ -267,7 +284,10 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
 
         // Không được phép gọi createOrder tạo mới đơn hàng
         await waitFor(() => {
-            expect(startPayment).toHaveBeenCalledWith('ORD-PREVIOUSLY-CREATED-888', expect.any(String))
+            expect(startPayment).toHaveBeenCalledWith(
+                'ORD-PREVIOUSLY-CREATED-888',
+                expect.any(String),
+            )
         })
         expect(ordersApi.createOrder).not.toHaveBeenCalled()
     })
@@ -284,10 +304,14 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
         await screen.findByText('Bạn đã thắng phiên đấu giá')
 
         // Để trống số điện thoại và địa chỉ
-        const submitButton = screen.getByRole('button', { name: /Tiếp tục đến thanh toán Sandbox/i })
+        const submitButton = screen.getByRole('button', {
+            name: /Tiếp tục đến thanh toán Sandbox/i,
+        })
         fireEvent.click(submitButton)
 
-        expect(await screen.findByText('Vui lòng điền đầy đủ thông tin giao hàng trước khi tiếp tục.')).toBeVisible()
+        expect(
+            await screen.findByText('Vui lòng điền đầy đủ thông tin giao hàng trước khi tiếp tục.'),
+        ).toBeVisible()
         expect(ordersApi.createOrder).not.toHaveBeenCalled()
         expect(startPayment).not.toHaveBeenCalled()
     })

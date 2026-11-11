@@ -96,7 +96,17 @@ export function AuctionListPage() {
         } finally {
             setLoading(false)
         }
-    }, [statusFilter, searchQuery, sortBy, appliedMinPrice, appliedMaxPrice, page, createdAuctions, auctionReviews, lang])
+    }, [
+        statusFilter,
+        searchQuery,
+        sortBy,
+        appliedMinPrice,
+        appliedMaxPrice,
+        page,
+        createdAuctions,
+        auctionReviews,
+        lang,
+    ])
 
     useEffect(() => {
         fetchAuctions()
@@ -151,7 +161,9 @@ export function AuctionListPage() {
                     {/* Ô tìm kiếm nhanh */}
                     <div className="relative flex-1 sm:w-64">
                         <Input
-                            placeholder={lang === 'en' ? 'Search auctions...' : 'Tìm phiên đấu giá...'}
+                            placeholder={
+                                lang === 'en' ? 'Search auctions...' : 'Tìm phiên đấu giá...'
+                            }
                             value={searchQuery}
                             onChange={(e) => {
                                 setSearchQuery(e.target.value)
@@ -270,7 +282,8 @@ export function AuctionListPage() {
                                 >
                                     {lang === 'en' ? 'Apply' : 'Áp dụng'}
                                 </Button>
-                                {(appliedMinPrice !== undefined || appliedMaxPrice !== undefined) && (
+                                {(appliedMinPrice !== undefined ||
+                                    appliedMaxPrice !== undefined) && (
                                     <Button
                                         variant="outline"
                                         size="sm"
@@ -305,7 +318,9 @@ export function AuctionListPage() {
                                         ? 'Error Loading Auctions'
                                         : 'Lỗi tải danh sách phiên đấu giá'}
                                 </h3>
-                                <p className="text-sm text-gray-600 mt-1 max-w-md mx-auto">{error}</p>
+                                <p className="text-sm text-gray-600 mt-1 max-w-md mx-auto">
+                                    {error}
+                                </p>
                             </div>
                             <Button
                                 variant="primary"
@@ -343,17 +358,19 @@ export function AuctionListPage() {
                                         : 'Không có phiên đấu giá nào phù hợp với bộ lọc hiện tại. Hãy thử thay đổi từ khóa hoặc khoảng giá.'
                                 }
                                 action={
-                                    (statusFilter !== 'all' ||
-                                        searchQuery ||
-                                        appliedMinPrice !== undefined ||
-                                        appliedMaxPrice !== undefined) ? (
+                                    statusFilter !== 'all' ||
+                                    searchQuery ||
+                                    appliedMinPrice !== undefined ||
+                                    appliedMaxPrice !== undefined ? (
                                         <Button
                                             variant="outline"
                                             size="sm"
                                             onClick={handleClearFilters}
                                             className="mt-3"
                                         >
-                                            {lang === 'en' ? 'Clear all filters' : 'Xóa toàn bộ bộ lọc'}
+                                            {lang === 'en'
+                                                ? 'Clear all filters'
+                                                : 'Xóa toàn bộ bộ lọc'}
                                         </Button>
                                     ) : undefined
                                 }
@@ -423,34 +440,41 @@ export function AuctionDetailPage() {
     const [selectedImageIndex, setSelectedImageIndex] = useState(0)
 
     // Tải thông tin chi tiết qua API Adapter
-    const loadAuctionDetail = useCallback(async (backgroundRefresh = false) => {
-        if (!auctionId) {
-            setError(lang === 'en' ? 'Auction ID is missing.' : 'Thiếu mã phiên đấu giá.')
-            setLoading(false)
-            return
-        }
-        if (!backgroundRefresh) {
-            setLoading(true)
-            setError('')
-        }
-        try {
-            const data = await auctionsApi.getAuctionById(auctionId, createdAuctions, auctionReviews)
-            setAuction(data)
-            if (!backgroundRefresh) setCustomBid(String(data.currentBid + data.minIncrement))
-        } catch (err) {
-            if (!backgroundRefresh) {
-                setError(
-                    err instanceof Error
-                        ? err.message
-                        : lang === 'en'
-                          ? 'Failed to load auction details.'
-                          : 'Không thể tải thông tin chi tiết phiên đấu giá.',
-                )
+    const loadAuctionDetail = useCallback(
+        async (backgroundRefresh = false) => {
+            if (!auctionId) {
+                setError(lang === 'en' ? 'Auction ID is missing.' : 'Thiếu mã phiên đấu giá.')
+                setLoading(false)
+                return
             }
-        } finally {
-            if (!backgroundRefresh) setLoading(false)
-        }
-    }, [auctionId, createdAuctions, auctionReviews, lang])
+            if (!backgroundRefresh) {
+                setLoading(true)
+                setError('')
+            }
+            try {
+                const data = await auctionsApi.getAuctionById(
+                    auctionId,
+                    createdAuctions,
+                    auctionReviews,
+                )
+                setAuction(data)
+                if (!backgroundRefresh) setCustomBid(String(data.currentBid + data.minIncrement))
+            } catch (err) {
+                if (!backgroundRefresh) {
+                    setError(
+                        err instanceof Error
+                            ? err.message
+                            : lang === 'en'
+                              ? 'Failed to load auction details.'
+                              : 'Không thể tải thông tin chi tiết phiên đấu giá.',
+                    )
+                }
+            } finally {
+                if (!backgroundRefresh) setLoading(false)
+            }
+        },
+        [auctionId, createdAuctions, auctionReviews, lang],
+    )
 
     useEffect(() => {
         loadAuctionDetail()
@@ -495,9 +519,7 @@ export function AuctionDetailPage() {
                     </div>
                     <div>
                         <h2 className="text-xl font-bold text-gray-900">
-                            {lang === 'en'
-                                ? 'Auction Not Found'
-                                : 'Không tìm thấy phiên đấu giá'}
+                            {lang === 'en' ? 'Auction Not Found' : 'Không tìm thấy phiên đấu giá'}
                         </h2>
                         <p className="text-sm text-gray-500 mt-1.5 max-w-md mx-auto">
                             {error ||
@@ -512,16 +534,10 @@ export function AuctionDetailPage() {
                             size="md"
                             onClick={() => navigate('auction-list')}
                         >
-                            {lang === 'en'
-                                ? '← Back to Auctions'
-                                : '← Quay lại danh sách đấu giá'}
+                            {lang === 'en' ? '← Back to Auctions' : '← Quay lại danh sách đấu giá'}
                         </Button>
                         {error && (
-                            <Button
-                                variant="outline"
-                                size="md"
-                                onClick={() => loadAuctionDetail()}
-                            >
+                            <Button variant="outline" size="md" onClick={() => loadAuctionDetail()}>
                                 {lang === 'en' ? 'Retry' : 'Thử lại'}
                             </Button>
                         )}
@@ -564,7 +580,7 @@ export function AuctionDetailPage() {
         }
 
         // 3. Kiểm tra điểm uy tín
-        if ((user?.reputationScore || 0) < 30 && (user?.reputationScore !== undefined)) {
+        if ((user?.reputationScore || 0) < 30 && user?.reputationScore !== undefined) {
             setBidError(tr(lang, 'insufficientReputation'))
             return
         }
@@ -612,7 +628,9 @@ export function AuctionDetailPage() {
     const images =
         auction.product.images && auction.product.images.length > 0
             ? auction.product.images
-            : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80']
+            : [
+                  'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80',
+              ]
 
     return (
         <BuyerLayout>
@@ -671,7 +689,11 @@ export function AuctionDetailPage() {
                                                 : 'border-transparent opacity-75 hover:opacity-100'
                                         }`}
                                     >
-                                        <img src={img} className="w-full h-full object-cover" alt="" />
+                                        <img
+                                            src={img}
+                                            className="w-full h-full object-cover"
+                                            alt=""
+                                        />
                                     </button>
                                 ))}
                             </div>
@@ -890,7 +912,9 @@ export function AuctionDetailPage() {
                                             <Trophy size={28} />
                                         </div>
                                         <h3 className="font-bold text-emerald-700 text-lg">
-                                            {lang === 'en' ? 'Congratulations! You won!' : 'Chúc mừng! Bạn đã thắng phiên đấu giá!'}
+                                            {lang === 'en'
+                                                ? 'Congratulations! You won!'
+                                                : 'Chúc mừng! Bạn đã thắng phiên đấu giá!'}
                                         </h3>
                                         <p className="text-2xl font-black text-gray-900">
                                             {formatCurrency(auction.currentBid, lang)}
@@ -905,7 +929,9 @@ export function AuctionDetailPage() {
                                                 })
                                             }
                                         >
-                                            {lang === 'en' ? 'Proceed to Checkout' : 'Thanh toán đơn hàng ngay'}
+                                            {lang === 'en'
+                                                ? 'Proceed to Checkout'
+                                                : 'Thanh toán đơn hàng ngay'}
                                         </Button>
                                     </>
                                 ) : auction.winnerId ? (
@@ -944,7 +970,9 @@ export function AuctionDetailPage() {
                     {/* Bảng nhập đặt giá thầu (Chỉ hiện khi ACTIVE) */}
                     {isActive && (
                         <div className="nexus-card p-6 shadow-sm space-y-4">
-                            <h3 className="font-bold text-gray-900 text-base">{tr(lang, 'placeBid')}</h3>
+                            <h3 className="font-bold text-gray-900 text-base">
+                                {tr(lang, 'placeBid')}
+                            </h3>
 
                             {bidError && (
                                 <AlertBanner
@@ -1005,7 +1033,8 @@ export function AuctionDetailPage() {
                                 onClick={() => placeBid(Number(customBid))}
                             >
                                 <Gavel size={16} />
-                                {tr(lang, 'placeBid')} – {formatCurrency(Number(customBid) || minBid, lang)}
+                                {tr(lang, 'placeBid')} –{' '}
+                                {formatCurrency(Number(customBid) || minBid, lang)}
                             </Button>
 
                             {isSeller && (
@@ -1020,7 +1049,11 @@ export function AuctionDetailPage() {
                             <div className="p-3 bg-amber-50 rounded-xl border border-amber-200/60 text-xs text-amber-800 space-y-1">
                                 <div className="font-bold flex items-center gap-1.5">
                                     <Clock size={13} />
-                                    <span>{lang === 'en' ? 'Anti-Sniping Protection' : 'Cơ chế bảo vệ giờ chót'}</span>
+                                    <span>
+                                        {lang === 'en'
+                                            ? 'Anti-Sniping Protection'
+                                            : 'Cơ chế bảo vệ giờ chót'}
+                                    </span>
                                 </div>
                                 <p className="text-[11px] text-amber-700 leading-relaxed">
                                     {lang === 'en'
@@ -1327,7 +1360,9 @@ export function AuctionPaymentPage() {
                     orderId = freshSettlement.orderId
                     setSettlement(freshSettlement)
                 } else {
-                    setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
+                    setCheckoutError(
+                        'Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.',
+                    )
                     return
                 }
             }
@@ -1448,9 +1483,13 @@ export function AuctionPaymentPage() {
                         ) : (
                             <div className="nexus-card p-5 flex items-center justify-between gap-4">
                                 <div>
-                                    <p className="text-sm text-gray-500">{tr(lang, 'paymentDeadline')}</p>
+                                    <p className="text-sm text-gray-500">
+                                        {tr(lang, 'paymentDeadline')}
+                                    </p>
                                     <p className="font-semibold text-gray-900">
-                                        {new Date(deadline).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                                        {new Date(deadline).toLocaleString(
+                                            lang === 'vi' ? 'vi-VN' : 'en-US',
+                                        )}
                                     </p>
                                 </div>
                                 <div className="text-right">
@@ -1467,12 +1506,16 @@ export function AuctionPaymentPage() {
                             <div className="nexus-card p-4 flex items-center justify-between gap-3 border-blue-200 bg-blue-50">
                                 <p className="text-sm text-blue-800">
                                     {tr(lang, 'linkedSettlementOrder')}{' '}
-                                    <span className="font-mono font-semibold">{settlement.orderId}</span>
+                                    <span className="font-mono font-semibold">
+                                        {settlement.orderId}
+                                    </span>
                                 </p>
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => navigate('order-detail', { id: settlement.orderId })}
+                                    onClick={() =>
+                                        navigate('order-detail', { id: settlement.orderId })
+                                    }
                                 >
                                     {tr(lang, 'viewLinkedOrder')}
                                 </Button>
@@ -1554,7 +1597,10 @@ export function AuctionPaymentPage() {
                             >
                                 <CreditCard size={16} />
                                 {checkoutBusy
-                                    ? (checkoutStatus || (lang === 'en' ? 'Processing\u2026' : '\u0110ang x\u1EED l\u00FD\u2026'))
+                                    ? checkoutStatus ||
+                                      (lang === 'en'
+                                          ? 'Processing\u2026'
+                                          : '\u0110ang x\u1EED l\u00FD\u2026')
                                     : settlement.orderId
                                       ? tr(lang, 'continueSandboxPayment')
                                       : `${tr(lang, 'continueSandboxPayment')}${settlement.finalPrice != null ? ` \u00B7 ${formatCurrency(settlement.finalPrice, lang)}` : ''}`}

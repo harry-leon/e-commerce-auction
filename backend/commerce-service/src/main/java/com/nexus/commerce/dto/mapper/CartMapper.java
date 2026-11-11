@@ -48,7 +48,7 @@ public class CartMapper {
         return new CartItemResponse(
                 item.getId(),
                 item.getSkuId(),
-                skuInfo != null ? skuInfo.skuCode() : "N/A",
+                skuInfo != null ? SkuInfo.resolveSkuCode(item.getSkuId(), skuInfo.skuCode()) : "N/A",
                 skuInfo != null ? skuInfo.productName() : "Unknown Product",
                 skuInfo != null ? skuInfo.thumbnailUrl() : null,
                 unitPrice,

@@ -43,6 +43,22 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID>, Jpa
     List<Inventory> findBySkuIdIn(Collection<UUID> skuIds);
 
     /**
+     * Tra cứu tất cả bản ghi tồn kho theo danh sách seller_sku_id (dùng cho màn hình danh sách Seller SKUs).
+     */
+    @Query("SELECT i FROM Inventory i JOIN FETCH i.warehouse WHERE i.sellerSku.id IN :sellerSkuIds")
+    List<Inventory> findBySellerSkuIdInWithWarehouse(@Param("sellerSkuIds") Collection<UUID> sellerSkuIds);
+
+    /**
+     * Tra cứu và khóa dòng theo seller_sku_id và warehouse_id trong luồng nhập kho mới.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT i FROM Inventory i WHERE i.sellerSku.id = :sellerSkuId AND i.warehouse.id = :warehouseId")
+    Optional<Inventory> findBySellerSkuIdAndWarehouseIdForUpdate(
+            @Param("sellerSkuId") UUID sellerSkuId,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    /**
      * Tra cứu danh sách tồn kho cho tập hợp SKU tại một kho hàng cụ thể.
      */
     List<Inventory> findBySkuIdInAndWarehouseId(Collection<UUID> skuIds, UUID warehouseId);

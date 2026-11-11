@@ -14,7 +14,14 @@
  * Lỗi & giới hạn: Dữ liệu phiên mới tạo có thể chỉ nằm cục bộ cho tới khi API đồng bộ thành công.
  */
 
-import { api, post, ApiClientError, type ApiProduct, type ApiResponse, type Envelope } from './client'
+import {
+    api,
+    post,
+    ApiClientError,
+    type ApiProduct,
+    type ApiResponse,
+    type Envelope,
+} from './client'
 import { readSession } from './client'
 import type { Auction, AuctionBid, AuctionStatus, Product } from '../types'
 import { AUCTIONS, PRODUCTS } from '../mockData'
@@ -110,7 +117,11 @@ export async function getAuctionSettlement(auctionId: string): Promise<AuctionSe
         !settlement.id ||
         !settlement.result
     ) {
-        throw new ApiClientError('Settlement response is invalid', 'INVALID_SETTLEMENT_RESPONSE', 502)
+        throw new ApiClientError(
+            'Settlement response is invalid',
+            'INVALID_SETTLEMENT_RESPONSE',
+            502,
+        )
     }
     return settlement
 }
@@ -136,7 +147,12 @@ export async function getWinnerAuctionDetails(auctionId: string): Promise<Winner
         `/products/${encodeURIComponent(auction.productId)}`,
     )
     const product = productResponse?.data
-    if (!productResponse?.success || !product || product.id !== auction.productId || !product.name) {
+    if (
+        !productResponse?.success ||
+        !product ||
+        product.id !== auction.productId ||
+        !product.name
+    ) {
         throw new ApiClientError('Catalog response is invalid', 'INVALID_CATALOG_RESPONSE', 502)
     }
 
@@ -277,10 +293,7 @@ let auctionProductCache: Map<string, AuctionProductCacheEntry> = loadAuctionProd
  * Luồng: Gọi sau khi Seller chọn sản phẩm để tạo auction; hoặc khi load danh sách sản phẩm.
  * Quy tắc: Chỉ ghi đè nếu entry mới có nhiều thông tin hơn entry cũ.
  */
-export function cacheAuctionProduct(
-    productId: string,
-    entry: AuctionProductCacheEntry,
-) {
+export function cacheAuctionProduct(productId: string, entry: AuctionProductCacheEntry) {
     if (!productId || !entry.name) return
     const existing = auctionProductCache.get(productId)
     // Ưu tiên giữ bản có đầy đủ thông tin hơn
@@ -324,15 +337,19 @@ function persistAuctionReviews(reviews: Record<string, StoredAuctionReview>) {
 function loadStoredAuctions(): Auction[] {
     try {
         // Đọc kho mới trước; nếu chỉ còn kho cũ thì di trú phiên người dùng tạo và bỏ fixture mặc định.
-        const raw = localStorage.getItem(AUCTIONS_STORAGE_KEY) || localStorage.getItem(LEGACY_AUCTIONS_STORAGE_KEY)
+        const raw =
+            localStorage.getItem(AUCTIONS_STORAGE_KEY) ||
+            localStorage.getItem(LEGACY_AUCTIONS_STORAGE_KEY)
         if (raw) {
             const parsed = JSON.parse(raw)
             if (Array.isArray(parsed)) {
                 const demoIds = new Set(AUCTIONS.map((auction) => auction.id))
                 const storedAuctions = parsed.filter((auction): auction is Auction =>
                     Boolean(
-                        auction && typeof auction.id === 'string' &&
-                        !demoIds.has(auction.id) && !isLocalFallbackAuction(auction),
+                        auction &&
+                        typeof auction.id === 'string' &&
+                        !demoIds.has(auction.id) &&
+                        !isLocalFallbackAuction(auction),
                     ),
                 )
                 localStorage.setItem(AUCTIONS_STORAGE_KEY, JSON.stringify(storedAuctions))
@@ -539,20 +556,14 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
             const cached = auctionProductCache.get(productId)
 
             const fallbackName =
-                item.productName ||
-                item.product_name ||
-                cached?.name ||
-                'Auction Product'
+                item.productName || item.product_name || cached?.name || 'Auction Product'
             const fallbackNameVi =
                 item.productNameVi ||
                 item.product_name_vi ||
                 cached?.nameVi ||
                 cached?.name ||
                 'Sản phẩm đấu giá'
-            const fallbackSku =
-                item.product?.sku ||
-                cached?.sku ||
-                'N/A'
+            const fallbackSku = item.product?.sku || cached?.sku || 'N/A'
             const fallbackImages =
                 cached?.images ||
                 (Array.isArray(item.productImages || item.product_images)
@@ -579,14 +590,8 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
                 // Dùng SKU thật từ cache; không tạo giả dạng AUC-{id} gây nhầm lẫn
                 sku: fallbackSku,
                 status: 'active',
-                description:
-                    item.productDescription ||
-                    item.product_description ||
-                    '',
-                descriptionVi:
-                    item.productDescriptionVi ||
-                    item.product_description_vi ||
-                    '',
+                description: item.productDescription || item.product_description || '',
+                descriptionVi: item.productDescriptionVi || item.product_description_vi || '',
                 sellerId: String(item.sellerId || item.seller_id || 'u-seller'),
                 sellerName: item.sellerName || item.seller_name || 'Nexus Seller',
                 sellerTrust: 'gold',
@@ -612,10 +617,7 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
             return {
                 id: bidId,
                 bidderId: String(b.bidderId || b.bidder_id || 'bidder-unknown'),
-                bidderName:
-                    b.bidderName ||
-                    b.bidder_name ||
-                    `Người dùng ***${bidId.slice(-3)}`,
+                bidderName: b.bidderName || b.bidder_name || `Người dùng ***${bidId.slice(-3)}`,
                 amount,
                 timestamp: !isNaN(parsedTime.getTime())
                     ? parsedTime.toISOString()
@@ -634,13 +636,12 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
         productId,
         product,
         sellerId: String(item.sellerId || item.seller_id || product.sellerId || 'u-seller'),
-        sellerName:
-            item.sellerName ||
-            item.seller_name ||
-            product.sellerName ||
-            'Nexus Seller',
+        sellerName: item.sellerName || item.seller_name || product.sellerName || 'Nexus Seller',
         sellerAccountName:
-            item.sellerFullName || item.seller_full_name || item.sellerAccountName || item.seller_account_name,
+            item.sellerFullName ||
+            item.seller_full_name ||
+            item.sellerAccountName ||
+            item.seller_account_name,
         sellerEmail: item.sellerEmail || item.seller_email,
         status,
         startingPrice,
@@ -652,7 +653,10 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
         bids,
         winnerId: item.highestBidderId || item.highest_bidder_id || undefined,
         winnerName: item.highestBidderName || item.highest_bidder_name || undefined,
-        visibility: item.visibility === 'PRIVATE' || item.visibility === 'restricted' ? 'restricted' : 'public',
+        visibility:
+            item.visibility === 'PRIVATE' || item.visibility === 'restricted'
+                ? 'restricted'
+                : 'public',
     }
 }
 
@@ -725,7 +729,8 @@ export const auctionsApi = {
         } = params
 
         const queryParts: string[] = []
-        if (status && status !== 'all') queryParts.push(`status=${encodeURIComponent(status.toUpperCase())}`)
+        if (status && status !== 'all')
+            queryParts.push(`status=${encodeURIComponent(status.toUpperCase())}`)
         if (search) queryParts.push(`search=${encodeURIComponent(search)}`)
         if (sortBy) queryParts.push(`sort=${encodeURIComponent(sortBy)}`)
         if (minPrice !== undefined) queryParts.push(`minPrice=${minPrice}`)
@@ -753,66 +758,136 @@ export const auctionsApi = {
                 const submittedIds = new Set(extraAuctions.map((auction) => auction.id))
                 const matchesCurrentSeller = (auction: Auction) =>
                     auction.sellerId === sellerId ||
-                    Boolean(sellerName && [auction.sellerName, auction.sellerAccountName]
-                        .some((name) => name?.trim().toLowerCase() === sellerName.trim().toLowerCase()))
-                const localCreated = [...extraAuctions, ...localAuctionsStore].filter((auction, index, source) => {
-                    // Chỉ ẩn bản ghi offline khi khách Buyer vãng lai xem danh sách công khai; Seller và Admin vẫn theo dõi được phiên vừa tạo.
-                    if (isLocalFallbackAuction(auction) && (!sellerId && !includePending) && !submittedIds.has(auction.id)) return false
-                    if (excludeDemoData && seededIds.has(auction.id) && !submittedIds.has(auction.id)) return false
-                    if ((seededIds.has(auction.id) && !submittedIds.has(auction.id)) || serverIds.has(auction.id)) return false
-                    if (source.findIndex((candidate) => candidate.id === auction.id) !== index) return false
-                    // Ưu tiên ID Seller; tên chỉ đối chiếu bản ghi local mới tạo bị thiếu/sai sellerId sau khi reload.
-                    if (sellerId && !matchesCurrentSeller(auction) && !submittedIds.has(auction.id)) return false
-                    const effectiveStatus = resolveAuctionStatus(auction.id, auction.status, reviews)
-                    if (status !== 'all' && effectiveStatus !== status) return false
-                    if (!sellerId && !includePending && ['pending_approval', 'rejected', 'paused'].includes(effectiveStatus)) {
-                        return false
-                    }
-                    if (search.trim()) {
-                        const query = search.trim().toLowerCase()
-                        if (!auction.product.name.toLowerCase().includes(query) &&
-                            !auction.product.nameVi.toLowerCase().includes(query) &&
-                            !auction.sellerName.toLowerCase().includes(query)) return false
-                    }
-                    if (minPrice !== undefined && auction.currentBid < minPrice) return false
-                    if (maxPrice !== undefined && auction.currentBid > maxPrice) return false
-                    return true
-                }).map((auction) => ({
-                    ...auction,
-                    sellerId: sellerId && (submittedIds.has(auction.id) || matchesCurrentSeller(auction))
-                        ? sellerId
-                        : auction.sellerId,
-                    status: resolveAuctionStatus(auction.id, auction.status, reviews),
-                }))
-                const serverItems = validatedItems
-                    .filter((auction) => !excludeDemoData || !seededIds.has(auction.id) || submittedIds.has(auction.id))
-                    .map((auction) => {
-                    const localCreatedAuction = [...extraAuctions, ...localAuctionsStore].find(
-                        (candidate) => candidate.id === auction.id && !seededIds.has(candidate.id),
+                    Boolean(
+                        sellerName &&
+                        [auction.sellerName, auction.sellerAccountName].some(
+                            (name) =>
+                                name?.trim().toLowerCase() === sellerName.trim().toLowerCase(),
+                        ),
                     )
-                    if (!localCreatedAuction || (sellerId && !matchesCurrentSeller(localCreatedAuction))) return auction
-
-                    // API list có thể thiếu seller_id; dùng owner đã cache cho phiên này nếu khớp Seller hiện tại.
-                    const resolvedSellerId = sellerId || localCreatedAuction.sellerId
-                    const resolvedSellerName = localCreatedAuction.sellerName || auction.sellerName
-                    return {
-                        ...auction,
-                        sellerId: resolvedSellerId,
-                        sellerName: resolvedSellerName,
-                        sellerAccountName: auction.sellerAccountName || localCreatedAuction.sellerAccountName,
-                        sellerEmail: auction.sellerEmail || localCreatedAuction.sellerEmail,
-                        status: resolveAuctionStatus(auction.id, auction.status, reviews),
-                        product: { ...auction.product, sellerId: resolvedSellerId, sellerName: resolvedSellerName },
-                    }
+                const localCreated = [...extraAuctions, ...localAuctionsStore]
+                    .filter((auction, index, source) => {
+                        // Chỉ ẩn bản ghi offline khi khách Buyer vãng lai xem danh sách công khai; Seller và Admin vẫn theo dõi được phiên vừa tạo.
+                        if (
+                            isLocalFallbackAuction(auction) &&
+                            !sellerId &&
+                            !includePending &&
+                            !submittedIds.has(auction.id)
+                        )
+                            return false
+                        if (
+                            excludeDemoData &&
+                            seededIds.has(auction.id) &&
+                            !submittedIds.has(auction.id)
+                        )
+                            return false
+                        if (
+                            (seededIds.has(auction.id) && !submittedIds.has(auction.id)) ||
+                            serverIds.has(auction.id)
+                        )
+                            return false
+                        if (source.findIndex((candidate) => candidate.id === auction.id) !== index)
+                            return false
+                        // Ưu tiên ID Seller; tên chỉ đối chiếu bản ghi local mới tạo bị thiếu/sai sellerId sau khi reload.
+                        if (
+                            sellerId &&
+                            !matchesCurrentSeller(auction) &&
+                            !submittedIds.has(auction.id)
+                        )
+                            return false
+                        const effectiveStatus = resolveAuctionStatus(
+                            auction.id,
+                            auction.status,
+                            reviews,
+                        )
+                        if (status !== 'all' && effectiveStatus !== status) return false
+                        if (
+                            !sellerId &&
+                            !includePending &&
+                            ['pending_approval', 'rejected', 'paused'].includes(effectiveStatus)
+                        ) {
+                            return false
+                        }
+                        if (search.trim()) {
+                            const query = search.trim().toLowerCase()
+                            if (
+                                !auction.product.name.toLowerCase().includes(query) &&
+                                !auction.product.nameVi.toLowerCase().includes(query) &&
+                                !auction.sellerName.toLowerCase().includes(query)
+                            )
+                                return false
+                        }
+                        if (minPrice !== undefined && auction.currentBid < minPrice) return false
+                        if (maxPrice !== undefined && auction.currentBid > maxPrice) return false
+                        return true
                     })
-                const items = [...localCreated, ...serverItems].filter((auction) => {
-                    const effectiveStatus = resolveAuctionStatus(auction.id, auction.status, reviews)
-                    return (!status || status === 'all' || effectiveStatus === status) &&
-                        (sellerId ? auction.sellerId === sellerId : includePending || !['pending_approval', 'rejected', 'paused'].includes(effectiveStatus))
-                }).map((auction) => ({
-                    ...auction,
-                    status: resolveAuctionStatus(auction.id, auction.status, reviews),
-                }))
+                    .map((auction) => ({
+                        ...auction,
+                        sellerId:
+                            sellerId &&
+                            (submittedIds.has(auction.id) || matchesCurrentSeller(auction))
+                                ? sellerId
+                                : auction.sellerId,
+                        status: resolveAuctionStatus(auction.id, auction.status, reviews),
+                    }))
+                const serverItems = validatedItems
+                    .filter(
+                        (auction) =>
+                            !excludeDemoData ||
+                            !seededIds.has(auction.id) ||
+                            submittedIds.has(auction.id),
+                    )
+                    .map((auction) => {
+                        const localCreatedAuction = [...extraAuctions, ...localAuctionsStore].find(
+                            (candidate) =>
+                                candidate.id === auction.id && !seededIds.has(candidate.id),
+                        )
+                        if (
+                            !localCreatedAuction ||
+                            (sellerId && !matchesCurrentSeller(localCreatedAuction))
+                        )
+                            return auction
+
+                        // API list có thể thiếu seller_id; dùng owner đã cache cho phiên này nếu khớp Seller hiện tại.
+                        const resolvedSellerId = sellerId || localCreatedAuction.sellerId
+                        const resolvedSellerName =
+                            localCreatedAuction.sellerName || auction.sellerName
+                        return {
+                            ...auction,
+                            sellerId: resolvedSellerId,
+                            sellerName: resolvedSellerName,
+                            sellerAccountName:
+                                auction.sellerAccountName || localCreatedAuction.sellerAccountName,
+                            sellerEmail: auction.sellerEmail || localCreatedAuction.sellerEmail,
+                            status: resolveAuctionStatus(auction.id, auction.status, reviews),
+                            product: {
+                                ...auction.product,
+                                sellerId: resolvedSellerId,
+                                sellerName: resolvedSellerName,
+                            },
+                        }
+                    })
+                const items = [...localCreated, ...serverItems]
+                    .filter((auction) => {
+                        const effectiveStatus = resolveAuctionStatus(
+                            auction.id,
+                            auction.status,
+                            reviews,
+                        )
+                        return (
+                            (!status || status === 'all' || effectiveStatus === status) &&
+                            (sellerId
+                                ? auction.sellerId === sellerId
+                                : includePending ||
+                                  !['pending_approval', 'rejected', 'paused'].includes(
+                                      effectiveStatus,
+                                  ))
+                        )
+                    })
+                    .map((auction) => ({
+                        ...auction,
+                        status: resolveAuctionStatus(auction.id, auction.status, reviews),
+                    }))
                 return {
                     items,
                     total: items.length,
@@ -835,7 +910,13 @@ export const auctionsApi = {
         let filtered = combined
             .filter((a) => {
                 if (seededIds.has(a.id) && !submittedIds.has(a.id)) return false
-                if (isLocalFallbackAuction(a) && (!sellerId && !includePending) && !submittedIds.has(a.id)) return false
+                if (
+                    isLocalFallbackAuction(a) &&
+                    !sellerId &&
+                    !includePending &&
+                    !submittedIds.has(a.id)
+                )
+                    return false
                 if (seen.has(a.id)) return false
                 seen.add(a.id)
                 return true
@@ -850,17 +931,28 @@ export const auctionsApi = {
             filtered = filtered.filter((a) => a.status === status)
         }
         if (!sellerId && !includePending) {
-            filtered = filtered.filter((a) => !['pending_approval', 'rejected', 'paused'].includes(a.status))
+            filtered = filtered.filter(
+                (a) => !['pending_approval', 'rejected', 'paused'].includes(a.status),
+            )
         }
 
         // Lọc theo người bán nếu có yêu cầu (phía Seller Portal)
         if (sellerId) {
-            filtered = filtered.filter((auction) =>
-                auction.sellerId === sellerId ||
-                (!seededIds.has(auction.id) && Boolean(sellerName &&
-                    [auction.sellerName, auction.sellerAccountName]
-                        .some((name) => name?.trim().toLowerCase() === sellerName.trim().toLowerCase()))),
-            ).map((auction) => ({ ...auction, sellerId }))
+            filtered = filtered
+                .filter(
+                    (auction) =>
+                        auction.sellerId === sellerId ||
+                        (!seededIds.has(auction.id) &&
+                            Boolean(
+                                sellerName &&
+                                [auction.sellerName, auction.sellerAccountName].some(
+                                    (name) =>
+                                        name?.trim().toLowerCase() ===
+                                        sellerName.trim().toLowerCase(),
+                                ),
+                            )),
+                )
+                .map((auction) => ({ ...auction, sellerId }))
         }
 
         // Lọc tìm kiếm từ khóa
@@ -884,9 +976,7 @@ export const auctionsApi = {
 
         // Sắp xếp
         if (sortBy === 'ending-soon') {
-            filtered.sort(
-                (a, b) => new Date(a.endTime).getTime() - new Date(b.endTime).getTime(),
-            )
+            filtered.sort((a, b) => new Date(a.endTime).getTime() - new Date(b.endTime).getTime())
         } else if (sortBy === 'most-bids') {
             filtered.sort((a, b) => b.bidCount - a.bidCount)
         } else if (sortBy === 'newest') {
@@ -918,9 +1008,10 @@ export const auctionsApi = {
         const envelope = await api<ApiResponse<unknown> | unknown[]>(
             `/auctions/${encodeURIComponent(auctionId)}/bids?page=${page}&limit=${limit}&sortBy=placedAt&sortDir=DESC`,
         )
-        const rawData = envelope && typeof envelope === 'object' && 'data' in envelope
-            ? (envelope as ApiResponse<unknown>).data
-            : envelope
+        const rawData =
+            envelope && typeof envelope === 'object' && 'data' in envelope
+                ? (envelope as ApiResponse<unknown>).data
+                : envelope
         if (!Array.isArray(rawData)) return []
         return rawData.flatMap((value, index) => {
             if (!value || typeof value !== 'object') return []
@@ -929,16 +1020,19 @@ export const auctionsApi = {
             const amount = Number(bid.amount)
             if (!Number.isFinite(amount) || amount <= 0) return []
             const placedAt = bid.placedAt || bid.placed_at || bid.timestamp
-            const timestamp = placedAt && !Number.isNaN(new Date(placedAt).getTime())
-                ? new Date(placedAt).toISOString()
-                : new Date().toISOString()
-            return [{
-                id,
-                bidderId: String(bid.bidderId || bid.bidder_id || 'bidder-unknown'),
-                bidderName: bid.bidderName || bid.bidder_name || `User ***${id.slice(-3)}`,
-                amount,
-                timestamp,
-            }]
+            const timestamp =
+                placedAt && !Number.isNaN(new Date(placedAt).getTime())
+                    ? new Date(placedAt).toISOString()
+                    : new Date().toISOString()
+            return [
+                {
+                    id,
+                    bidderId: String(bid.bidderId || bid.bidder_id || 'bidder-unknown'),
+                    bidderName: bid.bidderName || bid.bidder_name || `User ***${id.slice(-3)}`,
+                    amount,
+                    timestamp,
+                },
+            ]
         })
     },
 
@@ -983,12 +1077,15 @@ export const auctionsApi = {
         }
 
         // Fallback tra cứu trong kho local
-        const found = extraAuctions.find((auction) => auction.id === id) ||
-            localAuctionsStore.find((auction) => auction.id === id && !isLocalFallbackAuction(auction))
+        const found =
+            extraAuctions.find((auction) => auction.id === id) ||
+            localAuctionsStore.find(
+                (auction) => auction.id === id && !isLocalFallbackAuction(auction),
+            )
         if (found) {
             return {
                 ...found,
-                    status: resolveAuctionStatus(found.id, found.status, reviews),
+                status: resolveAuctionStatus(found.id, found.status, reviews),
             }
         }
 
@@ -1024,9 +1121,13 @@ export const auctionsApi = {
         try {
             const payload = {
                 amount,
-                idempotencyKey: idempotencyKey || `bid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                idempotencyKey:
+                    idempotencyKey || `bid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             }
-            const envelope = await post<ApiResponse<PlaceBidResponse>>(`/auctions/${auctionId}/bids`, payload)
+            const envelope = await post<ApiResponse<PlaceBidResponse>>(
+                `/auctions/${auctionId}/bids`,
+                payload,
+            )
             if (envelope?.data) {
                 return envelope.data
             }
@@ -1056,7 +1157,9 @@ export const auctionsApi = {
             const currentExtensions = targetAuction.extensionCount || 0
             if (timeLeftMs > 0 && timeLeftMs <= 5 * 60 * 1000 && currentExtensions < 5) {
                 extended = true
-                newEndTime = new Date(new Date(targetAuction.endTime).getTime() + 5 * 60 * 1000).toISOString()
+                newEndTime = new Date(
+                    new Date(targetAuction.endTime).getTime() + 5 * 60 * 1000,
+                ).toISOString()
             }
             const updatedBids = [newBid, ...targetAuction.bids]
             const updatedAuction: Auction = {
@@ -1197,22 +1300,16 @@ export const auctionsApi = {
 
         const startPrice = Number(payload.startingPrice)
         if (!Number.isFinite(startPrice) || startPrice <= 0) {
-            throw new ApiClientError(
-                'Giá khởi điểm phải lớn hơn 0',
-                'INVALID_START_PRICE',
-                422,
-                [{ field: 'startingPrice', message: 'Giá khởi điểm phải lớn hơn 0' }],
-            )
+            throw new ApiClientError('Giá khởi điểm phải lớn hơn 0', 'INVALID_START_PRICE', 422, [
+                { field: 'startingPrice', message: 'Giá khởi điểm phải lớn hơn 0' },
+            ])
         }
 
         const minIncrement = Number(payload.minIncrement)
         if (!Number.isFinite(minIncrement) || minIncrement <= 0) {
-            throw new ApiClientError(
-                'Bước giá phải lớn hơn 0',
-                'INVALID_BID_INCREMENT',
-                422,
-                [{ field: 'minIncrement', message: 'Bước giá phải lớn hơn 0' }],
-            )
+            throw new ApiClientError('Bước giá phải lớn hơn 0', 'INVALID_BID_INCREMENT', 422, [
+                { field: 'minIncrement', message: 'Bước giá phải lớn hơn 0' },
+            ])
         }
         if (minIncrement < 1000) {
             throw new ApiClientError(
@@ -1229,7 +1326,12 @@ export const auctionsApi = {
                 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại',
                 'INVALID_START_TIME',
                 422,
-                [{ field: 'startTime', message: 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại' }],
+                [
+                    {
+                        field: 'startTime',
+                        message: 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại',
+                    },
+                ],
             )
         }
 
@@ -1265,7 +1367,9 @@ export const auctionsApi = {
 
         // Kiểm tra định dạng UUID cho skuId để tránh lỗi Jackson HttpMessageNotReadableException
         const isUuidPattern = (val?: string | null) =>
-            Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val))
+            Boolean(
+                val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val),
+            )
 
         const apiPayload = {
             productId: payload.productId,
@@ -1287,7 +1391,9 @@ export const auctionsApi = {
                 const sellerName =
                     envelope.data.sellerName ||
                     envelope.data.seller_name ||
-                    (sellerId === session?.user?.id ? session?.user?.fullName : normalized.sellerName)
+                    (sellerId === session?.user?.id
+                        ? session?.user?.fullName
+                        : normalized.sellerName)
                 const createdAuction: Auction = {
                     ...normalized,
                     sellerId,
@@ -1298,10 +1404,16 @@ export const auctionsApi = {
                         envelope.data.sellerAccountName ||
                         envelope.data.seller_account_name ||
                         (sellerId === session?.user?.id ? session?.user?.fullName : undefined),
-                    sellerEmail: envelope.data.sellerEmail || envelope.data.seller_email || session?.user?.email,
+                    sellerEmail:
+                        envelope.data.sellerEmail ||
+                        envelope.data.seller_email ||
+                        session?.user?.email,
                     product: { ...normalized.product, sellerId, sellerName },
                 }
-                localAuctionsStore = [createdAuction, ...localAuctionsStore.filter((auction) => auction.id !== createdAuction.id)]
+                localAuctionsStore = [
+                    createdAuction,
+                    ...localAuctionsStore.filter((auction) => auction.id !== createdAuction.id),
+                ]
                 persistStoredAuctions(localAuctionsStore)
                 return createdAuction
             }
@@ -1358,9 +1470,12 @@ export const auctionsApi = {
         if (payload.startingPrice !== undefined) {
             const p = Number(payload.startingPrice)
             if (!Number.isFinite(p) || p <= 0) {
-                throw new ApiClientError('Giá khởi điểm phải lớn hơn 0', 'INVALID_START_PRICE', 422, [
-                    { field: 'startingPrice', message: 'Giá khởi điểm phải lớn hơn 0' },
-                ])
+                throw new ApiClientError(
+                    'Giá khởi điểm phải lớn hơn 0',
+                    'INVALID_START_PRICE',
+                    422,
+                    [{ field: 'startingPrice', message: 'Giá khởi điểm phải lớn hơn 0' }],
+                )
             }
             newStartPrice = p
         }
@@ -1374,9 +1489,12 @@ export const auctionsApi = {
                 ])
             }
             if (inc < 1000) {
-                throw new ApiClientError('Bước giá tối thiểu phải từ 1,000 đ', 'MIN_INCREMENT_TOO_LOW', 422, [
-                    { field: 'minIncrement', message: 'Bước giá tối thiểu phải từ 1,000 đ' },
-                ])
+                throw new ApiClientError(
+                    'Bước giá tối thiểu phải từ 1,000 đ',
+                    'MIN_INCREMENT_TOO_LOW',
+                    422,
+                    [{ field: 'minIncrement', message: 'Bước giá tối thiểu phải từ 1,000 đ' }],
+                )
             }
             newMinIncrement = inc
         }
@@ -1385,32 +1503,56 @@ export const auctionsApi = {
         if (payload.startTime) {
             const s = new Date(payload.startTime)
             if (isNaN(s.getTime()) || s.getTime() <= Date.now()) {
-                throw new ApiClientError('Thời gian bắt đầu phải lớn hơn thời gian hiện tại', 'INVALID_START_TIME', 422, [
-                    { field: 'startTime', message: 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại' },
-                ])
+                throw new ApiClientError(
+                    'Thời gian bắt đầu phải lớn hơn thời gian hiện tại',
+                    'INVALID_START_TIME',
+                    422,
+                    [
+                        {
+                            field: 'startTime',
+                            message: 'Thời gian bắt đầu phải lớn hơn thời gian hiện tại',
+                        },
+                    ],
+                )
             }
             newStartTime = s.toISOString()
         }
 
-        let newEndTime = currentAuction ? currentAuction.endTime : new Date(Date.now() + 86400000).toISOString()
+        let newEndTime = currentAuction
+            ? currentAuction.endTime
+            : new Date(Date.now() + 86400000).toISOString()
         if (payload.endTime) {
             const e = new Date(payload.endTime)
             const s = new Date(newStartTime)
             if (isNaN(e.getTime()) || e.getTime() <= s.getTime()) {
-                throw new ApiClientError('Thời gian kết thúc phải sau thời gian bắt đầu', 'INVALID_END_TIME', 422, [
-                    { field: 'endTime', message: 'Thời gian kết thúc phải sau thời gian bắt đầu' },
-                ])
+                throw new ApiClientError(
+                    'Thời gian kết thúc phải sau thời gian bắt đầu',
+                    'INVALID_END_TIME',
+                    422,
+                    [
+                        {
+                            field: 'endTime',
+                            message: 'Thời gian kết thúc phải sau thời gian bắt đầu',
+                        },
+                    ],
+                )
             }
             const durationMs = e.getTime() - s.getTime()
             if (durationMs < 3600000) {
-                throw new ApiClientError('Thời lượng phiên tối thiểu là 1 giờ', 'DURATION_TOO_SHORT', 422, [
-                    { field: 'endTime', message: 'Thời lượng phiên tối thiểu là 1 giờ' },
-                ])
+                throw new ApiClientError(
+                    'Thời lượng phiên tối thiểu là 1 giờ',
+                    'DURATION_TOO_SHORT',
+                    422,
+                    [{ field: 'endTime', message: 'Thời lượng phiên tối thiểu là 1 giờ' }],
+                )
             }
             if (durationMs > 7 * 86400000) {
-                throw new ApiClientError('Thời lượng phiên tối đa là 7 ngày', 'DURATION_TOO_LONG', 422, [
-                    { field: 'endTime', message: 'Thời lượng phiên tối đa là 7 ngày' },
-                ])
+                throw new ApiClientError(
+                    'Thời lượng phiên tối đa là 7 ngày',
+                    'DURATION_TOO_LONG',
+                    422,
+                    [{ field: 'endTime', message: 'Thời lượng phiên tối đa là 7 ngày' }],
+                )
             }
             newEndTime = e.toISOString()
         }
@@ -1455,7 +1597,11 @@ export const auctionsApi = {
             return updatedAuction
         }
 
-        throw new ApiClientError(`Không tìm thấy phiên đấu giá với ID ${id}`, 'AUCTION_NOT_FOUND', 404)
+        throw new ApiClientError(
+            `Không tìm thấy phiên đấu giá với ID ${id}`,
+            'AUCTION_NOT_FOUND',
+            404,
+        )
     },
 
     /**
@@ -1489,7 +1635,10 @@ export const auctionsApi = {
         const currentAuction = targetIndex >= 0 ? localAuctionsStore[targetIndex] : null
 
         if (currentAuction && actor === 'seller') {
-            if (['active', 'ended', 'settled'].includes(currentAuction.status) || new Date(currentAuction.startTime).getTime() <= Date.now()) {
+            if (
+                ['active', 'ended', 'settled'].includes(currentAuction.status) ||
+                new Date(currentAuction.startTime).getTime() <= Date.now()
+            ) {
                 throw new ApiClientError(
                     'Người bán chỉ có thể hủy phiên đấu giá trước giờ mở phiên',
                     'SELLER_CANNOT_CANCEL_ACTIVE_AUCTION',
@@ -1527,7 +1676,11 @@ export const auctionsApi = {
             return cancelledAuction
         }
 
-        throw new ApiClientError(`Không tìm thấy phiên đấu giá với ID ${id}`, 'AUCTION_NOT_FOUND', 404)
+        throw new ApiClientError(
+            `Không tìm thấy phiên đấu giá với ID ${id}`,
+            'AUCTION_NOT_FOUND',
+            404,
+        )
     },
 
     /**
@@ -1600,10 +1753,17 @@ export const auctionsApi = {
         }
         const index = localAuctionsStore.findIndex((auction) => auction.id === id)
         const auction = index >= 0 ? localAuctionsStore[index] : null
-        if (!auction) throw new ApiClientError(`Không tìm thấy phiên đấu giá với ID ${id}`, 'AUCTION_NOT_FOUND', 404)
+        if (!auction)
+            throw new ApiClientError(
+                `Không tìm thấy phiên đấu giá với ID ${id}`,
+                'AUCTION_NOT_FOUND',
+                404,
+            )
 
         try {
-            await post<ApiResponse<unknown>>(`/auctions/${id}/${paused ? 'pause' : 'resume'}`, { reason: reason.trim() })
+            await post<ApiResponse<unknown>>(`/auctions/${id}/${paused ? 'pause' : 'resume'}`, {
+                reason: reason.trim(),
+            })
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
         }
