@@ -25,7 +25,7 @@ Nhánh triển khai: `feature/winner-confirmation-timeout-notification` (tách t
 2. Trong cùng transaction:
    - Chuyển `Order.status = CANCELLED` (`AUCTION_PAYMENT_DEADLINE`).
    - Đưa `RELEASE` vào `payment_inventory_tasks` để Fulfillment giải phóng kho và ghi `inventory_ledger` (`RELEASE`) + `InventoryReleasedEvent`.
-   - Đưa `REPUTATION_PENALTY` (`PAYMENT_TIMEOUT_PENALTY_SCORE = 10`) và `AUCTION_DEFAULTED` vào `auction_timeout_tasks` (`V10`).
+   - Đưa `REPUTATION_PENALTY` (`PAYMENT_TIMEOUT_PENALTY_SCORE = 10`) và `AUCTION_DEFAULTED` vào `auction_timeout_tasks` (`V12`).
    - Đưa `AUCTION_PAYMENT_TIMEOUT` vào `commerce_notification_outbox`.
 3. `AuctionTimeoutSideEffectWorker` đọc `auction_timeout_tasks` bằng `FOR UPDATE SKIP LOCKED`:
    - Gọi `POST /api/v1/internal/reputations/penalties` (`nexus-commerce-service` + `REPUTATION.PENALTY`): `reputation-service` khóa hồ sơ `reputations`, kiểm tra khóa duy nhất `uq_user_penalty_ref (user_id, ref_type, ref_id)` tránh trừ hai lần, trừ 10 điểm với sàn `>= 0`, tăng `failed_tx` + `auction_failed`, cập nhật `trust_level` và phát `ReputationPenaltyAppliedEvent`.
@@ -34,7 +34,7 @@ Nhánh triển khai: `feature/winner-confirmation-timeout-notification` (tách t
 
 ## Migration & Keycloak
 
-- **Commerce:** [V10__auction_timeout_reputation_notifications.sql](../backend/commerce-service/src/main/resources/db/migration/V10__auction_timeout_reputation_notifications.sql)
+- **Commerce:** [V12__auction_timeout_reputation_notifications.sql](../backend/commerce-service/src/main/resources/db/migration/V12__auction_timeout_reputation_notifications.sql)
 - **Notification:** [V5__auction_notification_push.sql](../backend/notification-service/src/main/resources/db/migration/V5__auction_notification_push.sql)
 - **Keycloak realm (`deploy/keycloak/nexus-realm.json`):** Bổ sung quyền dịch vụ `REPUTATION.PENALTY`, `AUCTION.SETTLEMENT_SYNC`, `USER.INTERNAL_READ` cho `nexus-commerce-service`.
 
@@ -44,10 +44,10 @@ Nhánh triển khai: `feature/winner-confirmation-timeout-notification` (tách t
 | --- | --- | --- | --- | --- | --- |
 | `reputation-service` | 10 | 10 | 0 | 0 lỗi | 83.93% (256/305) |
 | `notification-service` | 50 | 40 | 10 (`NEXUS_TEST_DB_URL` chưa đặt) | 0 lỗi | 82.77% (615/743) |
-| `commerce-service` | 350 | 326 | 24 (`NEXUS_TEST_DB_URL` chưa đặt) | 0 lỗi | 82.71% (1440/1741) |
+| `commerce-service` | 374 | 338 | 36 (`NEXUS_TEST_DB_URL` chưa đặt) | 0 lỗi | 80.95% (1555/1921) |
 | `auction-service` | 148 | 148 | 0 | 0 lỗi | 83.10% (1195/1438) |
 | `user-service` | 59 | 59 | 0 | 0 lỗi | 87.72% (507/578) |
 | `fulfillment-service` | 75 | 73 | 2 (`FULFILLMENT_TEST_DB_URL` chưa đặt) | 0 lỗi | 81.37% (808/993) |
 
-**Giới hạn còn lại:** Do môi trường local chưa khởi chạy container PostgreSQL test riêng (`NEXUS_TEST_DB_URL`, `FULFILLMENT_TEST_DB_URL`), 36 integration test phụ thuộc PostgreSQL (`PaymentPostgresTest`, `CheckoutPostgresTest`, `NotificationPostgresTest`, `TransactionalEmailPostgresTest`, `InventoryPaymentRacePostgresTest`...) đã bị `@EnabledIfEnvironmentVariable` bỏ qua trong lượt chạy local và sẽ chạy trên pipeline CI khi có DB test.
+**Giới hạn còn lại:** Do môi trường local chưa khởi chạy container PostgreSQL test riêng (`NEXUS_TEST_DB_URL`, `FULFILLMENT_TEST_DB_URL`), 48 integration test phụ thuộc PostgreSQL (`PaymentPostgresTest`, `BaselineMigrationPostgresTest`, `CheckoutPostgresTest`, `NotificationPostgresTest`, `TransactionalEmailPostgresTest`, `InventoryPaymentRacePostgresTest`...) đã bị `@EnabledIfEnvironmentVariable` bỏ qua trong lượt chạy local và sẽ chạy trên pipeline CI khi có DB test.
 

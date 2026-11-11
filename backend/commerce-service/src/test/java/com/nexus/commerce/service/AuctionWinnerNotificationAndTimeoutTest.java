@@ -149,6 +149,51 @@ class AuctionWinnerNotificationAndTimeoutTest {
         assertTrue(json.contains("\"penaltyScore\":10"));
     }
 
+    /** Đơn thắng đấu giá chưa thu tiền (priceFinalized = false) dùng estimatedTotal/estimatedUnitPrice cho outbox. */
+    @Test
+    void notificationOutboxUsesEstimatedPricesWhenAuctionOrderIsNotFinalized() {
+        NotificationOutbox outbox = new NotificationOutbox(jdbc, "https://shop.nexus.vn/", 10);
+        UUID orderId = UUID.randomUUID();
+        UUID buyerId = UUID.randomUUID();
+        Instant deadline = Instant.parse("2026-11-12T10:00:00Z");
+
+        Order order = Order.builder()
+                .id(orderId)
+                .orderNo("AUC-EST-1")
+                .buyerId(buyerId)
+                .sellerId(UUID.randomUUID())
+                .buyerEmail("winner@nexus.test")
+                .recipientName("Winner")
+                .sourceType(OrderSourceType.AUCTION)
+                .auctionId(UUID.randomUUID())
+                .paymentMethod("AUCTION")
+                .paymentDeadline(deadline)
+                .priceFinalized(false)
+                .estimatedTotal(new BigDecimal("1950000.00"))
+                .total(null)
+                .build();
+        order.addItem(OrderItem.builder()
+                .id(UUID.randomUUID())
+                .skuId(UUID.randomUUID())
+                .productName("Tác phẩm gốm")
+                .skuCode("POT-1")
+                .quantity(1)
+                .estimatedUnitPrice(new BigDecimal("1950000.00"))
+                .unitPrice(null)
+                .build());
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        outbox.enqueue(order, "AUCTION_WON");
+        verify(jdbc).update(contains("commerce_notification_outbox"),
+                any(UUID.class), eq(orderId), eq(buyerId), eq("AUCTION_WON"),
+                eq("AUC-EST-1"), eq(new BigDecimal("1950000.00")), jsonCaptor.capture());
+
+        String json = jsonCaptor.getValue();
+        assertTrue(json.contains("\"priceFinalized\":false"));
+        assertTrue(json.contains("1950000.00"));
+        assertTrue(json.contains("https://shop.nexus.vn/order-detail?id=" + orderId));
+    }
+
     /** Worker nhắc hạn chỉ gửi AUCTION_PAYMENT_REMINDER cho đơn chưa thanh toán nằm trong cửa sổ trước hạn 2 giờ. */
     @Test
     void reminderWorkerEnqueuesReminderWithinTwoHourWindow() {

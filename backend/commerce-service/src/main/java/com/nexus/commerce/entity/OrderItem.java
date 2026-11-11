@@ -64,8 +64,12 @@ public class OrderItem {
     @Column(name = "sku_code", nullable = false, length = 100)
     private String skuCode;
 
-    /** Đơn giá của 1 sản phẩm tại thời điểm mua (unit_price >= 0). */
-    @Column(name = "unit_price", nullable = false, precision = 15, scale = 2)
+    /** Giá dự kiến lúc tạo đơn; với AUCTION đây là giá settlement, không đọc lại giá bán thường. */
+    @Column(name = "estimated_unit_price", precision = 15, scale = 2)
+    private BigDecimal estimatedUnitPrice;
+
+    /** Giá chính thức, null trước khi xác thực thu tiền; chỉ chốt bằng snapshot Payment hoặc xác nhận COD. */
+    @Column(name = "unit_price", precision = 15, scale = 2)
     private BigDecimal unitPrice;
 
     /** Số lượng sản phẩm đặt mua (quantity > 0 theo ràng buộc chk_order_item_quantity). */
@@ -75,11 +79,12 @@ public class OrderItem {
     /**
      * Tính thành tiền của dòng sản phẩm (đơn giá nhân số lượng).
      *
-     * @return thành tiền BigDecimal
+     * @return thành tiền chính thức; null nếu chưa có đơn giá hoặc số lượng.
      */
     public BigDecimal getSubtotal() {
         if (unitPrice == null || quantity == null) {
-            return BigDecimal.ZERO;
+            // null nghĩa là chưa chốt giá; không đổi thành 0 vì có thể bị hiểu nhầm là sản phẩm miễn phí.
+            return null;
         }
         return unitPrice.multiply(BigDecimal.valueOf(quantity));
     }

@@ -1,0 +1,41 @@
+{
+  "date": "2026-11-11",
+  "command": "mvn -f backend/commerce-service/pom.xml verify checkstyle:check",
+  "postgresEnabled": true,
+  "tests": 369,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "lineCoveragePercent": 91.76,
+  "checkstyle": "passed",
+  "selectedSuites": [
+    {
+      "suite": "com.nexus.commerce.entity.BaselineMigrationPostgresTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.nexus.commerce.service.PaymentPostgresTest",
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.nexus.commerce.service.PaymentPricingServiceTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.nexus.commerce.service.PaymentServiceTest",
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ]
+}

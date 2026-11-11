@@ -1,5 +1,8 @@
 # TT-S1-3 — Tích hợp VNPAY sandbox
 
+> **Baseline lịch sử:** contract giá, retry và ref kho đã được cập nhật tại
+> [Payment Attempt Pricing](PAYMENT_ATTEMPT_PRICING.md). Với luồng V10, tạo đơn và tạo attempt là hai API riêng.
+
 Backend tạo URL VNPAY PAY 2.1.0 đã ký, xác minh IPN và cập nhật Order/Payment trong transaction.
 FE đọc kết quả từ DB, không dùng query return URL làm bằng chứng đã trả tiền.
 Tài liệu nhà cung cấp: [VNPAY PAY](https://sandbox.vnpayment.vn/apis/docs/thanh-toan-pay/pay.html).

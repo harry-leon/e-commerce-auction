@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.commerce.entity.Order;
 import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,9 +44,11 @@ public class NotificationOutbox {
     /** Rollback đơn/IPN cũng rollback sự kiện; unique(order,type) chặn replay, lỗi gửi chỉ xảy ra tại worker. */
     @Transactional(propagation = Propagation.MANDATORY)
     public void enqueue(Order order, String type) {
+        // Đơn chưa chốt thu tiền dùng estimatedTotal để outbox vẫn giữ tổng dự kiến thay vì null.
         jdbc.update("INSERT INTO commerce_notification_outbox(id,order_id,user_id,event_type,order_no,amount,email_payload) "
                 + "VALUES (?,?,?,?,?,?,?::jsonb) ON CONFLICT (order_id,event_type) DO NOTHING",
-                UUID.randomUUID(), order.getId(), order.getBuyerId(), type, order.getOrderNo(), order.getTotal(),
+                UUID.randomUUID(), order.getId(), order.getBuyerId(), type, order.getOrderNo(),
+                order.isPriceFinalized() ? order.getTotal() : order.getEstimatedTotal(),
                 emailSnapshot(order, type));
     }
 
@@ -57,6 +58,8 @@ public class NotificationOutbox {
         payload.put("recipientEmail", order.getBuyerEmail());
         payload.put("recipientName", order.getRecipientName());
         payload.put("paymentMethod", order.getPaymentMethod());
+        // Đơn chưa thu tiền gửi giá dự kiến và cờ phân biệt; dùng LinkedHashMap tránh lỗi khi giá chính thức null.
+        payload.put("priceFinalized", order.isPriceFinalized());
         if (order.getAuctionId() != null) {
             payload.put("auctionId", order.getAuctionId());
         }
@@ -69,11 +72,14 @@ public class NotificationOutbox {
         if ("AUCTION_PAYMENT_REMINDER".equals(type) || "AUCTION_PAYMENT_TIMEOUT".equals(type)) {
             payload.put("penaltyScore", timeoutPenaltyScore);
         }
-        payload.put("items", order.getItems().stream().map(item -> Map.of(
-                "productName", item.getProductName(),
-                "skuCode", item.getSkuCode(),
-                "quantity", item.getQuantity(),
-                "unitPrice", item.getUnitPrice())).toList());
+        payload.put("items", order.getItems().stream().map(item -> {
+            var itemPayload = new LinkedHashMap<String, Object>();
+            itemPayload.put("productName", item.getProductName());
+            itemPayload.put("skuCode", item.getSkuCode());
+            itemPayload.put("quantity", item.getQuantity());
+            itemPayload.put("unitPrice", order.isPriceFinalized() ? item.getUnitPrice() : item.getEstimatedUnitPrice());
+            return itemPayload;
+        }).toList());
         try {
             return new ObjectMapper().writeValueAsString(payload);
         } catch (JsonProcessingException error) {

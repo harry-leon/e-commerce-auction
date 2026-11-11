@@ -18,6 +18,12 @@ import org.hibernate.type.SqlTypes;
 @Getter
 @Setter
 public class Payment {
+    /** Snapshot giá từng dòng và tổng đã gửi cổng, giữ nguyên xuyên suốt vòng đời attempt. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "price_snapshot", nullable = false, columnDefinition = "jsonb")
+    private com.nexus.commerce.entity.PaymentPriceSnapshot priceSnapshot;
+    /** Ref kho của attempt thường là paymentId; AUCTION/legacy dùng orderId từ handover. */
+    @Column(name = "inventory_ref_id", nullable = false) private UUID inventoryRefId;
     @Id private UUID id;
     @Column(name = "order_id", nullable = false) private UUID orderId;
     @Column(nullable = false, length = 30) private String provider;

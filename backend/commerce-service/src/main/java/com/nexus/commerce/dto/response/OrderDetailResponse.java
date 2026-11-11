@@ -38,11 +38,17 @@ import lombok.Builder;
  * @param subtotal Tổng tiền hàng trước chiết khấu và phí vận chuyển.
  * @param shippingFee Cước phí vận chuyển thực tế tính cho đơn hàng.
  * @param discount Số tiền được giảm trừ qua voucher hoặc khuyến mãi.
- * @param total Tổng số tiền thanh toán cuối cùng của đơn hàng.
+ * @param total Tổng tiền chính thức; null nếu priceFinalized=false.
  * @param shippingAddress Địa chỉ giao nhận hàng snapshot chi tiết.
  * @param createdAt Thời điểm đặt đơn hàng thành công (UTC).
- * @param items Danh sách các mặt hàng snapshot đã mua trong đơn hàng.
+ * @param items Danh sách dòng đơn; unitPrice/subtotal null trước thu tiền, estimatedUnitPrice/estimatedSubtotal là dự kiến.
  * @param statusHistory Dòng thời gian lịch sử các bước chuyển trạng thái của đơn hàng.
+ * @param estimatedSubtotal Tiền hàng dự kiến lúc tạo đơn, không phải snapshot của attempt mới nhất.
+ * @param estimatedShippingFee Phí ship dự kiến lúc tạo đơn.
+ * @param estimatedDiscount Giảm giá dự kiến lúc tạo đơn.
+ * @param estimatedTotal Tổng dự kiến lúc tạo đơn; lấy Payment.amount để biết tiền của attempt đang xử lý.
+ * @param priceFinalized Đã xác nhận thu tiền và chốt official hay chưa; có thể true khi đang chờ xác nhận kho.
+ * @param fulfillmentStatus COD: PENDING chờ kho, CONFIRMED đã xác nhận, REVIEW cần đối soát; null với luồng khác.
  */
 @Builder
 public record OrderDetailResponse(
@@ -61,6 +67,12 @@ public record OrderDetailResponse(
         String shippingAddress,
         Instant createdAt,
         List<OrderItemResponse> items,
-        List<OrderStatusHistoryResponse> statusHistory
+        List<OrderStatusHistoryResponse> statusHistory,
+        BigDecimal estimatedSubtotal,
+        BigDecimal estimatedShippingFee,
+        BigDecimal estimatedDiscount,
+        BigDecimal estimatedTotal,
+        boolean priceFinalized,
+        String fulfillmentStatus
 ) {
 }
