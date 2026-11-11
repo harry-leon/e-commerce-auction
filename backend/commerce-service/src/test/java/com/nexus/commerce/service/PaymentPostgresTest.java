@@ -43,16 +43,16 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Checkout→Payment→IPN chạy transaction/Flyway thật; chỉ API Catalog/kho được mock, không cần merchant thật cho test. */
-@DataJpaTest(properties = {
+@DataJpaTest(showSql = false, properties = {
         "spring.datasource.url=${NEXUS_TEST_DB_URL}", "spring.datasource.username=postgres", "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.postgresql.Driver", "spring.flyway.enabled=true",
         "spring.jpa.hibernate.ddl-auto=validate", "spring.cloud.config.enabled=false", "eureka.client.enabled=false",
-        "spring.jpa.show-sql=false", "app.payment.vnpay.tmn-code=TESTONLY",
+        "spring.jpa.show-sql=false", "logging.level.org.hibernate.SQL=OFF", "app.payment.vnpay.tmn-code=TESTONLY",
         "app.payment.vnpay.hash-secret=unit-test-only-not-a-credential",
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({AuctionPaymentExpiryWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
+@Import({PaymentPricingService.class, AuctionPaymentExpiryWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
         CheckoutLock.class, CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class, com.nexus.commerce.service.impl.OrderServiceImpl.class,
         com.nexus.commerce.dto.mapper.OrderMapper.class, com.nexus.commerce.statemachine.OrderStatusStateMachine.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
@@ -80,6 +80,8 @@ class PaymentPostgresTest {
         jdbc.update("UPDATE orders SET source_type='AUCTION',auction_id=?,payment_deadline="
                 + "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + (? * interval '1 hour') WHERE id=?",
                 UUID.randomUUID(), expired ? -1 : 1, orderId);
+        // Fixture winner dùng ref kho từ handover; REGULAR trước đó giữ bằng paymentId.
+        jdbc.update("UPDATE payments SET inventory_ref_id=? WHERE id=?", orderId, paymentId);
         jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 day' WHERE order_id<>?", orderId);
         when(tokens.get()).thenReturn("service-jwt");
     }
@@ -240,8 +242,11 @@ class PaymentPostgresTest {
         String key = UUID.randomUUID().toString();
         var created = checkout.create(buyer, key, request, "buyer-jwt", "127.0.0.1", "buyer@example.test");
         orderId = created.id();
-        paymentId = jdbc.queryForObject("SELECT id FROM payments WHERE order_id=?", UUID.class, orderId);
         assertEquals(created, checkout.create(buyer, key, request, "buyer-jwt"));
+        when(tokens.get()).thenReturn("service-jwt");
+        paymentId = payments.start(buyer, orderId, "127.0.0.1", UUID.randomUUID().toString()).paymentId();
+        // Cô lập tác vụ còn lại của test trước vì mỗi ca dùng transaction thật và không rollback fixture.
+        jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 day' WHERE order_id<>?", orderId);
     }
 
     /** Đọc hết hạn không sửa DB/đơn; IPN tới sau vẫn commit SUCCESS và chỉ enqueue confirm đúng một lần. */
@@ -258,9 +263,11 @@ class PaymentPostgresTest {
         var ipn = callback("00", "00", "5000000");
         assertEquals("00", payments.ipn(ipn).code());
         assertEquals("02", payments.ipn(ipn).code());
+        assertEquals("PROCESSING", payments.get(buyer, paymentId).status());
+        worker.run();
         assertEquals("SUCCESS", payments.get(buyer, paymentId).status());
         assertEquals("PAID", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='CONFIRM'", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='COMMIT'", Integer.class, orderId));
     }
 
     private Map<String, String> callback(String response, String status, String amount) {
@@ -269,6 +276,220 @@ class PaymentPostgresTest {
                 "vnp_TransactionNo", Long.toString(Math.abs((long) paymentId.hashCode()) + 1)));
         params.put("vnp_SecureHash", gateway.sign(params));
         return params;
+    }
+
+    /** Snapshot khóa theo attempt: đổi Catalog giữa hai lần trả tiền chỉ ảnh hưởng attempt mới, không sửa tiền đã gửi cổng. */
+    @Test
+    void retryRepricesAndFreezesAttemptWhileOfficialPricesStayNullUntilSuccess() {
+        assertEquals(false, jdbc.queryForObject("SELECT price_finalized FROM orders WHERE id=?", Boolean.class, orderId));
+        org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, orderId));
+        assertEquals("00", payments.ipn(callback("24", "02", "5000000")).code());
+        org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT unit_price FROM order_items WHERE order_id=?", BigDecimal.class, orderId));
+        UUID oldPayment = paymentId;
+        UUID sku = jdbc.queryForObject("SELECT sku_id FROM order_items WHERE order_id=?", UUID.class, orderId);
+        UUID seller = jdbc.queryForObject("SELECT seller_id FROM orders WHERE id=?", UUID.class, orderId);
+        when(catalog.getSkuDetails(any())).thenReturn(Map.of(sku,
+                new SkuInfo(sku, "SKU", "Sản phẩm", null, new BigDecimal("30000"), null, true, seller)));
+        String key = UUID.randomUUID().toString();
+        var next = payments.start(buyer, orderId, "127.0.0.1", key);
+        paymentId = next.paymentId();
+        assertEquals(new BigDecimal("60000.00"), next.amount());
+        assertEquals(next.paymentId(), payments.start(buyer, orderId, "127.0.0.1", key).paymentId());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+        assertEquals(new BigDecimal("50000.00"), payments.get(buyer, oldPayment).amount());
+        // Catalog tiếp tục tăng sau khi cấp URL; callback vẫn chốt 30.000 mỗi SKU của attempt, không thành 90.000.
+        when(catalog.getSkuDetails(any())).thenReturn(Map.of(sku,
+                new SkuInfo(sku, "SKU", "Sản phẩm", null, new BigDecimal("90000"), null, true, seller)));
+        assertEquals("00", payments.ipn(callback("00", "00", "6000000")).code());
+        assertEquals(new BigDecimal("60000.00"), jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("30000.00"), jdbc.queryForObject("SELECT unit_price FROM order_items WHERE order_id=?", BigDecimal.class, orderId));
+        worker.run();
+        assertEquals("PAID", orderState());
+        // Release attempt cũ chạy cùng batch vẫn nhắm oldPayment, không thể nhả phiếu mới.
+        verify(inventory).release(oldPayment, "service-jwt");
+        verify(inventory).commitOrder(paymentId, List.of(reservation), "service-jwt");
+    }
+
+    /** Hai request retry song song cùng key phải có đúng một attempt mới, dù cả hai cùng thấy lần trước FAILED. */
+    @Test
+    void concurrentRetryCreatesExactlyOneNewAttempt() throws Exception {
+        assertEquals("00", payments.ipn(callback("24", "02", "5000000")).code());
+        String key = UUID.randomUUID().toString();
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> { gate.await(); return payments.start(buyer, orderId, "ip", key); });
+            var second = pool.submit(() -> { gate.await(); return payments.start(buyer, orderId, "ip", key); });
+            gate.countDown();
+            assertEquals(first.get(20, TimeUnit.SECONDS).paymentId(), second.get(20, TimeUnit.SECONDS).paymentId());
+        }
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=? AND status='PENDING'", Integer.class, orderId));
+    }
+
+    /** PENDING hết hạn chưa rõ kết quả không được mở lần thu tiền khác chỉ dựa trên đồng hồ client. */
+    @Test
+    void expiredPendingCannotBeRetriedAndFailedKeyReplaysOnlyItsOwnAttempt() {
+        jdbc.update("UPDATE payments SET expires_at=(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - interval '1 minute' WHERE id=?", paymentId);
+        assertThrows(com.nexus.common.exception.ApiException.class, () ->
+                payments.start(buyer, orderId, "ip", UUID.randomUUID().toString()));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+    }
+
+    /** Thu tiền muộn từ FAILED được lưu REVIEW; không ghi đè snapshot/tổng của attempt mới hoặc tự giao hai lần. */
+    @Test
+    void lateFundsFromFailedAttemptRequireReviewAndBlockNewCharges() {
+        var late = callback("00", "00", "5000000");
+        assertEquals("00", payments.ipn(callback("24", "02", "5000000")).code());
+        UUID previous = paymentId;
+        String nextKey = UUID.randomUUID().toString();
+        var next = payments.start(buyer, orderId, "ip", nextKey);
+        paymentId = next.paymentId();
+        assertEquals("00", payments.ipn(late).code());
+        assertEquals("REQUIRES_REVIEW", payments.get(buyer, previous).status());
+        // Không chỉ chặn key mới: URL đã cấp của attempt B phải bị ẩn trên cả GET và replay key B.
+        var pending = payments.get(buyer, paymentId);
+        assertEquals("REQUIRES_REVIEW", pending.status());
+        org.junit.jupiter.api.Assertions.assertNull(pending.paymentUrl());
+        var replay = payments.start(buyer, orderId, "ip", nextKey);
+        assertEquals("REQUIRES_REVIEW", replay.status());
+        org.junit.jupiter.api.Assertions.assertNull(replay.paymentUrl());
+        org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, orderId));
+        assertThrows(com.nexus.common.exception.ApiException.class, () ->
+                payments.start(buyer, orderId, "ip", UUID.randomUUID().toString()));
+        // Attempt mới đã được cấp URL vẫn có thể thu tiền; callback cũng phải đối soát thay vì chốt đè.
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        assertEquals("REQUIRES_REVIEW", payments.get(buyer, paymentId).status());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='COMMIT'", Integer.class, orderId));
+    }
+
+    /** Reserve timeout sau khi Fulfillment có thể đã giữ hàng: rollback không lưu attempt và bù trừ đúng ref mới. */
+    @Test
+    void reservationFailureRollsBackAttemptAndReleasesOnlyItsReference() {
+        assertEquals("00", payments.ipn(callback("24", "02", "5000000")).code());
+        doThrow(new IllegalStateException("lost reserve response")).when(inventory).reserve(any(), any(), any());
+        assertThrows(IllegalStateException.class, () ->
+                payments.start(buyer, orderId, "ip", UUID.randomUUID().toString()));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+        verify(inventory).release(org.mockito.ArgumentMatchers.argThat(ref -> !ref.equals(paymentId)), org.mockito.ArgumentMatchers.isNull());
+    }
+
+    /** COD ghi nhận tiền một lần, chỉ chuyển PAID sau xác nhận toàn bộ kho; trạng thái chờ không được xử lý giao hàng. */
+    @Test
+    void codConfirmationFinalizesEstimatedPricesAndCreatesInventoryTasksOnce() {
+        UUID codBuyer = UUID.randomUUID();
+        UUID cart = UUID.randomUUID();
+        UUID item = UUID.randomUUID();
+        UUID sku = jdbc.queryForObject("SELECT sku_id FROM order_items WHERE order_id=?", UUID.class, orderId);
+        jdbc.update("INSERT INTO carts(id,user_id,status,expires_at) VALUES (?,?,'ACTIVE',CURRENT_TIMESTAMP + interval '1 hour')", cart, codBuyer);
+        jdbc.update("INSERT INTO cart_items(id,cart_id,sku_id,quantity,unit_price) VALUES (?,?,?,1,25000)", item, cart, sku);
+        var created = checkout.create(codBuyer, UUID.randomUUID().toString(),
+                new CreateOrderRequest("123 Lê Lợi", "Người nhận", "0901234567", null, "COD", null, null, List.of(item)), "buyer-jwt");
+        assertEquals(false, created.priceFinalized());
+        org.junit.jupiter.api.Assertions.assertNull(created.total());
+        var confirm = new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(com.nexus.commerce.enums.OrderStatus.PAID, "Đã xác nhận thu tiền COD");
+        var paid = management.updateOrderStatus(created.id(), confirm, UUID.randomUUID(), List.of("ROLE_ADMIN"));
+        management.updateOrderStatus(created.id(), confirm, UUID.randomUUID(), List.of("ROLE_ADMIN"));
+        assertEquals(true, paid.priceFinalized());
+        assertEquals(new BigDecimal("25000.00"), paid.total());
+        assertEquals("PENDING_PAYMENT", paid.status().name());
+        assertEquals("PENDING", paid.fulfillmentStatus());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='COD_COMMIT'", Integer.class, created.id()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, created.id()));
+        assertThrows(com.nexus.common.exception.BusinessException.class, () -> management.updateOrderStatus(created.id(),
+                new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(com.nexus.commerce.enums.OrderStatus.PROCESSING, "Đóng gói"),
+                UUID.randomUUID(), List.of("ROLE_ADMIN")));
+        worker.run();
+        worker.run();
+        var confirmed = management.getOrderDetail(created.id(), codBuyer, List.of("ROLE_BUYER"));
+        assertEquals("PAID", confirmed.status().name());
+        assertEquals("CONFIRMED", confirmed.fulfillmentStatus());
+        verify(inventory).commitOrder(created.id(), List.of(reservation), "service-jwt");
+    }
+
+    /** Fixture COD riêng trong cùng schema; dùng SKU/seller Catalog thật của test, chỉ HTTP kho được mock. */
+    private UUID createCodOrder() {
+        UUID codBuyer = UUID.randomUUID(), cart = UUID.randomUUID(), item = UUID.randomUUID();
+        UUID sku = jdbc.queryForObject("SELECT sku_id FROM order_items WHERE order_id=?", UUID.class, orderId);
+        jdbc.update("INSERT INTO carts(id,user_id,status,expires_at) VALUES (?,?,'ACTIVE',CURRENT_TIMESTAMP + interval '1 hour')", cart, codBuyer);
+        jdbc.update("INSERT INTO cart_items(id,cart_id,sku_id,quantity,unit_price) VALUES (?,?,?,1,25000)", item, cart, sku);
+        return checkout.create(codBuyer, UUID.randomUUID().toString(), new CreateOrderRequest(
+                "123 Lê Lợi", "Người nhận", "0901234567", null, "COD", null, null, List.of(item)), "buyer-jwt").id();
+    }
+
+    /** Xác nhận COD qua cùng API admin mà UI đang dùng; khóa Order và quyền được service kiểm tra như production. */
+    private com.nexus.commerce.dto.response.OrderDetailResponse confirmCod(UUID id) {
+        return management.updateOrderStatus(id, new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(
+                com.nexus.commerce.enums.OrderStatus.PAID, "Đã thu COD"), UUID.randomUUID(), List.of("ROLE_ADMIN"));
+    }
+
+    /** Hồi quy P2: hết hạn/mất phiếu là lỗi vĩnh viễn, đóng task và lưu REVIEW thay vì tiếp tục PAID hoặc retry vô hạn. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"INVENTORY_RESERVATION_EXPIRED", "INVENTORY_RESERVATION_NOT_FOUND"})
+    void codPermanentInventoryFailurePreservesFundsAndRequiresReview(String code) {
+        UUID cod = createCodOrder();
+        doThrow(new com.nexus.common.exception.ApiException(code, org.springframework.http.HttpStatus.CONFLICT, "Kho không thể xuất", null))
+                .when(inventory).commitOrder(cod, List.of(reservation), "service-jwt");
+        confirmCod(cod);
+        worker.run();
+        worker.run();
+        var detail = management.getOrderDetail(cod, UUID.randomUUID(), List.of("ROLE_ADMIN"));
+        assertEquals("CANCELLED", detail.status().name());
+        assertEquals("REVIEW", detail.fulfillmentStatus());
+        assertEquals(true, detail.priceFinalized());
+        assertEquals(new BigDecimal("25000.00"), detail.total());
+        // Hủy do kho là SYSTEM, không phải buyer; mốc thời gian phải cùng UTC với receipt thu tiền.
+        var cancellation = detail.statusHistory().stream().filter(event -> event.toStatus() == com.nexus.commerce.enums.OrderStatus.CANCELLED)
+                .findFirst().orElseThrow();
+        assertEquals("SYSTEM", cancellation.actor());
+        org.junit.jupiter.api.Assertions.assertTrue(java.time.Duration.between(cancellation.changedAt(), java.time.Instant.now())
+                .abs().compareTo(java.time.Duration.ofMinutes(1)) < 0);
+        assertEquals(true, jdbc.queryForObject("SELECT done FROM payment_inventory_tasks WHERE order_id=? AND action='COD_COMMIT'", Boolean.class, cod));
+        assertEquals("REVIEW", confirmCod(cod).fulfillmentStatus());
+        assertThrows(com.nexus.common.exception.BusinessException.class, () -> management.updateOrderStatus(cod,
+                new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(com.nexus.commerce.enums.OrderStatus.PROCESSING, "Không được giao"),
+                UUID.randomUUID(), List.of("ROLE_ADMIN")));
+        verify(inventory).commitOrder(cod, List.of(reservation), "service-jwt");
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=? AND to_status='PAID'", Integer.class, cod));
+    }
+
+    /** Timeout sau commit kho chưa chứng minh thất bại: giữ chờ, chặn hủy/giao và retry cùng ref, không ghi thêm lần thu tiền. */
+    @Test
+    void codInventoryTimeoutStaysPendingThenRetriesExactlySameReference() {
+        UUID cod = createCodOrder();
+        doThrow(new IllegalStateException("lost commit ACK")).doNothing().when(inventory).commitOrder(cod, List.of(reservation), "service-jwt");
+        confirmCod(cod);
+        worker.run();
+        assertEquals("PENDING_PAYMENT", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, cod));
+        assertEquals("PENDING", jdbc.queryForObject("SELECT fulfillment_status FROM orders WHERE id=?", String.class, cod));
+        assertThrows(com.nexus.common.exception.BusinessException.class, () -> management.cancelOrder(cod,
+                new com.nexus.commerce.dto.request.CancelOrderRequest("Hủy khi đã thu tiền"), UUID.randomUUID(), List.of("ROLE_ADMIN")));
+        confirmCod(cod);
+        jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP WHERE order_id=?", cod);
+        worker.run();
+        assertEquals("PAID", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, cod));
+        assertEquals("CONFIRMED", jdbc.queryForObject("SELECT fulfillment_status FROM orders WHERE id=?", String.class, cod));
+        verify(inventory, org.mockito.Mockito.times(2)).commitOrder(cod, List.of(reservation), "service-jwt");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=? AND reason LIKE '%COD_FUNDS_RECEIVED_PENDING_INVENTORY'", Integer.class, cod));
+    }
+
+    /** Lỗi DB tại commit xác nhận COD phải rollback cả giá, cờ thu tiền, lịch sử và task; không để receipt nửa vời. */
+    @Test
+    void codReceiptCommitFailureRollsBackPricesAndTaskTogether() {
+        UUID cod = createCodOrder();
+        jdbc.execute("CREATE FUNCTION cod_test_reject() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'cod commit test'; END; $$");
+        jdbc.execute("CREATE CONSTRAINT TRIGGER cod_test_failure AFTER UPDATE ON orders DEFERRABLE INITIALLY DEFERRED "
+                + "FOR EACH ROW EXECUTE FUNCTION cod_test_reject()");
+        try {
+            assertThrows(RuntimeException.class, () -> confirmCod(cod));
+            org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, cod));
+            org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT fulfillment_status FROM orders WHERE id=?", String.class, cod));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, cod));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=?", Integer.class, cod));
+        } finally {
+            jdbc.execute("DROP TRIGGER cod_test_failure ON orders");
+            jdbc.execute("DROP FUNCTION cod_test_reject()");
+        }
+        assertEquals("PENDING", confirmCod(cod).fulfillmentStatus());
     }
 
     /** Hai callback song song chỉ một lần đổi trạng thái, ghi history và enqueue confirm; worker chạy lặp không gọi kho lại. */
@@ -283,9 +504,9 @@ class PaymentPostgresTest {
             List<String> codes = List.of(first.get(20, TimeUnit.SECONDS).code(), second.get(20, TimeUnit.SECONDS).code()).stream().sorted().toList();
             assertEquals(List.of("00", "02"), codes);
         }
-        assertEquals("PAID", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+        assertEquals("PENDING_PAYMENT", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
         assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=?", Integer.class, orderId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=?", Integer.class, orderId));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
         // Cô lập outbox của ca này vì các test khác có thể để lại tác vụ cố ý chưa xử lý trong DB tạm.
         jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 hour' WHERE order_id<>?", orderId);
@@ -293,7 +514,8 @@ class PaymentPostgresTest {
         when(tokens.get()).thenReturn("service-jwt");
         worker.run();
         worker.run();
-        verify(inventory).confirm(reservation, "service-jwt");
+        verify(inventory).commitOrder(paymentId, List.of(reservation), "service-jwt");
+        assertEquals("PAID", orderState());
         assertEquals(true, jdbc.queryForObject("SELECT done FROM payment_inventory_tasks WHERE order_id=?", Boolean.class, orderId));
     }
 
@@ -301,12 +523,12 @@ class PaymentPostgresTest {
     @Test
     void failureCommitsReleaseOutboxAndRetriesTransientErrors() {
         assertEquals("00", payments.ipn(callback("24", "02", "5000000")).code());
-        assertEquals("CANCELLED", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+        assertEquals("PENDING_PAYMENT", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
         assertEquals("FAILED", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
         jdbc.update("UPDATE payment_inventory_tasks SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 hour' WHERE order_id<>?", orderId);
         when(tokens.configured()).thenReturn(true);
         when(tokens.get()).thenReturn("service-jwt");
-        doThrow(new IllegalStateException("network")).doNothing().when(inventory).release(orderId, "service-jwt");
+        doThrow(new IllegalStateException("network")).doNothing().when(inventory).release(paymentId, "service-jwt");
         worker.run();
         assertEquals(false, jdbc.queryForObject("SELECT done FROM payment_inventory_tasks WHERE order_id=?", Boolean.class, orderId));
         assertEquals(1, jdbc.queryForObject("SELECT attempts FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
@@ -331,6 +553,7 @@ class PaymentPostgresTest {
     @Test
     void notificationFailureCannotUndoPaymentAndRetriesSameSnapshot() {
         assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        worker.run();
         assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
         jdbc.update("UPDATE commerce_notification_outbox SET next_attempt_at=CURRENT_TIMESTAMP + interval '1 hour' WHERE order_id<>?", orderId);
@@ -371,6 +594,9 @@ class PaymentPostgresTest {
             assertThrows(RuntimeException.class, () -> payments.ipn(callback("00", "00", "5000000")));
             assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
             assertEquals("PENDING_PAYMENT", jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, orderId));
+            // Deferred commit failure phải rollback cả giá chính thức của Order và OrderItem, không chỉ Payment.status.
+            org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT total FROM orders WHERE id=?", BigDecimal.class, orderId));
+            org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("SELECT unit_price FROM order_items WHERE order_id=?", BigDecimal.class, orderId));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
         } finally {
@@ -385,6 +611,7 @@ class PaymentPostgresTest {
     @Test
     void paidOrderCompletesRealLifecycleAndKeepsEmailSnapshot() {
         assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        worker.run();
         UUID seller = jdbc.queryForObject("SELECT seller_id FROM orders WHERE id=?", UUID.class, orderId);
         assertThrows(com.nexus.common.exception.BusinessException.class, () ->
                 management.getOrderDetail(orderId, UUID.randomUUID(), List.of("ROLE_BUYER")));
@@ -410,6 +637,7 @@ class PaymentPostgresTest {
     @Test
     void concurrentStatusUpdatesAreSerialized() throws Exception {
         assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        worker.run();
         UUID seller = jdbc.queryForObject("SELECT seller_id FROM orders WHERE id=?", UUID.class, orderId);
         var request = new com.nexus.commerce.dto.request.UpdateOrderStatusRequest(
                 com.nexus.commerce.enums.OrderStatus.PROCESSING, "Bắt đầu đóng gói");
@@ -432,6 +660,7 @@ class PaymentPostgresTest {
         assertThrows(com.nexus.common.exception.BusinessException.class,
                 () -> management.cancelOrder(orderId, request, buyer, List.of("ROLE_BUYER")));
         assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        worker.run();
         assertThrows(com.nexus.common.exception.BusinessException.class,
                 () -> management.cancelOrder(orderId, request, buyer, List.of("ROLE_BUYER")));
         assertThrows(com.nexus.common.exception.BusinessException.class, () -> management.updateOrderStatus(orderId,

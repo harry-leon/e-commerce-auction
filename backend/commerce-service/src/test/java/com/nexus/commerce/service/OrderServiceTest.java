@@ -176,7 +176,7 @@ class OrderServiceTest {
                 order.getTotal(),
                 order.getItems() != null ? order.getItems().size() : 0,
                 order.getShippingAddress(),
-                order.getCreatedAt()
+                order.getCreatedAt(), order.getEstimatedTotal(), order.isPriceFinalized(), order.getFulfillmentStatus()
         );
     }
 
@@ -191,7 +191,7 @@ class OrderServiceTest {
                         it.getSkuCode(),
                         it.getUnitPrice(),
                         it.getQuantity(),
-                        it.getSubtotal()
+                        it.getSubtotal(), it.getEstimatedUnitPrice(), null
                 ));
             }
         }
@@ -224,7 +224,8 @@ class OrderServiceTest {
                 order.getShippingAddress(),
                 order.getCreatedAt(),
                 itemResponses,
-                historyResponses
+                historyResponses, order.getEstimatedSubtotal(), order.getEstimatedShippingFee(),
+                order.getEstimatedDiscount(), order.getEstimatedTotal(), order.isPriceFinalized(), order.getFulfillmentStatus()
         );
     }
 
@@ -1057,9 +1058,12 @@ class OrderServiceTest {
             assertEquals(auctionId.toString(), savedOrder.getIdempotencyKey());
             assertEquals(auctionId, savedOrder.getAuctionId());
             assertEquals(OrderStatus.PENDING_PAYMENT, savedOrder.getStatus());
-            assertEquals(finalPrice, savedOrder.getSubtotal());
-            assertEquals(BigDecimal.ZERO, savedOrder.getShippingFee());
-            assertEquals(finalPrice, savedOrder.getTotal());
+            // Giá settlement là dự kiến bất biến; official chỉ được chốt sau IPN thành công.
+            org.junit.jupiter.api.Assertions.assertNull(savedOrder.getSubtotal());
+            org.junit.jupiter.api.Assertions.assertNull(savedOrder.getTotal());
+            assertEquals(finalPrice, savedOrder.getEstimatedSubtotal());
+            assertEquals(BigDecimal.ZERO, savedOrder.getEstimatedShippingFee());
+            assertEquals(finalPrice, savedOrder.getEstimatedTotal());
             assertEquals(paymentDeadline, savedOrder.getPaymentDeadline());
 
             // Xác minh OrderItem snapshot từ Catalog và đơn giá là giá thắng cuộc
@@ -1068,7 +1072,8 @@ class OrderServiceTest {
             assertEquals(skuId, item.getSkuId());
             assertEquals("Dong ho Vintage 1980", item.getProductName());
             assertEquals("SKU-AUCTION-VINTAGE", item.getSkuCode());
-            assertEquals(finalPrice, item.getUnitPrice());
+            org.junit.jupiter.api.Assertions.assertNull(item.getUnitPrice());
+            assertEquals(finalPrice, item.getEstimatedUnitPrice());
             assertEquals(1, item.getQuantity());
 
             // Xác minh lịch sử trạng thái ban đầu PENDING_PAYMENT được ghi nhận trong đơn hàng

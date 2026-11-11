@@ -1,5 +1,8 @@
 # Nexus E-Commerce - API Specification: Shopping Cart & Order Modules
 
+> **Contract giá mới:** [Payment Attempt Pricing](PAYMENT_ATTEMPT_PRICING.md) thay thế các mô tả cũ về
+> chốt giá khi tạo đơn, Create Order trả paymentUrl và giới hạn một attempt/Order.
+
 > **Version**: 1.0.0  
 > **Status**: DRAFT FOR TEAM REVIEW (Sprint 1 -> Sprint 2 Alignment)  
 > **Target Services**: `commerce-service`, `catalog-service`, `fulfillment-service`  
