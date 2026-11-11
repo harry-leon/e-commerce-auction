@@ -6,8 +6,8 @@ DECLARE
 BEGIN
     SELECT c.conname INTO constraint_name
     FROM pg_constraint c
-    JOIN pg_class t ON c.conrelid = t.oid
-    WHERE t.relname = 'commerce_notification_outbox'
+    -- Resolve đúng bảng trong search_path của Flyway, không lấy constraint từ schema Commerce khác.
+    WHERE c.conrelid = 'commerce_notification_outbox'::regclass
       AND c.contype = 'c'
       AND pg_get_constraintdef(c.oid) LIKE '%event_type%';
     IF constraint_name IS NOT NULL THEN
