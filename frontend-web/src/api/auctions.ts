@@ -78,13 +78,20 @@ export interface PlaceBidResponse {
     extended?: boolean
 }
 
-/** Kết quả settlement chính thức; trang checkout dùng các mốc này thay vì giá/deadline fixture. */
+/**
+ * Kết quả settlement chính thức; trang checkout dùng các mốc này thay vì giá/deadline fixture.
+ * - SUCCESS: phiên kết thúc có người thắng hợp lệ, đơn hàng sẽ được handover.
+ * - FAILED: phiên không có người thắng (không ai đấu giá hoặc không đạt giá khởi điểm).
+ * - DEFAULTED: winner đã thắng nhưng không thanh toán đúng hạn → AuctionTimeoutSideEffectWorker
+ *   đổi từ SUCCESS sang DEFAULTED, kho được nhả, winner bị phạt điểm uy tín.
+ *   Trường này được BE MR KH-S2-3 (Khang) bổ sung qua endpoint internal/settlement/defaulted.
+ */
 export interface AuctionSettlement {
     id: string
     auctionId: string
     winnerId: string | null
     finalPrice: number | null
-    result: 'SUCCESS' | 'FAILED'
+    result: 'SUCCESS' | 'FAILED' | 'DEFAULTED'
     orderId: string | null
     paymentDeadline: string | null
     settledAt: string
