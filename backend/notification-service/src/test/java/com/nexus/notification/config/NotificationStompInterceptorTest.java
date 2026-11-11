@@ -53,6 +53,13 @@ class NotificationStompInterceptorTest {
         subOwn.setSessionAttributes(sessionAttrs);
         interceptor.preSend(MessageBuilder.createMessage(new byte[0], subOwn.getMessageHeaders()), mock(MessageChannel.class));
 
+        // Kênh /user cố định dựa vào principal server; không cần biết profile id hay đọc token từ browser.
+        StompHeaderAccessor personal = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        personal.setDestination("/user/queue/notifications");
+        personal.setUser(authedAccessor.getUser());
+        personal.setSessionAttributes(sessionAttrs);
+        interceptor.preSend(MessageBuilder.createMessage(new byte[0], personal.getMessageHeaders()), mock(MessageChannel.class));
+
         StompHeaderAccessor subOther = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         subOther.setDestination("/topic/users/" + userB + "/notifications");
         subOther.setUser(authedAccessor.getUser());

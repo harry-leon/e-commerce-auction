@@ -179,11 +179,24 @@ public class CommerceNotificationController {
             payload.put("paymentDeadline", event.paymentDeadline() != null ? event.paymentDeadline().toString() : null);
             payload.put("penaltyScore", event.type() == Type.AUCTION_PAYMENT_TIMEOUT ? resolvePenalty(event) : null);
             payload.put("occurredAt", event.occurredAt().toString());
-            try {
-                messagingTemplate.convertAndSend("/topic/users/" + event.userId() + "/notifications", payload);
-            } catch (RuntimeException ex) {
-                // Không làm rollback thông báo DB nếu kết nối WebSocket tức thời chưa có subscriber hoặc lỗi broker.
-                log.warn("Không đẩy được WebSocket push cho user [{}]: {}", event.userId(), ex.getMessage());
+            // Commit DB trước push để HTTP refresh từ browser luôn đọc được tin mới và không nhận sự kiện rollback.
+            Runnable dispatch = () -> {
+                try {
+                    messagingTemplate.convertAndSendToUser(event.userId().toString(), "/queue/notifications", payload);
+                    messagingTemplate.convertAndSend("/topic/users/" + event.userId() + "/notifications", payload);
+                } catch (RuntimeException ex) {
+                    // Push best-effort; inbox REST còn nguyên và được resync khi reconnect, không ghi nhận đã tới browser.
+                    log.warn("Không đẩy được WebSocket push cho user [{}]: {}", event.userId(), ex.getMessage());
+                }
+            };
+            if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() { dispatch.run(); }
+                        });
+            } else {
+                dispatch.run();
             }
         }
     }

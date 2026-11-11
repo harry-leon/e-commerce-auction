@@ -17,6 +17,8 @@ import com.nexus.notification.config.SecurityConfig;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -38,6 +40,38 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({SecurityConfig.class, CommerceNotificationControllerPushTest.Config.class,
         com.nexus.common.exception.GlobalExceptionHandler.class})
 class CommerceNotificationControllerPushTest {
+
+    /** Chỉ phát push sau commit để browser đọc được inbox; rollback không được gửi sự kiện chưa lưu. */
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void defersPersonalPushUntilCommitAndDropsRolledBackEvents(boolean commit) {
+        properties.setPushEnabled(true);
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        var controller = new CommerceNotificationController(jdbc, properties, messagingTemplate);
+        UUID winner = UUID.randomUUID();
+        var event = new CommerceNotificationController.Event(UUID.randomUUID(), winner, UUID.randomUUID(),
+                "AUC-TX", CommerceNotificationController.Type.AUCTION_WON,
+                java.math.BigDecimal.TEN, java.time.Instant.now());
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            controller.receive(event);
+            verifyNoInteractions(messagingTemplate);
+            var callbacks = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            if (commit) {
+                callbacks.forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+                verify(messagingTemplate).convertAndSendToUser(eq(winner.toString()),
+                        eq("/queue/notifications"), any(Map.class));
+            } else {
+                callbacks.forEach(callback -> callback.afterCompletion(
+                        org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK));
+                verifyNoInteractions(messagingTemplate);
+            }
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+    }
 
     @Autowired
     private MockMvc mvc;

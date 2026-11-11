@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
 public class NotificationStompInterceptor implements ChannelInterceptor {
 
     private static final Pattern USER_TOPIC = Pattern.compile("/topic/users/([0-9a-fA-F-]{36})/notifications");
-    private static final String SESSION_EXPIRY_KEY = "notification_jwt_expires_at";
+    private static final String SESSION_EXPIRY_KEY = ExpiringNotificationWebSocketSessions.EXPIRY;
 
     private final JwtDecoder jwtDecoder;
 
@@ -72,6 +72,10 @@ public class NotificationStompInterceptor implements ChannelInterceptor {
         }
         if (command == StompCommand.SUBSCRIBE) {
             String destination = accessor.getDestination() != null ? accessor.getDestination() : "";
+            // Spring resolve /user theo principal JWT của session, không dùng profile id hoặc userId do browser chọn.
+            if ("/user/queue/notifications".equals(destination)) {
+                return message;
+            }
             Matcher matcher = USER_TOPIC.matcher(destination);
             if (!matcher.matches() || !matcher.group(1).equalsIgnoreCase(user.getToken().getSubject())) {
                 throw denied();
