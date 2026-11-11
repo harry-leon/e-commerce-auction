@@ -4,12 +4,25 @@
     <!-- figma:head-start -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title><!-- figma:title --></title>
+    <title>Nexus — E-Commerce & Auction Platform</title>
     <!-- figma:head-end -->
   </head>
   <body>
     <!-- figma:body-start -->
-    <div id="root"></div>
+    <div id="root">
+      <!-- Spinner phong cách Bootstrap chuẩn màu nhận diện Nexus (#ee4d2d) khi tải/reload trang -->
+      <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; gap: 14px;">
+        <div style="display: inline-block; width: 3rem; height: 3rem; vertical-align: -0.125em; border: 0.25em solid #fde0d8; border-top-color: #ee4d2d; border-radius: 50%; animation: 0.75s linear infinite initial-spinner-spin;" role="status">
+          <span style="display: none;">Đang tải...</span>
+        </div>
+        <p style="margin: 0; font-size: 14px; font-weight: 500; color: #6b7280;">Đang tải Project Nexus…</p>
+        <style>
+          @keyframes initial-spinner-spin {
+            to { transform: rotate(360deg); }
+          }
+        </style>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
     <!-- figma:body-end -->
   </body>

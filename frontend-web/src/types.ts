@@ -299,6 +299,8 @@ export type Page =
     | 'seller-dashboard'
     | 'seller-products'
     | 'seller-create-product'
+    | 'seller-edit-product'
+    | 'seller-update-product'
     | 'seller-auctions'
     | 'seller-create-auction'
     | 'seller-orders'

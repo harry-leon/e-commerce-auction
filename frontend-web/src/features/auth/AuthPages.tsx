@@ -191,25 +191,6 @@ export function LoginPage() {
                     {tr(lang, 'register')}
                 </button>
             </p>
-
-            {/* Chức năng: Cung cấp nút bấm điền nhanh tài khoản mẫu Buyer cho người dùng thử nghiệm */}
-            <div className="mt-5 pt-4 border-t border-gray-100">
-                <p className="text-xs text-gray-500 mb-2 font-medium">
-                    {lang === 'vi' ? 'Tài khoản mẫu để test nhanh:' : 'Demo accounts for testing:'}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setEmail('buyer@nexus.vn')
-                            setPassword('Nexus123@')
-                        }}
-                        className="text-xs bg-primary/10 hover:bg-primary/20 text-primary font-medium px-2.5 py-1.5 rounded-lg border border-primary/20 transition-colors"
-                    >
-                        Buyer: buyer@nexus.vn
-                    </button>
-                </div>
-            </div>
         </AuthCard>
     )
 }
@@ -223,12 +204,12 @@ function PasswordStrength({ password }: { password: string }) {
             /[A-Z]/.test(password) &&
             /[0-9]/.test(password) &&
             /[^A-Za-z0-9]/.test(password)
-          ? 4
-          : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
-            ? 3
-            : password.length >= 8
-              ? 2
-              : 1
+            ? 4
+            : password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password)
+                ? 3
+                : password.length >= 8
+                    ? 2
+                    : 1
     const labels = ['', 'Weak', 'Fair', 'Strong', 'Very Strong']
     const colors = ['', 'bg-danger', 'bg-warning', 'bg-success', 'bg-primary']
     if (!password) return null

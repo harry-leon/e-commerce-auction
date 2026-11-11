@@ -34,6 +34,8 @@ export function Button({
     )
 }
 
+export { BootstrapSpinner, PageSpinner, InlineSpinner } from './LoadState'
+
 // ─── Spinner ───────────────────────────────────────────────────────────────────
 export function Spinner({ size = 18, color = '#fff' }: { size?: number; color?: string }) {
     return (
