@@ -79,13 +79,14 @@ class ProductControllerTest {
         imageId = UUID.randomUUID();
 
         SkuResponse skuResp = new SkuResponse(
-                skuId, "SKU-001", "{\"color\":\"red\"}",
-                new BigDecimal("100.00"), new BigDecimal("120.00"), SkuStatus.ACTIVE);
+                skuId, "{\"color\":\"red\"}",
+                new BigDecimal("115.00"), new BigDecimal("100.00"), SkuStatus.ACTIVE);
         ImageResponse imgResp = new ImageResponse(imageId, "https://example.com/img1.png", 0);
 
         sampleResponse = new ProductResponse(
                 productId, sellerId, categoryId, "Sample Product",
                 "Description", ProductStatus.DRAFT, false, Instant.now(),
+                new BigDecimal("115.00"), new BigDecimal("115.00"),
                 List.of(skuResp), List.of(imgResp));
     }
 
@@ -98,8 +99,8 @@ class ProductControllerTest {
 
     private ProductRequest createSampleRequest() {
         SkuRequest skuReq = new SkuRequest(
-                "SKU-001", "{\"color\":\"red\"}",
-                new BigDecimal("100.00"), new BigDecimal("120.00"), SkuStatus.ACTIVE);
+                null, "{\"color\":\"red\"}",
+                new BigDecimal("100.00"), SkuStatus.ACTIVE);
         ImageRequest imgReq = new ImageRequest("https://example.com/img1.png", 0);
         return new ProductRequest(
                 "Sample Product", "Description", categoryId,
@@ -229,7 +230,7 @@ class ProductControllerTest {
         ProductResponse updatedStatus = new ProductResponse(
                 productId, sellerId, categoryId, "Sample Product",
                 "Description", ProductStatus.INACTIVE, false, Instant.now(),
-                List.of(), List.of());
+                null, null, List.of(), List.of());
         when(productService.changeStatus(productId, ProductStatus.INACTIVE))
                 .thenReturn(updatedStatus);
 
@@ -258,7 +259,7 @@ class ProductControllerTest {
         ProductResponse approvedResponse = new ProductResponse(
                 productId, sellerId, categoryId, "Sample Product",
                 "Description", ProductStatus.ACTIVE, false, Instant.now(),
-                List.of(), List.of());
+                null, null, List.of(), List.of());
         when(productService.approve(productId)).thenReturn(approvedResponse);
 
         mockMvc.perform(post("/api/v1/products/{id}/approve", productId)
@@ -279,12 +280,13 @@ class ProductControllerTest {
 
     @Test
     void addSku_Success() throws Exception {
+        UUID createdSkuId = UUID.randomUUID();
         SkuRequest skuReq = new SkuRequest(
-                "SKU-002", "{\"color\":\"blue\"}",
-                new BigDecimal("150.00"), new BigDecimal("160.00"), SkuStatus.ACTIVE);
+                null, "{\"color\":\"blue\"}",
+                new BigDecimal("150.00"), SkuStatus.ACTIVE);
         SkuResponse skuResp = new SkuResponse(
-                UUID.randomUUID(), "SKU-002", "{\"color\":\"blue\"}",
-                new BigDecimal("150.00"), new BigDecimal("160.00"), SkuStatus.ACTIVE);
+                createdSkuId, "{\"color\":\"blue\"}",
+                new BigDecimal("172.50"), new BigDecimal("150.00"), SkuStatus.ACTIVE);
 
         when(productService.addSku(eq(productId), any(SkuRequest.class)))
                 .thenReturn(skuResp);
@@ -294,17 +296,19 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(skuReq)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.skuCode").value("SKU-002"));
+                .andExpect(jsonPath("$.data.id").value(createdSkuId.toString()))
+                .andExpect(jsonPath("$.data.originalPrice").value(150.00))
+                .andExpect(jsonPath("$.data.skuCode").doesNotExist());
     }
 
     @Test
     void updateSku_Success() throws Exception {
         SkuRequest skuReq = new SkuRequest(
-                "SKU-001-MOD", null,
-                new BigDecimal("110.00"), null, SkuStatus.ACTIVE);
+                skuId, null,
+                new BigDecimal("110.00"), SkuStatus.ACTIVE);
         SkuResponse skuResp = new SkuResponse(
-                skuId, "SKU-001-MOD", null,
-                new BigDecimal("110.00"), null, SkuStatus.ACTIVE);
+                skuId, null,
+                new BigDecimal("126.50"), new BigDecimal("110.00"), SkuStatus.ACTIVE);
 
         when(productService.updateSku(eq(skuId), any(SkuRequest.class)))
                 .thenReturn(skuResp);
@@ -314,7 +318,9 @@ class ProductControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(skuReq)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.skuCode").value("SKU-001-MOD"));
+                .andExpect(jsonPath("$.data.id").value(skuId.toString()))
+                .andExpect(jsonPath("$.data.originalPrice").value(110.00))
+                .andExpect(jsonPath("$.data.skuCode").doesNotExist());
     }
 
     @Test

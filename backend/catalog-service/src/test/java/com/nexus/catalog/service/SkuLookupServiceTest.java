@@ -29,19 +29,23 @@ class SkuLookupServiceTest {
     // Snapshot phải mang seller từ Product thật để Commerce kiểm tra chủ shop, không dùng ID client.
     void returnsPriceAndMarksInactiveProductUnavailable() {
         UUID id = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
         var product = new Product();
+        product.setId(productId);
         product.setName("Product");
         product.setSellerId(UUID.randomUUID());
         product.setStatus(ProductStatus.DRAFT);
         var sku = new Sku();
         sku.setId(id);
         sku.setProduct(product);
-        sku.setSkuCode("SKU");
-        sku.setPrice(new BigDecimal("125000"));
+        sku.setOriginalPrice(new BigDecimal("125000"));
         sku.setStatus(SkuStatus.ACTIVE);
         when(skus.findById(id)).thenReturn(Optional.of(sku));
         var snapshot = new SkuLookupService(skus).get(id);
-        assertEquals(new BigDecimal("125000"), snapshot.price());
+        assertEquals(id, snapshot.skuId());
+        assertEquals(productId, snapshot.productId());
+        assertEquals(new BigDecimal("125000.00"), snapshot.price());
+        assertEquals(new BigDecimal("125000"), snapshot.originalPrice());
         assertEquals(product.getSellerId(), snapshot.sellerId());
         assertNull(snapshot.stockQuantity());
         assertNull(snapshot.thumbnailUrl());
@@ -51,31 +55,5 @@ class SkuLookupServiceTest {
     @Test
     void missingSkuReturnsDomainNotFound() {
         assertThrows(ResourceNotFoundException.class, () -> new SkuLookupService(skus).get(UUID.randomUUID()));
-    }
-
-    /** Kiểm tra tra cứu SKU theo skuCode trả đúng skuId/sellerId và từ chối mã rỗng hoặc không tồn tại. */
-    @Test
-    void resolvesSnapshotBySkuCodeAndRejectsBlankOrMissing() {
-        UUID id = UUID.randomUUID();
-        UUID sellerId = UUID.randomUUID();
-        var product = new Product();
-        product.setName("Bàn phím cơ");
-        product.setSellerId(sellerId);
-        product.setStatus(ProductStatus.ACTIVE);
-        var sku = new Sku();
-        sku.setId(id);
-        sku.setProduct(product);
-        sku.setSkuCode("NX-KB-01");
-        sku.setPrice(new BigDecimal("890000"));
-        sku.setStatus(SkuStatus.ACTIVE);
-        when(skus.findBySkuCodeIgnoreCase("NX-KB-01")).thenReturn(Optional.of(sku));
-
-        var snapshot = new SkuLookupService(skus).getByCode("  NX-KB-01  ");
-        assertEquals(id, snapshot.skuId());
-        assertEquals(sellerId, snapshot.sellerId());
-        assertEquals("NX-KB-01", snapshot.skuCode());
-
-        assertThrows(ResourceNotFoundException.class, () -> new SkuLookupService(skus).getByCode(" "));
-        assertThrows(ResourceNotFoundException.class, () -> new SkuLookupService(skus).getByCode("UNKNOWN"));
     }
 }

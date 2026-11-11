@@ -6,64 +6,60 @@ import com.nexus.catalog.repository.SkuRepository;
 import com.nexus.common.exception.ResourceNotFoundException;
 import java.math.BigDecimal;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Read model cho Cart lấy giá/trạng thái SKU thật; tồn kho thuộc Fulfillment
- * nên stockQuantity để null.
+ * Read model cho Commerce/Cart và Fulfillment tra cứu SKU Catalog theo skuId.
+ * Chỉ trả thông tin định danh Catalog (skuId, productId, sellerId), giá động và trạng thái;
+ * tồn kho và skuCode thuộc thẩm quyền riêng của Fulfillment Service.
  */
 @Service
 public class SkuLookupService {
     private final SkuRepository skus;
+    private final DynamicPricingService pricingService;
 
     public SkuLookupService(SkuRepository skus) {
-        this.skus = skus;
+        this(skus, new DynamicPricingService(null));
     }
 
-    /**
-     * Đọc SKU/product trong transaction; trả sellerId thật để Checkout chặn tự mua
-     * và đơn nhiều shop.
-     */
+    /** Khởi tạo dịch vụ tra cứu SKU cùng DynamicPricingService để trả giá bán động. */
+    @Autowired
+    public SkuLookupService(SkuRepository skus, DynamicPricingService pricingService) {
+        this.skus = skus;
+        this.pricingService = pricingService != null ? pricingService : new DynamicPricingService(null);
+    }
+
+    /** Đọc SKU/product trong transaction; trả sellerId thật để Fulfillment và Checkout xác thực quyền sở hữu. */
     @Transactional(readOnly = true)
     public SkuSnapshot get(UUID id) {
         var sku = skus.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy SKU"));
-        return toSnapshot(sku);
-    }
-
-    /**
-     * Tra cứu snapshot SKU theo mã nghiệp vụ skuCode (không phân biệt hoa thường).
-     * Đầu vào: chuỗi skuCode; đầu ra: SkuSnapshot kèm skuId và sellerId để
-     * Fulfillment xác minh quyền seller.
-     */
-    @Transactional(readOnly = true)
-    public SkuSnapshot getByCode(String skuCode) {
-        String normalized = skuCode == null ? "" : skuCode.trim();
-        if (normalized.isEmpty()) {
-            throw new ResourceNotFoundException("Không tìm thấy SKU");
-        }
-        var sku = skus.findBySkuCodeIgnoreCase(normalized)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy SKU với mã " + normalized));
-        return toSnapshot(sku);
-    }
-
-    /**
-     * Ánh xạ entity Sku sang SkuSnapshot dùng chung cho tra cứu theo UUID và
-     * skuCode.
-     */
-    private SkuSnapshot toSnapshot(com.nexus.catalog.entity.Sku sku) {
         var product = sku.getProduct();
         String image = product.getImages().isEmpty() ? null : product.getImages().getFirst().getUrl();
-        return new SkuSnapshot(sku.getId(), sku.getSkuCode(), product.getName(), image, sku.getPrice(), null,
+        BigDecimal dynamicPrice = pricingService.calculateSellingPrice(sku);
+        return new SkuSnapshot(
+                id,
+                product.getId(),
+                product.getName(),
+                image,
+                dynamicPrice,
+                sku.getOriginalPrice(),
+                null,
                 sku.getStatus() == SkuStatus.ACTIVE && product.getStatus() == ProductStatus.ACTIVE,
                 product.getSellerId());
     }
 
-    /**
-     * Contract đọc giữa Catalog/Commerce; sellerId thuộc product, null stock chưa
-     * được kiểm tra tại Fulfillment.
-     */
-    public record SkuSnapshot(UUID skuId, String skuCode, String productName, String thumbnailUrl,
-            BigDecimal price, Integer stockQuantity, Boolean isActive, UUID sellerId) {
+    /** Contract đọc giữa Catalog với Commerce/Fulfillment; không chứa skuCode và không giả lập tồn kho. */
+    public record SkuSnapshot(
+            UUID skuId,
+            UUID productId,
+            String productName,
+            String thumbnailUrl,
+            BigDecimal price,
+            BigDecimal originalPrice,
+            Integer stockQuantity,
+            Boolean isActive,
+            UUID sellerId) {
     }
 }

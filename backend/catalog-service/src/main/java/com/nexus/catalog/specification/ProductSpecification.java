@@ -5,6 +5,7 @@ import com.nexus.catalog.entity.Category;
 import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.entity.Sku;
 import com.nexus.catalog.enums.ProductStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
@@ -46,14 +47,12 @@ public class ProductSpecification {
                 predicates.add(cb.or(nameLike, categoryLike));
             }
 
-            // 4. Lọc theo khoảng giá (minPrice, maxPrice dựa trên bảng SKUs)
+            // 4. Sơ lọc SKU ACTIVE ở DB; giá bán động luôn >= originalPrice nên originalPrice <= maxPrice an toàn.
             if (request.minPrice() != null || request.maxPrice() != null) {
                 Join<Product, Sku> skuJoin = root.join("skus", JoinType.INNER);
-                if (request.minPrice() != null) {
-                    predicates.add(cb.greaterThanOrEqualTo(skuJoin.get("price"), request.minPrice()));
-                }
+                predicates.add(cb.equal(skuJoin.get("status"), SkuStatus.ACTIVE));
                 if (request.maxPrice() != null) {
-                    predicates.add(cb.lessThanOrEqualTo(skuJoin.get("price"), request.maxPrice()));
+                    predicates.add(cb.lessThanOrEqualTo(skuJoin.get("originalPrice"), request.maxPrice()));
                 }
             }
 

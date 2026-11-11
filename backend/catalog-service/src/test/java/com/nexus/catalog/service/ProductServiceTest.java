@@ -21,6 +21,7 @@ import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.enums.ProductStatus;
 import com.nexus.catalog.enums.SkuStatus;
 import com.nexus.catalog.dto.mapper.ProductMapper;
+import com.nexus.catalog.config.CatalogProperties;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductImageRepository;
 import com.nexus.catalog.repository.ProductRepository;
@@ -57,6 +58,7 @@ class ProductServiceTest {
     private SkuRepository skuRepository;
     private CategoryRepository categoryRepository;
     private ProductImageRepository productImageRepository;
+    private CatalogEventOutboxService catalogEventOutboxService;
     private ProductService productService;
     private UUID sellerId;
     private Category category;
@@ -78,13 +80,17 @@ class ProductServiceTest {
         skuRepository = mock(SkuRepository.class);
         categoryRepository = mock(CategoryRepository.class);
         productImageRepository = mock(ProductImageRepository.class);
+        catalogEventOutboxService = mock(CatalogEventOutboxService.class);
         productService = new ProductServiceImpl(
                 productRepository,
                 skuRepository,
                 categoryRepository,
                 productImageRepository,
                 ProductMapper.INSTANCE,
-                validator);
+                validator,
+                new CatalogProperties(),
+                new DynamicPricingService(null),
+                catalogEventOutboxService);
         sellerId = UUID.randomUUID();
         category = new Category();
         category.setId(UUID.randomUUID());
@@ -100,9 +106,14 @@ class ProductServiceTest {
         SecurityContextHolder.clearContext();
     }
 
-    private SkuRequest sku(String code, String price) {
+    private SkuRequest sku(String label, String originalPrice) {
         return new SkuRequest(
-                code, null, new BigDecimal(price), null, SkuStatus.ACTIVE);
+                null, "{\"label\":\"" + label + "\"}", new BigDecimal(originalPrice), SkuStatus.ACTIVE);
+    }
+
+    private SkuRequest skuWithId(UUID id, String originalPrice) {
+        return new SkuRequest(
+                id, "{\"color\":\"black\"}", new BigDecimal(originalPrice), SkuStatus.ACTIVE);
     }
 
     private ProductRequest command(List<SkuRequest> skus,
@@ -128,7 +139,6 @@ class ProductServiceTest {
     @Test
     void createPersistsDraftProduct() {
         when(categoryRepository.findById(category.getId())).thenReturn(Optional.of(category));
-        when(skuRepository.existsBySkuCode("SKU-1")).thenReturn(false);
         when(productRepository.save(any(Product.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
@@ -141,6 +151,7 @@ class ProductServiceTest {
         assertEquals(1, product.skus().size());
         assertEquals(1, product.images().size());
         verify(productRepository).save(any(Product.class));
+        verify(catalogEventOutboxService).enqueueSkuCreated(any(Product.class), any());
     }
 
     @Test
@@ -186,7 +197,6 @@ class ProductServiceTest {
     @Test
     void createWithFiveImagesIsAccepted() {
         when(categoryRepository.findById(category.getId())).thenReturn(Optional.of(category));
-        when(skuRepository.existsBySkuCode("SKU-1")).thenReturn(false);
         when(productRepository.save(any(Product.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
         List<ImageRequest> images =
@@ -199,41 +209,21 @@ class ProductServiceTest {
     }
 
     @Test
-    void createWithMissingPriceIsRejected() {
-        SkuRequest noPrice = new SkuRequest(
-                "SKU-1", null, null, null, null);
-        ProductRequest command = command(List.of(noPrice), null);
+    void createWithMissingOriginalPriceIsRejected() {
+        SkuRequest noOriginalPrice = new SkuRequest(
+                null, null, null, null);
+        ProductRequest command = command(List.of(noOriginalPrice), null);
         assertThrows(BusinessException.class,
                 () -> productService.create(sellerId, command));
     }
 
     @Test
-    void createWithOriginalPriceBelowPriceIsRejected() {
+    void createWithNegativeOriginalPriceIsRejected() {
         SkuRequest bad = new SkuRequest(
-                "SKU-1", null, new BigDecimal("10.00"), new BigDecimal("5.00"), null);
+                null, null, new BigDecimal("-5.00"), null);
         ProductRequest command = command(List.of(bad), null);
-        BusinessException ex = assertThrows(BusinessException.class,
-                () -> productService.create(sellerId, command));
-        assertTrue(ex.getMessage().contains("Original price"));
-    }
-
-    @Test
-    void createWithDuplicateSkuCodesInCommandIsRejected() {
-        ProductRequest command = command(
-                List.of(sku("SKU-1", "10.00"), sku("sku-1", "20.00")), null);
         assertThrows(BusinessException.class,
                 () -> productService.create(sellerId, command));
-    }
-
-    @Test
-    void createWithSkuCodeAlreadyInUseIsRejected() {
-        when(categoryRepository.findById(category.getId())).thenReturn(Optional.of(category));
-        when(skuRepository.existsBySkuCode("SKU-1")).thenReturn(true);
-        ProductRequest command = command(List.of(sku("SKU-1", "10.00")), null);
-        BusinessException ex = assertThrows(BusinessException.class,
-                () -> productService.create(sellerId, command));
-        assertTrue(ex.getMessage().contains("already exists"));
-        verify(productRepository, never()).save(any());
     }
 
     @Test
@@ -375,11 +365,13 @@ class ProductServiceTest {
     }
 
     @Test
-    void updateKeepsExistingSkuCodeWithoutDuplicateCheck() {
+    void updatePreservesExistingSkuIdAndUpdatesFieldsInPlace() {
         Product product = existingProduct(ProductStatus.DRAFT);
+        UUID existingSkuId = UUID.randomUUID();
         com.nexus.catalog.entity.Sku existing = new com.nexus.catalog.entity.Sku();
-        existing.setSkuCode("SKU-1");
-        existing.setPrice(new BigDecimal("10.00"));
+        existing.setId(existingSkuId);
+        existing.setProduct(product);
+        existing.setOriginalPrice(new BigDecimal("10.00"));
         product.getSkus().add(existing);
         when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
         when(productRepository.save(any(Product.class)))
@@ -387,12 +379,42 @@ class ProductServiceTest {
 
         ProductResponse updated = productService.update(
                 product.getId(),
-                command(List.of(sku("SKU-1", "15.00")), null));
+                command(List.of(skuWithId(existingSkuId, "15.00")), null));
 
         assertEquals("iPhone 16", updated.name());
         assertEquals(1, updated.skus().size());
-        assertEquals(new BigDecimal("15.00"), updated.skus().get(0).price());
-        verify(skuRepository, never()).existsBySkuCode(any());
+        assertEquals(existingSkuId, updated.skus().get(0).id());
+        assertEquals(new BigDecimal("15.00"), updated.skus().get(0).originalPrice());
+        verify(catalogEventOutboxService, never()).enqueueSkuCreated(any(), any());
+    }
+
+    @Test
+    void updateRejectsForeignSkuId() {
+        Product product = existingProduct(ProductStatus.DRAFT);
+        com.nexus.catalog.entity.Sku existing = new com.nexus.catalog.entity.Sku();
+        existing.setId(UUID.randomUUID());
+        product.getSkus().add(existing);
+        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+
+        assertThrows(BusinessException.class, () -> productService.update(
+                product.getId(),
+                command(List.of(skuWithId(UUID.randomUUID(), "15.00")), null)));
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void updateRejectsDuplicateSkuIdInRequest() {
+        Product product = existingProduct(ProductStatus.DRAFT);
+        UUID existingSkuId = UUID.randomUUID();
+        com.nexus.catalog.entity.Sku existing = new com.nexus.catalog.entity.Sku();
+        existing.setId(existingSkuId);
+        product.getSkus().add(existing);
+        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+
+        assertThrows(BusinessException.class, () -> productService.update(
+                product.getId(),
+                command(List.of(skuWithId(existingSkuId, "15.00"), skuWithId(existingSkuId, "20.00")), null)));
+        verify(productRepository, never()).save(any());
     }
 
     @Test
@@ -460,14 +482,20 @@ class ProductServiceTest {
         product.setName("Laptop Gaming");
         product.setCategory(category);
         product.setStatus(ProductStatus.ACTIVE);
-        when(productRepository.findAll(any(Specification.class), eq(pageable)))
-            .thenReturn(new PageImpl<>(List.of(product), pageable, 1));
+        com.nexus.catalog.entity.Sku activeSku = new com.nexus.catalog.entity.Sku();
+        activeSku.setOriginalPrice(new BigDecimal("200"));
+        activeSku.setStatus(SkuStatus.ACTIVE);
+        activeSku.setProduct(product);
+        product.getSkus().add(activeSku);
+        when(productRepository.findAll(any(Specification.class), eq(pageable.getSort())))
+            .thenReturn(List.of(product));
         // Act
         Page<ProductResponse> result = productService.search(filter, pageable);
         // Assert
         assertEquals(1, result.getTotalElements());
         assertEquals("Laptop Gaming", result.getContent().get(0).name());
-        verify(productRepository).findAll(any(Specification.class), eq(pageable));
+        assertEquals(new BigDecimal("200.00"), result.getContent().get(0).minPrice());
+        verify(productRepository).findAll(any(Specification.class), eq(pageable.getSort()));
     }
     @Test
     void search_MinPriceGreaterThanMaxPrice_ThrowsBusinessException() {
