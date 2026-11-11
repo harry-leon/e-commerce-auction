@@ -1,5 +1,9 @@
 # Commerce Service DTO Contract
 
+> **Thay đổi contract giá/attempt:** xem [Order/Payment theo Payment Attempt](../PAYMENT_ATTEMPT_PRICING.md).
+> Từ V10, Create Order không tự tạo URL; official nullable, estimated*/priceFinalized phân biệt giá dự kiến.
+> Mỗi Order có thể có nhiều attempt; hướng dẫn bên dưới về một attempt/giá chốt lúc tạo thuộc baseline cũ.
+
 > **Gateway paths:** `/api/v1/cart/**`, `/api/v1/checkout/**`, `/api/v1/orders/**`, `/api/v1/payments/**`
 >
 > **CURRENT:** Cart, checkout COD/VNPAY, Order Management, Payment/IPN và notification outbox

@@ -300,6 +300,17 @@ public class OrderServiceImpl implements OrderService {
         }
 
         rejectActiveVnpayCancellation(order, targetStatus);
+        // Thu COD đã ghi nhận thì lặp command chỉ đọc kết quả, kể cả đang chờ kho hoặc cần đối soát.
+        // Vẫn kiểm tra quyền xác nhận tiền trước replay; không cho seller tự xác nhận thu COD.
+        if (targetStatus == OrderStatus.PAID && "COD".equals(order.getPaymentMethod()) && order.getFulfillmentStatus() != null) {
+            orderStatusStateMachine.validateTransition(OrderStatus.PENDING_PAYMENT, OrderStatus.PAID, userRoles);
+            return orderMapper.toDetailResponse(order);
+        }
+        // Đơn có lỗi/chưa xác nhận kho không được đi tiếp quy trình giao hàng, kể cả dữ liệu cũ đã PROCESSING.
+        if (order.getFulfillmentStatus() != null && !"CONFIRMED".equals(order.getFulfillmentStatus())
+                && Set.of(OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.COMPLETED).contains(targetStatus)) {
+            throw new BusinessException(ErrorCode.ORDER_STATUS_INVALID, "Đơn chưa được kho xác nhận hoặc cần đối soát");
+        }
         // 2. Kiểm tra tính Idempotent (chống trùng lặp yêu cầu mạng)
         if (currentStatus == targetStatus) {
             log.info("Đơn hàng {} hiện đã ở trạng thái {}, xử lý idempotent trả về kết quả hiện tại",
@@ -319,6 +330,10 @@ public class OrderServiceImpl implements OrderService {
         orderStatusStateMachine.validateTransition(currentStatus, targetStatus, userRoles);
 
         // 4. Cập nhật thực thể đơn hàng
+        // COD chỉ chốt giá khi thao tác backend hợp lệ xác nhận PAID; giá lấy từ dự kiến đã lưu, không từ request.
+        if (targetStatus == OrderStatus.PAID && "COD".equals(order.getPaymentMethod()) && !order.isPriceFinalized()) {
+            return confirmCodFunds(order, currentUserId, userRoles);
+        }
         order.setStatus(targetStatus);
         Order savedOrder = orderRepository.save(order);
         if (targetStatus == OrderStatus.CANCELLED) { enqueueRelease(order); }
@@ -442,13 +457,42 @@ public class OrderServiceImpl implements OrderService {
     /**
      * Tra cứu thực thể đơn hàng theo ID hoặc ném ngoại lệ ORDER_NOT_FOUND (HTTP 404).
      */
-    /** Không hủy đơn khi URL VNPAY còn có thể thu tiền; cần provider cancel/refund để mở nghiệp vụ này an toàn. */
+    /** COD đã thu tiền/chờ kho và VNPAY có thể thu tiền không được hủy như đơn chưa trả; chưa có refund provider. */
     private void rejectActiveVnpayCancellation(Order order, OrderStatus target) {
+        if (target == OrderStatus.CANCELLED && order.isPriceFinalized() && order.getFulfillmentStatus() != null) {
+            throw refundUnavailable();
+        }
         if (target == OrderStatus.CANCELLED && order.getStatus() == OrderStatus.PENDING_PAYMENT
                 && "VNPAY".equals(order.getPaymentMethod())) {
-            throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL,
-                    "Giao dịch VNPAY đang chờ kết quả; hãy kiểm tra thanh toán trước khi yêu cầu hủy");
+            // Draft chưa có attempt hoặc chỉ FAILED được hủy; không hủy khi cổng còn có thể thu tiền/chờ kho/đối soát.
+            Integer active = jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=? "
+                    + "AND (status IN ('PENDING','SUCCESS','REVIEW') OR inventory_status='REVIEW')", Integer.class, order.getId());
+            if (active != null && active > 0) {
+                throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL,
+                        "Giao dịch VNPAY đang chờ kết quả; hãy kiểm tra thanh toán trước khi yêu cầu hủy");
+            }
         }
+    }
+
+    /**
+     * Ghi xác nhận thu COD và giá chính thức cùng COD_COMMIT trong transaction, chưa đổi Order sang PAID.
+     * Worker xác nhận toàn bộ phiếu kho rồi mới PAID; lỗi kho giữ giá/tiền và chuyển REVIEW, không thu/hoàn tiền giả.
+     * Khóa Order của caller và fulfillmentStatus chặn lặp command, history chỉ ghi một lần nhận tiền.
+     */
+    private OrderDetailResponse confirmCodFunds(Order order, UUID actor, List<String> roles) {
+        com.nexus.commerce.service.PaymentPricingService.finalizePrices(order,
+                com.nexus.commerce.service.PaymentPricingService.estimated(order));
+        order.setFulfillmentStatus("PENDING");
+        jdbc.update("INSERT INTO payment_inventory_tasks(id,order_id,target_id,action) VALUES (?,?,?,'COD_COMMIT') ON CONFLICT DO NOTHING",
+                UUID.randomUUID(), order.getId(), order.getId());
+        var history = OrderStatusHistory.builder().order(order).fromStatus(order.getStatus()).toStatus(order.getStatus())
+                .reason("[" + resolvePrimaryActor(roles) + "] COD_FUNDS_RECEIVED_PENDING_INVENTORY")
+                .changedAt(Instant.now()).build();
+        orderStatusHistoryRepository.save(history);
+        order.addStatusHistory(history);
+        orderRepository.save(order);
+        log.info("Đã ghi nhận thu COD, chờ xác nhận kho: order={}, actor={}", order.getId(), actor);
+        return orderMapper.toDetailResponse(order);
     }
 
     /** Cùng commit với hủy đơn; worker dùng service account hoàn kho, retry không giải phóng hai lần. */
@@ -651,7 +695,7 @@ public class OrderServiceImpl implements OrderService {
                     order.getBuyerId(),
                     order.getSellerId(),
                     order.getStatus().name(),
-                    order.getTotal(),
+                    order.isPriceFinalized() ? order.getTotal() : order.getEstimatedTotal(),
                     deadline,
                     order.getCreatedAt()
             );
@@ -697,10 +741,16 @@ public class OrderServiceImpl implements OrderService {
                 .sellerId(request.sellerId())
                 .sourceType(OrderSourceType.AUCTION)
                 .auctionId(request.auctionId())
-                .subtotal(request.finalPrice())
-                .shippingFee(BigDecimal.ZERO)
-                .discount(BigDecimal.ZERO)
-                .total(request.finalPrice())
+                // Giá thắng được giữ ở estimated để payment không áp lại giá bán thường; chỉ chốt sau thu tiền.
+                .estimatedSubtotal(request.finalPrice())
+                .estimatedShippingFee(BigDecimal.ZERO)
+                .estimatedDiscount(BigDecimal.ZERO)
+                .estimatedTotal(request.finalPrice())
+                .subtotal(null)
+                .shippingFee(null)
+                .discount(null)
+                .total(null)
+                .priceFinalized(false)
                 .status(OrderStatus.PENDING_PAYMENT)
                 .shippingAddress("AUCTION_PENDING_BUYER_ADDRESS")
                 .idempotencyKey(request.auctionId().toString())
@@ -720,7 +770,8 @@ public class OrderServiceImpl implements OrderService {
                 .skuId(request.skuId())
                 .productName(productName)
                 .skuCode(skuCode)
-                .unitPrice(request.finalPrice())
+                .estimatedUnitPrice(request.finalPrice())
+                .unitPrice(null)
                 .quantity(1)
                 .build();
         order.addItem(item);
@@ -737,7 +788,7 @@ public class OrderServiceImpl implements OrderService {
         // Bước 7: Lưu đơn hàng vào cơ sở dữ liệu
         Order savedOrder = orderRepository.save(order);
         log.info("Khởi tạo thành công đơn hàng đấu giá [{}] cho phiên [{}] với winner [{}], tổng tiền [{}]",
-                savedOrder.getOrderNo(), request.auctionId(), request.winnerId(), savedOrder.getTotal());
+                savedOrder.getOrderNo(), request.auctionId(), request.winnerId(), savedOrder.getEstimatedTotal());
 
         return new AuctionOrderResponse(
                 savedOrder.getId(),
@@ -746,7 +797,7 @@ public class OrderServiceImpl implements OrderService {
                 savedOrder.getBuyerId(),
                 savedOrder.getSellerId(),
                 savedOrder.getStatus().name(),
-                savedOrder.getTotal(),
+                savedOrder.isPriceFinalized() ? savedOrder.getTotal() : savedOrder.getEstimatedTotal(),
                 deadline,
                 savedOrder.getCreatedAt()
         );
