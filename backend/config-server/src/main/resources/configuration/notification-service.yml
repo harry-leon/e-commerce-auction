@@ -1,0 +1,7 @@
+# Cấu hình tập trung cho notification-service do Config Server quản lý (SRS §2.6 & KH-S2-3).
+notification:
+  email-enabled: true
+  push-enabled: true                # PUSH_NOTIFICATION_ENABLED = true theo SRS §2.6
+  retry-limit: 3                    # NOTIFICATION_RETRY_LIMIT = 3
+  transactional-mandatory: true
+  sender-from: no-reply@nexus.com

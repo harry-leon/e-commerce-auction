@@ -29,6 +29,8 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                // Handshake WebSocket công khai; STOMP CONNECT tự xác minh JWT và khóa kênh theo user UUID.
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/ws/notifications").permitAll()
                 // Email và inbox cần JWT; controller kiểm tra quyền writer hoặc chủ sở hữu.
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));

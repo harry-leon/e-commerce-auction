@@ -138,4 +138,17 @@ class UserServiceTest {
         assertThrows(ResourceNotFoundException.class, () -> service.getUserById(UUID.randomUUID()));
         assertThrows(ResourceNotFoundException.class, () -> service.findBySubject(UUID.randomUUID().toString()));
     }
+
+    /** Tra cứu liên hệ nội bộ hỗ trợ cả user.id lẫn keycloak_id đã liên kết. */
+    @Test
+    void resolvesInternalContactByIdOrKeycloakSubject() {
+        when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
+        var byProfile = service.getInternalContact(user.getId());
+        assertEquals("profile@example.com", byProfile.email());
+
+        when(users.findByIdAndIsDeletedFalse(user.getKeycloakId())).thenReturn(Optional.empty());
+        when(users.findByKeycloakIdAndIsDeletedFalse(user.getKeycloakId())).thenReturn(Optional.of(user));
+        var bySubject = service.getInternalContact(user.getKeycloakId());
+        assertEquals("Hồ sơ", bySubject.fullName());
+    }
 }

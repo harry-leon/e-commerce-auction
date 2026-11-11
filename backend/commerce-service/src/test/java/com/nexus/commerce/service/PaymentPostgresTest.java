@@ -3,15 +3,18 @@ package com.nexus.commerce.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexus.commerce.client.AuctionTimeoutSyncClient;
 import com.nexus.commerce.client.CatalogClient;
 import com.nexus.commerce.client.InventoryClient;
 import com.nexus.commerce.client.InventoryServiceToken;
 import com.nexus.commerce.client.NotificationDelivery;
+import com.nexus.commerce.client.UserContactClient;
 import com.nexus.commerce.client.VnpayGateway;
 import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.config.CheckoutTransactionConfig;
@@ -52,8 +55,10 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({AuctionPaymentExpiryWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class,
-        CheckoutLock.class, CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class, com.nexus.commerce.service.impl.OrderServiceImpl.class,
+@Import({AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class, AuctionTimeoutSideEffectWorker.class,
+        NotificationWorker.class, NotificationOutbox.class, CheckoutService.class, PaymentService.class,
+        PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class, CheckoutTransactionConfig.class,
+        PaymentPostgresTest.Config.class, com.nexus.commerce.service.impl.OrderServiceImpl.class,
         com.nexus.commerce.dto.mapper.OrderMapper.class, com.nexus.commerce.statemachine.OrderStatusStateMachine.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -63,6 +68,8 @@ class PaymentPostgresTest {
     @Autowired private PaymentService payments;
     @Autowired private PaymentInventoryWorker worker;
     @Autowired private AuctionPaymentExpiryWorker expiry;
+    @Autowired private AuctionPaymentReminderWorker reminderWorker;
+    @Autowired private AuctionTimeoutSideEffectWorker timeoutSideEffectWorker;
     @Autowired private VnpayGateway gateway;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private NotificationWorker notificationWorker;
@@ -70,6 +77,8 @@ class PaymentPostgresTest {
     @MockitoBean private CatalogClient catalog;
     @MockitoBean private InventoryClient inventory;
     @MockitoBean private InventoryServiceToken tokens;
+    @MockitoBean private AuctionTimeoutSyncClient auctionTimeoutSync;
+    @MockitoBean private UserContactClient userContactClient;
     private UUID buyer;
     private UUID orderId;
     private UUID paymentId;
@@ -152,6 +161,39 @@ class PaymentPostgresTest {
         assertEquals("CANCELLED", orderState());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='RELEASE'", Integer.class, orderId));
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=? AND action='COMMIT'", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND event_type='AUCTION_PAYMENT_TIMEOUT'", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND task_type='REPUTATION_PENALTY' AND score_delta=10", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND task_type='AUCTION_DEFAULTED'", Integer.class, orderId));
+    }
+
+    /** Nhắc hạn 2h chỉ ghi đúng 1 outbox; lỗi mạng sang Reputation giữ retry backoff cho tới khi hồi phục. */
+    @Test
+    void reminderAndTimeoutSideEffectsPersistAndRecoverCleanly() {
+        UUID auction = UUID.randomUUID();
+        var nearDeadline = java.time.Instant.now().plusSeconds(3600).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        when(userContactClient.findContact(buyer)).thenReturn(java.util.Optional.of(
+                new UserContactClient.UserContact(buyer, "winner@nexus.test", "Winner Postgres")));
+        var created = management.createAuctionOrder(new com.nexus.commerce.dto.request.CreateAuctionOrderRequest(
+                auction, buyer, UUID.randomUUID(), null, UUID.randomUUID(),
+                new BigDecimal("300000"), nearDeadline, "Gốm sứ", "CER-01", List.of(reservation)));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND event_type='AUCTION_WON'", Integer.class, created.orderId()));
+
+        reminderWorker.run();
+        reminderWorker.run();
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=? AND event_type='AUCTION_PAYMENT_REMINDER'", Integer.class, created.orderId()));
+
+        jdbc.update("UPDATE orders SET payment_deadline=(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - interval '5 minutes' WHERE id=?", created.orderId());
+        expiry.run();
+        when(auctionTimeoutSync.configured()).thenReturn(true);
+        doThrow(new IllegalStateException("timeout")).doNothing()
+                .when(auctionTimeoutSync).applyTimeoutPenalty(eq(buyer), eq(auction), eq(created.orderId()), eq(10), any());
+
+        timeoutSideEffectWorker.run();
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND done=true", Integer.class, created.orderId()));
+
+        jdbc.update("UPDATE auction_timeout_tasks SET next_attempt_at=CURRENT_TIMESTAMP WHERE order_id=?", created.orderId());
+        timeoutSideEffectWorker.run();
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM auction_timeout_tasks WHERE order_id=? AND done=true", Integer.class, created.orderId()));
     }
 
     /** IPN và timeout chạy song song phải có một kết quả nhất quán; expiry không hủy đơn có SUCCESS đang chờ kho. */

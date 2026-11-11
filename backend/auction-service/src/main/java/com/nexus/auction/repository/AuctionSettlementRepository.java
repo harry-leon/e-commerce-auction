@@ -2,10 +2,14 @@ package com.nexus.auction.repository;
 
 import com.nexus.auction.entity.AuctionSettlement;
 import com.nexus.auction.enums.SettlementResult;
+import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -23,6 +27,13 @@ public interface AuctionSettlementRepository extends JpaRepository<AuctionSettle
      * Tìm bản ghi quyết toán duy nhất của một phiên đấu giá.
      */
     Optional<AuctionSettlement> findByAuctionId(UUID auctionId);
+
+    /**
+     * Khóa bi quan bản ghi quyết toán theo auctionId khi đồng bộ trạng thái DEFAULTED từ Commerce Service.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM AuctionSettlement s WHERE s.auctionId = :auctionId")
+    Optional<AuctionSettlement> findByAuctionIdForUpdate(@Param("auctionId") UUID auctionId);
 
     /**
      * Kiểm tra xem phiên đấu giá đã từng được quyết toán hay chưa.
