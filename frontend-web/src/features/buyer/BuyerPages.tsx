@@ -1099,6 +1099,8 @@ export function CheckoutPage() {
     const [priceMismatchNotice, setPriceMismatchNotice] = useState<string | null>(null)
     // Giữ đơn hàng đã tạo thành công khi bước tiếp theo (Payment Attempt) gặp lỗi để có thể thử lại đúng đơn đó
     const [createdOrder, setCreatedOrder] = useState<CreateOrderResponse | null>(null)
+    const [authExpired, setAuthExpired] = useState(false)
+    const attemptKeyRef = useRef<string | null>(null)
 
     /**
      * Kiểm tra tính giá thực tế và điều kiện đặt hàng từ Backend (POST /api/v1/orders/checkout/preview).
@@ -1379,6 +1381,7 @@ export function CheckoutPage() {
 
         setLoading(true)
         setCheckoutError(null)
+        setAuthExpired(false)
         isSubmittingRef.current = true
 
         try {
@@ -1440,18 +1443,33 @@ export function CheckoutPage() {
             // Nối tạo đơn → Payment Attempt nếu phương thức thanh toán là VNPAY mà chưa có paymentUrl
             if (paymentData.method === 'VNPAY' && !response.paymentUrl && response.id) {
                 try {
-                    const attemptKey =
-                        typeof crypto !== 'undefined' && crypto.randomUUID
-                            ? crypto.randomUUID()
-                            : undefined
-                    const attempt = await createPaymentAttempt(response.id, attemptKey)
+                    // Giữ nguyên Idempotency-Key giữa các lần bấm nếu request trước chưa rõ kết quả/lỗi mạng để BE replay attempt cũ,
+                    // tránh Backend ném lỗi 409 PAYMENT_IN_PROGRESS do đổi key khi attempt trước đang PENDING.
+                    if (!attemptKeyRef.current) {
+                        attemptKeyRef.current =
+                            typeof crypto !== 'undefined' && crypto.randomUUID
+                                ? crypto.randomUUID()
+                                : null
+                    }
+                    const attempt = await createPaymentAttempt(response.id, attemptKeyRef.current || undefined)
                     if (attempt?.paymentUrl) {
+                        // Khởi tạo attempt thành công, reset attemptKeyRef để chu kỳ mới nếu có sẽ sinh key mới
+                        attemptKeyRef.current = null
                         response = {
                             ...response,
                             paymentUrl: attempt.paymentUrl,
                         }
                     }
                 } catch (attemptErr: unknown) {
+                    // Nếu Backend trả về PAYMENT_RETRY_KEY_REQUIRED (do attempt trước đó đã FAILED dứt điểm),
+                    // xóa ref để lần bấm tiếp theo sinh Idempotency-Key mới theo yêu cầu của PaymentService.
+                    if (
+                        attemptErr instanceof ApiClientError &&
+                        (attemptErr.code === 'PAYMENT_RETRY_KEY_REQUIRED' ||
+                            attemptErr.message.includes('PAYMENT_RETRY_KEY_REQUIRED'))
+                    ) {
+                        attemptKeyRef.current = null
+                    }
                     throw attemptErr
                 }
             }
@@ -1541,14 +1559,15 @@ export function CheckoutPage() {
              * Đầu vào: Đối tượng lỗi err bắt được từ ordersApi.createOrder().
              * Kết quả: Chuyển đổi mã lỗi kỹ thuật 401 thành câu thông báo tiếng Việt có ý nghĩa,
              *          lưu nháp an toàn (chỉ lưu thông tin giao hàng và method, không lưu số thẻ) và xóa session.
-             * Quy tắc: Phải dựa trên HTTP status 401 hoặc mã lỗi xác thực, tuyệt đối không bắt chuỗi "hết hạn" chung chung
-             *          vì lỗi hết hạn giữ kho / hết hạn thanh toán là lỗi nghiệp vụ, không được xóa phiên đăng nhập của người dùng.
+             * Quy tắc: Phải dựa trên HTTP status 401 hoặc mã lỗi xác thực của ApiClientError,
+             *          tuyệt đối không dựa vào chuỗi "hết hạn" hay dò text trên generic Error.message.
              */
             const isAuthError =
-                (err instanceof ApiClientError && (err.status === 401 || err.code === 'AUTH_UNAUTHORIZED' || err.code === 'UNAUTHORIZED')) ||
-                (err instanceof Error && (err.message.includes('401') || err.message.toLowerCase().includes('unauthorized')))
+                err instanceof ApiClientError &&
+                (err.status === 401 || err.code === 'AUTH_UNAUTHORIZED' || err.code === 'UNAUTHORIZED')
 
             if (isAuthError) {
+                setAuthExpired(true)
                 msg =
                     lang === 'vi'
                         ? 'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401). Vui lòng đăng nhập lại để hoàn tất đặt hàng.'
@@ -2041,10 +2060,7 @@ export function CheckoutPage() {
                             {checkoutError && (
                                 <div className="space-y-3">
                                     <AlertBanner type="error" message={checkoutError} />
-                                    {(checkoutError.includes('401') ||
-                                        checkoutError.toLowerCase().includes('unauthorized') ||
-                                        checkoutError.includes('Phiên đăng nhập') ||
-                                        checkoutError.includes('Session has expired')) && (
+                                    {authExpired && (
                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
                                             <div>
                                                 <p className="font-bold text-amber-900">

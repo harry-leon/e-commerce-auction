@@ -655,4 +655,85 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         // Phải có nút "Lịch sử đơn hàng"
         expect(screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i })).toBeVisible()
     })
+
+    /**
+     * Tình huống 11: VnpayPaymentResult không hiển thị nút Thử lại thanh toán khi attempt ở trạng thái CANCELLED
+     * (Do Backend từ chối retry các trạng thái khác FAILED và PENDING).
+     */
+    it('VnpayPaymentResult: không hiển thị nút Thử lại thanh toán khi attempt ở trạng thái CANCELLED', async () => {
+        contextHolder.current.pageParams = { vnp_TxnRef: 'txn-cancelled-001' }
+
+        vi.spyOn(paymentsApi, 'getPayment').mockResolvedValueOnce({
+            paymentId: 'txn-cancelled-001',
+            orderId: 'order-cancelled-uuid',
+            status: 'CANCELLED',
+            amount: 500000,
+            currency: 'VND',
+            paymentUrl: null,
+            expiresAt: '2026-11-10T12:00:00Z',
+        })
+
+        render(<PaymentResultPage />)
+
+        expect(await screen.findByText('Giao dịch thanh toán đã bị hủy')).toBeVisible()
+        // Tuyệt đối không hiển thị nút Thử lại thanh toán
+        expect(screen.queryByRole('button', { name: /thử lại thanh toán|retry payment/i })).not.toBeInTheDocument()
+        // Phải có nút "Lịch sử đơn hàng"
+        expect(screen.getByRole('button', { name: /lịch sử đơn hàng|order history/i })).toBeVisible()
+    })
+
+    /**
+     * Tình huống 12: VnpayPaymentResult giữ nguyên Idempotency-Key khi retry gặp lỗi mạng chưa rõ kết quả,
+     * để lần bấm tiếp theo gửi cùng key cho Backend replay thay vì tạo key mới gây PAYMENT_IN_PROGRESS.
+     */
+    it('VnpayPaymentResult: giữ nguyên Idempotency-Key khi retry gặp lỗi mạng và người dùng bấm thử lại lần nữa', async () => {
+        contextHolder.current.pageParams = { vnp_TxnRef: 'txn-failed-001' }
+
+        vi.spyOn(paymentsApi, 'getPayment').mockResolvedValueOnce({
+            paymentId: 'txn-failed-001',
+            orderId: 'order-failed-uuid',
+            status: 'FAILED',
+            amount: 500000,
+            currency: 'VND',
+            paymentUrl: null,
+            expiresAt: '2026-11-10T12:00:00Z',
+        })
+
+        const attemptSpy = vi.spyOn(paymentsApi, 'createPaymentAttempt')
+            // Lần 1: Lỗi mạng rớt kết nối
+            .mockRejectedValueOnce(new Error('Network error'))
+            // Lần 2: Thành công trả về sandbox url
+            .mockResolvedValueOnce({
+                paymentId: 'txn-new-002',
+                orderId: 'order-failed-uuid',
+                status: 'PENDING',
+                amount: 500000,
+                currency: 'VND',
+                paymentUrl: 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?token=abc',
+                expiresAt: '2026-11-10T12:15:00Z',
+            })
+
+        const redirectSpy = vi.spyOn(paymentsApi, 'redirectToGateway').mockImplementation(() => {})
+
+        render(<PaymentResultPage />)
+
+        expect(await screen.findByText('Thanh toán không thành công')).toBeVisible()
+        const retryBtn = screen.getByRole('button', { name: /thử lại thanh toán|retry payment/i })
+
+        // Bấm retry lần 1 (bị lỗi mạng)
+        fireEvent.click(retryBtn)
+        expect(await screen.findByText('Network error')).toBeVisible()
+        expect(attemptSpy).toHaveBeenCalledTimes(1)
+        const firstAttemptKey = attemptSpy.mock.calls[0][1]
+        expect(firstAttemptKey).toBeDefined()
+
+        // Bấm retry lần 2 (người dùng thử lại sau khi mạng ổn định)
+        fireEvent.click(retryBtn)
+        await waitFor(() => expect(attemptSpy).toHaveBeenCalledTimes(2))
+        const secondAttemptKey = attemptSpy.mock.calls[1][1]
+
+        // Phải gửi CÙNG Idempotency-Key để BE replay attempt cũ
+        expect(secondAttemptKey).toBe(firstAttemptKey)
+        expect(redirectSpy).toHaveBeenCalledWith('https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?token=abc')
+    })
 })

@@ -10,7 +10,7 @@ import { AdminCategoriesPage } from '../features/admin/AdminCategoriesPage'
 import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/AuthPages'
 import { CartPage, CheckoutPage, SandboxPaymentPage } from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
-import { readSession } from '../api/client'
+import { readSession, ApiClientError } from '../api/client'
 import { ordersApi } from '../api/orders'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
@@ -737,7 +737,9 @@ describe('Cart, Checkout và Payment Result', () => {
          */
         const spy = vi
             .spyOn(ordersApi, 'createOrder')
-            .mockRejectedValueOnce(new Error('Request failed (401)'))
+            .mockRejectedValueOnce(
+                new ApiClientError('Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)', 'AUTH_UNAUTHORIZED', 401),
+            )
         render(<CheckoutPage />)
         // 1 -> 2 -> 3 -> 4
         fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))

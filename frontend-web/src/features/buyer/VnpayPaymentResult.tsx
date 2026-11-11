@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { getPayment, createPaymentAttempt, redirectToGateway, type PaymentResult } from '../../api/payments'
+import { ApiClientError } from '../../api/client'
 import { useApp } from '../../context'
 import { Button } from '../../components/UI'
 
@@ -18,19 +19,25 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const [refresh, setRefresh] = useState(0)
     const [retrying, setRetrying] = useState(false)
     const [retryError, setRetryError] = useState<string | null>(null)
+    const retryKeyRef = useRef<string | null>(null)
+
     useEffect(() => {
-        let cancelled = false
+        let isCancelled = false
         let timer: ReturnType<typeof setTimeout> | undefined
         async function poll(attempt: number) {
             try {
                 const data = await getPayment(paymentId)
-                if (cancelled) return
+                if (isCancelled) return
                 setResult(data)
                 setError(null)
+                // Khi nhận được kết quả cuối cùng từ BE, xóa key nháp để lần retry tiếp theo sinh key mới
+                if (data.status === 'FAILED') {
+                    retryKeyRef.current = null
+                }
                 if ((data.status === 'PENDING' || data.status === 'PROCESSING') && attempt < 9)
                     timer = setTimeout(() => void poll(attempt + 1), 2000)
             } catch {
-                if (!cancelled)
+                if (!isCancelled)
                     setError(
                         lang === 'vi'
                             ? 'Chưa xác nhận được thanh toán. Hãy đăng nhập và kiểm tra lại.'
@@ -40,14 +47,15 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
         }
         void poll(0)
         return () => {
-            cancelled = true
+            isCancelled = true
             clearTimeout(timer)
         }
     }, [paymentId, refresh, lang])
 
     const current = result?.paymentId === paymentId ? result : null
     const success = current?.status === 'SUCCESS'
-    const failed = current?.status === 'FAILED' || current?.status === 'CANCELLED'
+    const failed = current?.status === 'FAILED'
+    const cancelled = current?.status === 'CANCELLED'
     const expired = current?.status === 'EXPIRED'
     const review = current?.status === 'REQUIRES_REVIEW'
 
@@ -55,20 +63,26 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
      * Thử lại thanh toán qua API backend thật (POST /api/v1/payments).
      * 1. Chức năng: Khởi tạo hoặc lấy lại URL thanh toán cho đơn hàng hiện tại nếu còn hiệu lực giữ kho.
      * 2. Đầu vào & kết quả: current.orderId; điều hướng sang cổng paymentUrl thật hoặc hiển thị lỗi từ BE.
-     * 3. Luồng xử lý: Gọi createPaymentAttempt(orderId) -> nhận paymentUrl -> chuyển hướng trình duyệt.
-     * 4. Quy tắc: Không giả lập chuyển trạng thái thành công; mọi kết quả đều theo máy trạng thái backend.
+     * 3. Luồng xử lý: Giữ nguyên Idempotency-Key giữa các lần bấm nếu request trước chưa rõ kết quả để BE replay attempt đang xử lý,
+     *    chỉ sinh key mới khi attempt trước đó đã có kết quả FAILED dứt điểm.
+     * 4. Quy tắc: Không cho phép retry khi CANCELLED hoặc EXPIRED (BE chỉ cho phép retry trên FAILED).
      */
     const handleRetry = async () => {
-        if (!current?.orderId) return
+        // Chỉ cho phép retry khi đơn có orderId và trạng thái là FAILED (BE từ chối retry các trạng thái khác)
+        if (!current?.orderId || current?.status !== 'FAILED') return
         setRetrying(true)
         setRetryError(null)
         try {
-            const retryKey =
-                typeof crypto !== 'undefined' && crypto.randomUUID
-                    ? crypto.randomUUID()
-                    : undefined
-            const attempt = await createPaymentAttempt(current.orderId, retryKey)
+            if (!retryKeyRef.current) {
+                retryKeyRef.current =
+                    typeof crypto !== 'undefined' && crypto.randomUUID
+                        ? crypto.randomUUID()
+                        : null
+            }
+            const attempt = await createPaymentAttempt(current.orderId, retryKeyRef.current || undefined)
             if (attempt.paymentUrl) {
+                // Đã khởi tạo attempt thành công và chuẩn bị điều hướng, reset ref để lần sau (nếu attempt này FAILED) sẽ tạo key mới
+                retryKeyRef.current = null
                 redirectToGateway(attempt.paymentUrl)
                 return
             }
@@ -78,6 +92,13 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                     : 'Payment gateway URL not received from server.',
             )
         } catch (err: unknown) {
+            // Nếu Backend yêu cầu Idempotency-Key mới do attempt trước đó đã FAILED
+            if (
+                err instanceof ApiClientError &&
+                (err.code === 'PAYMENT_RETRY_KEY_REQUIRED' || err.message.includes('PAYMENT_RETRY_KEY_REQUIRED'))
+            ) {
+                retryKeyRef.current = null
+            }
             setRetryError(
                 err instanceof Error
                     ? err.message
@@ -104,13 +125,17 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                         ? lang === 'vi'
                             ? 'Thanh toán không thành công'
                             : 'Payment failed'
-                        : expired
+                        : cancelled
                           ? lang === 'vi'
-                              ? 'Liên kết thanh toán đã hết hạn'
-                              : 'Payment link expired'
-                          : lang === 'vi'
-                            ? 'Đang chờ xác nhận thanh toán'
-                            : 'Waiting for payment confirmation'}
+                              ? 'Giao dịch thanh toán đã bị hủy'
+                              : 'Payment cancelled'
+                          : expired
+                            ? lang === 'vi'
+                                ? 'Liên kết thanh toán đã hết hạn'
+                                : 'Payment link expired'
+                            : lang === 'vi'
+                              ? 'Đang chờ xác nhận thanh toán'
+                              : 'Waiting for payment confirmation'}
             </h1>
             {(review || current?.status === 'PROCESSING') && (
                 <p className="mb-4" role="status">
@@ -121,6 +146,13 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                         : lang === 'vi'
                           ? 'Đã ghi nhận thanh toán, đang xác nhận hàng cho đơn đấu giá. Không thanh toán lại.'
                           : 'Payment received. Confirming your auction inventory. Do not pay again.'}
+                </p>
+            )}
+            {cancelled && (
+                <p className="mb-4" role="status">
+                    {lang === 'vi'
+                        ? 'Giao dịch thanh toán đã bị hủy bởi người dùng hoặc cổng thanh toán. Bạn có thể kiểm tra lại lịch sử đơn hàng.'
+                        : 'Payment transaction was cancelled. You can review your order history.'}
                 </p>
             )}
             {expired && (
@@ -147,7 +179,7 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                 </p>
             )}
             <div className="flex justify-center gap-3 flex-wrap">
-                {!success && !failed && (
+                {!success && !failed && !cancelled && (
                     <Button variant="primary" onClick={() => setRefresh((value) => value + 1)}>
                         {lang === 'vi' ? 'Kiểm tra lại' : 'Check again'}
                     </Button>
