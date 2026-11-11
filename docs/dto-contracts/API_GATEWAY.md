@@ -184,7 +184,7 @@ Các mã lỗi thường gặp: `AUTH_CREDENTIALS_INVALID` (401), `AUTH_REFRESH_
 | Route prefix | Đích |
 |---|---|
 | `/users/**`, `/roles/**`, một số `/auth/**` | User Service |
-| `/products/**`, `/categories/**` | Catalog Service |
+| `/products/**`, `/categories/**`, `/pricing-rules/**` | Catalog Service |
 | `/cart/**`, `/checkout/**`, `/orders/**`, `/payments/**` | Commerce Service |
 | `/auctions/**`, `/bids/**`, `/ws/auctions/**` | Auction Service |
 | `/inventory/**`, `/warehouses/**`, `/shipping/**`, `/shipments/**` | Fulfillment Service |

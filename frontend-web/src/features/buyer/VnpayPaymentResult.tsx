@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getPayment, type PaymentResult } from '../../api/payments'
+import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { useApp } from '../../context'
 import { Button } from '../../components/UI'
 
@@ -103,6 +104,19 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                 <Button variant="primary" onClick={() => setRefresh((value) => value + 1)}>
                     {lang === 'vi' ? 'Kiểm tra lại' : 'Check again'}
                 </Button>
+            )}
+            {failed && current?.orderId && (
+                <div className="mb-3">
+                    <WinnerPaymentButton
+                        orderId={current.orderId}
+                        idempotencyKey={
+                            typeof crypto !== 'undefined' && crypto.randomUUID
+                                ? crypto.randomUUID()
+                                : undefined
+                        }
+                        label={lang === 'vi' ? 'Thử thanh toán lại (VNPAY)' : 'Retry VNPAY Payment'}
+                    />
+                </div>
             )}
             <Button variant="outline" onClick={() => navigate('order-history')}>
                 {lang === 'vi' ? 'Lịch sử đơn hàng' : 'Order history'}

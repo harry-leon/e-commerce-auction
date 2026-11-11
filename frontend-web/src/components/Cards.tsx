@@ -5,13 +5,19 @@ import { CountdownTimer, StarRating, StatusBadge, Gavel, ShoppingCart } from './
 import type { Product, Auction } from '../types'
 import { readSession } from '../api/client'
 import { addItemToCart } from '../api/cart'
+import { formatPriceRange } from '../features/catalog/catalog'
 
 // ─── Product Card ──────────────────────────────────────────────────────────────
 export function ProductCard({ product }: { product: Product }) {
     const { lang, navigate, setCartCount, showToast } = useApp()
-    const discount = product.originalPrice
-        ? Math.round((1 - product.price / product.originalPrice) * 100)
-        : 0
+    const discount =
+        product.originalPrice && product.originalPrice > product.price
+            ? Math.round((1 - product.price / product.originalPrice) * 100)
+            : 0
+    // Hiển thị khoảng giá động [minPrice – maxPrice] từ Backend thay vì một giá cố định cho cả Product.
+    const priceLabel =
+        formatPriceRange(product.minPrice, product.maxPrice, lang) ??
+        formatCurrency(product.price, lang)
     /**
      * Chức năng: Thêm nhanh sản phẩm từ thẻ card vào giỏ hàng mà không cần mở trang chi tiết.
      * Đầu vào và kết quả: Sự kiện click `e`; lưu sản phẩm vào giỏ hàng backend (nếu đã đăng nhập) hoặc guestCart (nếu chưa).
@@ -92,10 +98,8 @@ export function ProductCard({ product }: { product: Product }) {
                 </div>
                 <div className="flex items-center justify-between">
                     <div>
-                        <span className="text-lg font-bold text-primary">
-                            {formatCurrency(product.price, lang)}
-                        </span>
-                        {product.originalPrice && (
+                        <span className="text-lg font-bold text-primary">{priceLabel}</span>
+                        {discount > 0 && product.originalPrice && (
                             <span className="text-xs text-gray-400 line-through ml-2">
                                 {formatCurrency(product.originalPrice, lang)}
                             </span>

@@ -31,7 +31,7 @@ import lombok.Builder;
  * @param sellerId ID tài khoản người bán hoặc chủ gian hàng (Keycloak User ID).
  * @param sourceType Phân loại nguồn gốc đơn hàng (REGULAR: Mua thường, AUCTION: Đấu giá).
  * @param status Trạng thái hiện tại của đơn hàng theo OrderStatus.
- * @param total Tổng số tiền thanh toán thực tế của đơn hàng (sau giảm giá + phí ship).
+ * @param total Tổng tiền chính thức, null nếu chưa xác nhận thu tiền; dùng estimatedTotal để hiển thị dự kiến.
  * @param itemCount Tổng số lượng dòng sản phẩm trong đơn hàng.
  * @param shippingAddress Địa chỉ giao hàng snapshot tại thời điểm đặt hàng.
  * @param createdAt Thời điểm tạo đơn hàng (lưu timestamp UTC).
@@ -47,6 +47,8 @@ public record OrderSummaryResponse(
         BigDecimal total,
         Integer itemCount,
         String shippingAddress,
-        Instant createdAt
+        Instant createdAt,
+        BigDecimal estimatedTotal,
+        boolean priceFinalized
 ) {
 }

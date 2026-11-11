@@ -42,6 +42,7 @@ erDiagram
     varchar name
     integer level
     varchar status
+    varchar name_vi
   }
   products {
     uuid id
@@ -58,7 +59,6 @@ erDiagram
     uuid product_id
     varchar sku_code
     jsonb attributes
-    numeric price
     numeric original_price
     varchar status
   }
@@ -81,6 +81,20 @@ erDiagram
     timestamp seller_replied_at
     boolean is_hidden
     timestamp created_at
+  }
+  pricing_rules {
+    uuid id
+    varchar name
+    uuid category_id
+    numeric margin_rate
+    numeric season_factor
+    numeric market_adjustment_rate
+    integer priority
+    timestamp start_date
+    timestamp end_date
+    boolean is_active
+    timestamp created_at
+    timestamp updated_at
   }
   categories ||--o{ categories : parent_id
   categories ||--o{ products : category_id
@@ -143,6 +157,17 @@ erDiagram
     varchar shipping_address
     varchar idempotency_key
     timestamp created_at
+    varchar recipient_name
+    varchar recipient_phone
+    varchar payment_method
+    varchar request_hash
+    varchar buyer_email
+    timestamp payment_deadline
+    numeric estimated_subtotal
+    numeric estimated_shipping_fee
+    numeric estimated_discount
+    numeric estimated_total
+    boolean price_finalized
   }
   order_items {
     uuid id
@@ -152,6 +177,7 @@ erDiagram
     varchar sku_code
     numeric unit_price
     integer quantity
+    numeric estimated_unit_price
   }
   order_status_history {
     uuid id
@@ -172,6 +198,15 @@ erDiagram
     integer retry_count
     varchar idempotency_key
     timestamp created_at
+    text payment_url
+    varchar merchant_code
+    timestamp expires_at
+    varchar response_code
+    varchar transaction_status
+    timestamp completed_at
+    varchar inventory_status
+    jsonb price_snapshot
+    uuid inventory_ref_id
   }
   refunds {
     uuid id
@@ -195,6 +230,30 @@ erDiagram
     uuid user_id
     numeric discount_amount
     timestamp used_at
+  }
+  order_reservations {
+    uuid order_id
+    uuid reservation_id
+  }
+  payment_inventory_tasks {
+    uuid id
+    uuid order_id
+    uuid target_id
+    varchar action
+    boolean done
+    integer attempts
+    timestamp next_attempt_at
+  }
+  commerce_notification_outbox {
+    uuid id
+    uuid order_id
+    uuid user_id
+    varchar event_type
+    varchar order_no
+    numeric amount
+    boolean done
+    integer attempts
+    jsonb email_payload
   }
   carts ||--o{ cart_items : cart_id
   vouchers ||--o{ orders : voucher_id
@@ -346,6 +405,8 @@ erDiagram
     varchar status
     timestamp sent_at
     timestamp created_at
+    uuid order_id
+    varchar event_type
   }
   notification_attempts {
     uuid id

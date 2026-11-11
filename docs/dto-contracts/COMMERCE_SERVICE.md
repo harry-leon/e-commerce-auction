@@ -203,35 +203,34 @@ Header `Idempotency-Key` bắt buộc là UUID chuẩn; cùng key + buyer + nộ
 
 `recipientName` tối đa 255 ký tự; số điện thoại 8–15 chữ số với dấu `+` tùy chọn. Item IDs là UUID, nếu có phải từ 1–50 phần tử, không null/trùng và đều thuộc giỏ ACTIVE còn hạn của buyer. Bỏ danh sách nghĩa là chọn toàn bộ giỏ. Chặn giỏ rỗng, SKU ngừng bán, quantity sai, tự mua và đơn chứa nhiều shop vì schema Order chỉ có một seller.
 
-Backend tải giá/tên/mã/seller mới nhất từ Catalog, tính `BigDecimal` scale 2 `HALF_UP`, lưu snapshot vào `orders`/`order_items`. Preview trả `subtotal`, `discountAmount`, `shippingFee`, `taxAmount`, `totalAmount`, `appliedVoucher: null`, `items`, `isOrderable`, `warnings`. Mỗi item có `skuId`, `sellerId`, `productName`, `skuCode`, `unitPrice`, `cartUnitPrice`, `quantity`, `itemTotal`. Giá khác giỏ tạo cảnh báo; giá lúc tạo đơn luôn lấy lại từ Catalog. Preview thiếu kho trả `isOrderable: false`; bước tạo đơn dùng reserve nguyên tử làm kiểm tra cuối.
+Backend tải giá động/tên/mã/seller mới nhất từ Catalog, tính `BigDecimal` scale 2 `HALF_UP`. Với luồng Deferred Price Settlement (HG-S2-5, Flyway V10):
+- Khi tạo đơn (`POST /api/v1/orders` với VNPAY): lưu `priceFinalized = false`, các trường `estimatedSubtotal`, `estimatedShippingFee`, `estimatedDiscount`, `estimatedTotal` và `OrderItem.estimatedUnitPrice` / `estimatedSubtotal` ghi giá tạm tính; trong khi các trường chính thức `subtotal`, `shippingFee`, `discount`, `total`, `OrderItem.unitPrice`, `OrderItem.subtotal` giữ **`null`** cho tới khi thanh toán thành công (COD chốt ngay lúc tạo đơn với `priceFinalized = true`).
 
-Kết quả tạo đơn có `id`, `orderNo`, `status: PENDING_PAYMENT`, `subtotal`, `shippingFee`, `discount`, `total`, `paymentMethod: COD|VNPAY`, `paymentUrl` (COD null, VNPAY là URL sandbox đã ký). Sau reserve chỉ xóa items đã mua; giỏ hết item chuyển `CONVERTED`. Đơn/items/giỏ và Payment VNPAY commit cùng transaction.
+Kết quả tạo đơn (`CreateOrderResponse`) trả `orderId` (hoặc `id`), `orderNo`, `status: PENDING_PAYMENT`, `priceFinalized`, `subtotal`, `shippingFee`, `discount`, `total`, `estimatedSubtotal`, `estimatedShippingFee`, `estimatedDiscount`, `estimatedTotal`, `paymentMethod: COD|VNPAY`, `paymentUrl`, `expiresAt`. Với VNPAY deferred pricing, FE tạo đơn (`priceFinalized=false`) rồi gọi `POST /api/v1/payments` để BE lấy giá live mới nhất từ Catalog, giữ kho theo `payment.id` (`inventoryRefId`) và đóng băng `amount` + `priceSnapshot` trên Payment Attempt trước khi chuyển tới VNPAY.
 
 Phí ship tạm dùng `app.commerce.order.shipping-fee` (mặc định 0), VAT đã gồm trong giá nên `taxAmount = 0`. Voucher khác rỗng trả `422 CHECKOUT_VOUCHER_UNSUPPORTED`; CARD trả `422 PAYMENT_METHOD_UNSUPPORTED`, source auction trả `422 CHECKOUT_SOURCE_UNSUPPORTED`. TT-S1-3 bổ sung VNPAY sandbox, yêu cầu VND nguyên dương và cấu hình merchant/service account; thiếu cấu hình trả 503. Chưa tính ship theo cân nặng/khoảng cách.
 
-Commerce gọi Fulfillment qua `FULFILLMENT_SERVICE_URL` và chuyển tiếp JWT cho reserve/release. Reservation hết hạn sau 15 phút. Khi reserve timeout hoặc transaction rollback sau reserve, callback gọi `/inventory/release` theo orderId; nếu release lỗi mạng/process chết, scheduler Fulfillment hoàn kho khi TTL hết. Chưa có outbox retry bền vững. Nếu kết quả commit không xác định, chỉ ghi log đối soát, không release ngay vì đơn có thể đã commit.
+Commerce gọi Fulfillment qua `FULFILLMENT_SERVICE_URL` và dùng token service account cho reserve/release. Reservation hết hạn sau 15 phút. Khi reserve timeout hoặc transaction rollback sau reserve, callback gọi `/inventory/release` theo `inventoryRefId`/`orderId`; nếu release lỗi mạng/process chết, scheduler Fulfillment hoàn kho khi TTL hết. Nếu kết quả commit không xác định, chỉ ghi log đối soát, không release ngay vì đơn có thể đã commit.
 
 Các lỗi đáng chú ý: `409 INVENTORY_INSUFFICIENT`, `409 CART_SKU_NOT_AVAILABLE`, `404 CART_ITEM_NOT_FOUND`, `422 CHECKOUT_EXPIRED`, `422 CHECKOUT_MULTIPLE_SELLERS`, `422 ORDER_DAILY_LIMIT_EXCEEDED`, `422 CHECKOUT_INVALID_IDEMPOTENCY_KEY`, `502 CATALOG_INVALID_RESPONSE`/`INVENTORY_UNAVAILABLE`. Thiếu header trả 400; DTO không hợp lệ trả 422.
 
-Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; V5 thêm payment snapshot, reservation IDs và outbox kho sau IPN. Cần triển khai Catalog có `sellerId` trước Commerce mới. Route đọc/hủy/cập nhật đơn đã có backend; mock COD/demo phía FE còn tồn tại, VNPAY không fallback mock.
+Flyway V4 bổ sung thông tin người nhận, phương thức và fingerprint; V5 thêm payment snapshot, reservation IDs và outbox kho sau IPN; V10 thêm `estimated_*`, `price_finalized` trên `orders`/`order_items` và `price_snapshot`, `inventory_ref_id`, `idempotency_key` trên `payments`. Route đọc/hủy/cập nhật đơn đã có backend; VNPAY không fallback mock.
 
-## 5. VNPAY sandbox — TT-S1-3
+## 5. VNPAY sandbox & Payment Attempt Snapshots — TT-S1-3 / HG-S2-5
 
 | Method | Path | Xác thực | Kết quả |
 |---|---|---|---|
-| POST | `/api/v1/payments` | JWT + ORDER.CREATE, đúng buyer | Envelope PaymentResponse; body chỉ nhận orderId |
-| GET | `/api/v1/payments/{paymentId}` | JWT, đúng buyer | Envelope PaymentResponse, kết quả DB kèm trạng thái hết hạn URL |
-| GET | `/api/v1/payments/vnpay/ipn` | HMAC-SHA512, không JWT | JSON RspCode/Message theo protocol VNPAY |
+| POST | `/api/v1/payments` | JWT + ORDER.CREATE, đúng buyer (hỗ trợ header `Idempotency-Key` UUID để retry sau `FAILED`) | Envelope `PaymentResponse`; body chỉ nhận `orderId` |
+| GET | `/api/v1/payments/{paymentId}` | JWT, đúng buyer | Envelope `PaymentResponse`, kết quả DB kèm trạng thái hết hạn URL |
+| GET | `/api/v1/payments/vnpay/ipn` | HMAC-SHA512, không JWT | JSON `RspCode`/`Message` theo protocol VNPAY |
 
-`PaymentResponse`: `paymentId`, `orderId`, `status` (PENDING/EXPIRED/SUCCESS/FAILED/CANCELLED), `amount`, `currency: VND`, `paymentUrl`, `expiresAt`. URL dùng paymentId làm TxnRef, amount DB × 100, hạn theo cửa sổ giữ kho của Order; attempt mới lưu hạn chính xác đến giây giống `vnp_ExpireDate`.
+`PaymentResponse`: `paymentId`, `orderId`, `status` (PENDING/PROCESSING/REQUIRES_REVIEW/EXPIRED/SUCCESS/FAILED/CANCELLED), `amount`, `currency: VND`, `paymentUrl`, `expiresAt`, `priceSnapshot` (snapshot từng `orderItemId`/`skuId`/`quantity`/`unitPrice`/`itemTotal` đóng băng ở attempt), `inventoryRefId`. URL dùng `paymentId` làm `TxnRef`, `amount` DB × 100, hạn theo cửa sổ giữ kho của attempt; attempt mới lưu hạn chính xác đến giây giống `vnp_ExpireDate`. Khi retry bằng `Idempotency-Key` mới sau giao dịch `FAILED`/`EXPIRED`, BE tạo Payment Attempt mới với giá live mới nhất tại thời điểm mở attempt, không tự sửa `amount` của attempt đang xử lý.
 
-Khi DB còn PENDING và `expiresAt <= now`, API trả `status: EXPIRED`, `paymentUrl: null`. Đây là trạng thái link hết hạn cần chờ kết quả/đối soát, không phải kết luận chưa thu tiền. GET không sửa DB, hủy đơn hoặc enqueue release; IPN hợp lệ đến chậm vẫn được xử lý và kết quả SUCCESS/FAILED/CANCELLED luôn được ưu tiên hơn hạn URL. Không gia hạn attempt cũ qua POST /payments. Fulfillment tự quét giải phóng reservation PENDING hết hạn bằng scheduler hiện có (mặc định mỗi 60 giây); Commerce chưa có query/đối soát chủ động với VNPAY nên không tự hủy đơn chưa rõ kết quả. Nếu SUCCESS đến sau khi reservation đã EXPIRED, outbox confirm kho cần quản trị đối soát/refund theo cơ chế retry hiện có, không tự reserve lại.
+Khi DB còn PENDING và `expiresAt <= now`, API trả `status: EXPIRED`, `paymentUrl: null`. Đây là trạng thái link hết hạn cần chờ kết quả/đối soát, không phải kết luận chưa thu tiền. GET không sửa DB, hủy đơn hoặc enqueue release; IPN hợp lệ đến chậm vẫn được xử lý và kết quả SUCCESS/FAILED/CANCELLED luôn được ưu tiên hơn hạn URL. Không gia hạn attempt cũ qua `POST /payments` (chỉ replay với cùng key hoặc tạo attempt mới với `Idempotency-Key` mới khi hợp lệ). Fulfillment tự quét giải phóng reservation PENDING hết hạn bằng scheduler hiện có; Commerce chưa có query/đối soát chủ động với VNPAY nên không tự hủy đơn chưa rõ kết quả.
 
-IPN xác minh chữ ký/merchant rồi đối chiếu Payment→Order và amount cả hai bảng; khóa DB chặn callback trùng. Thành công cập nhật SUCCESS/PAID, thất bại xác định cập nhật FAILED/CANCELLED; terminal lặp trả 02, không tạo history/outbox lần hai. Kết quả bất thường cần đối soát.
+IPN xác minh chữ ký/merchant rồi đối chiếu `Payment -> Order` và `amount`; khóa DB chặn callback trùng (idempotent). Thành công chốt giá chính thức từ `priceSnapshot` vào `Order` & `OrderItem` (`priceFinalized = true`), chuyển `Order -> PAID`; thất bại xác định cập nhật `Payment -> FAILED`, giữ `unitPrice`/`total` chính thức là `null`, hoàn reservation của attempt và giữ `Order` ở `PENDING_PAYMENT` để buyer có thể Retry. Terminal lặp trả `RspCode: "02"`, không tạo history/outbox lần hai.
 
-Outbox sau IPN commit cùng Payment và worker retry confirm/release bằng service account; khác với cleanup **checkout rollback** vẫn dùng callback/TTL ở mục 4. Nếu kho hết hạn trước confirm cần đối soát/refund, chưa có hoàn tiền tự động.
-
-Cấu hình, RspCode, giới hạn, cách test và hướng review: [PAYMENT_SANDBOX_INTEGRATION.md](../PAYMENT_SANDBOX_INTEGRATION.md).
+Outbox sau IPN commit cùng Payment và worker retry confirm/release bằng service account. Cấu hình, RspCode, giới hạn, cách test và hướng review: [PAYMENT_SANDBOX_INTEGRATION.md](../PAYMENT_SANDBOX_INTEGRATION.md).
 
 ## 6. Order Management — baseline TT-S2-1
 
@@ -247,7 +246,7 @@ Tất cả path dưới đây tính từ `/api/v1`. Identity lấy từ JWT; t�
 
 Danh sách nhận `status`, `startDate`, `endDate` (ISO local datetime), `page` (mặc định 0), `size` (1–100, mặc định 20), `sortBy` (mặc định `createdAt`), `sortDirection` (mặc định DESC). `role` không cấp thêm quyền. Không dùng `PageResponse` cũ hoặc Spring Page làm shape của API này.
 
-Summary có `id`, `orderNo`, `buyerId`, `sellerId`, `sourceType`, `status`, `total`, `itemCount`, `shippingAddress`, `createdAt`. Detail thêm `auctionId`, `voucherId`, `subtotal`, `shippingFee`, `discount`, `items`, `statusHistory`. `createdAt` là Instant UTC. Detail hiện không trả `paymentUrl` hoặc thông tin người nhận; lấy URL từ response tạo đơn/payment.
+Summary có `id`, `orderNo`, `buyerId`, `sellerId`, `sourceType`, `status`, `priceFinalized`, `total` (nullable), `estimatedTotal`, `itemCount`, `shippingAddress`, `createdAt`. Detail thêm `auctionId`, `voucherId`, `subtotal`, `shippingFee`, `discount`, `estimatedSubtotal`, `estimatedShippingFee`, `estimatedDiscount`, `items` (`unitPrice`/`subtotal` nullable + `estimatedUnitPrice`/`estimatedSubtotal`), `statusHistory`. `createdAt` là Instant UTC. Detail hiện không trả `paymentUrl` hoặc thông tin người nhận; lấy URL từ response tạo đơn/payment.
 
 Cancel nhận `{ "reason": "Đổi nhu cầu mua hàng" }`; nếu gửi body thì reason phải nonblank, tối đa 500 ký tự. Bỏ toàn bộ body được controller thay bằng lý do mặc định. Status nhận `{ "status": "PROCESSING", "reason": "Đã tiếp nhận đơn" }`; status bắt buộc thuộc enum, reason tùy chọn tối đa 500 ký tự. Enum: PENDING_PAYMENT, PAID, PROCESSING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, REFUNDED.
 

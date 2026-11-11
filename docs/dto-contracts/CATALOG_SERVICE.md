@@ -1,6 +1,6 @@
 # Catalog Service DTO Contract
 
-> **Gateway paths:** `/api/v1/products/**`, `/api/v1/categories/**`
+> **Gateway paths:** `/api/v1/products/**`, `/api/v1/categories/**`, `/api/v1/pricing-rules/**`
 >
 > **Success wrapper:** `ApiResponse<T>`; xem [COMMON.md](COMMON.md)
 >
@@ -10,9 +10,9 @@
 
 | DTO trong source | Vai trò | Có được controller expose |
 |---|---|---|
-| `ProductRequest`, `SkuRequest`, `ImageRequest`, `CategoryRequest` | Request body thao tác ghi | Có |
+| `ProductRequest`, `SkuRequest`, `ImageRequest`, `CategoryRequest`, `PricingRuleRequest` | Request body thao tác ghi | Có |
 | `ProductFilterRequest` | Query object cho `/products/search` | Có |
-| `ProductResponse`, `SkuResponse`, `ImageResponse`, `CategoryResponse` | Public response | Có |
+| `ProductResponse`, `SkuResponse`, `ImageResponse`, `CategoryResponse`, `PricingRuleResponse`, `PricePreviewResponse` | Public response | Có |
 | `SkuSnapshot` | Read model Catalog → Commerce | Có qua lookup endpoint |
 | `PageResponse<T>` | Wrapper phân trang cục bộ | **Không**; controller dùng `ApiResponse.ok(Page<T>)` |
 
@@ -49,6 +49,17 @@
 | `PUT` | `/categories/{id}` | `CategoryRequest` | `CategoryResponse` | `200` | `CATEGORY.UPDATE` |
 | `DELETE` | `/categories/{id}` | — | Không có body | `204` | `CATEGORY.DELETE` |
 
+### Dynamic Pricing Rules (`/api/v1/pricing-rules`)
+
+| Method | Path | Request | `data` khi success | HTTP | Quyền |
+|---|---|---|---|---|---|
+| `GET` | `/pricing-rules` | — | `PricingRuleResponse[]` (rules đang active & trong thời gian hiệu lực) | `200` | Public |
+| `GET` | `/pricing-rules/all` | — | `PricingRuleResponse[]` (tất cả rules kể cả inactive/hết hạn) | `200` | `ADMIN` |
+| `GET` | `/pricing-rules/preview` | Query `originalPrice` (`>= 0`), `categoryId` (optional UUID) | `PricePreviewResponse` | `200` | Public |
+| `POST` | `/pricing-rules` | `PricingRuleRequest` | `PricingRuleResponse` | `201` | `ADMIN` |
+| `PUT` | `/pricing-rules/{id}` | `PricingRuleRequest` | `PricingRuleResponse` | `200` | `ADMIN` |
+| `DELETE` | `/pricing-rules/{id}` | — | Không có body | `204` | `ADMIN` |
+
 ## 2. Request DTO
 
 Lookup `GET /api/v1/products/skus/{id}` bổ sung `sellerId` UUID từ Product vào `SkuSnapshot` để Commerce kiểm tra chủ shop khi checkout. Các field cũ giữ nguyên: `skuId`, `skuCode`, `productName`, `thumbnailUrl`, `price`, `stockQuantity`, `isActive`. `stockQuantity` vẫn null vì tồn kho thuộc Fulfillment. Triển khai Catalog mới trước Commerce checkout; Cart cũ vẫn đọc được snapshot có thêm field.
@@ -78,8 +89,7 @@ Ví dụ body dùng chung cho create/update product:
     {
       "skuCode": "NEXUS-BLACK-M",
       "attributes": "{\"color\":\"BLACK\",\"size\":\"M\"}",
-      "price": 250000.00,
-      "originalPrice": 300000.00,
+      "originalPrice": 250000.00,
       "status": "ACTIVE"
     }
   ],
@@ -100,18 +110,16 @@ Ví dụ body dùng chung cho create/update product:
 |---|---|---|---|
 | `skuCode` | `string` | Có | Không blank, tối đa `100` ký tự |
 | `attributes` | `string` | Không | Chuỗi thuộc tính; hiện chưa phải JSON object có schema |
-| `price` | `number` | Có | `>= 0` |
-| `originalPrice` | `number` | Không | `>= 0` |
+| `originalPrice` | `number` | **Có** | Giá nhập tối thiểu (`minPrice`), `>= 0`. Backend tự tính `price = originalPrice * (1 + max(0, marginRate + seasonFactor + marketAdjustmentRate))` |
 | `status` | `"ACTIVE" \| "INACTIVE"` | Không | Khi tạo, mặc định `ACTIVE` |
 
-Ví dụ body khi thêm/cập nhật riêng một SKU:
+Ví dụ body khi thêm/cập nhật riêng một SKU (`price` đã bị loại bỏ khỏi DB & request DTO ở Flyway V6):
 
 ```json
 {
   "skuCode": "NEXUS-BLACK-L",
   "attributes": "{\"color\":\"BLACK\",\"size\":\"L\"}",
-  "price": 260000.00,
-  "originalPrice": 310000.00,
+  "originalPrice": 260000.00,
   "status": "ACTIVE"
 }
 ```
@@ -172,7 +180,9 @@ Ví dụ body khi thêm/cập nhật riêng một image:
 | `status` | `ProductStatus` | Không | `DRAFT`, `ACTIVE`, `INACTIVE` |
 | `auctionEnabled` | `boolean` | Không theo entity hợp lệ | Có cho phép đấu giá |
 | `createdAt` | `string` | Có | ISO-8601 Instant |
-| `skus` | `SkuResponse[]` | Không theo mapper hợp lệ | Danh sách SKU |
+| `minPrice` | `number` | Có | Giá bán động thấp nhất trong các SKU `ACTIVE` (hoặc `null` nếu chưa có SKU active) |
+| `maxPrice` | `number` | Có | Giá bán động cao nhất trong các SKU `ACTIVE` (hoặc `null` nếu chưa có SKU active) |
+| `skus` | `SkuResponse[]` | Không theo mapper hợp lệ | Danh sách SKU; mỗi `sku.price` do Backend tính động từ `sku.originalPrice` |
 | `images` | `ImageResponse[]` | Không theo mapper hợp lệ | Danh sách ảnh |
 
 Ví dụ success của create/get/update product; các endpoint dùng cùng `ProductResponse`:
@@ -222,8 +232,8 @@ Ví dụ success của create/get/update product; các endpoint dùng cùng `Pro
 | `id` | `string` UUID | Không | SKU ID |
 | `skuCode` | `string` | Không | Mã SKU |
 | `attributes` | `string` | Có | Chuỗi thuộc tính |
-| `price` | `number` | Không | Giá hiện tại |
-| `originalPrice` | `number` | Có | Giá gốc |
+| `price` | `number` | Không | Giá bán động do `DynamicPricingService` tính từ `originalPrice` theo rule hiện hành (`>= originalPrice`) |
+| `originalPrice` | `number` | Không | Giá nhập tối thiểu (`minPrice`) do Seller nhập |
 | `status` | `"ACTIVE" \| "INACTIVE"` | Không | Trạng thái SKU |
 
 ### `ImageResponse`
@@ -358,7 +368,14 @@ Ví dụ `GET /products/skus/{id}`:
 }
 ```
 
-Các endpoint delete Product/SKU/Image/Category thành công trả HTTP `204 No Content`: response không có JSON body, FE không gọi `response.json()`.
+Các endpoint delete Product/SKU/Image/Category/PricingRule thành công trả HTTP `204 No Content`: response không có JSON body, FE không gọi `response.json()`.
+
+### `PricingRuleResponse` & `PricePreviewResponse`
+
+| DTO | Field chính | Ghi chú |
+|---|---|---|
+| `PricingRuleResponse` | `id`, `name`, `categoryId`, `categoryName`, `marginRate`, `seasonFactor`, `marketAdjustmentRate`, `priority`, `startDate`, `endDate`, `isActive`, `createdAt`, `updatedAt` | `categoryId = null` là quy tắc toàn hệ thống |
+| `PricePreviewResponse` | `originalPrice`, `sellingPrice`, `appliedRuleId`, `appliedRuleName`, `marginRate`, `seasonFactor`, `marketAdjustmentRate`, `effectiveRate` | `sellingPrice >= originalPrice`; `effectiveRate = max(0, margin + season + market)` |
 
 ## 4. TypeScript tối thiểu phía FE
 
@@ -375,6 +392,8 @@ interface ProductResponse {
   status: ProductStatus
   auctionEnabled: boolean
   createdAt: string | null
+  minPrice?: number | null
+  maxPrice?: number | null
   skus: SkuResponse[]
   images: ImageResponse[]
 }

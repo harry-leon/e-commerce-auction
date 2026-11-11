@@ -60,18 +60,24 @@ export interface CreateOrderRequest {
 
 /**
  * DTO kết quả tạo đơn hàng phản hồi từ Backend.
- * Chứa thông tin đơn hàng và paymentUrl chuyển hướng cổng sandbox (nếu có).
+ * subtotal/shippingFee/discount/total là giá chính thức (null khi priceFinalized=false, chưa thu tiền).
+ * estimated* chứa giá dự kiến lúc tạo đơn để FE hiển thị; paymentUrl chỉ có sau khi gọi POST /payments.
  */
 export interface CreateOrderResponse {
     id: string
     orderNo: string
     status: OrderStatus
-    subtotal: number
-    shippingFee: number
-    discount: number
-    total: number
+    subtotal: number | null
+    shippingFee: number | null
+    discount: number | null
+    total: number | null
     paymentMethod: 'CARD' | 'VNPAY' | 'COD'
-    paymentUrl?: string
+    paymentUrl?: string | null
+    estimatedSubtotal?: number | null
+    estimatedShippingFee?: number | null
+    estimatedDiscount?: number | null
+    estimatedTotal?: number | null
+    priceFinalized?: boolean
 }
 
 export type OrderDetailResponse = Order
@@ -419,7 +425,9 @@ export const ordersApi = {
         // Nếu Backend trả dữ liệu thành công: Hợp nhất đơn thật và đơn sandbox cục bộ
         if (hasBackendData) {
             const existingIds = new Set(backendOrders.map((o) => o.id))
-            const existingNos = new Set(backendOrders.map((o) => (o as any).orderNo).filter(Boolean))
+            const existingNos = new Set(
+                backendOrders.map((o) => (o as any).orderNo).filter(Boolean),
+            )
             const customSandboxOrders = localOrders.filter(
                 (o) =>
                     !SEED_ORDER_IDS.has(o.id) &&
@@ -446,7 +454,8 @@ export const ordersApi = {
      * - Chuẩn hóa kết quả qua normalizeOrder để items luôn là mảng an toàn.
      */
     async getOrderById(id: string): Promise<Order | null> {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+        const isUuid =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
 
         // 1. Thử gọi backend API nếu là UUID — unwrap theo ApiResponse<OrderPayload> chuẩn V2
         if (isUuid) {
@@ -914,6 +923,6 @@ export const ordersApi = {
         if (!envelope?.data) {
             throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
         }
-        return envelope.data
+        return normalizeOrder(envelope.data as OrderPayload)
     },
 }

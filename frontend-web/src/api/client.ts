@@ -360,10 +360,15 @@ export interface ApiProduct {
     status: string
     auctionEnabled: boolean
     createdAt: string
+    /** Giá bán thấp nhất và cao nhất tổng hợp từ các SKU ACTIVE (Dynamic Pricing Engine). */
+    minPrice?: number | null
+    maxPrice?: number | null
     skus: {
         id: string
         skuCode: string
+        /** Giá bán thực tế được Backend tính động từ originalPrice + pricing_rules. */
         price: number
+        /** Giá nhập tối thiểu (minPrice) do Seller nhập; Backend giữ >= 0. */
         originalPrice?: number
         status: string
         attributes?: string

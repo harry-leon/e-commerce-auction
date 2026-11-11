@@ -40,7 +40,7 @@ class ProductMapperTest {
         Sku sku = new Sku();
         sku.setId(UUID.randomUUID());
         sku.setSkuCode("SKU-1");
-        sku.setPrice(new BigDecimal("99.99"));
+        sku.setOriginalPrice(new BigDecimal("99.99"));
         sku.setStatus(SkuStatus.ACTIVE);
         product.getSkus().add(sku);
 
@@ -83,7 +83,7 @@ class ProductMapperTest {
     void toSkuEntity_MapsRequestCorrectly() {
         SkuRequest request = new SkuRequest(
                 "SKU-NEW", "{\"size\":\"L\"}",
-                new BigDecimal("50.00"), new BigDecimal("60.00"), SkuStatus.ACTIVE);
+                new BigDecimal("50.00"), SkuStatus.ACTIVE);
 
         Sku sku = mapper.toSkuEntity(request);
 
@@ -91,8 +91,7 @@ class ProductMapperTest {
         assertNull(sku.getId());
         assertEquals("SKU-NEW", sku.getSkuCode());
         assertEquals("{\"size\":\"L\"}", sku.getAttributes());
-        assertEquals(new BigDecimal("50.00"), sku.getPrice());
-        assertEquals(new BigDecimal("60.00"), sku.getOriginalPrice());
+        assertEquals(new BigDecimal("50.00"), sku.getOriginalPrice());
         assertEquals(SkuStatus.ACTIVE, sku.getStatus());
     }
 
@@ -113,17 +112,16 @@ class ProductMapperTest {
         Sku sku = new Sku();
         sku.setId(UUID.randomUUID());
         sku.setSkuCode("OLD-CODE");
-        sku.setPrice(new BigDecimal("10.00"));
+        sku.setOriginalPrice(new BigDecimal("10.00"));
 
         SkuRequest request = new SkuRequest(
                 "UPDATED-CODE", "{\"color\":\"red\"}",
-                new BigDecimal("20.00"), new BigDecimal("25.00"), SkuStatus.INACTIVE);
+                new BigDecimal("25.00"), SkuStatus.INACTIVE);
 
         mapper.updateSkuFromRequest(request, sku);
 
         assertEquals("UPDATED-CODE", sku.getSkuCode());
         assertEquals("{\"color\":\"red\"}", sku.getAttributes());
-        assertEquals(new BigDecimal("20.00"), sku.getPrice());
         assertEquals(new BigDecimal("25.00"), sku.getOriginalPrice());
         assertEquals(SkuStatus.INACTIVE, sku.getStatus());
     }

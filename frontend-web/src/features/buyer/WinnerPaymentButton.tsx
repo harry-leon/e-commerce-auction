@@ -7,18 +7,28 @@ import { startPayment } from '../../api/payments'
  * Tạo/replay VNPAY từ orderId thật; backend kiểm tra winner và giá, không ghi PAID hoặc payment mock vào storage.
  * Chặn click lặp khi chờ API; chỉ redirect đúng sandbox, tiền đã thu thì chuyển sang trang đọc kết quả backend.
  */
-export function WinnerPaymentButton({ orderId }: { orderId: string }) {
+export function WinnerPaymentButton({
+    orderId,
+    idempotencyKey,
+    label,
+}: {
+    orderId: string
+    idempotencyKey?: string
+    label?: string
+}) {
     const { lang, navigate } = useApp()
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    /** Request chỉ có ID đơn; URL không hợp lệ và lỗi mạng được báo tại chỗ, không fallback thanh toán demo. */
+    /** Request chỉ có ID đơn (và Idempotency-Key mới khi retry); BE tự kiểm tra giá live và giữ kho. */
     async function pay() {
         if (busy) return
         setBusy(true)
         setError(null)
         try {
-            const payment = await startPayment(orderId)
+            const payment = idempotencyKey
+                ? await startPayment(orderId, idempotencyKey)
+                : await startPayment(orderId)
             if (payment.status !== 'PENDING') {
                 navigate('payment-result', { vnp_TxnRef: payment.paymentId })
                 return
@@ -52,9 +62,7 @@ export function WinnerPaymentButton({ orderId }: { orderId: string }) {
                     ? lang === 'vi'
                         ? 'Đang kiểm tra…'
                         : 'Checking…'
-                    : lang === 'vi'
-                      ? 'Thanh toán VNPAY'
-                      : 'Pay with VNPAY'}
+                    : label || (lang === 'vi' ? 'Thanh toán VNPAY' : 'Pay with VNPAY')}
             </Button>
             {error && (
                 <p role="alert" className="mt-2 text-sm text-red-600">

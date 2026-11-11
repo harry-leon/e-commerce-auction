@@ -42,13 +42,10 @@ public class Sku {
     @Column(columnDefinition = "jsonb")
     private String attributes;
 
+    // SKU chỉ lưu giá nhập tối thiểu (minPrice); giá bán thực tế được tính động qua DynamicPricingService.
     @NotNull
-    @DecimalMin(value = "0", inclusive = true, message = "price must be >= 0")
-    @Column(nullable = false, precision = 15, scale = 2)
-    private BigDecimal price;
-
     @DecimalMin(value = "0", inclusive = true, message = "original price must be >= 0")
-    @Column(name = "original_price", precision = 15, scale = 2)
+    @Column(name = "original_price", nullable = false, precision = 15, scale = 2)
     private BigDecimal originalPrice;
 
     @Enumerated(EnumType.STRING)
@@ -65,8 +62,6 @@ public class Sku {
     public void setSkuCode(String skuCode) { this.skuCode = skuCode; }
     public String getAttributes() { return attributes; }
     public void setAttributes(String attributes) { this.attributes = attributes; }
-    public BigDecimal getPrice() { return price; }
-    public void setPrice(BigDecimal price) { this.price = price; }
     public BigDecimal getOriginalPrice() { return originalPrice; }
     public void setOriginalPrice(BigDecimal originalPrice) { this.originalPrice = originalPrice; }
     public SkuStatus getStatus() { return status; }

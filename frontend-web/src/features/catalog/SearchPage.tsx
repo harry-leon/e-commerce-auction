@@ -132,7 +132,7 @@ export function SearchPage() {
                         )}
                         <div className="p-4">
                             <h2 className="font-semibold">{product.name}</h2>
-                            <p>{price(product)}</p>
+                            <p className="text-primary font-bold mt-1">{price(product)}</p>
                         </div>
                     </button>
                 ))}

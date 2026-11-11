@@ -3,20 +3,24 @@ package com.nexus.catalog.service;
 import com.nexus.catalog.dto.mapper.ProductMapper;
 import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.entity.Category;
+import com.nexus.catalog.entity.PricingRule;
 import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.entity.Sku;
 import com.nexus.catalog.enums.ProductStatus;
 import com.nexus.catalog.enums.SkuStatus;
-import com.nexus.common.exception.BusinessException;
 import com.nexus.catalog.repository.ProductRepository;
+import com.nexus.common.exception.BusinessException;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
@@ -24,21 +28,32 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Tìm kiếm sản phẩm bằng JPA Specification để ghép các bộ lọc tùy chọn trong một truy vấn DB.
- * Luồng: kiểm tra tham số → tạo điều kiện tên/danh mục/SKU → phân trang → ánh xạ sang ProductResponse.
+ * Luồng: kiểm tra tham số → tạo điều kiện tên/danh mục/SKU → tính giá động → lọc khoảng giá & phân trang.
  */
 @Service
 public class ProductSearchService {
     private final ProductRepository products;
     private final ProductMapper mapper;
+    private final DynamicPricingService pricingService;
 
     public ProductSearchService(ProductRepository products, ProductMapper mapper) {
+        this(products, mapper, new DynamicPricingService(null));
+    }
+
+    /** Khởi tạo dịch vụ tìm kiếm có tích hợp DynamicPricingService để lọc và tổng hợp khoảng giá động. */
+    @Autowired
+    public ProductSearchService(
+            ProductRepository products,
+            ProductMapper mapper,
+            DynamicPricingService pricingService) {
         this.products = products;
         this.mapper = mapper;
+        this.pricingService = pricingService != null ? pricingService : new DynamicPricingService(null);
     }
 
     /**
      * Mặc định lấy sản phẩm ACTIVE; controller kiểm tra quyền nếu client yêu cầu trạng thái khác.
-     * Khoảng giá áp dụng cho SKU ACTIVE; transaction đọc giữ các quan hệ lazy khi mapper dựng DTO.
+     * Khoảng giá áp dụng cho SKU ACTIVE sau khi tính giá động; transaction đọc nạp sẵn quy tắc theo batch.
      */
     @Transactional(readOnly = true)
     public Page<ProductResponse> search(String q, UUID categoryId, BigDecimal minPrice,
@@ -71,14 +86,11 @@ public class ProductSearchService {
                         cb.equal(parent.get("id"), categoryId), cb.equal(grandparent.get("id"), categoryId)));
             }
             if (minPrice != null || maxPrice != null) {
-                // Hai cận giá cùng áp dụng lên một SKU ACTIVE, không lấy giá thấp/cao từ hai SKU khác nhau.
+                // Sơ lọc SKU ACTIVE ở DB; do sellingPrice >= originalPrice nên originalPrice <= maxPrice không bỏ sót kết quả.
                 var sku = root.<Product, Sku>join("skus");
                 filters.add(cb.equal(sku.get("status"), SkuStatus.ACTIVE));
-                if (minPrice != null) {
-                    filters.add(cb.greaterThanOrEqualTo(sku.get("price"), minPrice));
-                }
                 if (maxPrice != null) {
-                    filters.add(cb.lessThanOrEqualTo(sku.get("price"), maxPrice));
+                    filters.add(cb.lessThanOrEqualTo(sku.get("originalPrice"), maxPrice));
                 }
             }
             if (auctionEnabled != null) {
@@ -88,6 +100,31 @@ public class ProductSearchService {
             query.distinct(true);
             return cb.and(filters.toArray(Predicate[]::new));
         };
-        return products.findAll(spec, pageable).map(mapper::toResponse);
+        List<PricingRule> activeRules = pricingService.loadActiveRules(Instant.now());
+        if (minPrice == null && maxPrice == null) {
+            return products.findAll(spec, pageable)
+                    .map(p -> pricingService.toEnrichedProductResponse(p, mapper, activeRules));
+        }
+        // Khi có lọc theo giá động, đánh giá khoảng giá chính xác trên cùng một SKU ACTIVE trước khi cắt trang.
+        List<ProductResponse> matched = products.findAll(spec, pageable.getSort()).stream()
+                .map(p -> pricingService.toEnrichedProductResponse(p, mapper, activeRules))
+                .filter(p -> matchesPriceRange(p, minPrice, maxPrice))
+                .toList();
+        if (pageable.isUnpaged()) {
+            return new PageImpl<>(matched, pageable, matched.size());
+        }
+        int start = (int) Math.min(pageable.getOffset(), matched.size());
+        int end = Math.min(start + pageable.getPageSize(), matched.size());
+        return new PageImpl<>(matched.subList(start, end), pageable, matched.size());
+    }
+
+    private boolean matchesPriceRange(ProductResponse product, BigDecimal minPrice, BigDecimal maxPrice) {
+        if (product.skus() == null) {
+            return false;
+        }
+        return product.skus().stream()
+                .filter(sku -> sku.status() == SkuStatus.ACTIVE && sku.price() != null)
+                .anyMatch(sku -> (minPrice == null || sku.price().compareTo(minPrice) >= 0)
+                        && (maxPrice == null || sku.price().compareTo(maxPrice) <= 0));
     }
 }

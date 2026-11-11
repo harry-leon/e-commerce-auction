@@ -319,6 +319,16 @@ public class OrderServiceImpl implements OrderService {
         orderStatusStateMachine.validateTransition(currentStatus, targetStatus, userRoles);
 
         // 4. Cập nhật thực thể đơn hàng
+        // COD chỉ chốt giá khi thao tác backend hợp lệ xác nhận PAID; giá lấy từ dự kiến đã lưu, không từ request.
+        if (targetStatus == OrderStatus.PAID && "COD".equals(order.getPaymentMethod()) && !order.isPriceFinalized()) {
+            com.nexus.commerce.service.PaymentPricingService.finalizePrices(order,
+                    com.nexus.commerce.service.PaymentPricingService.estimated(order));
+            // Xác nhận COD và các tác vụ xuất kho cùng commit; worker retry confirm theo reservationId.
+            for (UUID reservation : order.getReservationIds()) {
+                jdbc.update("INSERT INTO payment_inventory_tasks(id,order_id,target_id,action) VALUES (?,?,?,'CONFIRM') ON CONFLICT DO NOTHING",
+                        UUID.randomUUID(), order.getId(), reservation);
+            }
+        }
         order.setStatus(targetStatus);
         Order savedOrder = orderRepository.save(order);
         if (targetStatus == OrderStatus.CANCELLED) { enqueueRelease(order); }
@@ -446,8 +456,13 @@ public class OrderServiceImpl implements OrderService {
     private void rejectActiveVnpayCancellation(Order order, OrderStatus target) {
         if (target == OrderStatus.CANCELLED && order.getStatus() == OrderStatus.PENDING_PAYMENT
                 && "VNPAY".equals(order.getPaymentMethod())) {
-            throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL,
-                    "Giao dịch VNPAY đang chờ kết quả; hãy kiểm tra thanh toán trước khi yêu cầu hủy");
+            // Draft chưa có attempt hoặc chỉ FAILED được hủy; không hủy khi cổng còn có thể thu tiền/chờ kho/đối soát.
+            Integer active = jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=? "
+                    + "AND (status IN ('PENDING','SUCCESS','REVIEW') OR inventory_status='REVIEW')", Integer.class, order.getId());
+            if (active != null && active > 0) {
+                throw new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL,
+                        "Giao dịch VNPAY đang chờ kết quả; hãy kiểm tra thanh toán trước khi yêu cầu hủy");
+            }
         }
     }
 
@@ -651,7 +666,7 @@ public class OrderServiceImpl implements OrderService {
                     order.getBuyerId(),
                     order.getSellerId(),
                     order.getStatus().name(),
-                    order.getTotal(),
+                    order.isPriceFinalized() ? order.getTotal() : order.getEstimatedTotal(),
                     deadline,
                     order.getCreatedAt()
             );
@@ -697,10 +712,16 @@ public class OrderServiceImpl implements OrderService {
                 .sellerId(request.sellerId())
                 .sourceType(OrderSourceType.AUCTION)
                 .auctionId(request.auctionId())
-                .subtotal(request.finalPrice())
-                .shippingFee(BigDecimal.ZERO)
-                .discount(BigDecimal.ZERO)
-                .total(request.finalPrice())
+                // Giá thắng được giữ ở estimated để payment không áp lại giá bán thường; chỉ chốt sau thu tiền.
+                .estimatedSubtotal(request.finalPrice())
+                .estimatedShippingFee(BigDecimal.ZERO)
+                .estimatedDiscount(BigDecimal.ZERO)
+                .estimatedTotal(request.finalPrice())
+                .subtotal(null)
+                .shippingFee(null)
+                .discount(null)
+                .total(null)
+                .priceFinalized(false)
                 .status(OrderStatus.PENDING_PAYMENT)
                 .shippingAddress("AUCTION_PENDING_BUYER_ADDRESS")
                 .idempotencyKey(request.auctionId().toString())
@@ -720,7 +741,8 @@ public class OrderServiceImpl implements OrderService {
                 .skuId(request.skuId())
                 .productName(productName)
                 .skuCode(skuCode)
-                .unitPrice(request.finalPrice())
+                .estimatedUnitPrice(request.finalPrice())
+                .unitPrice(null)
                 .quantity(1)
                 .build();
         order.addItem(item);
@@ -737,7 +759,7 @@ public class OrderServiceImpl implements OrderService {
         // Bước 7: Lưu đơn hàng vào cơ sở dữ liệu
         Order savedOrder = orderRepository.save(order);
         log.info("Khởi tạo thành công đơn hàng đấu giá [{}] cho phiên [{}] với winner [{}], tổng tiền [{}]",
-                savedOrder.getOrderNo(), request.auctionId(), request.winnerId(), savedOrder.getTotal());
+                savedOrder.getOrderNo(), request.auctionId(), request.winnerId(), savedOrder.getEstimatedTotal());
 
         return new AuctionOrderResponse(
                 savedOrder.getId(),
@@ -746,7 +768,7 @@ public class OrderServiceImpl implements OrderService {
                 savedOrder.getBuyerId(),
                 savedOrder.getSellerId(),
                 savedOrder.getStatus().name(),
-                savedOrder.getTotal(),
+                savedOrder.isPriceFinalized() ? savedOrder.getTotal() : savedOrder.getEstimatedTotal(),
                 deadline,
                 savedOrder.getCreatedAt()
         );

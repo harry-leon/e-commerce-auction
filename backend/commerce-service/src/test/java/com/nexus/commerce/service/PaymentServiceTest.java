@@ -1,5 +1,7 @@
 package com.nexus.commerce.service;
 
+import com.nexus.commerce.entity.PaymentPriceSnapshot;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -42,6 +44,8 @@ class PaymentServiceTest {
     @Mock private CheckoutLock locks;
     @Mock private JdbcTemplate jdbc;
     @Mock private InventoryServiceToken tokens;
+    @Mock private PaymentPricingService pricing;
+    @Mock private com.nexus.commerce.client.InventoryClient inventory;
     private VnpayGateway gateway;
     private PaymentService service;
     private Order order;
@@ -54,7 +58,8 @@ class PaymentServiceTest {
         config.setHashSecret("unit-test-only-not-a-credential");
         config.setReturnUrl("https://example.test/payment-result");
         gateway = new VnpayGateway(config);
-        service = new PaymentService(payments, orders, gateway, config, locks, jdbc, tokens, org.mockito.Mockito.mock(NotificationOutbox.class));
+        service = new PaymentService(payments, orders, gateway, config, locks, jdbc, tokens,
+                org.mockito.Mockito.mock(NotificationOutbox.class), pricing, inventory);
         lenient().when(tokens.configured()).thenReturn(true);
         order = new Order();
         order.setId(UUID.randomUUID());
@@ -62,6 +67,18 @@ class PaymentServiceTest {
         order.setPaymentMethod("VNPAY");
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setTotal(new BigDecimal("50000.00"));
+        // Fixture chưa thu tiền: official null; snapshot giá cố định để kiểm thử IPN độc lập Catalog.
+        order.setEstimatedTotal(order.getTotal());
+        order.setPriceFinalized(false);
+        order.setTotal(null);
+        var item = com.nexus.commerce.entity.OrderItem.builder().skuId(UUID.randomUUID()).productName("Áo")
+                .skuCode("AO").quantity(2).estimatedUnitPrice(new BigDecimal("25000.00")).build();
+        order.addItem(item);
+        var snapshot = new PaymentPriceSnapshot(new BigDecimal("50000.00"), new BigDecimal("0.00"),
+                new BigDecimal("0.00"), new BigDecimal("50000.00"), List.of(new PaymentPriceSnapshot.Line(
+                item.getId(), item.getSkuId(), 2, new BigDecimal("25000.00"), new BigDecimal("50000.00"))));
+        lenient().when(pricing.quote(order)).thenReturn(snapshot);
+        lenient().when(inventory.reserve(any(), any(), any())).thenReturn(List.of(UUID.randomUUID()));
         order.setCreatedAt(Instant.now());
         order.setReservationIds(List.of(UUID.randomUUID()));
         payment = new Payment();
@@ -70,7 +87,9 @@ class PaymentServiceTest {
         payment.setProvider("VNPAY");
         payment.setMerchantCode("TESTONLY");
         payment.setStatus("PENDING");
-        payment.setAmount(order.getTotal());
+        payment.setAmount(snapshot.total());
+        payment.setPriceSnapshot(snapshot);
+        payment.setInventoryRefId(payment.getId());
         payment.setExpiresAt(Instant.now().plusSeconds(600));
         lenient().when(orders.findForPayment(order.getId())).thenReturn(Optional.of(order));
         // IPN dùng query fetch sẵn items để tạo notification snapshot trong cùng transaction.
@@ -91,11 +110,11 @@ class PaymentServiceTest {
     @Test
     void createsAndReplaysPendingUrlWithoutNewAttempt() {
         var created = service.start(order.getBuyerId(), order.getId(), "192.0.2.1");
-        assertEquals(order.getTotal(), created.amount());
+        assertEquals(order.getEstimatedTotal(), created.amount());
         assertEquals("VND", created.currency());
         assertEquals("PENDING", created.status());
         payment.setPaymentUrl(created.paymentUrl());
-        when(payments.findByOrderIdAndProvider(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
+        when(payments.findFirstByOrderIdAndProviderOrderByCreatedAtDescIdDesc(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
         assertEquals(created.paymentUrl(), service.start(order.getBuyerId(), order.getId(), "192.0.2.2").paymentUrl());
         assertEquals(created.paymentUrl(), service.checkoutUrl(order, "192.0.2.2"));
         assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
@@ -107,19 +126,24 @@ class PaymentServiceTest {
         var callback = signed("5000000", "00", "00");
         assertEquals("00", service.ipn(callback).code());
         assertEquals("SUCCESS", payment.getStatus());
-        assertEquals(OrderStatus.PAID, order.getStatus());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
+        assertEquals(new BigDecimal("50000.00"), order.getTotal());
+        assertEquals("PENDING", payment.getInventoryStatus());
         assertEquals("123456", payment.getProviderRef());
         assertEquals("02", service.ipn(callback).code());
         verify(payments).flush();
     }
 
-    /** IPN thất bại hợp lệ hủy đơn và giữ payment FAILED; thành công đến sau không tự đảo terminal cũ. */
+    /** FAILED giữ đơn cho retry; success đến sau được lưu REVIEW để không làm mất dấu tiền đã thu muộn. */
     @Test
-    void failureCancelsOrderAndCannotBeProcessedAgain() {
+    void failureKeepsOrderRetryableAndLateSuccessRequiresReview() {
         assertEquals("00", service.ipn(signed("5000000", "24", "02")).code());
         assertEquals("FAILED", payment.getStatus());
-        assertEquals(OrderStatus.CANCELLED, order.getStatus());
-        assertEquals("02", service.ipn(signed("5000000", "00", "00")).code());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
+        assertNull(order.getTotal());
+        assertEquals("00", service.ipn(signed("5000000", "00", "00")).code());
+        assertEquals("REVIEW", payment.getStatus());
+        assertEquals("REQUIRES_REVIEW", service.get(order.getBuyerId(), payment.getId()).status());
     }
 
     /** Chặn hash sai, mã đơn lạ và số tiền sai ở cả snapshot payment lẫn order. */
@@ -129,7 +153,8 @@ class PaymentServiceTest {
         forged.put("vnp_Amount", "1");
         assertEquals("97", service.ipn(forged).code());
         assertEquals("04", service.ipn(signed("1", "00", "00")).code());
-        order.setTotal(new BigDecimal("60000"));
+        // Đối soát theo snapshot attempt, không so giá trên Order hay Catalog đã thay đổi.
+        payment.setAmount(new BigDecimal("60000"));
         assertEquals("04", service.ipn(signed("5000000", "00", "00")).code());
         verify(payments, never()).flush();
         assertEquals("PENDING", payment.getStatus());
@@ -140,7 +165,7 @@ class PaymentServiceTest {
     void ambiguousAndReusedProviderTransactionsRemainPending() {
         assertEquals("99", service.ipn(signed("5000000", "00", "01")).code());
         assertEquals("99", service.ipn(signed("5000000", "07", "02")).code());
-        when(payments.existsByProviderAndProviderRefAndStatus("VNPAY", "123456", "SUCCESS")).thenReturn(true);
+        when(payments.existsByProviderAndProviderRefAndStatusIn("VNPAY", "123456", List.of("SUCCESS", "REVIEW"))).thenReturn(true);
         assertEquals("99", service.ipn(signed("5000000", "00", "00")).code());
         assertEquals("PENDING", payment.getStatus());
         verify(payments, never()).flush();
@@ -157,8 +182,9 @@ class PaymentServiceTest {
         assertCode("ORDER_STATUS_INVALID", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setReservationIds(List.of());
+        when(inventory.reserve(any(), any(), any())).thenReturn(List.of());
         assertCode("PAYMENT_RESERVATIONS_MISSING", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
-        order.setCreatedAt(Instant.now().minusSeconds(1000));
+        order.setPaymentDeadline(Instant.now().minusSeconds(1000));
         assertCode("PAYMENT_EXPIRED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
         verify(payments, never()).saveAndFlush(any());
     }
@@ -168,11 +194,11 @@ class PaymentServiceTest {
     void readsOnlyOwnedPaymentAndRejectsExpiredOrCompletedAttempts() {
         assertEquals("PENDING", service.get(order.getBuyerId(), payment.getId()).status());
         assertCode("PAYMENT_ACCESS_DENIED", () -> service.get(UUID.randomUUID(), payment.getId()));
-        when(payments.findByOrderIdAndProvider(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
+        when(payments.findFirstByOrderIdAndProviderOrderByCreatedAtDescIdDesc(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
         payment.setExpiresAt(Instant.now().minusSeconds(1));
         assertCode("PAYMENT_EXPIRED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
         payment.setStatus("SUCCESS");
-        assertCode("PAYMENT_ALREADY_COMPLETED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
+        assertEquals("SUCCESS", service.start(order.getBuyerId(), order.getId(), "ip").status());
     }
 
     /** Hết hạn URL phải hiện EXPIRED/null link, nhưng GET không hủy đơn hay ghi tác vụ kho khi chưa biết đã thu tiền chưa. */
@@ -208,20 +234,20 @@ class PaymentServiceTest {
         assertEquals("EXPIRED", service.get(order.getBuyerId(), payment.getId()).status());
         var callback = signed("5000000", "00", "00");
         assertEquals("00", service.ipn(callback).code());
-        assertEquals("SUCCESS", service.get(order.getBuyerId(), payment.getId()).status());
-        assertEquals(OrderStatus.PAID, order.getStatus());
+        assertEquals("PROCESSING", service.get(order.getBuyerId(), payment.getId()).status());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
         assertEquals("02", service.ipn(callback).code());
         verify(payments).flush();
     }
 
-    /** IPN thất bại đến chậm mới là bằng chứng hủy đơn/release, không dùng đồng hồ client để kết luận. */
+    /** IPN thất bại đến chậm mới cho phép release/retry; đồng hồ client không được tự kết luận thất bại. */
     @Test
-    void lateFailureAfterExpiredLookupCancelsOrder() {
+    void lateFailureAfterExpiredLookupKeepsOrderRetryable() {
         payment.setExpiresAt(Instant.now().minusSeconds(60));
         assertEquals("EXPIRED", service.get(order.getBuyerId(), payment.getId()).status());
         assertEquals("00", service.ipn(signed("5000000", "24", "02")).code());
         assertEquals("FAILED", service.get(order.getBuyerId(), payment.getId()).status());
-        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        assertEquals(OrderStatus.PENDING_PAYMENT, order.getStatus());
         verify(payments).flush();
     }
 
@@ -240,6 +266,41 @@ class PaymentServiceTest {
         assertEquals(code, assertThrows(ApiException.class, action).getCode());
     }
 
+    /** Retry FAILED cần UUID mới; cùng key luôn replay kết quả cũ, không đọc giá hoặc giữ kho lại. */
+    @Test
+    void failedAttemptRequiresNewKeyAndReplaysOldKeyWithoutChargingAgain() {
+        payment.setStatus("FAILED");
+        when(payments.findFirstByOrderIdAndProviderOrderByCreatedAtDescIdDesc(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
+        assertCode("PAYMENT_RETRY_KEY_REQUIRED", () -> service.start(order.getBuyerId(), order.getId(), "ip"));
+        assertCode("PAYMENT_KEY_INVALID", () -> service.start(order.getBuyerId(), order.getId(), "ip", "invalid"));
+        String oldKey = UUID.randomUUID().toString();
+        when(payments.findByOrderIdAndIdempotencyKey(order.getId(), order.getId() + ":" + oldKey)).thenReturn(Optional.of(payment));
+        assertEquals(payment.getId(), service.start(order.getBuyerId(), order.getId(), "ip", oldKey).paymentId());
+        verify(inventory, never()).reserve(any(), any(), any());
+        var next = service.start(order.getBuyerId(), order.getId(), "ip", UUID.randomUUID().toString());
+        org.junit.jupiter.api.Assertions.assertNotEquals(payment.getId(), next.paymentId());
+        verify(inventory).reserve(org.mockito.ArgumentMatchers.eq(next.paymentId()), any(), any());
+        assertNull(order.getTotal());
+    }
+
+    /** Có tiền cần đối soát thì chặn mọi attempt mới, kể cả attempt mới nhất đang FAILED. */
+    @Test
+    void reviewBlocksFurtherPaymentAttempts() {
+        when(payments.existsByOrderIdAndInventoryStatus(order.getId(), "REVIEW")).thenReturn(true);
+        assertCode("PAYMENT_REQUIRES_REVIEW", () ->
+                service.start(order.getBuyerId(), order.getId(), "ip", UUID.randomUUID().toString()));
+        verify(inventory, never()).reserve(any(), any(), any());
+    }
+
+    /** Một key mới khi đang có PENDING phải bị từ chối, không được báo replay rồi có thể tạo tiền mới khi gửi lại sau FAILED. */
+    @Test
+    void differentKeyCannotClaimAnExistingPendingAttempt() {
+        when(payments.findFirstByOrderIdAndProviderOrderByCreatedAtDescIdDesc(order.getId(), "VNPAY")).thenReturn(Optional.of(payment));
+        assertCode("PAYMENT_IN_PROGRESS", () ->
+                service.start(order.getBuyerId(), order.getId(), "ip", UUID.randomUUID().toString()));
+        verify(inventory, never()).reserve(any(), any(), any());
+    }
+
     /** Winner mới chọn VNPAY dùng giá DB và deadline settlement; replay giữ URL/TxnRef cũ, không gia hạn thêm 24h. */
     @Test
     void winnerSelectsVnpayUsingSettlementDeadline() {
@@ -251,7 +312,7 @@ class PaymentServiceTest {
         var result = service.start(order.getBuyerId(), order.getId(), "127.0.0.1");
         assertEquals(deadline, result.expiresAt());
         assertEquals("VNPAY", order.getPaymentMethod());
-        assertEquals(order.getTotal(), result.amount());
+        assertEquals(order.getEstimatedTotal(), result.amount());
     }
 
     /** Thiếu deadline/kho từ handover phải fail closed, không tự chọn mốc mới hoặc cấp URL cho người không phải winner. */
@@ -288,7 +349,7 @@ class PaymentServiceTest {
         order.setSourceType(com.nexus.commerce.enums.OrderSourceType.AUCTION);
         order.setStatus(OrderStatus.CANCELLED);
         assertEquals("00", service.ipn(signed("5000000", "00", "00")).code());
-        assertEquals("SUCCESS", payment.getStatus());
+        assertEquals("REVIEW", payment.getStatus());
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
         assertEquals("REQUIRES_REVIEW", service.get(order.getBuyerId(), payment.getId()).status());
         verify(jdbc, never()).update(anyString(), any(Object[].class));

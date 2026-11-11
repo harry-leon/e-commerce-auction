@@ -28,7 +28,7 @@ import org.springframework.data.domain.PageRequest;
         "spring.cloud.config.enabled=false", "eureka.client.enabled=false"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({ProductSearchService.class, ProductMapperImpl.class})
+@Import({ProductSearchService.class, ProductMapperImpl.class, DynamicPricingService.class})
 class ProductSearchIntegrationTest {
     @Autowired
     private EntityManager entities;
@@ -40,13 +40,14 @@ class ProductSearchIntegrationTest {
     private Category category(Category parent) {
         Category result = new Category();
         result.setName("Category");
+        result.setNameVi("Danh mục");
         result.setParent(parent);
         result.setLevel(parent == null ? 1 : parent.getLevel() + 1);
         entities.persist(result);
         return result;
     }
 
-    private Product product(Category category, String name, int price, ProductStatus status) {
+    private Product product(Category category, String name, int originalPrice, ProductStatus status) {
         Product product = new Product();
         product.setName(name);
         product.setDescription("Description");
@@ -56,7 +57,7 @@ class ProductSearchIntegrationTest {
         Sku sku = new Sku();
         sku.setProduct(product);
         sku.setSkuCode(UUID.randomUUID().toString());
-        sku.setPrice(BigDecimal.valueOf(price));
+        sku.setOriginalPrice(BigDecimal.valueOf(originalPrice));
         product.getSkus().add(sku);
         entities.persist(product);
         return product;

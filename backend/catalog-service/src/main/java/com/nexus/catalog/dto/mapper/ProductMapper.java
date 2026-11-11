@@ -28,6 +28,8 @@ public interface ProductMapper {
     ProductMapper INSTANCE = Mappers.getMapper(ProductMapper.class);
 
     @Mapping(target = "categoryId", source = "category.id")
+    @Mapping(target = "minPrice", ignore = true)
+    @Mapping(target = "maxPrice", ignore = true)
     ProductResponse toResponse(Product product);
 
     @Mapping(target = "id", ignore = true)
@@ -53,6 +55,7 @@ public interface ProductMapper {
 
     List<ImageResponse> toImageResponseList(List<ProductImage> images);
 
+    @Mapping(target = "price", ignore = true)
     SkuResponse toSku(Sku sku);
 
     ImageResponse toImage(ProductImage image);

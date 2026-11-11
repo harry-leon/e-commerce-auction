@@ -43,7 +43,14 @@ import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import type { Auction, Order, Product } from '../../types'
-import { ordersApi, type CreateOrderRequest, type CreateOrderResponse, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
+import {
+    ordersApi,
+    type CreateOrderRequest,
+    type CreateOrderResponse,
+    readLocalMockOrders,
+    writeLocalMockOrders,
+} from '../../api/orders'
+import { startPayment } from '../../api/payments'
 import { auctionsApi } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
 import {
@@ -93,18 +100,23 @@ export function HomePage() {
     useEffect(() => {
         let mounted = true
         setLoadingAuctions(true)
-        auctionsApi.getAuctions({
-            status: 'all',
-            sortBy: 'ending-soon',
-            limit: 8,
-            extraAuctions: createdAuctions,
-            reviews: auctionReviews,
-        })
+        auctionsApi
+            .getAuctions({
+                status: 'all',
+                sortBy: 'ending-soon',
+                limit: 8,
+                extraAuctions: createdAuctions,
+                reviews: auctionReviews,
+            })
             .then((response) => {
                 if (!mounted) return
-                setHomeAuctions(response.items.filter((auction) =>
-                    ['active', 'scheduled'].includes(auction.status) && auction.product?.images?.[0],
-                ))
+                setHomeAuctions(
+                    response.items.filter(
+                        (auction) =>
+                            ['active', 'scheduled'].includes(auction.status) &&
+                            auction.product?.images?.[0],
+                    ),
+                )
             })
             .catch(() => {
                 if (mounted) setHomeAuctions([])
@@ -140,7 +152,8 @@ export function HomePage() {
      * Kết quả: Danh sách sản phẩm với giá, SKU và ảnh từ database.
      */
     const liveProducts: Product[] = (prodData?.data || []).map((p) => {
-        const sku = p.skus?.[0]
+        const activeSkus = (p.skus || []).filter((s) => s.status === 'ACTIVE')
+        const sku = activeSkus[0] || p.skus?.[0]
         const categoryObj = allLiveCategories.find((c) => c.id === p.categoryId)
         const categoryName = categoryObj
             ? lang === 'vi'
@@ -155,10 +168,14 @@ export function HomePage() {
             nameVi: p.name,
             category: categoryName,
             categoryId: p.categoryId,
-            price: sku?.price || 0,
-            originalPrice: sku?.originalPrice,
+            price: p.minPrice ?? sku?.price ?? 0,
+            minPrice: p.minPrice ?? undefined,
+            maxPrice: p.maxPrice ?? undefined,
+            // Không hiển thị originalPrice (minPrice nhập kho) làm giá gạch ngang giảm giá trên thẻ sản phẩm.
+            originalPrice: undefined,
             sku: sku?.skuCode || '',
             skuId: sku?.id,
+            skus: p.skus,
             images:
                 p.images && p.images.length > 0
                     ? p.images.map((img) => img.url)
@@ -235,7 +252,9 @@ export function HomePage() {
                                 </>
                             )}
                         </h1>
-                        <p className="text-white/80 text-lg mb-8 max-w-md">{tr(lang, 'homeHeroDescription')}</p>
+                        <p className="text-white/80 text-lg mb-8 max-w-md">
+                            {tr(lang, 'homeHeroDescription')}
+                        </p>
                         <div className="flex gap-3">
                             <Button
                                 variant="primary"
@@ -355,7 +374,10 @@ export function HomePage() {
                 <section aria-labelledby="home-live-auctions-heading">
                     <div className="flex items-center justify-between mb-5">
                         <div className="flex items-center gap-3">
-                            <h2 id="home-live-auctions-heading" className="text-2xl font-bold text-gray-900">
+                            <h2
+                                id="home-live-auctions-heading"
+                                className="text-2xl font-bold text-gray-900"
+                            >
                                 {tr(lang, 'liveAuctions')}
                             </h2>
                             {homeAuctions.some((auction) => auction.status === 'active') && (
@@ -373,7 +395,10 @@ export function HomePage() {
                         </Button>
                     </div>
                     {loadingAuctions ? (
-                        <div className="nexus-card py-10 text-center text-sm text-gray-500" role="status">
+                        <div
+                            className="nexus-card py-10 text-center text-sm text-gray-500"
+                            role="status"
+                        >
                             <div className="flex justify-center mb-2">
                                 <Spinner size={18} color="#64748b" />
                             </div>
@@ -1269,7 +1294,7 @@ export function CheckoutPage() {
 
             // Kiểm tra xem danh sách sản phẩm có chứa ID tạm client (guest-item-) hay không
             const hasLocalId = cartItems.some(
-                (item) => !item.id || item.id.startsWith('guest-item-')
+                (item) => !item.id || item.id.startsWith('guest-item-'),
             )
 
             // Theo đặc tả Backend CreateOrderRequest (§4.2): Không truyền selectedItemIds (undefined)
@@ -1325,9 +1350,10 @@ export function CheckoutPage() {
                         createErr?.status === 400)
 
                 if (isVnpayUnconfigured || isCardUnsupported) {
-                    const fallbackKey = typeof crypto !== 'undefined' && crypto.randomUUID
-                        ? crypto.randomUUID()
-                        : 'c0000000-0000-4000-8000-' + String(Date.now()).padStart(12, '0')
+                    const fallbackKey =
+                        typeof crypto !== 'undefined' && crypto.randomUUID
+                            ? crypto.randomUUID()
+                            : 'c0000000-0000-4000-8000-' + String(Date.now()).padStart(12, '0')
                     try {
                         const fallbackResponse = await ordersApi.createOrder(
                             { ...orderPayload, paymentMethod: 'COD' },
@@ -1351,9 +1377,17 @@ export function CheckoutPage() {
                             (acc, i) => acc + i.unitPrice * i.quantity,
                             0,
                         )
-                        const shippingVal = shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+                        const shippingVal =
+                            shipping === 'GHN'
+                                ? lang === 'vi'
+                                    ? 55000
+                                    : 3.99
+                                : lang === 'vi'
+                                  ? 35000
+                                  : 2.49
                         const currentBuyerId = session?.user?.id || 'u1'
-                        const currentBuyerName = session?.user?.fullName || shippingData.fullName || 'Minh Tran'
+                        const currentBuyerName =
+                            session?.user?.fullName || shippingData.fullName || 'Minh Tran'
 
                         const fullMockOrder: Order = {
                             id: orderRef,
@@ -1365,10 +1399,13 @@ export function CheckoutPage() {
                             items: cartItems.map((item) => ({
                                 productId: item.skuId || item.id,
                                 productName: item.productName || 'Sản phẩm',
-                                image: item.thumbnailUrl || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
+                                image:
+                                    item.thumbnailUrl ||
+                                    'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100&h=100&fit=crop&auto=format',
                                 quantity: Number(item.quantity) || 1,
                                 unitPrice: Number(item.unitPrice) || 0,
-                                subtotal: (Number(item.unitPrice) || 0) * (Number(item.quantity) || 1),
+                                subtotal:
+                                    (Number(item.unitPrice) || 0) * (Number(item.quantity) || 1),
                             })),
                             subtotal: total,
                             tax: 0,
@@ -1379,7 +1416,8 @@ export function CheckoutPage() {
                             refundStatus: 'none',
                             paymentStatus: 'held',
                             shippingAddress: fullAddress,
-                            paymentMethod: paymentData.method === 'CARD' ? 'Credit Card' : paymentData.method,
+                            paymentMethod:
+                                paymentData.method === 'CARD' ? 'Credit Card' : paymentData.method,
                             createdAt: new Date().toISOString(),
                             updatedAt: new Date().toISOString(),
                             disputeStatus: 'none',
@@ -1422,9 +1460,19 @@ export function CheckoutPage() {
             clearGuestCart()
             setCartCount(0)
 
-            // Chuyển hướng đến cổng thanh toán sandbox khi Backend trả về URL hợp lệ (Accept Criteria 3)
+            // Chuyển hướng đến cổng thanh toán VNPAY: CreateOrder chỉ tạo đơn chưa chốt giá,
+            // sau đó gọi POST /payments để BE lấy giá live mới nhất, reserve kho theo attempt và trả paymentUrl.
             if (paymentData.method === 'VNPAY' || response.paymentUrl) {
-                const url = response.paymentUrl
+                let url = response.paymentUrl
+                if (!url && response.id) {
+                    const paymentAttempt = await startPayment(
+                        response.id,
+                        typeof crypto !== 'undefined' && crypto.randomUUID
+                            ? crypto.randomUUID()
+                            : undefined,
+                    )
+                    url = paymentAttempt.paymentUrl
+                }
                 if (!url) {
                     throw new Error(
                         lang === 'en'
@@ -1942,7 +1990,9 @@ export function CheckoutPage() {
                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
                                             <div>
                                                 <p className="font-bold text-amber-900">
-                                                    {lang === 'vi' ? 'Phiên đăng nhập đã hết hạn' : 'Session Expired'}
+                                                    {lang === 'vi'
+                                                        ? 'Phiên đăng nhập đã hết hạn'
+                                                        : 'Session Expired'}
                                                 </p>
                                                 <p className="text-amber-700 mt-0.5">
                                                     {lang === 'vi'
@@ -2095,6 +2145,11 @@ export function CheckoutPage() {
                             ))
                         })()}
                     </div>
+                    <p className="mt-3 pt-3 border-t border-border/60 text-[11px] text-amber-700 leading-relaxed">
+                        {lang === 'en'
+                            ? 'Provisional estimate shown above. Official item & order prices are re-validated by Backend when payment is processed.'
+                            : 'Giá hiển thị là mức tạm tính. Backend sẽ kiểm tra giá live mới nhất và chốt giá chính thức khi thanh toán thành công.'}
+                    </p>
                 </div>
             </div>
         </BuyerLayout>
@@ -2167,7 +2222,9 @@ export function SandboxPaymentPage() {
                 // Cập nhật trạng thái đơn hàng mock trong localStorage
                 try {
                     const localOrders = readLocalMockOrders()
-                    const idx = localOrders.findIndex((o) => o.id === orderId || (o as any).orderNo === orderId)
+                    const idx = localOrders.findIndex(
+                        (o) => o.id === orderId || (o as any).orderNo === orderId,
+                    )
                     if (idx !== -1) {
                         localOrders[idx].status = 'PAID'
                         localOrders[idx].paymentStatus = 'held'
@@ -2217,9 +2274,7 @@ export function SandboxPaymentPage() {
         showToast({
             type: 'info',
             message:
-                lang === 'en'
-                    ? 'Payment transaction cancelled.'
-                    : 'Đã hủy giao dịch thanh toán.',
+                lang === 'en' ? 'Payment transaction cancelled.' : 'Đã hủy giao dịch thanh toán.',
         })
         navigate('payment-result', { status: 'cancelled', orderId })
     }
@@ -2254,17 +2309,19 @@ export function SandboxPaymentPage() {
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="flex items-center">
-                            <span className="text-2xl font-black text-[#005baa] tracking-tight">VN</span>
-                            <span className="text-2xl font-black text-[#e11b22] tracking-tight">PAY</span>
+                            <span className="text-2xl font-black text-[#005baa] tracking-tight">
+                                VN
+                            </span>
+                            <span className="text-2xl font-black text-[#e11b22] tracking-tight">
+                                PAY
+                            </span>
                         </div>
                         <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                         <div className="hidden sm:block">
                             <div className="text-xs font-bold text-slate-700 uppercase tracking-wide">
                                 CỔNG THANH TOÁN ĐIỆN TỬ
                             </div>
-                            <div className="text-[10px] text-slate-400">
-                                VNPAY Payment Gateway
-                            </div>
+                            <div className="text-[10px] text-slate-400">VNPAY Payment Gateway</div>
                         </div>
                     </div>
 
@@ -2308,7 +2365,9 @@ export function SandboxPaymentPage() {
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm divide-y divide-slate-200">
                             <div className="flex justify-between items-center pb-2.5">
                                 <span className="text-slate-500">Đơn vị chấp nhận thanh toán:</span>
-                                <span className="font-semibold text-slate-800">NEXUS E-COMMERCE</span>
+                                <span className="font-semibold text-slate-800">
+                                    NEXUS E-COMMERCE
+                                </span>
                             </div>
                             <div className="flex justify-between items-center py-2.5">
                                 <span className="text-slate-500">Mã đơn hàng:</span>
@@ -2317,7 +2376,9 @@ export function SandboxPaymentPage() {
                                 </span>
                             </div>
                             <div className="flex justify-between items-center pt-2.5">
-                                <span className="text-slate-500 font-medium">Số tiền thanh toán:</span>
+                                <span className="text-slate-500 font-medium">
+                                    Số tiền thanh toán:
+                                </span>
                                 <span className="text-2xl font-black text-[#e11b22]">
                                     {displayAmount}
                                 </span>
@@ -2409,7 +2470,8 @@ export function SandboxPaymentPage() {
                                             onClick={handleFillTestCard}
                                             className="w-full text-xs font-semibold text-[#005baa] bg-blue-50 hover:bg-blue-100 p-2.5 rounded-xl border border-blue-200 transition-colors flex items-center justify-center gap-1.5"
                                         >
-                                            ⚡ Bấm vào đây để tự động điền thẻ test VNPAY Sandbox (NCB)
+                                            ⚡ Bấm vào đây để tự động điền thẻ test VNPAY Sandbox
+                                            (NCB)
                                         </button>
 
                                         {/* Form nhập thẻ */}
@@ -2423,7 +2485,9 @@ export function SandboxPaymentPage() {
                                             <Input
                                                 label="Tên in trên thẻ *"
                                                 value={cardHolder}
-                                                onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+                                                onChange={(e) =>
+                                                    setCardHolder(e.target.value.toUpperCase())
+                                                }
                                                 placeholder="NGUYEN VAN A"
                                             />
                                             <Input
@@ -2441,7 +2505,10 @@ export function SandboxPaymentPage() {
                                             loading={simulating}
                                             onClick={handleSimulateSuccess}
                                         >
-                                            ✓ {lang === 'en' ? 'Simulate Success' : 'Xác nhận thanh toán thành công (Simulate Success)'}
+                                            ✓{' '}
+                                            {lang === 'en'
+                                                ? 'Simulate Success'
+                                                : 'Xác nhận thanh toán thành công (Simulate Success)'}
                                         </Button>
                                     </>
                                 ) : (
@@ -2455,7 +2522,8 @@ export function SandboxPaymentPage() {
                                                 Xác thực giao dịch OTP ({selectedBank})
                                             </h3>
                                             <p className="text-xs text-slate-500">
-                                                Mã OTP bảo mật được gửi đến SĐT đăng ký của chủ thẻ {cardHolder}.
+                                                Mã OTP bảo mật được gửi đến SĐT đăng ký của chủ thẻ{' '}
+                                                {cardHolder}.
                                             </p>
                                         </div>
 
@@ -2501,30 +2569,159 @@ export function SandboxPaymentPage() {
                                             viewBox="0 0 100 100"
                                             fill="currentColor"
                                         >
-                                            <rect x="5" y="5" width="28" height="28" rx="3" fill="#005baa" />
-                                            <rect x="9" y="9" width="20" height="20" rx="2" fill="#fff" />
-                                            <rect x="13" y="13" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="5"
+                                                y="5"
+                                                width="28"
+                                                height="28"
+                                                rx="3"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="9"
+                                                y="9"
+                                                width="20"
+                                                height="20"
+                                                rx="2"
+                                                fill="#fff"
+                                            />
+                                            <rect
+                                                x="13"
+                                                y="13"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
-                                            <rect x="67" y="5" width="28" height="28" rx="3" fill="#005baa" />
-                                            <rect x="71" y="9" width="20" height="20" rx="2" fill="#fff" />
-                                            <rect x="75" y="13" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="67"
+                                                y="5"
+                                                width="28"
+                                                height="28"
+                                                rx="3"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="71"
+                                                y="9"
+                                                width="20"
+                                                height="20"
+                                                rx="2"
+                                                fill="#fff"
+                                            />
+                                            <rect
+                                                x="75"
+                                                y="13"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
-                                            <rect x="5" y="67" width="28" height="28" rx="3" fill="#005baa" />
-                                            <rect x="9" y="71" width="20" height="20" rx="2" fill="#fff" />
-                                            <rect x="13" y="75" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="5"
+                                                y="67"
+                                                width="28"
+                                                height="28"
+                                                rx="3"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="9"
+                                                y="71"
+                                                width="20"
+                                                height="20"
+                                                rx="2"
+                                                fill="#fff"
+                                            />
+                                            <rect
+                                                x="13"
+                                                y="75"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
-                                            <rect x="38" y="10" width="8" height="20" fill="#005baa" />
-                                            <rect x="50" y="24" width="12" height="8" fill="#005baa" />
-                                            <rect x="38" y="72" width="14" height="8" fill="#005baa" />
-                                            <rect x="56" y="64" width="8" height="16" fill="#005baa" />
-                                            <rect x="70" y="70" width="16" height="16" fill="#005baa" />
-                                            <rect x="70" y="44" width="10" height="10" fill="#005baa" />
-                                            <rect x="44" y="44" width="12" height="12" fill="#005baa" />
+                                            <rect
+                                                x="38"
+                                                y="10"
+                                                width="8"
+                                                height="20"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="50"
+                                                y="24"
+                                                width="12"
+                                                height="8"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="38"
+                                                y="72"
+                                                width="14"
+                                                height="8"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="56"
+                                                y="64"
+                                                width="8"
+                                                height="16"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="70"
+                                                y="70"
+                                                width="16"
+                                                height="16"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="70"
+                                                y="44"
+                                                width="10"
+                                                height="10"
+                                                fill="#005baa"
+                                            />
+                                            <rect
+                                                x="44"
+                                                y="44"
+                                                width="12"
+                                                height="12"
+                                                fill="#005baa"
+                                            />
 
                                             {/* Logo VNPAY trung tâm QR */}
-                                            <rect x="35" y="35" width="30" height="30" rx="6" fill="#fff" stroke="#005baa" strokeWidth="2" />
-                                            <text x="37" y="52" fontFamily="Arial, sans-serif" fontWeight="900" fontSize="9" fill="#005baa">VN</text>
-                                            <text x="51" y="52" fontFamily="Arial, sans-serif" fontWeight="900" fontSize="9" fill="#e11b22">PAY</text>
+                                            <rect
+                                                x="35"
+                                                y="35"
+                                                width="30"
+                                                height="30"
+                                                rx="6"
+                                                fill="#fff"
+                                                stroke="#005baa"
+                                                strokeWidth="2"
+                                            />
+                                            <text
+                                                x="37"
+                                                y="52"
+                                                fontFamily="Arial, sans-serif"
+                                                fontWeight="900"
+                                                fontSize="9"
+                                                fill="#005baa"
+                                            >
+                                                VN
+                                            </text>
+                                            <text
+                                                x="51"
+                                                y="52"
+                                                fontFamily="Arial, sans-serif"
+                                                fontWeight="900"
+                                                fontSize="9"
+                                                fill="#e11b22"
+                                            >
+                                                PAY
+                                            </text>
                                         </svg>
                                     </div>
 
@@ -2532,7 +2729,8 @@ export function SandboxPaymentPage() {
                                         Quét mã để thanh toán bằng ứng dụng Ngân hàng hoặc ví VNPAY
                                     </p>
                                     <p className="text-[11px] text-slate-500 mt-1 text-center max-w-sm">
-                                        Hỗ trợ VCB Digibank, BIDV SmartBanking, VietinBank iPay, Agribank, MB Bank, App VNPAY...
+                                        Hỗ trợ VCB Digibank, BIDV SmartBanking, VietinBank iPay,
+                                        Agribank, MB Bank, App VNPAY...
                                     </p>
                                 </div>
 
@@ -2552,7 +2750,8 @@ export function SandboxPaymentPage() {
                         {tab === 'intl' && (
                             <div className="space-y-4 pt-1">
                                 <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 border border-slate-200">
-                                    ℹ️ Chấp nhận thẻ Visa, MasterCard, JCB phát hành trong nước và quốc tế.
+                                    ℹ️ Chấp nhận thẻ Visa, MasterCard, JCB phát hành trong nước và
+                                    quốc tế.
                                 </div>
                                 <Input
                                     label="Số thẻ quốc tế *"
@@ -2560,7 +2759,11 @@ export function SandboxPaymentPage() {
                                     placeholder="4242 4242 4242 4242"
                                 />
                                 <div className="grid grid-cols-2 gap-3">
-                                    <Input label="Hết hạn (MM/YY) *" defaultValue="12/28" placeholder="MM/YY" />
+                                    <Input
+                                        label="Hết hạn (MM/YY) *"
+                                        defaultValue="12/28"
+                                        placeholder="MM/YY"
+                                    />
                                     <Input label="CVV/CVC *" defaultValue="123" placeholder="123" />
                                 </div>
                                 <Button
@@ -2602,9 +2805,13 @@ export function SandboxPaymentPage() {
 
             {/* Footer Cổng thanh toán độc lập */}
             <footer className="bg-white border-t border-slate-200 py-4 px-4 text-center text-[11px] text-slate-500 space-y-1">
-                <div>Cổng thanh toán điện tử VNPAY thuộc Công ty Cổ phần Giải pháp Thanh toán Việt Nam (VNPAY)</div>
+                <div>
+                    Cổng thanh toán điện tử VNPAY thuộc Công ty Cổ phần Giải pháp Thanh toán Việt
+                    Nam (VNPAY)
+                </div>
                 <div className="text-slate-400">
-                    Hotline hỗ trợ: 1900 55 55 77 | Email: hotro@vnpay.vn | Môi trường thử nghiệm Sandbox
+                    Hotline hỗ trợ: 1900 55 55 77 | Email: hotro@vnpay.vn | Môi trường thử nghiệm
+                    Sandbox
                 </div>
             </footer>
         </div>
@@ -2809,7 +3016,9 @@ export function OrderHistoryPage() {
                                             </p>
                                         )}
                                         <div className="space-y-3">
-                                            {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
+                                            {order.items &&
+                                            Array.isArray(order.items) &&
+                                            order.items.length > 0 ? (
                                                 order.items.map((item, idx) => (
                                                     <div
                                                         key={item.productId || idx}
@@ -2842,7 +3051,10 @@ export function OrderHistoryPage() {
                                             ) : (
                                                 <div className="flex items-center justify-between py-2.5 px-3.5 bg-gray-50/80 rounded-lg text-xs text-gray-600 border border-gray-100">
                                                     <div className="flex items-center gap-2">
-                                                        <Package size={16} className="text-gray-400" />
+                                                        <Package
+                                                            size={16}
+                                                            className="text-gray-400"
+                                                        />
                                                         <span>
                                                             {lang === 'en'
                                                                 ? `${(order as any).itemCount || 1} product(s) in this order`
@@ -2871,13 +3083,24 @@ export function OrderHistoryPage() {
                                             </div>
                                             <div className="text-right">
                                                 <span className="text-xs text-gray-500 mr-2">
-                                                    {lang === 'en'
-                                                        ? 'Total payable:'
-                                                        : 'Tổng thanh toán:'}
+                                                    {order.priceFinalized === false
+                                                        ? lang === 'en'
+                                                            ? 'Estimated total:'
+                                                            : 'Tạm tính ước tính:'
+                                                        : lang === 'en'
+                                                          ? 'Total payable:'
+                                                          : 'Tổng thanh toán:'}
                                                 </span>
                                                 <span className="font-bold text-base text-primary">
                                                     {formatCurrency(order.total, lang)}
                                                 </span>
+                                                {order.priceFinalized === false && (
+                                                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                                        {lang === 'en'
+                                                            ? 'Unfinalized'
+                                                            : 'Chưa chốt giá'}
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -3144,6 +3367,11 @@ export function OrderDetailPage() {
                                         <p className="text-sm text-gray-500 mt-1">
                                             ×{item.quantity} ·{' '}
                                             {formatCurrency(item.unitPrice, lang)}
+                                            {order.priceFinalized === false && (
+                                                <span className="ml-1.5 text-[11px] text-amber-700">
+                                                    ({lang === 'en' ? 'estimated' : 'ước tính'})
+                                                </span>
+                                            )}
                                         </p>
                                     </div>
                                     <p className="font-bold text-primary shrink-0">
@@ -3153,8 +3381,20 @@ export function OrderDetailPage() {
                             ))}
                         </div>
 
-                        {/* Tổng kết chi phí */}
+                        {/* Tổng kết chi phí: phân biệt giá chính thức (sau IPN/COD) và giá ước tính lúc tạo đơn */}
                         <div className="pt-4 border-t border-border mt-4 space-y-2 text-sm">
+                            {order.priceFinalized === false && (
+                                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                                    <span>
+                                        {lang === 'en'
+                                            ? 'Prices are provisional until payment succeeds.'
+                                            : 'Đơn giá tạm ước tính; giá chính thức được chốt khi thanh toán thành công.'}
+                                    </span>
+                                    <span className="font-semibold shrink-0 ml-2">
+                                        {lang === 'en' ? 'Unfinalized' : 'Chưa chốt giá'}
+                                    </span>
+                                </div>
+                            )}
                             <div className="flex justify-between text-gray-600">
                                 <span>{tr(lang, 'subtotal')}</span>
                                 <span>{formatCurrency(order.subtotal, lang)}</span>
@@ -3174,7 +3414,13 @@ export function OrderDetailPage() {
                                 </div>
                             )}
                             <div className="flex justify-between font-bold text-base text-gray-900 border-t border-border pt-3 mt-1">
-                                <span>{tr(lang, 'total')}</span>
+                                <span>
+                                    {order.priceFinalized === false
+                                        ? lang === 'en'
+                                            ? 'Estimated Total'
+                                            : 'Tổng tạm tính'
+                                        : tr(lang, 'total')}
+                                </span>
                                 <span className="text-primary text-lg">
                                     {formatCurrency(order.total, lang)}
                                 </span>
@@ -3343,10 +3589,28 @@ export function OrderDetailPage() {
                     <div className="nexus-card p-5">
                         <h3 className="font-bold mb-3">{tr(lang, 'payment')}</h3>
                         <p className="text-sm text-gray-700">{order.paymentMethod}</p>
-                        {/* Winner dùng orderId từ API, server quyết định quyền/hạn/kho và không lấy giá từ màn hình. */}
-                        {order.isAuctionOrder && order.status === 'PENDING_PAYMENT' && (
-                            <WinnerPaymentButton orderId={order.id} />
-                        )}
+                        {/* Winner dùng orderId từ API; đơn thường PENDING_PAYMENT qua VNPAY cũng có thể thanh toán/thử lại với Idempotency-Key mới. */}
+                        {order.status === 'PENDING_PAYMENT' &&
+                            (order.isAuctionOrder ||
+                                order.paymentMethod?.toUpperCase() === 'VNPAY') && (
+                                <WinnerPaymentButton
+                                    orderId={order.id}
+                                    idempotencyKey={
+                                        order.isAuctionOrder
+                                            ? undefined
+                                            : typeof crypto !== 'undefined' && crypto.randomUUID
+                                              ? crypto.randomUUID()
+                                              : undefined
+                                    }
+                                    label={
+                                        order.isAuctionOrder
+                                            ? undefined
+                                            : lang === 'en'
+                                              ? 'Pay / Retry VNPAY'
+                                              : 'Thanh toán / Thử lại VNPAY'
+                                    }
+                                />
+                            )}
                         <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
                             <span className="text-xs text-gray-500">
                                 {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}

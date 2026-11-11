@@ -26,7 +26,7 @@ import lombok.Builder;
  * @param skuId ID của biến thể sản phẩm từ Catalog Service.
  * @param productName Tên sản phẩm được lưu snapshot tại thời điểm mua.
  * @param skuCode Mã SKU của biến thể sản phẩm snapshot.
- * @param unitPrice Đơn giá của một sản phẩm tại thời điểm đặt mua.
+ * @param unitPrice Đơn giá chính thức từ attempt thành công, null khi chưa thu tiền.
  * @param quantity Số lượng sản phẩm đặt mua (quantity > 0).
  * @param subtotal Thành tiền của dòng sản phẩm (unitPrice * quantity).
  */
@@ -38,6 +38,8 @@ public record OrderItemResponse(
         String skuCode,
         BigDecimal unitPrice,
         Integer quantity,
-        BigDecimal subtotal
+        BigDecimal subtotal,
+        BigDecimal estimatedUnitPrice,
+        BigDecimal estimatedSubtotal
 ) {
 }

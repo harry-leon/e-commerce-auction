@@ -53,6 +53,7 @@ import {
     type Envelope,
 } from '../../api/client'
 import { useLoad } from '../../hooks/useLoad'
+import { AdminPricingRulesPanel } from './AdminPricingRulesPanel'
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
@@ -1498,7 +1499,9 @@ export function AdminAuctionsPage() {
 
     // Dữ liệu danh sách phiên đấu giá
     const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
-    const [sellerAccounts, setSellerAccounts] = useState<Record<string, Pick<ApiUser, 'fullName' | 'email'>>>({})
+    const [sellerAccounts, setSellerAccounts] = useState<
+        Record<string, Pick<ApiUser, 'fullName' | 'email'>>
+    >({})
 
     // Tải danh sách toàn bộ phiên đấu giá
     const loadAuctions = async () => {
@@ -1526,12 +1529,14 @@ export function AdminAuctionsPage() {
     }, [createdAuctions, auctionReviews])
 
     // Tra cứu theo từng sellerId duy nhất trong hàng chờ; không gọi User API cho các phiên khác hoặc mock users đã có sẵn.
-    const pendingSellerIds = [...new Set(
-        liveAuctions
-            .filter((auction) => auction.status === 'pending_approval')
-            .map((auction) => auction.sellerId)
-            .filter((id) => id && !USERS.some((user) => user.id === id)),
-    )].sort()
+    const pendingSellerIds = [
+        ...new Set(
+            liveAuctions
+                .filter((auction) => auction.status === 'pending_approval')
+                .map((auction) => auction.sellerId)
+                .filter((id) => id && !USERS.some((user) => user.id === id)),
+        ),
+    ].sort()
     const pendingSellerIdsKey = pendingSellerIds.join('|')
 
     useEffect(() => {
@@ -1539,15 +1544,19 @@ export function AdminAuctionsPage() {
         let active = true
         const sellerIds = pendingSellerIdsKey.split('|')
 
-        Promise.all(sellerIds.map(async (sellerId) => {
-            try {
-                const response = await api<ApiUser | { data: ApiUser }>(`/users/${encodeURIComponent(sellerId)}`)
-                const account = 'data' in response ? response.data : response
-                return [sellerId, { fullName: account.fullName, email: account.email }] as const
-            } catch {
-                return null
-            }
-        })).then((accounts) => {
+        Promise.all(
+            sellerIds.map(async (sellerId) => {
+                try {
+                    const response = await api<ApiUser | { data: ApiUser }>(
+                        `/users/${encodeURIComponent(sellerId)}`,
+                    )
+                    const account = 'data' in response ? response.data : response
+                    return [sellerId, { fullName: account.fullName, email: account.email }] as const
+                } catch {
+                    return null
+                }
+            }),
+        ).then((accounts) => {
             if (!active) return
             setSellerAccounts((current) => ({
                 ...current,
@@ -1593,7 +1602,11 @@ export function AdminAuctionsPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to approve auction' : 'Không thể phê duyệt phiên đấu giá'),
+                message:
+                    err?.message ||
+                    (lang === 'en'
+                        ? 'Failed to approve auction'
+                        : 'Không thể phê duyệt phiên đấu giá'),
             })
         }
     }
@@ -1614,10 +1627,7 @@ export function AdminAuctionsPage() {
             reviewAuction(rejectAuctionId, 'rejected', rejectReason.trim())
             showToast({
                 type: 'error',
-                message:
-                    lang === 'en'
-                        ? 'Auction rejected.'
-                        : 'Đã từ chối phiên đấu giá.',
+                message: lang === 'en' ? 'Auction rejected.' : 'Đã từ chối phiên đấu giá.',
             })
             setRejectAuctionId(null)
             setRejectReason('')
@@ -1626,7 +1636,11 @@ export function AdminAuctionsPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to reject auction' : 'Không thể từ chối phiên đấu giá'),
+                message:
+                    err?.message ||
+                    (lang === 'en'
+                        ? 'Failed to reject auction'
+                        : 'Không thể từ chối phiên đấu giá'),
             })
         } finally {
             setRejecting(false)
@@ -1661,7 +1675,9 @@ export function AdminAuctionsPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to cancel auction' : 'Không thể cưỡng chế hủy phiên'),
+                message:
+                    err?.message ||
+                    (lang === 'en' ? 'Failed to cancel auction' : 'Không thể cưỡng chế hủy phiên'),
             })
         } finally {
             setCancelling(false)
@@ -1672,18 +1688,31 @@ export function AdminAuctionsPage() {
     const handlePauseAuction = async () => {
         if (!pauseAuctionId) return
         if (!pauseReason.trim()) {
-            showToast({ type: 'error', message: lang === 'en' ? 'Reason is required' : 'Vui lòng nhập lý do tạm dừng' })
+            showToast({
+                type: 'error',
+                message: lang === 'en' ? 'Reason is required' : 'Vui lòng nhập lý do tạm dừng',
+            })
             return
         }
         setPausing(true)
         try {
             await auctionsApi.setAuctionPaused(pauseAuctionId, true, pauseReason.trim())
-            showToast({ type: 'success', message: lang === 'en' ? 'Auction paused.' : 'Đã tạm dừng phiên đấu giá.' })
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Auction paused.' : 'Đã tạm dừng phiên đấu giá.',
+            })
             setPauseAuctionId(null)
             setPauseReason('')
             await loadAuctions()
         } catch (err: any) {
-            showToast({ type: 'error', message: err?.message || (lang === 'en' ? 'Unable to pause auction.' : 'Không thể tạm dừng phiên đấu giá.') })
+            showToast({
+                type: 'error',
+                message:
+                    err?.message ||
+                    (lang === 'en'
+                        ? 'Unable to pause auction.'
+                        : 'Không thể tạm dừng phiên đấu giá.'),
+            })
         } finally {
             setPausing(false)
         }
@@ -1691,11 +1720,25 @@ export function AdminAuctionsPage() {
 
     const handleResumeAuction = async (id: string) => {
         try {
-            await auctionsApi.setAuctionPaused(id, false, lang === 'en' ? 'Admin resumed auction' : 'Quản trị viên tiếp tục phiên')
-            showToast({ type: 'success', message: lang === 'en' ? 'Auction resumed.' : 'Đã tiếp tục phiên đấu giá.' })
+            await auctionsApi.setAuctionPaused(
+                id,
+                false,
+                lang === 'en' ? 'Admin resumed auction' : 'Quản trị viên tiếp tục phiên',
+            )
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Auction resumed.' : 'Đã tiếp tục phiên đấu giá.',
+            })
             await loadAuctions()
         } catch (err: any) {
-            showToast({ type: 'error', message: err?.message || (lang === 'en' ? 'Unable to resume auction.' : 'Không thể tiếp tục phiên đấu giá.') })
+            showToast({
+                type: 'error',
+                message:
+                    err?.message ||
+                    (lang === 'en'
+                        ? 'Unable to resume auction.'
+                        : 'Không thể tiếp tục phiên đấu giá.'),
+            })
         }
     }
 
@@ -1718,13 +1761,21 @@ export function AdminAuctionsPage() {
             const seller = (a.sellerName || '').toLowerCase()
             const id = (a.id || '').toLowerCase()
             const sku = (a.product?.sku || '').toLowerCase()
-            return name.includes(q) || nameVi.includes(q) || seller.includes(q) || id.includes(q) || sku.includes(q)
+            return (
+                name.includes(q) ||
+                nameVi.includes(q) ||
+                seller.includes(q) ||
+                id.includes(q) ||
+                sku.includes(q)
+            )
         })
 
     const pendingCount = allAuctions.filter((a) => a.status === 'pending_approval').length
     const activeCount = allAuctions.filter((a) => a.status === 'active').length
     const scheduledCount = allAuctions.filter((a) => a.status === 'scheduled').length
-    const cancelledCount = allAuctions.filter((a) => ['cancelled', 'rejected'].includes(a.status)).length
+    const cancelledCount = allAuctions.filter((a) =>
+        ['cancelled', 'rejected'].includes(a.status),
+    ).length
 
     return (
         <AdminLayout title={tr(lang, 'auctionManagement')}>
@@ -1745,19 +1796,27 @@ export function AdminAuctionsPage() {
             {/* Thống kê chỉ số nhanh */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="nexus-card p-4">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Total Auctions' : 'Tổng số phiên'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Total Auctions' : 'Tổng số phiên'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-gray-800">{allAuctions.length}</p>
                 </div>
                 <div className="nexus-card p-4 border-l-4 border-l-green-500">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Active Sessions' : 'Đang diễn ra'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Active Sessions' : 'Đang diễn ra'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-green-600">{activeCount}</p>
                 </div>
                 <div className="nexus-card p-4 border-l-4 border-l-amber-500">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Pending Approval' : 'Chờ duyệt'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Pending Approval' : 'Chờ duyệt'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-amber-600">{pendingCount}</p>
                 </div>
                 <div className="nexus-card p-4 border-l-4 border-l-red-500">
-                    <p className="text-xs text-gray-500">{lang === 'en' ? 'Cancelled / Violations' : 'Đã hủy / Vi phạm'}</p>
+                    <p className="text-xs text-gray-500">
+                        {lang === 'en' ? 'Cancelled / Violations' : 'Đã hủy / Vi phạm'}
+                    </p>
                     <p className="text-2xl font-bold mt-1 text-red-600">{cancelledCount}</p>
                 </div>
             </div>
@@ -1782,16 +1841,28 @@ export function AdminAuctionsPage() {
                             label: tr(lang, 'statusActive'),
                             count: activeCount,
                         },
-                        { id: 'paused', label: lang === 'en' ? 'Paused' : 'Tạm dừng', count: allAuctions.filter((a) => a.status === 'paused').length },
+                        {
+                            id: 'paused',
+                            label: lang === 'en' ? 'Paused' : 'Tạm dừng',
+                            count: allAuctions.filter((a) => a.status === 'paused').length,
+                        },
                         { id: 'ended', label: tr(lang, 'statusEnded') },
-                        { id: 'cancelled', label: tr(lang, 'statusCancelled'), count: cancelledCount },
+                        {
+                            id: 'cancelled',
+                            label: tr(lang, 'statusCancelled'),
+                            count: cancelledCount,
+                        },
                     ]}
                     active={tab}
                     onChange={setTab}
                 />
                 <div className="w-full md:w-72">
                     <Input
-                        placeholder={lang === 'en' ? 'Search by product, seller, SKU...' : 'Tìm theo sản phẩm, seller, SKU...'}
+                        placeholder={
+                            lang === 'en'
+                                ? 'Search by product, seller, SKU...'
+                                : 'Tìm theo sản phẩm, seller, SKU...'
+                        }
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         icon={<Search size={16} />}
@@ -1806,7 +1877,9 @@ export function AdminAuctionsPage() {
                         {
                             key: 'id',
                             label: 'ID',
-                            render: (r: any) => <span className="font-mono text-xs text-gray-600">{r.id}</span>,
+                            render: (r: any) => (
+                                <span className="font-mono text-xs text-gray-600">{r.id}</span>
+                            ),
                         },
                         {
                             key: 'product',
@@ -1814,15 +1887,22 @@ export function AdminAuctionsPage() {
                             render: (r: any) => (
                                 <div className="flex items-center gap-3">
                                     <img
-                                        src={r.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        src={
+                                            r.product?.images?.[0] ||
+                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                        }
                                         alt=""
                                         className="w-10 h-10 object-cover rounded-lg"
                                     />
                                     <div>
                                         <p className="font-semibold text-sm line-clamp-1">
-                                            {lang === 'vi' ? r.product?.nameVi || r.product?.name : r.product?.name}
+                                            {lang === 'vi'
+                                                ? r.product?.nameVi || r.product?.name
+                                                : r.product?.name}
                                         </p>
-                                        <p className="text-xs text-gray-400">SKU: {r.product?.sku || 'N/A'}</p>
+                                        <p className="text-xs text-gray-400">
+                                            SKU: {r.product?.sku || 'N/A'}
+                                        </p>
                                     </div>
                                 </div>
                             ),
@@ -1838,11 +1918,19 @@ export function AdminAuctionsPage() {
                                 const email = r.sellerEmail || account?.email
                                 return (
                                     <div>
-                                        <p className="text-sm font-medium">{accountName || r.sellerName}</p>
-                                        {accountName && r.sellerName && accountName !== r.sellerName && (
-                                            <p className="text-xs text-gray-500">{tr(lang, 'sellerStore')}: {r.sellerName}</p>
-                                        )}
-                                        <p className="text-xs text-gray-400 font-mono">{email || r.sellerId}</p>
+                                        <p className="text-sm font-medium">
+                                            {accountName || r.sellerName}
+                                        </p>
+                                        {accountName &&
+                                            r.sellerName &&
+                                            accountName !== r.sellerName && (
+                                                <p className="text-xs text-gray-500">
+                                                    {tr(lang, 'sellerStore')}: {r.sellerName}
+                                                </p>
+                                            )}
+                                        <p className="text-xs text-gray-400 font-mono">
+                                            {email || r.sellerId}
+                                        </p>
                                     </div>
                                 )
                             },
@@ -1875,8 +1963,12 @@ export function AdminAuctionsPage() {
                             label: lang === 'en' ? 'Duration' : 'Khung giờ',
                             render: (r: any) => (
                                 <div className="text-xs text-gray-500">
-                                    <p className="whitespace-nowrap">{formatDateTime(r.startTime, lang)}</p>
-                                    <p className="whitespace-nowrap text-gray-400">→ {formatDateTime(r.endTime, lang)}</p>
+                                    <p className="whitespace-nowrap">
+                                        {formatDateTime(r.startTime, lang)}
+                                    </p>
+                                    <p className="whitespace-nowrap text-gray-400">
+                                        → {formatDateTime(r.endTime, lang)}
+                                    </p>
                                 </div>
                             ),
                         },
@@ -1933,28 +2025,43 @@ export function AdminAuctionsPage() {
                                             </div>
                                         ) : ['scheduled', 'active', 'paused'].includes(status) ? (
                                             <div className="flex gap-1.5 items-center">
-                                            {status === 'paused' ? (
-                                                <Button variant="primary" size="sm" onClick={(e) => { e.stopPropagation(); handleResumeAuction(r.id) }}>
-                                                    {tr(lang, 'resumeAuction')}
+                                                {status === 'paused' ? (
+                                                    <Button
+                                                        variant="primary"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleResumeAuction(r.id)
+                                                        }}
+                                                    >
+                                                        {tr(lang, 'resumeAuction')}
+                                                    </Button>
+                                                ) : status === 'active' ? (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setPauseAuctionId(r.id)
+                                                            setPauseReason('')
+                                                        }}
+                                                    >
+                                                        {tr(lang, 'pauseAuction')}
+                                                    </Button>
+                                                ) : null}
+                                                <Button
+                                                    variant="danger"
+                                                    size="sm"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        setCancelAuctionId(r.id)
+                                                        setCancelReason('')
+                                                        setCancelReasonError('')
+                                                        setCancelOpen(true)
+                                                    }}
+                                                >
+                                                    {lang === 'en' ? 'Force Cancel' : 'Hủy vi phạm'}
                                                 </Button>
-                                            ) : status === 'active' ? (
-                                                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setPauseAuctionId(r.id); setPauseReason('') }}>
-                                                    {tr(lang, 'pauseAuction')}
-                                                </Button>
-                                            ) : null}
-                                            <Button
-                                                variant="danger"
-                                                size="sm"
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setCancelAuctionId(r.id)
-                                                    setCancelReason('')
-                                                    setCancelReasonError('')
-                                                    setCancelOpen(true)
-                                                }}
-                                            >
-                                                {lang === 'en' ? 'Force Cancel' : 'Hủy vi phạm'}
-                                            </Button>
                                             </div>
                                         ) : null}
                                     </div>
@@ -1991,11 +2098,7 @@ export function AdminAuctionsPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button
-                            variant="danger"
-                            loading={cancelling}
-                            onClick={handleForceCancel}
-                        >
+                        <Button variant="danger" loading={cancelling} onClick={handleForceCancel}>
                             {lang === 'en' ? 'Confirm Force Cancel' : 'Xác nhận hủy phiên'}
                         </Button>
                     </>
@@ -2031,17 +2134,36 @@ export function AdminAuctionsPage() {
             {/* Modal Admin Từ chối Phiên chờ duyệt */}
             <Modal
                 open={!!pauseAuctionId}
-                onClose={() => { setPauseAuctionId(null); setPauseReason('') }}
+                onClose={() => {
+                    setPauseAuctionId(null)
+                    setPauseReason('')
+                }}
                 title={tr(lang, 'pauseAuction')}
                 size="sm"
                 footer={
                     <>
-                        <Button variant="outline" onClick={() => { setPauseAuctionId(null); setPauseReason('') }}>{tr(lang, 'cancel')}</Button>
-                        <Button variant="primary" loading={pausing} onClick={handlePauseAuction}>{tr(lang, 'pauseAuction')}</Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setPauseAuctionId(null)
+                                setPauseReason('')
+                            }}
+                        >
+                            {tr(lang, 'cancel')}
+                        </Button>
+                        <Button variant="primary" loading={pausing} onClick={handlePauseAuction}>
+                            {tr(lang, 'pauseAuction')}
+                        </Button>
                     </>
                 }
             >
-                <Textarea label={`${tr(lang, 'pauseReason')} *`} placeholder={tr(lang, 'pauseReason')} value={pauseReason} onChange={(event) => setPauseReason(event.target.value)} rows={3} />
+                <Textarea
+                    label={`${tr(lang, 'pauseReason')} *`}
+                    placeholder={tr(lang, 'pauseReason')}
+                    value={pauseReason}
+                    onChange={(event) => setPauseReason(event.target.value)}
+                    rows={3}
+                />
             </Modal>
 
             <Modal
@@ -2065,11 +2187,7 @@ export function AdminAuctionsPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button
-                            variant="danger"
-                            loading={rejecting}
-                            onClick={handleReject}
-                        >
+                        <Button variant="danger" loading={rejecting} onClick={handleReject}>
                             {lang === 'en' ? 'Reject Auction' : 'Từ chối đấu giá'}
                         </Button>
                     </>
@@ -2106,63 +2224,113 @@ export function AdminAuctionsPage() {
             <Modal
                 open={!!selectedAuction}
                 onClose={() => setSelectedAuction(null)}
-                title={lang === 'en' ? 'Auction Details & Audit' : 'Chi tiết phiên đấu giá & Kiểm toán'}
+                title={
+                    lang === 'en' ? 'Auction Details & Audit' : 'Chi tiết phiên đấu giá & Kiểm toán'
+                }
                 size="md"
             >
                 {selectedAuction && (
                     <div className="space-y-4">
                         <div className="flex gap-4 items-start p-3 bg-gray-50 rounded-xl">
                             <img
-                                src={selectedAuction.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'}
+                                src={
+                                    selectedAuction.product?.images?.[0] ||
+                                    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'
+                                }
                                 alt=""
                                 className="w-16 h-16 object-cover rounded-lg border"
                             />
                             <div>
                                 <h4 className="font-bold text-base text-gray-900">
-                                    {lang === 'vi' ? selectedAuction.product?.nameVi || selectedAuction.product?.name : selectedAuction.product?.name}
+                                    {lang === 'vi'
+                                        ? selectedAuction.product?.nameVi ||
+                                          selectedAuction.product?.name
+                                        : selectedAuction.product?.name}
                                 </h4>
                                 <p className="text-xs text-gray-500 mt-0.5">
-                                    SKU: <span className="font-mono text-gray-700">{selectedAuction.product?.sku || 'N/A'}</span> · ID: <span className="font-mono text-gray-700">{selectedAuction.id}</span>
+                                    SKU:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {selectedAuction.product?.sku || 'N/A'}
+                                    </span>{' '}
+                                    · ID:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {selectedAuction.id}
+                                    </span>
                                 </p>
                                 <div className="mt-2">
-                                    <StatusBadge status={selectedAuction.status} label={statusLabel(selectedAuction.status)} />
+                                    <StatusBadge
+                                        status={selectedAuction.status}
+                                        label={statusLabel(selectedAuction.status)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-sm">
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Seller' : 'Người bán'}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Seller' : 'Người bán'}
+                                </span>
                                 <span className="font-semibold">{selectedAuction.sellerName}</span>
-                                <span className="text-xs text-gray-400 block font-mono">{selectedAuction.sellerId}</span>
+                                <span className="text-xs text-gray-400 block font-mono">
+                                    {selectedAuction.sellerId}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Visibility' : 'Chế độ hiển thị'}</span>
-                                <span className="font-semibold capitalize">{selectedAuction.visibility}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Visibility' : 'Chế độ hiển thị'}
+                                </span>
+                                <span className="font-semibold capitalize">
+                                    {selectedAuction.visibility}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'startingPrice')}</span>
-                                <span className="font-semibold text-gray-800">{formatCurrency(selectedAuction.startingPrice, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'startingPrice')}
+                                </span>
+                                <span className="font-semibold text-gray-800">
+                                    {formatCurrency(selectedAuction.startingPrice, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'currentBid')}</span>
-                                <span className="font-bold text-auction">{formatCurrency(selectedAuction.currentBid, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'currentBid')}
+                                </span>
+                                <span className="font-bold text-auction">
+                                    {formatCurrency(selectedAuction.currentBid, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'minIncrement')}</span>
-                                <span className="font-semibold">{formatCurrency(selectedAuction.minIncrement, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'minIncrement')}
+                                </span>
+                                <span className="font-semibold">
+                                    {formatCurrency(selectedAuction.minIncrement, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{lang === 'en' ? 'Total Bids' : 'Tổng số lượt đặt'}</span>
-                                <span className="font-semibold">{selectedAuction.bidCount} lượt</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {lang === 'en' ? 'Total Bids' : 'Tổng số lượt đặt'}
+                                </span>
+                                <span className="font-semibold">
+                                    {selectedAuction.bidCount} lượt
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'startTime')}</span>
-                                <span className="text-xs text-gray-700">{formatDateTime(selectedAuction.startTime, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'startTime')}
+                                </span>
+                                <span className="text-xs text-gray-700">
+                                    {formatDateTime(selectedAuction.startTime, lang)}
+                                </span>
                             </div>
                             <div className="p-3 bg-gray-50 rounded-lg">
-                                <span className="text-gray-500 text-xs block">{tr(lang, 'endTime')}</span>
-                                <span className="text-xs text-gray-700">{formatDateTime(selectedAuction.endTime, lang)}</span>
+                                <span className="text-gray-500 text-xs block">
+                                    {tr(lang, 'endTime')}
+                                </span>
+                                <span className="text-xs text-gray-700">
+                                    {formatDateTime(selectedAuction.endTime, lang)}
+                                </span>
                             </div>
                         </div>
 
@@ -2170,9 +2338,13 @@ export function AdminAuctionsPage() {
                         {selectedAuction.cancelReason && (
                             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                                 <p className="text-xs font-bold text-red-800 uppercase tracking-wider mb-1">
-                                    {lang === 'en' ? 'Cancellation / Rejection Reason:' : 'Lý do Hủy / Từ chối:'}
+                                    {lang === 'en'
+                                        ? 'Cancellation / Rejection Reason:'
+                                        : 'Lý do Hủy / Từ chối:'}
                                 </p>
-                                <p className="text-sm text-red-700">{selectedAuction.cancelReason}</p>
+                                <p className="text-sm text-red-700">
+                                    {selectedAuction.cancelReason}
+                                </p>
                             </div>
                         )}
 
@@ -2187,14 +2359,20 @@ export function AdminAuctionsPage() {
                                         <thead className="bg-gray-100 text-gray-600">
                                             <tr>
                                                 <th className="p-2 text-left">Bidder</th>
-                                                <th className="p-2 text-right">{lang === 'en' ? 'Amount' : 'Mức giá'}</th>
-                                                <th className="p-2 text-right">{lang === 'en' ? 'Time' : 'Thời gian'}</th>
+                                                <th className="p-2 text-right">
+                                                    {lang === 'en' ? 'Amount' : 'Mức giá'}
+                                                </th>
+                                                <th className="p-2 text-right">
+                                                    {lang === 'en' ? 'Time' : 'Thời gian'}
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
                                             {selectedAuction.bids.map((b) => (
                                                 <tr key={b.id} className="hover:bg-gray-50">
-                                                    <td className="p-2 font-medium">{b.bidderName}</td>
+                                                    <td className="p-2 font-medium">
+                                                        {b.bidderName}
+                                                    </td>
                                                     <td className="p-2 text-right font-bold text-auction">
                                                         {formatCurrency(b.amount, lang)}
                                                     </td>
@@ -2208,7 +2386,9 @@ export function AdminAuctionsPage() {
                                 </div>
                             ) : (
                                 <p className="text-xs text-gray-400 italic">
-                                    {lang === 'en' ? 'No bids placed yet.' : 'Chưa có lượt đặt giá nào.'}
+                                    {lang === 'en'
+                                        ? 'No bids placed yet.'
+                                        : 'Chưa có lượt đặt giá nào.'}
                                 </p>
                             )}
                         </div>
@@ -2637,7 +2817,8 @@ export function AdminSystemConfigPage() {
     ]
     return (
         <AdminLayout title={tr(lang, 'systemConfig')}>
-            <div className="max-w-3xl space-y-5">
+            <div className="max-w-4xl space-y-6">
+                <AdminPricingRulesPanel />
                 {CONFIG_GROUPS.map((group) => (
                     <div key={group.title} className="nexus-card">
                         <div className="p-4 border-b border-border font-bold">{group.title}</div>
@@ -2771,7 +2952,10 @@ export function AdminProductsPage() {
         id: p.id,
         name: p.name,
         nameVi: p.name,
-        price: p.skus?.[0]?.price || 0,
+        price: p.minPrice ?? p.skus?.[0]?.price ?? 0,
+        minPrice: p.minPrice ?? null,
+        maxPrice: p.maxPrice ?? null,
+        skuCount: p.skus?.length ?? 0,
         sku: p.skus?.[0]?.skuCode || '',
         category: 'Thiết bị điện tử',
         sellerName: 'Nexus Store',
@@ -2847,9 +3031,22 @@ export function AdminProductsPage() {
                         {
                             key: 'price',
                             label: tr(lang, 'price'),
-                            render: (r: any) => (
-                                <span className="font-bold">{formatCurrency(r.price, lang)}</span>
-                            ),
+                            render: (r: any) => {
+                                const minP = r.minPrice ?? r.price
+                                const maxP = r.maxPrice ?? minP
+                                return (
+                                    <div>
+                                        <span className="font-bold">
+                                            {minP !== maxP
+                                                ? `${formatCurrency(minP, lang)} – ${formatCurrency(maxP, lang)}`
+                                                : formatCurrency(minP, lang)}
+                                        </span>
+                                        <p className="text-[11px] text-gray-400">
+                                            {r.skuCount} SKU
+                                        </p>
+                                    </div>
+                                )
+                            },
                         },
                         { key: 'sellerName', label: lang === 'en' ? 'Seller' : 'Người bán' },
                         {

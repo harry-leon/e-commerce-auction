@@ -36,7 +36,7 @@ import org.hibernate.type.SqlTypes;
  * <ul>
  *   <li>Chứa các trường ánh xạ bảng, mối quan hệ và phương thức tiện ích quản lý quan hệ hai chiều.</li>
  *   <li>Toàn bộ quy tắc xác thực máy trạng thái và phân quyền do OrderStatusStateMachine và OrderService đảm nhiệm.</li>
- *   <li>Tuân thủ nghiêm ngặt Hibernate ddl-auto: validate (khớp 100% cột vật lý trong PostgreSQL, không thêm trường ngoài ERD).</li>
+ *   <li>Hibernate ddl-auto: validate đối chiếu schema Flyway; V10 tách estimated_* khỏi giá chính thức nullable.</li>
  * </ul>
  */
 @Entity
@@ -47,6 +47,15 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Order {
+    /** Giá dự kiến lúc tạo đơn; tách biệt giá chính thức và có thể khác giá mới khi tạo attempt. */
+    @Column(name = "estimated_subtotal", precision = 15, scale = 2) private BigDecimal estimatedSubtotal;
+    @Column(name = "estimated_shipping_fee", precision = 15, scale = 2) private BigDecimal estimatedShippingFee;
+    @Column(name = "estimated_discount", precision = 15, scale = 2) private BigDecimal estimatedDiscount;
+    @Column(name = "estimated_total", precision = 15, scale = 2) private BigDecimal estimatedTotal;
+    /** true chỉ sau xác nhận thu tiền; mặc định true giữ tương thích entity lịch sử, luồng tạo mới đặt false. */
+    @Column(name = "price_finalized", nullable = false)
+    @Builder.Default
+    private boolean priceFinalized = true;
     /** Snapshot checkout và phiếu kho cùng đơn để IPN/outbox không phụ thuộc token hoặc giỏ đã xóa. */
     @ElementCollection
     @CollectionTable(name = "order_reservations", joinColumns = @JoinColumn(name = "order_id"))
@@ -100,23 +109,23 @@ public class Order {
     @Builder.Default
     private OrderStatus status = OrderStatus.PENDING_PAYMENT;
 
-    /** Tổng giá trị tiền hàng trước giảm giá (subtotal >= 0). */
-    @Column(nullable = false, precision = 15, scale = 2)
+    /** Tổng tiền hàng chính thức; null trên đơn mới chưa được xác nhận thu tiền. */
+    @Column(precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal subtotal = BigDecimal.ZERO;
 
-    /** Cước phí vận chuyển (shipping_fee >= 0). */
-    @Column(name = "shipping_fee", nullable = false, precision = 15, scale = 2)
+    /** Phí vận chuyển chính thức, được chốt cùng tổng đơn sau thu tiền. */
+    @Column(name = "shipping_fee", precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal shippingFee = BigDecimal.ZERO;
 
     /** Số tiền được giảm giá qua voucher hoặc khuyến mãi (discount >= 0). */
-    @Column(nullable = false, precision = 15, scale = 2)
+    @Column(precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal discount = BigDecimal.ZERO;
 
-    /** Tổng số tiền người mua phải thanh toán: max(0, subtotal - discount) + shipping_fee. */
-    @Column(nullable = false, precision = 15, scale = 2)
+    /** Tổng tiền chính thức từ snapshot attempt đã SUCCESS; không dùng estimatedTotal để đối soát IPN. */
+    @Column(precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal total = BigDecimal.ZERO;
 

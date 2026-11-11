@@ -37,11 +37,11 @@ class SkuLookupServiceTest {
         sku.setId(id);
         sku.setProduct(product);
         sku.setSkuCode("SKU");
-        sku.setPrice(new BigDecimal("125000"));
+        sku.setOriginalPrice(new BigDecimal("125000"));
         sku.setStatus(SkuStatus.ACTIVE);
         when(skus.findById(id)).thenReturn(Optional.of(sku));
         var snapshot = new SkuLookupService(skus).get(id);
-        assertEquals(new BigDecimal("125000"), snapshot.price());
+        assertEquals(new BigDecimal("125000.00"), snapshot.price());
         assertEquals(product.getSellerId(), snapshot.sellerId());
         assertNull(snapshot.stockQuantity());
         assertNull(snapshot.thumbnailUrl());

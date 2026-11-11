@@ -36,8 +36,15 @@ import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi } from '../../api/auctions'
-import { api, ApiClientError, type ApiCategory, type ApiProduct, type Envelope } from '../../api/client'
+import {
+    api,
+    ApiClientError,
+    type ApiCategory,
+    type ApiProduct,
+    type Envelope,
+} from '../../api/client'
 import { useLoad } from '../../hooks/useLoad'
+import { previewDynamicPrice, type PricePreviewResponse } from '../../api/pricing'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
 const VIETNAMESE_BANKS = [
@@ -502,8 +509,7 @@ export function SellerProductListPage() {
 
     // Kiểm tra xem seller có ID dạng UUID hợp lệ từ backend hay không
     const isUuid = Boolean(
-        user?.id &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
+        user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
     )
     const productUrl = isUuid
         ? `/products/seller/${user?.id}?v=${refreshKey}`
@@ -527,19 +533,24 @@ export function SellerProductListPage() {
      */
     const rawList = (prodEnvelope as any)?.data ?? prodEnvelope
     const apiProducts = Array.isArray(rawList)
-        ? rawList.map((p: ApiProduct) => ({
-              id: p.id,
-              name: p.name,
-              nameVi: p.name,
-              price: p.skus?.[0]?.price ?? 0,
-              sku: p.skus?.[0]?.skuCode ?? '',
-              stock: (p.skus?.[0] as any)?.stock ?? 10,
-              images:
-                  p.images && p.images.length > 0
-                      ? p.images.map((img) => img.url)
-                      : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
-              status: (p.status ? p.status.toLowerCase() : 'draft') as ProductStatus,
-          }))
+        ? rawList.map((p: ApiProduct) => {
+              const firstActive = (p.skus || []).find((s) => s.status === 'ACTIVE') ?? p.skus?.[0]
+              return {
+                  id: p.id,
+                  name: p.name,
+                  nameVi: p.name,
+                  price: p.minPrice ?? firstActive?.price ?? 0,
+                  minPrice: p.minPrice ?? null,
+                  maxPrice: p.maxPrice ?? null,
+                  sku: firstActive?.skuCode ?? '',
+                  stock: (firstActive as any)?.stock ?? 10,
+                  images:
+                      p.images && p.images.length > 0
+                          ? p.images.map((img) => img.url)
+                          : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+                  status: (p.status ? p.status.toLowerCase() : 'draft') as ProductStatus,
+              }
+          })
         : []
 
     // Gộp sản phẩm từ backend và sản phẩm tạo cục bộ (ưu tiên bản ghi cục bộ mới hơn, loại bỏ trùng lặp id/sku)
@@ -654,11 +665,17 @@ export function SellerProductListPage() {
                             {
                                 key: 'price',
                                 label: tr(lang, 'price'),
-                                render: (r: any) => (
-                                    <span className="font-bold text-primary">
-                                        {formatCurrency(r.price, lang)}
-                                    </span>
-                                ),
+                                render: (r: any) => {
+                                    const lo = r.minPrice ?? r.price
+                                    const hi = r.maxPrice ?? lo
+                                    return (
+                                        <span className="font-bold text-primary">
+                                            {lo !== hi
+                                                ? `${formatCurrency(lo, lang)} – ${formatCurrency(hi, lang)}`
+                                                : formatCurrency(lo, lang)}
+                                        </span>
+                                    )
+                                },
                             },
                             {
                                 key: 'stock',
@@ -734,8 +751,7 @@ export function SellerProductListPage() {
                     } catch {}
                     showToast({
                         type: 'success',
-                        message:
-                            lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
+                        message: lang === 'en' ? 'Product deleted.' : 'Đã xóa sản phẩm thành công.',
                     })
                     setRefreshKey((k) => k + 1)
                     setDeleteId(null)
@@ -758,9 +774,11 @@ export function CreateProductPage() {
     const { lang, navigate, showToast } = useApp()
     const [saving, setSaving] = useState(false)
     const [name, setName] = useState('')
-    const [price, setPrice] = useState('')
+    const [originalPrice, setOriginalPrice] = useState('')
     const [stock, setStock] = useState('')
     const [sku, setSku] = useState('')
+    const [pricePreview, setPricePreview] = useState<PricePreviewResponse | null>(null)
+    const [previewLoading, setPreviewLoading] = useState(false)
     const [status, setStatus] = useState('active')
     const [enableAuction, setEnableAuction] = useState(false)
     const [nameError, setNameError] = useState('')
@@ -771,24 +789,60 @@ export function CreateProductPage() {
     const rawCats = (catEnvelope as any)?.data ?? catEnvelope
     const categoriesList: ApiCategory[] = Array.isArray(rawCats) ? rawCats : []
 
+    // Tự động gọi Backend /pricing-rules/preview mỗi khi người bán nhập giá nhập tối thiểu hoặc đổi danh mục
+    useEffect(() => {
+        const numericMin = Number(originalPrice)
+        if (!originalPrice || !Number.isFinite(numericMin) || numericMin < 0) {
+            setPricePreview(null)
+            return
+        }
+        let cancelled = false
+        const timer = window.setTimeout(async () => {
+            setPreviewLoading(true)
+            try {
+                const res = await previewDynamicPrice(numericMin, categoryId || null)
+                if (!cancelled) setPricePreview(res)
+            } catch {
+                if (!cancelled) setPricePreview(null)
+            } finally {
+                if (!cancelled) setPreviewLoading(false)
+            }
+        }, 250)
+        return () => {
+            cancelled = true
+            window.clearTimeout(timer)
+        }
+    }, [originalPrice, categoryId])
+
     // Gọi API Catalog Service tạo sản phẩm mới vào PostgreSQL, hỗ trợ lưu trữ cục bộ khi demo/offline
     const save = async () => {
         if (!name) {
             setNameError(tr(lang, 'required'))
             return
         }
+        const numericMinPrice = Number(originalPrice)
+        if (!originalPrice || !Number.isFinite(numericMinPrice) || numericMinPrice < 0) {
+            showToast({
+                type: 'warning',
+                message:
+                    lang === 'en'
+                        ? 'Min / Cost price must be a number >= 0.'
+                        : 'Giá nhập tối thiểu (Min Price) phải là số >= 0.',
+            })
+            return
+        }
         setSaving(true)
         setNameError('')
 
         const generatedSku = sku || `SKU-${Date.now().toString().slice(-6)}`
-        const numericPrice = Number(price) || 100
+        const estimatedSelling = pricePreview?.sellingPrice ?? numericMinPrice
         const numericStock = Number(stock) || 10
 
         const newProduct = {
             id: `prod-${Date.now()}`,
             name,
             nameVi: name,
-            price: numericPrice,
+            price: estimatedSelling,
             sku: generatedSku,
             stock: numericStock,
             images: [
@@ -806,11 +860,11 @@ export function CreateProductPage() {
                     description: name,
                     categoryId: categoryId || '11111111-1111-1111-1111-111111111111',
                     auctionEnabled: enableAuction,
+                    // Chỉ gửi originalPrice (minPrice), giá bán chính thức do Dynamic Pricing Engine quyết định.
                     skus: [
                         {
                             skuCode: generatedSku,
-                            price: numericPrice,
-                            originalPrice: numericPrice * 1.2,
+                            originalPrice: numericMinPrice,
                             status: status === 'active' ? 'ACTIVE' : 'DRAFT',
                         },
                     ],
@@ -824,6 +878,9 @@ export function CreateProductPage() {
             })
             if (res?.data?.id) {
                 newProduct.id = res.data.id
+                if (typeof res.data.minPrice === 'number') {
+                    newProduct.price = res.data.minPrice
+                }
             }
         } catch (err) {
             // Khi dùng Demo Seller hoặc chưa có session JWT, lưu cục bộ để người bán xem được ngay
@@ -887,11 +944,15 @@ export function CreateProductPage() {
                         </h3>
                         <div className="grid grid-cols-3 gap-4">
                             <Input
-                                label={`${tr(lang, 'price')} ($)`}
+                                label={
+                                    lang === 'en'
+                                        ? 'Min / Cost Price (VND) *'
+                                        : 'Giá nhập tối thiểu / Min Price (VND) *'
+                                }
                                 type="number"
-                                value={price}
-                                onChange={(e) => setPrice(e.target.value)}
-                                placeholder="0.00"
+                                value={originalPrice}
+                                onChange={(e) => setOriginalPrice(e.target.value)}
+                                placeholder="100000"
                             />
                             <Input
                                 label={tr(lang, 'stock')}
@@ -906,6 +967,34 @@ export function CreateProductPage() {
                                 onChange={(e) => setSku(e.target.value)}
                                 placeholder="SKU-001"
                             />
+                        </div>
+                        {/* Khung xem trước giá bán động do Backend tính từ originalPrice + pricing_rules */}
+                        <div className="mt-4 p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs space-y-1">
+                            <div className="flex items-center justify-between">
+                                <span className="font-semibold text-blue-900">
+                                    {lang === 'en'
+                                        ? 'Estimated Dynamic Selling Price (BE Formula):'
+                                        : 'Giá bán dự kiến trên sàn (Backend Dynamic Pricing):'}
+                                </span>
+                                <span className="text-base font-black text-primary">
+                                    {previewLoading
+                                        ? '...'
+                                        : pricePreview
+                                          ? formatCurrency(pricePreview.sellingPrice, lang)
+                                          : originalPrice
+                                            ? formatCurrency(Number(originalPrice) || 0, lang)
+                                            : '—'}
+                                </span>
+                            </div>
+                            {pricePreview && (
+                                <p className="text-blue-700">
+                                    {pricePreview.appliedRuleName || 'Default Rule'} · Margin:{' '}
+                                    {(pricePreview.marginRate * 100).toFixed(1)}% · Season:{' '}
+                                    {(pricePreview.seasonFactor * 100).toFixed(1)}% · Market:{' '}
+                                    {(pricePreview.marketAdjustmentRate * 100).toFixed(1)}% (Total:{' '}
+                                    +{(pricePreview.effectiveRate * 100).toFixed(1)}%)
+                                </p>
+                            )}
                         </div>
                     </div>
                     <div className="nexus-card p-5">
@@ -1073,7 +1162,11 @@ export function SellerAuctionListPage() {
         setDetailAuction(auction)
         setDetailLoading(true)
         try {
-            const details = await auctionsApi.getAuctionById(auction.id, createdAuctions, auctionReviews)
+            const details = await auctionsApi.getAuctionById(
+                auction.id,
+                createdAuctions,
+                auctionReviews,
+            )
             if (requestId === detailRequestId.current) setDetailAuction(details)
         } catch {
             // Giữ dữ liệu hàng hiện tại nếu endpoint chi tiết tạm lỗi; không thay bằng dữ liệu giả.
@@ -1124,7 +1217,9 @@ export function SellerAuctionListPage() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to cancel auction' : 'Không thể hủy phiên đấu giá'),
+                message:
+                    err?.message ||
+                    (lang === 'en' ? 'Failed to cancel auction' : 'Không thể hủy phiên đấu giá'),
             })
         } finally {
             setCancelling(false)
@@ -1140,7 +1235,8 @@ export function SellerAuctionListPage() {
                         {
                             id: 'pending_approval',
                             label: lang === 'en' ? 'Pending approval' : 'Chờ duyệt',
-                            count: sellerAuctions.filter((a) => a.status === 'pending_approval').length,
+                            count: sellerAuctions.filter((a) => a.status === 'pending_approval')
+                                .length,
                         },
                         {
                             id: 'scheduled',
@@ -1175,15 +1271,22 @@ export function SellerAuctionListPage() {
                             render: (r: any) => (
                                 <div className="flex items-center gap-3">
                                     <img
-                                        src={r.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'}
+                                        src={
+                                            r.product?.images?.[0] ||
+                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                        }
                                         alt=""
                                         className="w-10 h-10 object-cover rounded-lg"
                                     />
                                     <div>
                                         <p className="text-sm font-semibold line-clamp-1">
-                                            {lang === 'vi' ? r.product?.nameVi || r.product?.name : r.product?.name}
+                                            {lang === 'vi'
+                                                ? r.product?.nameVi || r.product?.name
+                                                : r.product?.name}
                                         </p>
-                                        <p className="text-xs text-gray-400">SKU: {r.product?.sku || 'N/A'}</p>
+                                        <p className="text-xs text-gray-400">
+                                            SKU: {r.product?.sku || 'N/A'}
+                                        </p>
                                     </div>
                                 </div>
                             ),
@@ -1241,8 +1344,12 @@ export function SellerAuctionListPage() {
                             label: tr(lang, 'actions'),
                             render: (r: any) => {
                                 const isBeforeStart = new Date(r.startTime).getTime() > Date.now()
-                                const isEditable = ['pending_approval', 'scheduled', 'draft'].includes(r.status) && isBeforeStart
-                                const isCancellable = ['pending_approval', 'scheduled', 'draft'].includes(r.status) && isBeforeStart
+                                const isEditable =
+                                    ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
+                                    isBeforeStart
+                                const isCancellable =
+                                    ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
+                                    isBeforeStart
 
                                 return (
                                     <div className="flex gap-1 items-center">
@@ -1260,7 +1367,11 @@ export function SellerAuctionListPage() {
                                         </button>
                                         {isEditable && (
                                             <button
-                                                title={lang === 'en' ? 'Edit auction' : 'Chỉnh sửa phiên'}
+                                                title={
+                                                    lang === 'en'
+                                                        ? 'Edit auction'
+                                                        : 'Chỉnh sửa phiên'
+                                                }
                                                 onClick={(e) => {
                                                     e.stopPropagation()
                                                     navigate('seller-create-auction', { id: r.id })
@@ -1272,7 +1383,11 @@ export function SellerAuctionListPage() {
                                         )}
                                         {isCancellable && (
                                             <button
-                                                title={lang === 'en' ? 'Cancel auction' : 'Hủy phiên đấu giá'}
+                                                title={
+                                                    lang === 'en'
+                                                        ? 'Cancel auction'
+                                                        : 'Hủy phiên đấu giá'
+                                                }
                                                 onClick={(e) => {
                                                     e.stopPropagation()
                                                     setCancellingAuctionId(r.id)
@@ -1322,74 +1437,124 @@ export function SellerAuctionListPage() {
                     <div className="space-y-4">
                         <div className="flex items-start gap-3 rounded-xl bg-gray-50 p-4">
                             <img
-                                src={detailAuction.product?.images?.[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'}
+                                src={
+                                    detailAuction.product?.images?.[0] ||
+                                    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=120'
+                                }
                                 alt=""
                                 className="h-16 w-16 rounded-lg border object-cover"
                             />
                             <div className="min-w-0">
                                 <h3 className="font-semibold text-gray-900">
-                                    {lang === 'vi' ? detailAuction.product?.nameVi || detailAuction.product?.name : detailAuction.product?.name}
+                                    {lang === 'vi'
+                                        ? detailAuction.product?.nameVi ||
+                                          detailAuction.product?.name
+                                        : detailAuction.product?.name}
                                 </h3>
                                 <p className="mt-1 text-xs text-gray-500">
-                                    SKU: {detailAuction.product?.sku || 'N/A'} · ID: {detailAuction.id}
+                                    SKU: {detailAuction.product?.sku || 'N/A'} · ID:{' '}
+                                    {detailAuction.id}
                                 </p>
                                 <div className="mt-2">
-                                    <StatusBadge status={detailAuction.status} label={statusLabel(detailAuction.status)} />
+                                    <StatusBadge
+                                        status={detailAuction.status}
+                                        label={statusLabel(detailAuction.status)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-sm">
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'startingPrice')}</span>
-                                <span className="font-semibold">{formatCurrency(detailAuction.startingPrice, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'startingPrice')}
+                                </span>
+                                <span className="font-semibold">
+                                    {formatCurrency(detailAuction.startingPrice, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'currentBid')}</span>
-                                <span className="font-bold text-auction">{formatCurrency(detailAuction.currentBid, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'currentBid')}
+                                </span>
+                                <span className="font-bold text-auction">
+                                    {formatCurrency(detailAuction.currentBid, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'minIncrement')}</span>
-                                <span className="font-semibold">{formatCurrency(detailAuction.minIncrement, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'minIncrement')}
+                                </span>
+                                <span className="font-semibold">
+                                    {formatCurrency(detailAuction.minIncrement, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'totalBidCount')}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'totalBidCount')}
+                                </span>
                                 <span className="font-semibold">{detailAuction.bidCount}</span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'auctionVisibility')}</span>
-                                <span className="font-semibold capitalize">{detailAuction.visibility}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'auctionVisibility')}
+                                </span>
+                                <span className="font-semibold capitalize">
+                                    {detailAuction.visibility}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'startTime')}</span>
-                                <span className="font-medium">{formatDateTime(detailAuction.startTime, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'startTime')}
+                                </span>
+                                <span className="font-medium">
+                                    {formatDateTime(detailAuction.startTime, lang)}
+                                </span>
                             </div>
                             <div className="rounded-lg bg-gray-50 p-3">
-                                <span className="block text-xs text-gray-500">{tr(lang, 'endTime')}</span>
-                                <span className="font-medium">{formatDateTime(detailAuction.endTime, lang)}</span>
+                                <span className="block text-xs text-gray-500">
+                                    {tr(lang, 'endTime')}
+                                </span>
+                                <span className="font-medium">
+                                    {formatDateTime(detailAuction.endTime, lang)}
+                                </span>
                             </div>
                         </div>
 
                         <section>
                             <h4 className="mb-2 font-semibold">{tr(lang, 'bidHistory')}</h4>
                             {detailLoading ? (
-                                <p className="text-sm text-gray-500" role="status">{tr(lang, 'loadingAuctionDetails')}</p>
+                                <p className="text-sm text-gray-500" role="status">
+                                    {tr(lang, 'loadingAuctionDetails')}
+                                </p>
                             ) : detailAuction.bids?.length ? (
                                 <div className="max-h-56 overflow-y-auto rounded-lg border">
                                     <table className="w-full text-sm">
                                         <thead className="bg-gray-50 text-gray-600">
                                             <tr>
-                                                <th className="p-3 text-left">{tr(lang, 'bidAmount')}</th>
-                                                <th className="p-3 text-right">{tr(lang, 'bidTime')}</th>
+                                                <th className="p-3 text-left">
+                                                    {tr(lang, 'bidAmount')}
+                                                </th>
+                                                <th className="p-3 text-right">
+                                                    {tr(lang, 'bidTime')}
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
                                             {[...detailAuction.bids]
-                                                .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                                                .sort(
+                                                    (a, b) =>
+                                                        new Date(b.timestamp).getTime() -
+                                                        new Date(a.timestamp).getTime(),
+                                                )
                                                 .map((bid) => (
                                                     <tr key={bid.id}>
-                                                        <td className="p-3 font-semibold text-auction">{formatCurrency(bid.amount, lang)}</td>
-                                                        <td className="p-3 text-right text-gray-500">{formatDateTime(bid.timestamp, lang)}</td>
+                                                        <td className="p-3 font-semibold text-auction">
+                                                            {formatCurrency(bid.amount, lang)}
+                                                        </td>
+                                                        <td className="p-3 text-right text-gray-500">
+                                                            {formatDateTime(bid.timestamp, lang)}
+                                                        </td>
                                                     </tr>
                                                 ))}
                                         </tbody>
@@ -1429,11 +1594,7 @@ export function SellerAuctionListPage() {
                         >
                             {tr(lang, 'cancel')}
                         </Button>
-                        <Button
-                            variant="danger"
-                            loading={cancelling}
-                            onClick={handleConfirmCancel}
-                        >
+                        <Button variant="danger" loading={cancelling} onClick={handleConfirmCancel}>
                             {tr(lang, 'confirm')}
                         </Button>
                     </>
@@ -1455,7 +1616,9 @@ export function SellerAuctionListPage() {
                         }}
                         error={cancelReasonError}
                         placeholder={
-                            lang === 'en' ? 'Reason for cancellation...' : 'Lý do hủy phiên đấu giá...'
+                            lang === 'en'
+                                ? 'Reason for cancellation...'
+                                : 'Lý do hủy phiên đấu giá...'
                         }
                     />
                 </div>
@@ -1608,7 +1771,8 @@ export function CreateAuctionPage() {
                 if (!auction) {
                     showToast({
                         type: 'error',
-                        message: lang === 'en' ? 'Auction not found' : 'Không tìm thấy phiên đấu giá',
+                        message:
+                            lang === 'en' ? 'Auction not found' : 'Không tìm thấy phiên đấu giá',
                     })
                     navigate('seller-auctions')
                     return
@@ -1616,7 +1780,10 @@ export function CreateAuctionPage() {
 
                 // Kiểm tra điều kiện chỉnh sửa: chỉ cho phép khi chưa mở (startTime > now) và trạng thái scheduled/draft/pending
                 const isPastStart = new Date(auction.startTime).getTime() <= Date.now()
-                if (['active', 'ended', 'settled', 'cancelled'].includes(auction.status) || isPastStart) {
+                if (
+                    ['active', 'ended', 'settled', 'cancelled'].includes(auction.status) ||
+                    isPastStart
+                ) {
                     setNotEditableError(
                         lang === 'en'
                             ? 'This auction has already started or ended and cannot be edited.'
@@ -1685,9 +1852,7 @@ export function CreateAuctionPage() {
         const minIncNum = Number(minIncrement)
         if (!minIncrement || isNaN(minIncNum) || minIncNum <= 0) {
             errors.minIncrement =
-                lang === 'en'
-                    ? 'Bid increment must be greater than 0'
-                    : 'Bước giá phải lớn hơn 0'
+                lang === 'en' ? 'Bid increment must be greater than 0' : 'Bước giá phải lớn hơn 0'
         } else if (minIncNum < 1000) {
             errors.minIncrement =
                 lang === 'en'
@@ -1697,9 +1862,7 @@ export function CreateAuctionPage() {
 
         if (!startTime) {
             errors.startTime =
-                lang === 'en'
-                    ? 'Please specify start time'
-                    : 'Vui lòng chọn thời gian bắt đầu'
+                lang === 'en' ? 'Please specify start time' : 'Vui lòng chọn thời gian bắt đầu'
         } else {
             const startDate = new Date(startTime)
             if (isNaN(startDate.getTime())) {
@@ -1715,9 +1878,7 @@ export function CreateAuctionPage() {
 
         if (!endTime) {
             errors.endTime =
-                lang === 'en'
-                    ? 'Please specify end time'
-                    : 'Vui lòng chọn thời gian kết thúc'
+                lang === 'en' ? 'Please specify end time' : 'Vui lòng chọn thời gian kết thúc'
         } else if (startTime) {
             const startDate = new Date(startTime)
             const endDate = new Date(endTime)
@@ -1889,7 +2050,9 @@ export function CreateAuctionPage() {
                             value={productId}
                             disabled={isEdit || Boolean(notEditableError)}
                             error={fieldErrors.productId}
-                            onChange={(e) => handleFieldChange('productId', e.target.value, setProductId)}
+                            onChange={(e) =>
+                                handleFieldChange('productId', e.target.value, setProductId)
+                            }
                             options={[
                                 {
                                     value: '',
@@ -1903,7 +2066,9 @@ export function CreateAuctionPage() {
                         />
                         {isEdit && (
                             <p className="text-xs text-gray-400 mt-2">
-                                {lang === 'en' ? 'Product cannot be changed during edit.' : 'Không thể thay đổi sản phẩm khi đang chỉnh sửa phiên.'}
+                                {lang === 'en'
+                                    ? 'Product cannot be changed during edit.'
+                                    : 'Không thể thay đổi sản phẩm khi đang chỉnh sửa phiên.'}
                             </p>
                         )}
                     </div>
@@ -1920,9 +2085,19 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={startingPrice}
                                 error={fieldErrors.startingPrice}
-                                onChange={(e) => handleFieldChange('startingPrice', e.target.value, setStartingPrice)}
+                                onChange={(e) =>
+                                    handleFieldChange(
+                                        'startingPrice',
+                                        e.target.value,
+                                        setStartingPrice,
+                                    )
+                                }
                                 placeholder="100000"
-                                helper={lang === 'en' ? 'Must be greater than 0' : 'Giá khởi điểm phải lớn hơn 0'}
+                                helper={
+                                    lang === 'en'
+                                        ? 'Must be greater than 0'
+                                        : 'Giá khởi điểm phải lớn hơn 0'
+                                }
                             />
                             <Input
                                 label={tr(lang, 'minIncrement')}
@@ -1930,9 +2105,17 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={minIncrement}
                                 error={fieldErrors.minIncrement}
-                                onChange={(e) => handleFieldChange('minIncrement', e.target.value, setMinIncrement)}
+                                onChange={(e) =>
+                                    handleFieldChange(
+                                        'minIncrement',
+                                        e.target.value,
+                                        setMinIncrement,
+                                    )
+                                }
                                 placeholder="1000"
-                                helper={lang === 'en' ? 'Min 1,000 đ' : 'Bước giá tối thiểu 1,000 đ'}
+                                helper={
+                                    lang === 'en' ? 'Min 1,000 đ' : 'Bước giá tối thiểu 1,000 đ'
+                                }
                             />
                             <Input
                                 label={tr(lang, 'startTime')}
@@ -1940,8 +2123,14 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={startTime}
                                 error={fieldErrors.startTime}
-                                onChange={(e) => handleFieldChange('startTime', e.target.value, setStartTime)}
-                                helper={lang === 'en' ? 'Must be greater than current time' : 'Lớn hơn thời gian hiện tại'}
+                                onChange={(e) =>
+                                    handleFieldChange('startTime', e.target.value, setStartTime)
+                                }
+                                helper={
+                                    lang === 'en'
+                                        ? 'Must be greater than current time'
+                                        : 'Lớn hơn thời gian hiện tại'
+                                }
                             />
                             <Input
                                 label={tr(lang, 'endTime')}
@@ -1949,8 +2138,14 @@ export function CreateAuctionPage() {
                                 disabled={Boolean(notEditableError)}
                                 value={endTime}
                                 error={fieldErrors.endTime}
-                                onChange={(e) => handleFieldChange('endTime', e.target.value, setEndTime)}
-                                helper={lang === 'en' ? 'Duration: 1 hour to 7 days' : 'Thời lượng: 1 giờ đến 7 ngày'}
+                                onChange={(e) =>
+                                    handleFieldChange('endTime', e.target.value, setEndTime)
+                                }
+                                helper={
+                                    lang === 'en'
+                                        ? 'Duration: 1 hour to 7 days'
+                                        : 'Thời lượng: 1 giờ đến 7 ngày'
+                                }
                             />
                         </div>
                         <p className="text-xs text-gray-400 mt-2">{tr(lang, 'auctionDuration')}</p>
@@ -1966,7 +2161,13 @@ export function CreateAuctionPage() {
                                 setVisibility(e.target.value as 'public' | 'restricted')
                             }
                             options={[
-                                { value: 'public', label: lang === 'en' ? 'Public (All buyers)' : 'Công khai (Tất cả người mua)' },
+                                {
+                                    value: 'public',
+                                    label:
+                                        lang === 'en'
+                                            ? 'Public (All buyers)'
+                                            : 'Công khai (Tất cả người mua)',
+                                },
                                 {
                                     value: 'restricted',
                                     label: lang === 'en' ? 'Restricted' : 'Hạn chế',

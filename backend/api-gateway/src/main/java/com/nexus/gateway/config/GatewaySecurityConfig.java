@@ -70,7 +70,9 @@ public class GatewaySecurityConfig {
                     "/api/v1/auth/forgot-password",
                     "/api/v1/auth/reset-password").permitAll()
                 .pathMatchers(HttpMethod.GET, "/api/v1/products/**",
-                    "/api/v1/categories/**").permitAll()
+                    "/api/v1/categories/**",
+                    "/api/v1/pricing-rules",
+                    "/api/v1/pricing-rules/preview").permitAll()
                 .pathMatchers(HttpMethod.GET, "/api/v1/reputations/**")
                     .permitAll()
                 .anyExchange().authenticated())

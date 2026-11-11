@@ -77,6 +77,8 @@ export interface Product {
     description: string
     descriptionVi: string
     price: number
+    minPrice?: number
+    maxPrice?: number
     originalPrice?: number
     images: string[]
     category: string
@@ -84,6 +86,14 @@ export interface Product {
     location: string
     sku: string
     skuId?: string
+    skus?: Array<{
+        id: string
+        skuCode: string
+        price: number
+        originalPrice?: number
+        status: string
+        attributes?: Record<string, unknown> | string
+    }>
     stock: number
     status: ProductStatus
     sellerId: string
@@ -134,8 +144,14 @@ export interface OrderItem {
     productName: string
     image: string
     quantity: number
+    /** Đơn giá hiển thị (lấy giá chính thức nếu đã thu tiền, hoặc giá ước tính nếu chưa thu). */
     unitPrice: number
     subtotal: number
+    /** Đơn giá chính thức do Payment Attempt chốt sau IPN thành công; null khi chưa thanh toán. */
+    officialUnitPrice?: number | null
+    officialSubtotal?: number | null
+    estimatedUnitPrice?: number | null
+    estimatedSubtotal?: number | null
 }
 
 /** Lưu vết thay đổi trạng thái trong mock để Admin/Seller không mất lý do thao tác sau khi tải lại trang. */
@@ -177,6 +193,16 @@ export interface Order {
     discount: number
     shipping: number
     total: number
+    /** Cờ xác định đơn hàng đã chốt giá chính thức từ giao dịch thanh toán thành công hay mới chỉ có giá ước tính. */
+    priceFinalized?: boolean
+    estimatedSubtotal?: number | null
+    estimatedShippingFee?: number | null
+    estimatedDiscount?: number | null
+    estimatedTotal?: number | null
+    officialSubtotal?: number | null
+    officialShippingFee?: number | null
+    officialDiscount?: number | null
+    officialTotal?: number | null
     status: OrderStatus
     refundStatus: RefundStatus
     paymentStatus: PaymentStatus
