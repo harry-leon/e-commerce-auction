@@ -48,8 +48,30 @@ public record CreateAuctionOrderRequest(
 
         String skuCode,
 
-        List<UUID> reservationIds
+        List<UUID> reservationIds,
+
+        String winnerEmail,
+
+        String winnerName
 ) {
+    /**
+     * Constructor tương thích ngược với caller nội bộ 10 tham số (chưa truyền sẵn email/tên winner).
+     */
+    public CreateAuctionOrderRequest(
+            UUID auctionId,
+            UUID winnerId,
+            UUID sellerId,
+            UUID productId,
+            UUID skuId,
+            BigDecimal finalPrice,
+            Instant paymentDeadline,
+            String productName,
+            String skuCode,
+            List<UUID> reservationIds) {
+        this(auctionId, winnerId, sellerId, productId, skuId, finalPrice, paymentDeadline,
+                productName, skuCode, reservationIds, null, null);
+    }
+
     /**
      * Constructor thuận tiện cho các caller nội bộ chỉ truyền các trường tối thiểu bắt buộc.
      */
@@ -60,7 +82,7 @@ public record CreateAuctionOrderRequest(
             UUID skuId,
             BigDecimal finalPrice,
             Instant paymentDeadline) {
-        this(auctionId, winnerId, sellerId, null, skuId, finalPrice, paymentDeadline, null, null, null);
+        this(auctionId, winnerId, sellerId, null, skuId, finalPrice, paymentDeadline, null, null, null, null, null);
     }
 
     /**
@@ -76,7 +98,7 @@ public record CreateAuctionOrderRequest(
             Instant paymentDeadline,
             String productName,
             String skuCode) {
-        this(auctionId, winnerId, sellerId, productId, skuId, finalPrice, paymentDeadline, productName, skuCode, null);
+        this(auctionId, winnerId, sellerId, productId, skuId, finalPrice, paymentDeadline, productName, skuCode, null, null, null);
     }
 }
 

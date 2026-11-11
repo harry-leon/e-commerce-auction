@@ -44,6 +44,9 @@ public class NotificationDelivery {
                     case "ORDER_CREATED" -> "ORDER_CREATED";
                     case "PAYMENT_SUCCESS" -> "ORDER_PAID";
                     case "PAYMENT_FAILED" -> "ORDER_PAYMENT_FAILED";
+                    case "AUCTION_WON" -> "AUCTION_WON";
+                    case "AUCTION_PAYMENT_REMINDER" -> "AUCTION_PAYMENT_REMINDER";
+                    case "AUCTION_PAYMENT_TIMEOUT" -> "AUCTION_PAYMENT_TIMEOUT";
                     default -> throw new IllegalArgumentException("Sự kiện email không được hỗ trợ");
                 });
                 payload.put("totalAmount", event.get("amount"));

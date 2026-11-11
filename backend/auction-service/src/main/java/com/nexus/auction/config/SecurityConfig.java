@@ -36,6 +36,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/ping").permitAll()
                 // Transport công khai; interceptor STOMP xác thực CONNECT, không tin handshake ẩn danh.
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/ws/auctions").permitAll()
+                // API đồng bộ trạng thái settlement nội bộ chỉ nhận token từ nexus-commerce-service có quyền AUCTION.SETTLEMENT_SYNC.
+                .requestMatchers("/api/v1/internal/auctions/**").access((auth, context) ->
+                    new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-commerce-service", "AUCTION.SETTLEMENT_SYNC")))
                 // Cho phép truy cập endpoint đấu giá tại tầng filter; kiểm tra phân quyền chi tiết được xử lý bằng @PreAuthorize tại Controller
                 .requestMatchers("/api/v1/auctions/**").permitAll()
                 .anyRequest().authenticated())

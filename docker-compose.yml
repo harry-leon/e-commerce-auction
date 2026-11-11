@@ -162,6 +162,12 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
       FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
+      # Trong mạng Compose, client liên service của KH-S2-3 phải gọi tên service nội bộ (cổng 8080) thay vì localhost.
+      USER_SERVICE_URL: http://user-service:8080
+      REPUTATION_SERVICE_URL: http://reputation-service:8080
+      AUCTION_SERVICE_URL: http://auction-service:8080
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      PAYMENT_TIMEOUT_PENALTY_SCORE: ${PAYMENT_TIMEOUT_PENALTY_SCORE:-10}
       # Merchant VNPAY cấp ngoài repo; COD không cần merchant nhưng vẫn cần service account gọi kho.
       # OAuth thông báo riêng; thiếu config giữ backlog, không chặn checkout hoặc IPN.
       NOTIFICATION_TOKEN_URL: ${NOTIFICATION_TOKEN_URL:-http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token}
@@ -243,6 +249,9 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: notification-service
+      # Giữ link thanh toán và bật đẩy WebSocket nhất quán trong môi trường Docker Compose.
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      PUSH_NOTIFICATION_ENABLED: ${PUSH_NOTIFICATION_ENABLED:-true}
       # Email giao dịch gửi tới SMTP/Mailpit trong mạng Compose; credential chỉ lấy từ môi trường.
       SMTP_HOST: ${SMTP_HOST:-mailpit}
       SMTP_PORT: ${SMTP_PORT:-1025}
@@ -298,6 +307,8 @@ services:
       AUCTION_SERVICE_URL: lb://auction-service
       # Scheme lb:ws kích hoạt WebSocket routing sau khi Eureka phân giải instance.
       AUCTION_WS_URL: lb:ws://auction-service
+      # Route push tra cứu Notification qua Eureka; không proxy WS bằng route HTTP lb://.
+      NOTIFICATION_WS_URL: lb:ws://notification-service
       WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
       FULFILLMENT_SERVICE_URL: lb://fulfillment-service
       NOTIFICATION_SERVICE_URL: lb://notification-service

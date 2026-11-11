@@ -1,0 +1,8 @@
+# Cấu hình tập trung cho reputation-service do Config Server quản lý (SRS §2.6 & KH-S2-3).
+app:
+  reputation:
+    payment-timeout-penalty-score: 10 # PAYMENT_TIMEOUT_PENALTY_SCORE = 10
+    initial-score: 100
+    low-threshold: 60
+    high-threshold: 110
+    vip-threshold: 150

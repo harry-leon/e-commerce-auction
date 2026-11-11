@@ -31,6 +31,12 @@ public class NotificationProperties {
     /** Địa chỉ email người gửi (FROM header). */
     private String senderFrom = "no-reply@nexus.com";
 
+    /** Bật/tắt kênh thông báo đẩy thời gian thực WebSocket Push (SRS §2.6 PUSH_NOTIFICATION_ENABLED = true). */
+    private boolean pushEnabled = true;
+
+    /** URL gốc giao diện web dùng để tạo liên kết thanh toán đơn thắng đấu giá an toàn tại server. */
+    private String frontendUrl = "http://localhost:3000";
+
     public boolean isEmailEnabled() {
         return emailEnabled;
     }
@@ -61,5 +67,21 @@ public class NotificationProperties {
 
     public void setSenderFrom(String senderFrom) {
         this.senderFrom = senderFrom;
+    }
+
+    public boolean isPushEnabled() {
+        return pushEnabled;
+    }
+
+    public void setPushEnabled(boolean pushEnabled) {
+        this.pushEnabled = pushEnabled;
+    }
+
+    public String getFrontendUrl() {
+        return frontendUrl;
+    }
+
+    public void setFrontendUrl(String frontendUrl) {
+        this.frontendUrl = frontendUrl;
     }
 }

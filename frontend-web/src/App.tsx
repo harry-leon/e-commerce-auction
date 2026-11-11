@@ -2,6 +2,7 @@ import { Component, useState, useEffect, useRef, type ReactNode, type ErrorInfo 
 import { AppProvider, useApp } from './context'
 import { ToastContainer } from './components/UI'
 import { AppRouter } from './routes/AppRouter'
+import { connectNotificationStream, NOTIFICATIONS_CHANGED } from './api/notificationStream'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
     state = { error: null }
@@ -85,15 +86,23 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 /**
- * Chức năng: Component trung tâm kết nối Router và Toast.
- * Luồng: Tự động hiển thị spinner Bootstrap thương hiệu (#ee4d2d) khi người dùng điều hướng chuyển trang (page transition).
- * Quy tắc: Không trì hoãn việc mount trang con trong React tree để đảm bảo hiệu năng và tính ổn định cho kiểm thử.
+ * Kết nối Router, Toast và push theo phiên; đổi trang chỉ bật spinner, không tạo lại socket thông báo.
+ * Đổi tài khoản/logout dọn socket và request cũ; spinner không trì hoãn mount trang con.
  */
 function AppInner() {
-    const { toasts, dismissToast, page } = useApp()
+    const { toasts, dismissToast, user, showToast, page } = useApp()
     const [pageTransitioning, setPageTransitioning] = useState(false)
     const prevPageRef = useRef(page)
-
+    // Một socket theo phiên UI; đổi tài khoản/logout dọn socket cũ, không dùng token/profile demo làm xác thực.
+    useEffect(() => {
+        if (!user?.id || !/^[0-9a-f-]{36}$/i.test(user.id)) return
+        const refreshInbox = () => window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
+        return connectNotificationStream((event) => {
+            showToast({ type: 'info', message: event.title })
+            refreshInbox()
+        }, refreshInbox)
+    }, [user?.id, showToast])
+    // Chuyển trang chỉ điều khiển spinner 300 ms; giữ kết nối push xuyên suốt cùng một tài khoản.
     useEffect(() => {
         if (prevPageRef.current !== page) {
             prevPageRef.current = page

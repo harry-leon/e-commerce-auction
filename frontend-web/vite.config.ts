@@ -32,6 +32,12 @@ export default defineConfig(({ mode }) => {
         server: {
             // Dev tương đương nginx production: chuyển /api sang Gateway; API_PROXY_TARGET cho phép đổi địa chỉ đích.
             proxy: {
+                // Push dùng cùng origin/cookie HttpOnly như API; Gateway chuyển tiếp WS tới Notification.
+                '/ws/notifications': {
+                    target: process.env.API_PROXY_TARGET || 'http://localhost:8080',
+                    ws: true,
+                    changeOrigin: true,
+                },
                 // Dev chuyển WebSocket cùng origin tới Gateway; giữ Origin để Auction kiểm tra allowlist.
                 '/ws/auctions': {
                     target: process.env.API_PROXY_TARGET || 'http://localhost:8080',

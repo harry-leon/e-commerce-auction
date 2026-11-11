@@ -1,5 +1,6 @@
 package com.nexus.notification.service;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,5 +74,48 @@ class TransactionalEmailTemplateBuilderTest {
         String html = templateBuilder.buildHtmlContent(request);
         assertTrue(!html.contains("<script>"));
         assertTrue(html.contains("&lt;script&gt;"));
+    }
+
+    /** Kiểm tra 3 mẫu email vòng đời winner đấu giá: thắng phiên, nhắc trước 2h và hủy quá hạn 24h. */
+    @Test
+    @DisplayName("Kiểm tra nội dung chúc mừng thắng đấu giá, nhắc hạn 2h và hủy quá hạn 24h")
+    void testAuctionLifecycleTemplates() {
+        var deadline = java.time.Instant.parse("2026-11-12T10:00:00Z");
+        UUID orderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID auctionId = UUID.randomUUID();
+        List<OrderItemEmailDto> items = List.of(
+                new OrderItemEmailDto("Đồng hồ giới hạn", "SKU-AUC-1", 1, new BigDecimal("2500000"))
+        );
+
+        OrderEmailRequest won = OrderEmailRequest.ofAuctionWon(
+                orderId, "ORD-AUC-01", userId, "winner@nexus.test", "Người thắng",
+                new BigDecimal("2500000"), items, "EVT-WON", auctionId, deadline,
+                "http://localhost:3000/order-detail?id=" + orderId);
+        assertTrue(templateBuilder.buildSubject(won).contains("Chúc mừng thắng đấu giá"));
+        String wonHtml = templateBuilder.buildHtmlContent(won);
+        assertTrue(wonHtml.contains("http://localhost:3000/order-detail?id=" + orderId));
+        assertTrue(wonHtml.contains("17:00:00 (GMT+7)"));
+        assertTrue(templateBuilder.buildPlainTextContent(won).contains("Hạn chót thanh toán (24 giờ)"));
+
+        OrderEmailRequest reminder = OrderEmailRequest.ofAuctionPaymentReminder(
+                orderId, "ORD-AUC-01", userId, "winner@nexus.test", "Người thắng",
+                new BigDecimal("2500000"), items, "EVT-REM", auctionId, deadline,
+                "http://localhost:3000/order-detail?id=" + orderId, 10);
+        assertTrue(templateBuilder.buildSubject(reminder).contains("Nhắc nhở"));
+        assertTrue(templateBuilder.buildHtmlContent(reminder).contains("trừ 10 điểm uy tín"));
+
+        OrderEmailRequest timeout = OrderEmailRequest.ofAuctionPaymentTimeout(
+                orderId, "ORD-AUC-01", userId, "winner@nexus.test", "Người thắng",
+                new BigDecimal("2500000"), "AUCTION_PAYMENT_DEADLINE", items, "EVT-TMO",
+                auctionId, deadline, 10);
+        assertTrue(templateBuilder.buildSubject(timeout).contains("quá hạn thanh toán 24h"));
+        String timeoutHtml = templateBuilder.buildHtmlContent(timeout);
+        String timeoutText = templateBuilder.buildPlainTextContent(timeout);
+        assertTrue(timeoutHtml.contains("-10 điểm uy tín"));
+        assertTrue(timeoutHtml.contains("đang xử lý hoàn trả tồn kho"));
+        assertFalse(timeoutHtml.contains("đã được giải phóng"));
+        assertTrue(timeoutText.contains("trừ 10 điểm uy tín"));
+        assertTrue(timeoutText.contains("đang xử lý hoàn trả tồn kho"));
     }
 }

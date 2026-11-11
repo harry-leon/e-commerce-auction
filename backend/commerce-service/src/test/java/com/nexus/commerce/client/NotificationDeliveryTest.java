@@ -105,4 +105,28 @@ class NotificationDeliveryTest {
         emailStatus = "PENDING";
         assertThrows(IllegalStateException.class, () -> delivery.send(event));
     }
+
+    /** Bảo đảm 3 loại sự kiện đấu giá ánh xạ đúng sang OrderEmailType và giữ nguyên link/deadline/điểm phạt. */
+    @Test
+    void forwardsAuctionLifecycleEventsWithPaymentLinkAndPenaltyMetadata() throws Exception {
+        for (String type : java.util.List.of("AUCTION_WON", "AUCTION_PAYMENT_REMINDER", "AUCTION_PAYMENT_TIMEOUT")) {
+            var event = new java.util.LinkedHashMap<String, Object>();
+            event.put("id", "evt-" + type);
+            event.put("userId", "buyer-id");
+            event.put("orderId", "order-id");
+            event.put("orderNo", "AUC-TEST");
+            event.put("type", type);
+            event.put("amount", 1500000);
+            event.put("recipientEmail", "winner@nexus.test");
+            event.put("paymentLink", "http://localhost:3000/order-detail?id=order-id");
+            event.put("paymentDeadline", "2026-11-12T10:00:00Z");
+            event.put("penaltyScore", 10);
+
+            delivery.send(event);
+            var data = new com.fasterxml.jackson.databind.ObjectMapper().readTree(emailPayload);
+            assertEquals(type, data.get("eventType").asText());
+            assertEquals("http://localhost:3000/order-detail?id=order-id", data.get("paymentLink").asText());
+            assertEquals(10, data.get("penaltyScore").asInt());
+        }
+    }
 }
