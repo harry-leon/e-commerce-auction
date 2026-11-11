@@ -171,6 +171,8 @@ export function AppRouter() {
         case 'seller-products':
             return <SellerProductListPage />
         case 'seller-create-product':
+        case 'seller-edit-product':
+        case 'seller-update-product':
             return <CreateProductPage />
         case 'seller-auctions':
             return <SellerAuctionListPage />
