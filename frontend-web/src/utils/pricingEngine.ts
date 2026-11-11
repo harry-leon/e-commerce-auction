@@ -137,9 +137,14 @@ export function calculateEstimatedPricing(
     }
 
     // 2. Chiết khấu theo số lượng của cùng người bán / nhà sản xuất (Merchant Volume Discount)
+    // [P2-FIX] Chỉ nhóm theo sellerId khi có; nếu thiếu sellerId thì KHÔNG gộp vào 'default_seller'
+    // để tránh áp giảm giá "cùng shop" nhầm cho các sản phẩm khác seller.
+    // Cart API hiện chưa trả sellerId → bỏ qua discount nhóm seller khi không có đủ thông tin.
     const sellerQtyMap = new Map<string, { totalQty: number; sellerTotal: number; name: string }>()
     for (const it of items) {
-        const sKey = it.sellerId || it.sellerName || 'default_seller'
+        // Bỏ qua item không có sellerId — không thể xác định seller nên không tính volume discount
+        if (!it.sellerId) continue
+        const sKey = it.sellerId
         const curr = sellerQtyMap.get(sKey) || {
             totalQty: 0,
             sellerTotal: 0,
@@ -172,31 +177,9 @@ export function calculateEstimatedPricing(
     })
 
     // 3. Khuyến mãi theo nhóm sản phẩm (Category / Item Promotion)
-    let categoryDiscount = 0
-    for (const it of items) {
-        const lowerName = (it.productName || '').toLowerCase()
-        if (lowerName.includes('cua') || lowerName.includes('crab')) {
-            if (it.quantity >= 5) {
-                const disc = Math.round(it.unitPrice * it.quantity * 0.1) // 10%
-                categoryDiscount += disc
-                appliedPromotions.push({
-                    code: 'SEAFOOD_CRAB_10',
-                    title: `Khuyến mãi đặc sản cua (>=5 con): Giảm 10%`,
-                    amount: disc,
-                })
-            }
-        } else if (lowerName.includes('tôm') || lowerName.includes('shrimp')) {
-            if (it.quantity >= 3) {
-                const disc = Math.round(it.unitPrice * it.quantity * 0.15) // 15%
-                categoryDiscount += disc
-                appliedPromotions.push({
-                    code: 'SEAFOOD_SHRIMP_15',
-                    title: `Khuyến mãi tôm tươi (>=3 phần): Giảm 15%`,
-                    amount: disc,
-                })
-            }
-        }
-    }
+    // [P2-FIX] Tạm thời tắt các công thức khuyến mãi nhóm tự định nghĩa (như cua/tôm) để tránh
+    // làm sai lệch số tiền thanh toán khi BE chưa chốt quy tắc và Cart API chưa trả category code.
+    const categoryDiscount = 0
 
     // 4. Giảm giá từ Voucher
     let voucherDiscount = 0
@@ -231,11 +214,14 @@ export function calculateEstimatedPricing(
     const peakHourFee = peakInfo.isPeak ? peakInfo.surcharge : 0
 
     // 6. Phí vận chuyển ước tính
-    const estimatedShipping = baseSubtotal >= 100 ? 0 : 8.99
+    // [P2-FIX] Ngưỡng miễn phí ship dùng đơn vị VND (500.000đ), không phải 100 (nhầm USD).
+    // BE đang coi giá đã gồm VAT nên FE không cộng thêm VAT — xóa bước tính thuế 8%.
+    const FREE_SHIP_THRESHOLD_VND = 500_000
+    const estimatedShipping = baseSubtotal >= FREE_SHIP_THRESHOLD_VND ? 0 : 35_000
 
-    // 7. Thuế ước tính (8%)
+    // 7. Thuế ước tính: BE coi giá đã gồm VAT → FE không cộng thêm thuế (estimatedTax = 0)
     const netSubtotal = Math.max(0, baseSubtotal - merchantVolumeDiscount - categoryDiscount - voucherDiscount)
-    const estimatedTax = Number((netSubtotal * 0.08).toFixed(2))
+    const estimatedTax = 0
 
     // 8. Tổng thanh toán tạm tính
     const estimatedTotal = Number((netSubtotal + estimatedShipping + estimatedTax + peakHourFee).toFixed(2))
