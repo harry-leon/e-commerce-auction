@@ -657,7 +657,10 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         </div>
                     )}
                     {/* Chức năng: Cho phép Seller chuyển nhanh sang trang mua hàng của Buyer mà không cần đăng xuất */}
-                    <button onClick={() => navigate('home')} className="sidebar-link w-full text-indigo-300 hover:text-white">
+                    <button
+                        onClick={() => navigate('home')}
+                        className="sidebar-link w-full text-indigo-300 hover:text-white"
+                    >
                         <ShoppingCart size={16} />
                         {lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}
                     </button>

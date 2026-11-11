@@ -242,11 +242,7 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
             response.status === 401
                 ? 'Phiên đăng nhập đã hết hạn hoặc chưa xác thực (401)'
                 : `Request failed (${response.status})`
-        const msg =
-            errorObj.message ||
-            payload.message ||
-            payload.detail ||
-            defaultMsg
+        const msg = errorObj.message || payload.message || payload.detail || defaultMsg
         const code =
             errorObj.code ||
             (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
@@ -342,7 +338,9 @@ export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
         createdAt: raw.createdAt || new Date().toISOString(),
         avatar: '/avatar.svg',
         trustLevel: 'bronze',
-        reputationScore: 0,
+        // Điểm uy tín mặc định cho tài khoản theo thiết kế Nexus (reputation-service DEFAULT 100).
+        // Tránh lỗi gán cứng 0 khiến tài khoản mới bị chặn đấu giá (Insufficient reputation score).
+        reputationScore: typeof raw.reputationScore === 'number' ? raw.reputationScore : 100,
     }
 }
 

@@ -27,8 +27,15 @@ export async function getPayment(id: string): Promise<PaymentResult> {
     return response.data
 }
 
-/** Khởi tạo/replay payment cho đơn server; chỉ gửi orderId, backend tự xác minh winner, giá, hạn và kho. */
-export async function startPayment(orderId: string, idempotencyKey?: string): Promise<PaymentResult> {
+/**
+ * Khởi tạo hoặc lấy lại URL thanh toán VNPAY sandbox cho đơn hàng.
+ * POST /api/v1/payments với body { orderId } kèm header Idempotency-Key (nếu có).
+ * Backend tự kiểm tra quyền sở hữu đơn hàng, winner, giá và tính hợp lệ trước khi sinh paymentUrl sandbox.
+ */
+export async function startPayment(
+    orderId: string,
+    idempotencyKey?: string,
+): Promise<PaymentResult> {
     const headers: Record<string, string> = {}
     if (idempotencyKey) {
         headers['Idempotency-Key'] = idempotencyKey
@@ -52,7 +59,10 @@ export async function startPayment(orderId: string, idempotencyKey?: string): Pr
  * 4. Quy tắc và lý do: Số tiền thanh toán (amount) do Backend tính toán từ Order snapshot trong DB, không nhận từ client. Khi retry attempt FAILED bắt buộc gửi key mới chống 409 PAYMENT_RETRY_KEY_REQUIRED.
  * 5. Lỗi và giới hạn: Nếu đơn hàng không ở trạng thái PENDING_PAYMENT hoặc đã hết hạn giữ kho 15 phút, Backend sẽ ném lỗi.
  */
-export async function createPaymentAttempt(orderId: string, idempotencyKey?: string): Promise<PaymentResult> {
+export async function createPaymentAttempt(
+    orderId: string,
+    idempotencyKey?: string,
+): Promise<PaymentResult> {
     return startPayment(orderId, idempotencyKey)
 }
 

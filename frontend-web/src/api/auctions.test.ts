@@ -24,32 +24,41 @@ describe('Auctions API Adapter', () => {
         localStorage.clear()
         auctionsApi.resetMockStore()
         AUCTIONS.forEach((auction) => auctionsApi.addCreatedAuction(auction))
-        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = new URL(String(input), 'http://localhost')
-            if (url.pathname.endsWith('/auctions') && init?.method === 'POST') {
-                const body = JSON.parse(String(init.body))
-                return new Response(JSON.stringify({
-                    success: true,
-                    data: {
-                        id: '9b96b4ea-842c-4c91-9e9e-a91a2e55baf1',
-                        product_id: body.productId,
-                        seller_id: '1bb61969-bb72-4d69-8530-1b7eb7e30b50',
-                        seller_name: 'Test Seller',
-                        start_price: body.startPrice,
-                        current_price: body.startPrice,
-                        bid_increment: body.bidIncrement,
-                        status: 'SCHEDULED',
-                        start_time: body.startTime,
-                        end_time: body.endTime,
-                        visibility: body.visibility,
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                const url = new URL(String(input), 'http://localhost')
+                if (url.pathname.endsWith('/auctions') && init?.method === 'POST') {
+                    const body = JSON.parse(String(init.body))
+                    return new Response(
+                        JSON.stringify({
+                            success: true,
+                            data: {
+                                id: '9b96b4ea-842c-4c91-9e9e-a91a2e55baf1',
+                                product_id: body.productId,
+                                seller_id: '1bb61969-bb72-4d69-8530-1b7eb7e30b50',
+                                seller_name: 'Test Seller',
+                                start_price: body.startPrice,
+                                current_price: body.startPrice,
+                                bid_increment: body.bidIncrement,
+                                status: 'SCHEDULED',
+                                start_time: body.startTime,
+                                end_time: body.endTime,
+                                visibility: body.visibility,
+                            },
+                        }),
+                        { status: 201, headers: { 'Content-Type': 'application/json' } },
+                    )
+                }
+                return new Response(
+                    JSON.stringify({ success: false, error: { message: 'Not found' } }),
+                    {
+                        status: 404,
+                        headers: { 'Content-Type': 'application/json' },
                     },
-                }), { status: 201, headers: { 'Content-Type': 'application/json' } })
-            }
-            return new Response(JSON.stringify({ success: false, error: { message: 'Not found' } }), {
-                status: 404,
-                headers: { 'Content-Type': 'application/json' },
-            })
-        }))
+                )
+            }),
+        )
     })
 
     afterEach(() => {
@@ -223,17 +232,28 @@ describe('Auctions API Adapter', () => {
         it('không trả fixture mặc định trong chế độ portal Seller/Admin khi API lỗi', async () => {
             vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
 
-            const result = await auctionsApi.getAuctions({ includePending: true, excludeDemoData: true })
+            const result = await auctionsApi.getAuctions({
+                includePending: true,
+                excludeDemoData: true,
+            })
 
             expect(result.items).toEqual([])
             expect(result.total).toBe(0)
 
             // Một backend demo có thể trả lại chính fixture cũ; portal vẫn phải ẩn chúng.
-            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, data: AUCTIONS }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            })))
-            const demoApiResult = await auctionsApi.getAuctions({ includePending: true, excludeDemoData: true })
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockResolvedValue(
+                    new Response(JSON.stringify({ success: true, data: AUCTIONS }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    }),
+                ),
+            )
+            const demoApiResult = await auctionsApi.getAuctions({
+                includePending: true,
+                excludeDemoData: true,
+            })
             expect(demoApiResult.items).toEqual([])
         })
 
@@ -253,41 +273,66 @@ describe('Auctions API Adapter', () => {
             vi.stubGlobal(
                 'fetch',
                 vi.fn().mockImplementation(() =>
-                    Promise.resolve(new Response(JSON.stringify({ success: true, data: [] }), {
-                        status: 200,
-                        headers: { 'Content-Type': 'application/json' },
-                    })),
+                    Promise.resolve(
+                        new Response(JSON.stringify({ success: true, data: [] }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' },
+                        }),
+                    ),
                 ),
             )
 
-            const sellerList = await auctionsApi.getAuctions({ sellerId: 'seller-current', sellerName: 'Seller Nexus' })
+            const sellerList = await auctionsApi.getAuctions({
+                sellerId: 'seller-current',
+                sellerName: 'Seller Nexus',
+            })
             const adminList = await auctionsApi.getAuctions({ includePending: true })
 
             expect(sellerList.items.some((auction) => auction.id === created.id)).toBe(true)
             expect(adminList.items.some((auction) => auction.id === created.id)).toBe(true)
-            expect(sellerList.items.find((auction) => auction.id === created.id)?.currentBid).toBe(2005)
-            expect(adminList.items.find((auction) => auction.id === created.id)?.product.name).toBe('Vintage Mechanical Watch')
-            expect(sellerList.items.find((auction) => auction.id === created.id)?.sellerId).toBe('seller-current')
+            expect(sellerList.items.find((auction) => auction.id === created.id)?.currentBid).toBe(
+                2005,
+            )
+            expect(adminList.items.find((auction) => auction.id === created.id)?.product.name).toBe(
+                'Vintage Mechanical Watch',
+            )
+            expect(sellerList.items.find((auction) => auction.id === created.id)?.sellerId).toBe(
+                'seller-current',
+            )
 
             vi.stubGlobal(
                 'fetch',
-                vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
-                    success: true,
-                    data: [{
-                        id: created.id,
-                        product_id: created.productId,
-                        product_name: 'Vintage Mechanical Watch',
-                        start_price: 2005,
-                        current_price: 2005,
-                        bid_increment: 1000,
-                        status: 'DRAFT',
-                        start_time: created.startTime,
-                        end_time: created.endTime,
-                    }],
-                }), { status: 200, headers: { 'Content-Type': 'application/json' } }))),
+                vi.fn().mockImplementation(() =>
+                    Promise.resolve(
+                        new Response(
+                            JSON.stringify({
+                                success: true,
+                                data: [
+                                    {
+                                        id: created.id,
+                                        product_id: created.productId,
+                                        product_name: 'Vintage Mechanical Watch',
+                                        start_price: 2005,
+                                        current_price: 2005,
+                                        bid_increment: 1000,
+                                        status: 'DRAFT',
+                                        start_time: created.startTime,
+                                        end_time: created.endTime,
+                                    },
+                                ],
+                            }),
+                            { status: 200, headers: { 'Content-Type': 'application/json' } },
+                        ),
+                    ),
+                ),
             )
-            const serverList = await auctionsApi.getAuctions({ sellerId: 'seller-current', sellerName: 'Seller Nexus' })
-            expect(serverList.items.find((auction) => auction.id === created.id)?.sellerId).toBe('seller-current')
+            const serverList = await auctionsApi.getAuctions({
+                sellerId: 'seller-current',
+                sellerName: 'Seller Nexus',
+            })
+            expect(serverList.items.find((auction) => auction.id === created.id)?.sellerId).toBe(
+                'seller-current',
+            )
         })
 
         it('không tự hiển thị fixture khi backend trả về 404', async () => {
@@ -310,10 +355,7 @@ describe('Auctions API Adapter', () => {
         })
 
         it('không dựng dữ liệu mẫu khi API mất kết nối', async () => {
-            vi.stubGlobal(
-                'fetch',
-                vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
-            )
+            vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
 
             const resActive = await auctionsApi.getAuctions({ status: 'active' })
             expect(resActive.items).toEqual([])
@@ -531,7 +573,10 @@ describe('Auctions API Adapter', () => {
             expect(created.productId).toBe('p1')
 
             // Nếu list backend chưa đồng bộ ở request kế tiếp, session Seller vẫn giữ response đã được server xác nhận.
-            const list = await auctionsApi.getAuctions({ sellerId: created.sellerId, extraAuctions: [created] })
+            const list = await auctionsApi.getAuctions({
+                sellerId: created.sellerId,
+                extraAuctions: [created],
+            })
             expect(list.items.some((a) => a.id === created.id)).toBe(true)
         })
 
@@ -539,16 +584,21 @@ describe('Auctions API Adapter', () => {
             vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
             const start = new Date(Date.now() + 3600000)
 
-            await expect(auctionsApi.createAuction({
-                productId: 'p1',
-                startingPrice: 1000000,
-                minIncrement: 50000,
-                startTime: start.toISOString(),
-                endTime: new Date(start.getTime() + 86400000).toISOString(),
-            })).rejects.toThrow()
+            await expect(
+                auctionsApi.createAuction({
+                    productId: 'p1',
+                    startingPrice: 1000000,
+                    minIncrement: 50000,
+                    startTime: start.toISOString(),
+                    endTime: new Date(start.getTime() + 86400000).toISOString(),
+                }),
+            ).rejects.toThrow()
 
-            expect(JSON.parse(localStorage.getItem('nexus.auction-portal-store.v2') || '[]')
-                .some((auction: { id: string }) => /^auc-\d+$/.test(auction.id))).toBe(false)
+            expect(
+                JSON.parse(localStorage.getItem('nexus.auction-portal-store.v2') || '[]').some(
+                    (auction: { id: string }) => /^auc-\d+$/.test(auction.id),
+                ),
+            ).toBe(false)
         })
     })
 
@@ -669,25 +719,39 @@ describe('Auctions API Adapter', () => {
                 end_time: seededAuction.endTime,
             }
 
-            vi.stubGlobal('fetch', vi.fn().mockImplementation((input: RequestInfo | URL) => {
-                const url = String(input)
-                if (url.includes('/review')) {
-                    return Promise.resolve(new Response('{}', { status: 404 }))
-                }
-                return Promise.resolve(new Response(JSON.stringify({ success: true, data: [staleDraft] }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }))
-            }))
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockImplementation((input: RequestInfo | URL) => {
+                    const url = String(input)
+                    if (url.includes('/review')) {
+                        return Promise.resolve(new Response('{}', { status: 404 }))
+                    }
+                    return Promise.resolve(
+                        new Response(JSON.stringify({ success: true, data: [staleDraft] }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' },
+                        }),
+                    )
+                }),
+            )
 
             await auctionsApi.reviewAuction(seededAuction.id, 'scheduled')
-            const approvedList = await auctionsApi.getAuctions({ status: 'scheduled', includePending: true })
-            const pendingList = await auctionsApi.getAuctions({ status: 'pending_approval', includePending: true })
+            const approvedList = await auctionsApi.getAuctions({
+                status: 'scheduled',
+                includePending: true,
+            })
+            const pendingList = await auctionsApi.getAuctions({
+                status: 'pending_approval',
+                includePending: true,
+            })
 
             expect(approvedList.items.some((auction) => auction.id === seededAuction.id)).toBe(true)
             expect(pendingList.items.some((auction) => auction.id === seededAuction.id)).toBe(false)
-            expect(JSON.parse(localStorage.getItem('nexus.auction-reviews-store') || '{}')[seededAuction.id].status)
-                .toBe('scheduled')
+            expect(
+                JSON.parse(localStorage.getItem('nexus.auction-reviews-store') || '{}')[
+                    seededAuction.id
+                ].status,
+            ).toBe('scheduled')
         })
 
         it('Admin từ chối phiên kèm lý do chuyển trạng thái sang cancelled/rejected', async () => {
@@ -708,7 +772,9 @@ describe('Auctions API Adapter', () => {
                 'Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt',
             )
             expect(rejected?.status).toBe('rejected')
-            expect(rejected?.cancelReason).toBe('Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt')
+            expect(rejected?.cancelReason).toBe(
+                'Hình ảnh sản phẩm mờ không đạt tiêu chuẩn kiểm duyệt',
+            )
         })
 
         it('từ chối yêu cầu từ chối phiên nếu Admin không nhập lý do', async () => {

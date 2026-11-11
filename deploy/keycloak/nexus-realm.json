@@ -316,6 +316,18 @@
       {
         "name": "COMMERCE.AUCTION",
         "description": "Internal service privilege; require matching azp"
+      },
+      {
+        "name": "REPUTATION.PENALTY",
+        "description": "Internal service privilege; require matching azp"
+      },
+      {
+        "name": "AUCTION.SETTLEMENT_SYNC",
+        "description": "Internal service privilege; require matching azp"
+      },
+      {
+        "name": "USER.INTERNAL_READ",
+        "description": "Internal service privilege; require matching azp"
       }
     ]
   },
@@ -421,7 +433,10 @@
       "enabled": true,
       "serviceAccountClientId": "nexus-commerce-service",
       "realmRoles": [
-        "INVENTORY.ORDER"
+        "INVENTORY.ORDER",
+        "REPUTATION.PENALTY",
+        "AUCTION.SETTLEMENT_SYNC",
+        "USER.INTERNAL_READ"
       ]
     }
   ],
@@ -444,7 +459,10 @@
     {
       "client": "nexus-commerce-service",
       "roles": [
-        "INVENTORY.ORDER"
+        "INVENTORY.ORDER",
+        "REPUTATION.PENALTY",
+        "AUCTION.SETTLEMENT_SYNC",
+        "USER.INTERNAL_READ"
       ]
     }
   ]

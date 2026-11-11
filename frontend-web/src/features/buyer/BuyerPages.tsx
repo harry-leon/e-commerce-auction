@@ -44,7 +44,12 @@ import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import { createPaymentAttempt, redirectToGateway } from '../../api/payments'
-import { readCheckoutCommand, recoverOrCreateOrder, checkoutAttemptKey, clearCheckoutCommand } from './checkoutRecovery'
+import {
+    readCheckoutCommand,
+    recoverOrCreateOrder,
+    checkoutAttemptKey,
+    clearCheckoutCommand,
+} from './checkoutRecovery'
 import type { Auction, Order, Product } from '../../types'
 import {
     ordersApi,
@@ -814,22 +819,27 @@ export function CartPage() {
                 </Button>
             </div>
 
-            {/* Thông báo miễn phí vận chuyển */}
-            {subtotal < 100 && (
-                <AlertBanner
-                    type="info"
-                    message={
-                        lang === 'en'
-                            ? `Add $${(100 - subtotal).toFixed(2)} more to get free shipping!`
-                            : `Thêm ${formatCurrency(100 - subtotal, lang)} để được miễn phí vận chuyển!`
-                    }
-                />
-            )}
-            {subtotal < 100 && (
-                <div className="mt-3 mb-5">
-                    <ProgressBar value={subtotal} max={100} />
-                </div>
-            )}
+            {/* Thông báo miễn phí vận chuyển: tự động nhận diện đơn vị VND (ngưỡng 500.000đ) hoặc USD (ngưỡng 100) */}
+            {(() => {
+                const freeShippingThreshold = subtotal > 1000 ? 500_000 : 100
+                if (subtotal >= freeShippingThreshold) return null
+                const diff = freeShippingThreshold - subtotal
+                return (
+                    <>
+                        <AlertBanner
+                            type="info"
+                            message={
+                                lang === 'en'
+                                    ? `Add ${formatCurrency(diff, lang)} more to get free shipping!`
+                                    : `Thêm ${formatCurrency(diff, lang)} để được miễn phí vận chuyển!`
+                            }
+                        />
+                        <div className="mt-3 mb-5">
+                            <ProgressBar value={subtotal} max={freeShippingThreshold} />
+                        </div>
+                    </>
+                )
+            })()}
 
             <div className="grid grid-cols-[1fr_360px] gap-8 mt-4">
                 {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}

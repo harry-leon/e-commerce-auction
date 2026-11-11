@@ -19,6 +19,12 @@ spring:
           predicates:
             - Path=/ws/auctions
             - Method=GET
+        # Push dùng route WS riêng; cookie được đổi sang Bearer trước khi Notification kiểm tra CONNECT.
+        - id: notification-websocket
+          uri: ${NOTIFICATION_WS_URL:ws://localhost:8086}
+          predicates:
+            - Path=/ws/notifications
+            - Method=GET
         - id: user-service
           uri: ${USER_SERVICE_URL:http://localhost:8081}
           predicates:

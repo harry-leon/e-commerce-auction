@@ -21,7 +21,7 @@ Triển khai tách biệt ranh giới sở hữu dữ liệu giữa **Catalog Se
 2. **Fulfillment Service (`nexus_fulfillment`):**
    - Sở hữu độc quyền bảng `seller_skus` (`id`, `seller_id`, `sku_id` `UNIQUE`, `sku_code`, `status`, `created_at`, `updated_at`), sequence `fulfillment_sku_code_seq`, cột `inventories.seller_sku_id` (`FK -> seller_skus.id`) và `fulfillment_event_outbox` qua migration `V6__seller_skus_and_sku_code_sequence.sql`.
    - Khi nhập kho lần đầu (`POST /api/v1/inventory/inbound`) cho một `skuId`:
-     - `CatalogSkuClient` gọi `GET /api/v1/skus/{id}` xác thực Catalog SKU tồn tại (`404 RESOURCE_NOT_FOUND` nếu không tồn tại) và kiểm tra quyền sở hữu Seller (`403 AUTH_FORBIDDEN` nếu khác chủ shop; vai trò `ADMIN` được bỏ qua kiểm tra chủ sở hữu).
+     - `CatalogClient` (`HttpCatalogClient`) gọi `GET /api/v1/skus/{id}` xác thực Catalog SKU tồn tại (`404 RESOURCE_NOT_FOUND` nếu không tồn tại) và kiểm tra quyền sở hữu Seller (`403 AUTH_FORBIDDEN` nếu khác chủ shop; vai trò `ADMIN` được bỏ qua kiểm tra chủ sở hữu).
      - `SellerSkuRegistrar` (chạy transaction `REQUIRES_NEW`) sinh mã `FSKU-XXXXXXXX` từ `fulfillment_sku_code_seq` và tạo bản ghi `seller_skus`.
    - Các lần nhập kho tiếp theo cho cùng `skuId` **tái sử dụng nguyên bản ghi `seller_skus` và `skuCode` đã cấp**.
    - Cung cấp API tra cứu kho của người bán:
@@ -53,7 +53,7 @@ Triển khai tách biệt ranh giới sở hữu dữ liệu giữa **Catalog Se
 
 ## 3. Bằng chứng Kiểm thử Thực tế (Swagger UI & Real Chrome Browser)
 
-Toàn bộ ảnh chụp màn hình được lưu tại `docs/screenshots/HG-S2-6/` gồm **10 kịch bản Swagger UI** và **4 kịch bản End-to-End trên trình duyệt thật**.
+Toàn bộ ảnh chụp màn hình được lưu tại `docs/screenshots/HG-S2/` gồm **10 kịch bản Swagger UI** và **4 kịch bản End-to-End trên trình duyệt thật**.
 
 ### 3.1. Swagger UI — Catalog Service (`http://127.0.0.1:8082/swagger-ui/index.html`)
 
@@ -63,11 +63,11 @@ Toàn bộ ảnh chụp màn hình được lưu tại `docs/screenshots/HG-S2-6
 | Cập nhật Product truyền kèm `skus[].id` | `200` | Bảo toàn nguyên `skuId` cũ, cập nhật tên/giá gốc và tính lại giá bán động | `update-product_preserve-sku-id_200.png` |
 | Tra cứu `GET /api/v1/skus/{id}` | `200` | Trả `SkuSnapshot` gồm `skuId`, `productId`, `sellerId`, `price`, `originalPrice`, `stockQuantity: null` | `get-catalog-sku_success_200.png` |
 
-![Create Product Success 201](screenshots/HG-S2-6/create-product_success_201.png)
+![Create Product Success 201](screenshots/HG-S2/create-product_success_201.png)
 
-![Update Product Preserve SKU ID 200](screenshots/HG-S2-6/update-product_preserve-sku-id_200.png)
+![Update Product Preserve SKU ID 200](screenshots/HG-S2/update-product_preserve-sku-id_200.png)
 
-![Get Catalog SKU Success 200](screenshots/HG-S2-6/get-catalog-sku_success_200.png)
+![Get Catalog SKU Success 200](screenshots/HG-S2/get-catalog-sku_success_200.png)
 
 ### 3.2. Swagger UI — Fulfillment Service (`http://127.0.0.1:8085/swagger-ui/index.html`)
 
@@ -81,19 +81,19 @@ Toàn bộ ảnh chụp màn hình được lưu tại `docs/screenshots/HG-S2-6
 | Danh sách SKU kho `GET /api/v1/inventory/skus` | `200` | Trả danh sách `seller_skus` kèm tồn kho tổng hợp và phân trang hợp lệ | `list-seller-skus_success_200.png` |
 | Chi tiết SKU kho `GET /api/v1/inventory/skus/{id}` | `200` | Trả thông tin `seller_skus` kèm mảng tồn kho theo từng kho `warehouses[]` | `get-seller-sku-detail_success_200.png` |
 
-![Inbound First Generate FSKU 200](screenshots/HG-S2-6/inbound-stock_first-generate-fsku_200.png)
+![Inbound First Generate FSKU 200](screenshots/HG-S2/inbound-stock_first-generate-fsku_200.png)
 
-![Inbound Repeat Reuse FSKU 200](screenshots/HG-S2-6/inbound-stock_repeat-reuse-fsku_200.png)
+![Inbound Repeat Reuse FSKU 200](screenshots/HG-S2/inbound-stock_repeat-reuse-fsku_200.png)
 
-![Inbound Wrong Seller 403](screenshots/HG-S2-6/inbound-stock_wrong-seller_403.png)
+![Inbound Wrong Seller 403](screenshots/HG-S2/inbound-stock_wrong-seller_403.png)
 
-![Inbound Missing Catalog SKU 404](screenshots/HG-S2-6/inbound-stock_missing-catalog-sku_404.png)
+![Inbound Missing Catalog SKU 404](screenshots/HG-S2/inbound-stock_missing-catalog-sku_404.png)
 
-![Inbound Invalid Quantity 422](screenshots/HG-S2-6/inbound-stock_invalid-quantity_422.png)
+![Inbound Invalid Quantity 422](screenshots/HG-S2/inbound-stock_invalid-quantity_422.png)
 
-![List Seller SKUs 200](screenshots/HG-S2-6/list-seller-skus_success_200.png)
+![List Seller SKUs 200](screenshots/HG-S2/list-seller-skus_success_200.png)
 
-![Get Seller SKU Detail 200](screenshots/HG-S2-6/get-seller-sku-detail_success_200.png)
+![Get Seller SKU Detail 200](screenshots/HG-S2/get-seller-sku-detail_success_200.png)
 
 ### 3.3. Real Chrome Browser End-to-End (`http://localhost:5173`)
 
@@ -104,13 +104,13 @@ Toàn bộ ảnh chụp màn hình được lưu tại `docs/screenshots/HG-S2-6
 | Nhập kho lần đầu tại Inventory | Cấp phát tự động `Fulfillment SKU` dạng `FSKU-XXXXXXXX` từ biến thể Catalog | `browser_inbound-first-assign-fsku.png` |
 | Nhập kho lần 2 & mở chi tiết Warehouse Breakdown | Cộng dồn tồn kho trên cùng `FSKU-XXXXXXXX` và hiển thị rõ `Catalog skuId` bên cạnh `Seller SKU Record ID` | `browser_inbound-repeat-reuse-and-detail.png` |
 
-![Browser Create Product No SkuCode](screenshots/HG-S2-6/browser_create-product-no-skucode.png)
+![Browser Create Product No SkuCode](screenshots/HG-S2/browser_create-product-no-skucode.png)
 
-![Browser Edit Product Preserve SkuId](screenshots/HG-S2-6/browser_edit-product-preserve-sku-id.png)
+![Browser Edit Product Preserve SkuId](screenshots/HG-S2/browser_edit-product-preserve-sku-id.png)
 
-![Browser Inbound First Assign FSKU](screenshots/HG-S2-6/browser_inbound-first-assign-fsku.png)
+![Browser Inbound First Assign FSKU](screenshots/HG-S2/browser_inbound-first-assign-fsku.png)
 
-![Browser Inbound Repeat Reuse And Detail](screenshots/HG-S2-6/browser_inbound-repeat-reuse-and-detail.png)
+![Browser Inbound Repeat Reuse And Detail](screenshots/HG-S2/browser_inbound-repeat-reuse-and-detail.png)
 
 ---
 

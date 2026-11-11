@@ -127,7 +127,9 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             })
 
             // Kiểm tra các thông báo lỗi field xuất hiện trên DOM
-            expect(screen.getByText(/vui lòng chọn sản phẩm cho phiên đấu giá/i)).toBeInTheDocument()
+            expect(
+                screen.getByText(/vui lòng chọn sản phẩm cho phiên đấu giá/i),
+            ).toBeInTheDocument()
             expect(screen.getByText(/giá khởi điểm phải lớn hơn 0/i)).toBeInTheDocument()
             expect(screen.getByText(/vui lòng chọn thời gian bắt đầu/i)).toBeInTheDocument()
         })
@@ -226,7 +228,9 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
                 expect(contextHolder.current.showToast).toHaveBeenCalledWith(
                     expect.objectContaining({
                         type: 'success',
-                        message: expect.stringMatching(/đã gửi yêu cầu đấu giá để Admin phê duyệt/i),
+                        message: expect.stringMatching(
+                            /đã gửi yêu cầu đấu giá để Admin phê duyệt/i,
+                        ),
                     }),
                 )
                 expect(contextHolder.current.navigate).toHaveBeenCalledWith('seller-auctions')
@@ -260,7 +264,9 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             })
 
             // Kiểm tra tiêu đề màn hình là Chỉnh sửa
-            expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/sửa phiên|chỉnh sửa/i)
+            expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+                /sửa phiên|chỉnh sửa/i,
+            )
 
             // Đổi giá khởi điểm thành 700000
             const startPriceInput = screen.getByLabelText(/giá khởi điểm/i)
@@ -352,7 +358,9 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
 
             expect(await screen.findByText('Lịch sử đặt giá')).toBeInTheDocument()
             expect(screen.getByText('Thời gian đặt')).toBeInTheDocument()
-            expect(screen.getByText(formatDateTime('2026-11-05T10:30:00Z', 'vi'))).toBeInTheDocument()
+            expect(
+                screen.getByText(formatDateTime('2026-11-05T10:30:00Z', 'vi')),
+            ).toBeInTheDocument()
         })
 
         it('Người bán hủy thành công phiên scheduled trước giờ mở phiên kèm lý do (AC1)', async () => {
@@ -458,15 +466,29 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             contextHolder.current.createdAuctions = [pendingAuction]
             auctionsApi.addCreatedAuction(pendingAuction)
 
-            vi.stubGlobal('fetch', vi.fn().mockImplementation((input: string) => {
-                if (String(input).includes(`/users/${sellerId}`)) {
-                    return Promise.resolve(new Response(JSON.stringify({
-                        success: true,
-                        data: { id: sellerId, fullName: 'Nguyen Seller', email: 'seller@example.com' },
-                    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-                }
-                return Promise.resolve(new Response(JSON.stringify({ success: false }), { status: 503 }))
-            }))
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockImplementation((input: string) => {
+                    if (String(input).includes(`/users/${sellerId}`)) {
+                        return Promise.resolve(
+                            new Response(
+                                JSON.stringify({
+                                    success: true,
+                                    data: {
+                                        id: sellerId,
+                                        fullName: 'Nguyen Seller',
+                                        email: 'seller@example.com',
+                                    },
+                                }),
+                                { status: 200, headers: { 'Content-Type': 'application/json' } },
+                            ),
+                        )
+                    }
+                    return Promise.resolve(
+                        new Response(JSON.stringify({ success: false }), { status: 503 }),
+                    )
+                }),
+            )
 
             render(<AdminAuctionsPage />)
 
@@ -551,8 +573,12 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
 
             // Nhập lý do từ chối
             await waitFor(() => {
-                const reasonInput = screen.getByPlaceholderText(/giải thích nội dung người bán cần khắc phục/i)
-                fireEvent.change(reasonInput, { target: { value: 'Sản phẩm thiếu giấy tờ kiểm định nguồn gốc' } })
+                const reasonInput = screen.getByPlaceholderText(
+                    /giải thích nội dung người bán cần khắc phục/i,
+                )
+                fireEvent.change(reasonInput, {
+                    target: { value: 'Sản phẩm thiếu giấy tờ kiểm định nguồn gốc' },
+                })
             })
 
             // Click nút xác nhận từ chối
@@ -584,7 +610,9 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
 
             // Modal mở ra, nhập lý do vi phạm
             const reasonInput = screen.getByPlaceholderText(/nêu rõ lý do vi phạm chính sách/i)
-            fireEvent.change(reasonInput, { target: { value: 'Seller có dấu hiệu shill bidding thao túng giá' } })
+            fireEvent.change(reasonInput, {
+                target: { value: 'Seller có dấu hiệu shill bidding thao túng giá' },
+            })
 
             // Xác nhận cưỡng chế hủy
             const confirmBtn = screen.getByRole('button', { name: /xác nhận hủy phiên/i })
@@ -606,16 +634,23 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
             contextHolder.current.createdAuctions = [AUCTIONS[0]]
             render(<AdminAuctionsPage />)
 
-            const pauseButton = await screen.findAllByRole('button', { name: /tạm dừng phiên đấu giá/i })
+            const pauseButton = await screen.findAllByRole('button', {
+                name: /tạm dừng phiên đấu giá/i,
+            })
             fireEvent.click(pauseButton[0])
 
             const reason = screen.getByPlaceholderText(/lý do tạm dừng phiên đấu giá/i)
             fireEvent.change(reason, { target: { value: 'Phát hiện dấu hiệu thao túng giá' } })
-            fireEvent.click(screen.getAllByRole('button', { name: /tạm dừng phiên đấu giá/i }).at(-1)!)
+            fireEvent.click(
+                screen.getAllByRole('button', { name: /tạm dừng phiên đấu giá/i }).at(-1)!,
+            )
 
             await waitFor(() => {
                 expect(contextHolder.current.showToast).toHaveBeenCalledWith(
-                    expect.objectContaining({ type: 'success', message: 'Đã tạm dừng phiên đấu giá.' }),
+                    expect.objectContaining({
+                        type: 'success',
+                        message: 'Đã tạm dừng phiên đấu giá.',
+                    }),
                 )
             })
         })

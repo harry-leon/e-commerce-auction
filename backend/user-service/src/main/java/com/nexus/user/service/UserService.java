@@ -6,6 +6,7 @@ import com.nexus.common.exception.ResourceNotFoundException;
 import com.nexus.user.dto.ActivityHistoryResponse;
 import com.nexus.user.dto.CreateUserProfileRequest;
 import com.nexus.user.dto.UpdateUserRequest;
+import com.nexus.user.dto.UserContactResponse;
 import com.nexus.user.dto.UserResponse;
 import com.nexus.user.entity.User;
 import com.nexus.user.repository.UserRepository;
@@ -49,6 +50,19 @@ public class UserService {
     /** Trả profile và vai trò hiện hành từ Keycloak, không đọc bảng roles đã bị V4 xóa. */
     @Transactional(readOnly = true)
     public UserResponse getUserById(UUID id) { return toResponse(getEntity(id)); }
+
+    /**
+     * Tra cứu email và họ tên người dùng cho service nội bộ khi gửi thông báo giao dịch/đấu giá.
+     * Đầu vào: UUID tài khoản (chấp nhận cả user.id hoặc keycloak_id đã liên kết).
+     * Kết quả: UserContactResponse chỉ gồm id, email, fullName; không gọi Keycloak hay trả trường nhạy cảm.
+     */
+    @Transactional(readOnly = true)
+    public UserContactResponse getInternalContact(UUID id) {
+        User user = users.findByIdAndIsDeletedFalse(id)
+                .or(() -> users.findByKeycloakIdAndIsDeletedFalse(id))
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hồ sơ"));
+        return new UserContactResponse(user.getId(), user.getEmail(), user.getFullName());
+    }
 
     /** DTO giữ roles/privileges để tương thích UI; nguồn quyền duy nhất là Keycloak. */
     public UserResponse toResponse(User user) {

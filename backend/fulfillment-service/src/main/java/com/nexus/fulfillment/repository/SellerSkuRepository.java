@@ -14,6 +14,8 @@ public interface SellerSkuRepository extends JpaRepository<SellerSku, UUID>, Jpa
 
     Optional<SellerSku> findBySkuId(UUID skuId);
 
+    Optional<SellerSku> findBySkuCodeIgnoreCase(String skuCode);
+
     List<SellerSku> findBySkuIdIn(Collection<UUID> skuIds);
 
     Optional<SellerSku> findByIdOrSkuId(UUID id, UUID skuId);

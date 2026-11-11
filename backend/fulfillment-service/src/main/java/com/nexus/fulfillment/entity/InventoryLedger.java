@@ -56,10 +56,48 @@ public class InventoryLedger {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
+    // Khóa chống lặp cho các thao tác nhập/điều chỉnh kho khi client retry cùng request.
+    @Column(name = "idempotency_key", unique = true, length = 128)
+    private String idempotencyKey;
+
+    // Lý do nghiệp vụ của biến động kho (kiểm kê, hư hỏng, hủy đơn, thanh toán thất bại...).
+    @Column(name = "reason", length = 500)
+    private String reason;
+
+    // Định danh người thực hiện thao tác (seller/admin) nếu phát sinh từ người dùng xác thực.
+    @Column(name = "actor_id")
+    private UUID actorId;
+
     public InventoryLedger() {
     }
 
-    public InventoryLedger(UUID id, Inventory inventory, LedgerMovementType movementType, int quantity, String refType, UUID refId, Instant createdAt) {
+    public InventoryLedger(
+            UUID id,
+            Inventory inventory,
+            LedgerMovementType movementType,
+            int quantity,
+            String refType,
+            UUID refId,
+            Instant createdAt
+    ) {
+        this(id, inventory, movementType, quantity, refType, refId, createdAt, null, null, null);
+    }
+
+    /**
+     * Khởi tạo bản ghi sổ cái đầy đủ kèm khóa chống lặp, lý do và tác nhân thao tác.
+     */
+    public InventoryLedger(
+            UUID id,
+            Inventory inventory,
+            LedgerMovementType movementType,
+            int quantity,
+            String refType,
+            UUID refId,
+            Instant createdAt,
+            String idempotencyKey,
+            String reason,
+            UUID actorId
+    ) {
         this.id = id;
         this.inventory = inventory;
         this.movementType = movementType;
@@ -67,6 +105,9 @@ public class InventoryLedger {
         this.refType = refType;
         this.refId = refId;
         this.createdAt = (createdAt != null) ? createdAt : Instant.now();
+        this.idempotencyKey = idempotencyKey;
+        this.reason = reason;
+        this.actorId = actorId;
     }
 
     public UUID getId() {
@@ -123,6 +164,30 @@ public class InventoryLedger {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+    }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public void setReason(String reason) {
+        this.reason = reason;
+    }
+
+    public UUID getActorId() {
+        return actorId;
+    }
+
+    public void setActorId(UUID actorId) {
+        this.actorId = actorId;
     }
 
     @Override

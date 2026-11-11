@@ -40,6 +40,8 @@ spring:
 # Cấu hình kênh thông báo giao dịch (SRS §2.6 & §3.2.3)
 notification:
   email-enabled: ${EMAIL_NOTIFICATION_ENABLED:true}
+  push-enabled: ${PUSH_NOTIFICATION_ENABLED:true}
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
   retry-limit: ${NOTIFICATION_RETRY_LIMIT:3}
   transactional-mandatory: ${TRANSACTIONAL_NOTIFICATION_MANDATORY:true}
   sender-from: ${MAIL_FROM:no-reply@nexus.com}

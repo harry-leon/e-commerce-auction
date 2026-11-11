@@ -29,6 +29,13 @@ server:
 # Credential merchant và service account chỉ lấy từ môi trường; COD không cần VNPAY nhưng vẫn cần identity gọi kho.
 # Return URL là trang hiển thị; IPN URL /api/v1/payments/vnpay/ipn phải đăng ký riêng trên merchant VNPAY.
 app:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+  user:
+    url: ${USER_SERVICE_URL:http://localhost:8081}
+  reputation:
+    url: ${REPUTATION_SERVICE_URL:http://localhost:8087}
+  auction:
+    url: ${AUCTION_SERVICE_URL:http://localhost:8084}
   notification:
     # Service account riêng chỉ có NOTIFICATION_WRITER; gửi sau commit, không dùng JWT buyer.
     url: ${NOTIFICATION_SERVICE_URL:http://localhost:8086}
@@ -36,6 +43,12 @@ app:
     client-id: ${NOTIFICATION_CLIENT_ID:}
     client-secret: ${NOTIFICATION_CLIENT_SECRET:}
   payment:
+    auction:
+      expiry-poll-ms: ${AUCTION_EXPIRY_POLL_MS:10000}
+      reminder-poll-ms: ${AUCTION_REMINDER_POLL_MS:60000}
+      reminder-before-minutes: ${AUCTION_REMINDER_BEFORE_MINUTES:120}
+      timeout-poll-ms: ${AUCTION_TIMEOUT_POLL_MS:5000}
+      timeout-penalty-score: ${PAYMENT_TIMEOUT_PENALTY_SCORE:10}
     vnpay:
       tmn-code: ${VNPAY_TMN_CODE:}
       hash-secret: ${VNPAY_HASH_SECRET:}

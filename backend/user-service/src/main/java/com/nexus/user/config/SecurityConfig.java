@@ -27,6 +27,11 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/v3/api-docs/**",
                                 "/swagger-ui/**", "/swagger-ui.html", "/api/v1/ping",
                                 "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password").permitAll()
+                        // API tra cứu liên hệ nội bộ bắt buộc service account Commerce và privilege USER.INTERNAL_READ.
+                        .requestMatchers("/api/v1/internal/users/**").access((authentication, context) ->
+                                new org.springframework.security.authorization.AuthorizationDecision(
+                                        com.nexus.common.security.ServiceIdentity.permits(authentication.get(),
+                                                "nexus-commerce-service", "USER.INTERNAL_READ")))
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtConverter())));
         return http.build();

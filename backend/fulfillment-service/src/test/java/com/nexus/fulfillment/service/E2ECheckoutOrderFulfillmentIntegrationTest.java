@@ -9,7 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
-import com.nexus.fulfillment.client.CatalogSkuClient;
+import com.nexus.fulfillment.client.CatalogClient;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
@@ -32,6 +32,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,7 +92,7 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
     private InventoryEventListener inventoryEventListener;
 
     @MockitoBean
-    private CatalogSkuClient catalogSkuClient;
+    private CatalogClient catalogClient;
 
     private UUID sellerId;
     private UUID skuId;
@@ -113,14 +114,16 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
                         List.of(new SimpleGrantedAuthority("ROLE_SELLER"))
                 )
         );
-        when(catalogSkuClient.getSku(any(UUID.class))).thenAnswer(inv -> new CatalogSkuClient.CatalogSkuSnapshot(
-                inv.getArgument(0),
-                UUID.randomUUID(),
-                "E2E Product",
-                new BigDecimal("100000"),
-                new BigDecimal("90000"),
-                true,
-                sellerId
+        when(catalogClient.findSkuById(any(UUID.class))).thenAnswer(inv -> Optional.of(
+                new CatalogClient.SkuOwnershipInfo(
+                        inv.getArgument(0),
+                        UUID.randomUUID(),
+                        "E2E Product",
+                        new BigDecimal("100000"),
+                        new BigDecimal("90000"),
+                        sellerId,
+                        true
+                )
         ));
 
         warehouse = new Warehouse(

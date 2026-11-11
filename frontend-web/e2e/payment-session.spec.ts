@@ -46,10 +46,11 @@ test('can log in normally after anonymous session restoration and reload using c
 /** Hồi quy return từ cổng thanh toán: chỉ có cookie HttpOnly, không có profile trong sessionStorage của origin/tab mới.
  * API được chặn bằng fixture; không dùng thông tin giao dịch sandbox làm bằng chứng xác thực.
  */
+// Giữ phiên cookie sau mọi kết quả; dev hiện tách CANCELLED khỏi FAILED bằng tiêu đề riêng.
 for (const [status, title] of [
     ['SUCCESS', 'Payment confirmed'],
     ['FAILED', 'Payment failed'],
-    ['CANCELLED', 'Payment failed'],
+    ['CANCELLED', 'Payment cancelled'],
     ['PENDING', 'Waiting for payment confirmation'],
 ]) {
     test(`keeps the authenticated header after a ${status} payment return and reload`, async ({

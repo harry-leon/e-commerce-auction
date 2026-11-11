@@ -35,7 +35,11 @@ function formatDateForInput(dob?: string): string {
  */
 export function ProfilePage() {
     const { setUser, showToast, navigate, user, page, lang } = useApp()
-    const { data: userProfile, error, loading } = useLoad<ApiResponse<ApiUser> | ApiUser>('/users/me')
+    const {
+        data: userProfile,
+        error,
+        loading,
+    } = useLoad<ApiResponse<ApiUser> | ApiUser>('/users/me')
     // User Service bọc trang lịch sử trong data; đọc đúng envelope trước khi duyệt content.
     const history = useLoad<
         ApiResponse<{

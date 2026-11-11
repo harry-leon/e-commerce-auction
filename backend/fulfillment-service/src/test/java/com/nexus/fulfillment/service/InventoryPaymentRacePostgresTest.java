@@ -49,7 +49,9 @@ class InventoryPaymentRacePostgresTest {
 
     @TestConfiguration
     static class Config {
-        @Bean FulfillmentProperties fulfillmentProperties() { return new FulfillmentProperties(); }
+        @Bean FulfillmentProperties fulfillmentProperties() {
+            return new FulfillmentProperties();
+        }
     }
 
     /** Một đơn winner giữ đúng một đơn vị đã tới hạn để cả commit và sweep đều có thể tranh khóa. */
@@ -89,7 +91,9 @@ class InventoryPaymentRacePostgresTest {
                 finish.countDown();
                 committing.get(15, TimeUnit.SECONDS);
                 sweeping.get(15, TimeUnit.SECONDS);
-            } finally { finish.countDown(); }
+            } finally {
+                finish.countDown();
+            }
         }
         inventory.commitByOrder(order);
         inventory.releaseByOrder(order, "REPLAY_RELEASE");
@@ -120,7 +124,9 @@ class InventoryPaymentRacePostgresTest {
         while (System.nanoTime() < end) {
             Integer count = jdbc.queryForObject("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
                     + "AND wait_event_type='Lock' AND query LIKE '%inventory_reservations%'", Integer.class);
-            if (count != null && count > 0) { return; }
+            if (count != null && count > 0) {
+                return;
+            }
             Thread.sleep(20);
         }
         throw new AssertionError("Sweeper không chờ row lock của commit");
@@ -128,8 +134,12 @@ class InventoryPaymentRacePostgresTest {
 
     /** Giữ transaction commit đang mở cho đến khi sweeper đã chờ cùng row lock; không nuốt interruption. */
     private void await(CountDownLatch latch) {
-        try { assertTrue(latch.await(15, TimeUnit.SECONDS)); }
-        catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new IllegalStateException(error); }
+        try {
+            assertTrue(latch.await(15, TimeUnit.SECONDS));
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(error);
+        }
     }
 
     private String state() {

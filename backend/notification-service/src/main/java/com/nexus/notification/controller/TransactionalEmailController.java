@@ -101,6 +101,27 @@ public class TransactionalEmailController {
         return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
+    @Operation(summary = "Sự kiện Thắng đấu giá (AuctionWon)", description = "Gửi email chúc mừng người thắng kèm link thanh toán và mốc hạn 24 giờ")
+    @PostMapping("/events/auction-won")
+    public ResponseEntity<ApiResponse<NotificationResponse>> handleAuctionWonEvent(
+            @Valid @RequestBody OrderEmailRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(emailService.processOrderTransactionalEmail(request)));
+    }
+
+    @Operation(summary = "Sự kiện Nhắc hạn thanh toán đấu giá", description = "Gửi cảnh báo nhắc nhở trước khi hết hạn thanh toán 24h")
+    @PostMapping("/events/auction-payment-reminder")
+    public ResponseEntity<ApiResponse<NotificationResponse>> handleAuctionPaymentReminderEvent(
+            @Valid @RequestBody OrderEmailRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(emailService.processOrderTransactionalEmail(request)));
+    }
+
+    @Operation(summary = "Sự kiện Quá hạn thanh toán đấu giá 24h", description = "Thông báo hủy đơn, giải phóng kho và trừ điểm uy tín")
+    @PostMapping("/events/auction-payment-timeout")
+    public ResponseEntity<ApiResponse<NotificationResponse>> handleAuctionPaymentTimeoutEvent(
+            @Valid @RequestBody OrderEmailRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(emailService.processOrderTransactionalEmail(request)));
+    }
+
     @Operation(summary = "Tra cứu thông báo theo ID", description = "Lấy chi tiết thông báo cùng lịch sử các lần thử gửi (attempts)")
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")

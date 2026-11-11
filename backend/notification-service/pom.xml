@@ -88,6 +88,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-mail</artifactId>
     </dependency>
+    <!-- Kênh đẩy thông báo thời gian thực STOMP cho winner đấu giá (PUSH_NOTIFICATION_ENABLED). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
 
     <!-- Thêm khi service cần:
          spring-kafka, spring-boot-starter-data-redis, spring-boot-starter-websocket -->

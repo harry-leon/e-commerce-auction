@@ -1,6 +1,7 @@
 package com.nexus.commerce.service.impl;
 
 import com.nexus.commerce.client.CatalogClient;
+import com.nexus.commerce.client.UserContactClient;
 import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.OrderMapper;
 import com.nexus.commerce.dto.request.CancelOrderRequest;
@@ -16,6 +17,7 @@ import com.nexus.commerce.enums.OrderSourceType;
 import com.nexus.commerce.enums.OrderStatus;
 import com.nexus.commerce.repository.OrderRepository;
 import com.nexus.commerce.repository.OrderStatusHistoryRepository;
+import com.nexus.commerce.service.NotificationOutbox;
 import com.nexus.commerce.service.OrderService;
 import com.nexus.commerce.statemachine.OrderStatusStateMachine;
 import com.nexus.common.exception.BusinessException;
@@ -71,6 +73,8 @@ public class OrderServiceImpl implements OrderService {
     private final OrderMapper orderMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final CatalogClient catalogClient;
+    private final NotificationOutbox notificationOutbox;
+    private final UserContactClient userContactClient;
 
     public OrderServiceImpl(
             OrderRepository orderRepository,
@@ -78,7 +82,18 @@ public class OrderServiceImpl implements OrderService {
             OrderStatusStateMachine orderStatusStateMachine,
             OrderMapper orderMapper,
             org.springframework.jdbc.core.JdbcTemplate jdbc) {
-        this(orderRepository, orderStatusHistoryRepository, orderStatusStateMachine, orderMapper, jdbc, null);
+        this(orderRepository, orderStatusHistoryRepository, orderStatusStateMachine, orderMapper, jdbc, null, null, null);
+    }
+
+    public OrderServiceImpl(
+            OrderRepository orderRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            OrderStatusStateMachine orderStatusStateMachine,
+            OrderMapper orderMapper,
+            org.springframework.jdbc.core.JdbcTemplate jdbc,
+            CatalogClient catalogClient) {
+        this(orderRepository, orderStatusHistoryRepository, orderStatusStateMachine, orderMapper,
+                jdbc, catalogClient, null, null);
     }
 
     @Autowired
@@ -88,13 +103,17 @@ public class OrderServiceImpl implements OrderService {
             OrderStatusStateMachine orderStatusStateMachine,
             OrderMapper orderMapper,
             org.springframework.jdbc.core.JdbcTemplate jdbc,
-            @Autowired(required = false) CatalogClient catalogClient) {
+            @Autowired(required = false) CatalogClient catalogClient,
+            @Autowired(required = false) NotificationOutbox notificationOutbox,
+            @Autowired(required = false) UserContactClient userContactClient) {
         this.orderRepository = orderRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
         this.orderStatusStateMachine = orderStatusStateMachine;
         this.orderMapper = orderMapper;
         this.jdbc = jdbc;
         this.catalogClient = catalogClient;
+        this.notificationOutbox = notificationOutbox;
+        this.userContactClient = userContactClient;
     }
 
     /**
@@ -734,11 +753,32 @@ public class OrderServiceImpl implements OrderService {
         String orderNo = generateAuctionOrderNo(now);
 
         // Bước 4: Khởi tạo Order entity với sourceType = AUCTION, status = PENDING_PAYMENT và paymentDeadline
+        String winnerEmail = (request.winnerEmail() != null && !request.winnerEmail().isBlank())
+                ? request.winnerEmail().trim()
+                : null;
+        String winnerName = (request.winnerName() != null && !request.winnerName().isBlank())
+                ? request.winnerName().trim()
+                : null;
+        if ((winnerEmail == null || winnerName == null) && userContactClient != null) {
+            var contactOpt = userContactClient.findContact(request.winnerId());
+            if (contactOpt.isPresent()) {
+                var contact = contactOpt.get();
+                if (winnerEmail == null && contact.email() != null && !contact.email().isBlank()) {
+                    winnerEmail = contact.email().trim();
+                }
+                if (winnerName == null && contact.fullName() != null && !contact.fullName().isBlank()) {
+                    winnerName = contact.fullName().trim();
+                }
+            }
+        }
+
         Order order = Order.builder()
                 .id(UUID.randomUUID())
                 .orderNo(orderNo)
                 .buyerId(request.winnerId())
                 .sellerId(request.sellerId())
+                .buyerEmail(winnerEmail)
+                .recipientName(winnerName)
                 .sourceType(OrderSourceType.AUCTION)
                 .auctionId(request.auctionId())
                 // Giá thắng được giữ ở estimated để payment không áp lại giá bán thường; chỉ chốt sau thu tiền.
@@ -785,8 +825,12 @@ public class OrderServiceImpl implements OrderService {
                 .build();
         order.addStatusHistory(history);
 
-        // Bước 7: Lưu đơn hàng vào cơ sở dữ liệu
+        // Bước 7: Lưu đơn hàng, flush đơn cùng các bản ghi con xuống DB trong cùng transaction trước khi JDBC chèn outbox (tránh lỗi FK order_id)
         Order savedOrder = orderRepository.save(order);
+        orderRepository.flush();
+        if (notificationOutbox != null) {
+            notificationOutbox.enqueue(savedOrder, "AUCTION_WON");
+        }
         log.info("Khởi tạo thành công đơn hàng đấu giá [{}] cho phiên [{}] với winner [{}], tổng tiền [{}]",
                 savedOrder.getOrderNo(), request.auctionId(), request.winnerId(), savedOrder.getEstimatedTotal());
 

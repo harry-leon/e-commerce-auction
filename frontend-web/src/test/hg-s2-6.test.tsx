@@ -210,9 +210,10 @@ describe('HG-S2-6 formatSkuDisplay & inventory API wrappers', () => {
         })
         expect(adjusted.totalQty).toBe(20)
 
+        // Sau hợp nhất origin/dev, getInventoryLedger trả về PaginatedResult<InventoryLedgerResponse>
         const ledger = await getInventoryLedger({ skuId: SKU_UUID })
-        expect(ledger).toHaveLength(1)
-        expect(ledger[0].movementType).toBe('INBOUND')
+        expect(ledger.items).toHaveLength(1)
+        expect(ledger.items[0].movementType).toBe('INBOUND')
     })
 })
 
@@ -555,9 +556,9 @@ describe('HG-S2-6 SellerInventoryPage Fulfillment SKU workflow', () => {
 
         render(<SellerInventoryPage />)
 
-        // Ban đầu chưa có SKU nào trong kho Fulfillment; Seller không được gọi /inventory/ledger (tránh 403)
+        // Ban đầu chưa có SKU nào trong kho Fulfillment; sau hợp nhất origin/dev Seller cũng được đọc /inventory/ledger trong phạm vi SKU mình sở hữu
         await screen.findByText(/No Fulfillment SKUs registered yet/i)
-        expect(fetchCalls.some((c) => c.includes('/inventory/ledger'))).toBe(false)
+        expect(fetchCalls.some((c) => c.includes('/inventory/ledger'))).toBe(true)
 
         // Mở Modal nhập kho và gửi POST /inventory/inbound
         fireEvent.click(screen.getByRole('button', { name: /Inbound Stock/i }))
