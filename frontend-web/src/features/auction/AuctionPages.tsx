@@ -92,6 +92,9 @@ export function AuctionListPage() {
 
     useEffect(() => {
         fetchAuctions()
+        // Đồng bộ lại danh sách để phiên vừa đến startTime chuyển tab từ Scheduled sang Active.
+        const refreshTimer = window.setInterval(fetchAuctions, 5000)
+        return () => window.clearInterval(refreshTimer)
     }, [fetchAuctions])
 
     // Xử lý áp dụng khoảng giá
@@ -412,33 +415,40 @@ export function AuctionDetailPage() {
     const [selectedImageIndex, setSelectedImageIndex] = useState(0)
 
     // Tải thông tin chi tiết qua API Adapter
-    const loadAuctionDetail = useCallback(async () => {
+    const loadAuctionDetail = useCallback(async (backgroundRefresh = false) => {
         if (!auctionId) {
             setError(lang === 'en' ? 'Auction ID is missing.' : 'Thiếu mã phiên đấu giá.')
             setLoading(false)
             return
         }
-        setLoading(true)
-        setError('')
+        if (!backgroundRefresh) {
+            setLoading(true)
+            setError('')
+        }
         try {
             const data = await auctionsApi.getAuctionById(auctionId, createdAuctions, auctionReviews)
             setAuction(data)
-            setCustomBid(String(data.currentBid + data.minIncrement))
+            if (!backgroundRefresh) setCustomBid(String(data.currentBid + data.minIncrement))
         } catch (err) {
-            setError(
-                err instanceof Error
-                    ? err.message
-                    : lang === 'en'
-                      ? 'Failed to load auction details.'
-                      : 'Không thể tải thông tin chi tiết phiên đấu giá.',
-            )
+            if (!backgroundRefresh) {
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : lang === 'en'
+                          ? 'Failed to load auction details.'
+                          : 'Không thể tải thông tin chi tiết phiên đấu giá.',
+                )
+            }
         } finally {
-            setLoading(false)
+            if (!backgroundRefresh) setLoading(false)
         }
     }, [auctionId, createdAuctions, auctionReviews, lang])
 
     useEffect(() => {
         loadAuctionDetail()
+        // Làm mới status và bid history theo chu kỳ mở phiên của Auction Service khi Buyer đang xem detail.
+        const refreshTimer = window.setInterval(() => loadAuctionDetail(true), 5000)
+        return () => window.clearInterval(refreshTimer)
     }, [loadAuctionDetail])
 
     // Nếu đang loading, hiển thị skeleton loading state
@@ -502,7 +512,7 @@ export function AuctionDetailPage() {
                             <Button
                                 variant="outline"
                                 size="md"
-                                onClick={loadAuctionDetail}
+                                onClick={() => loadAuctionDetail()}
                             >
                                 {lang === 'en' ? 'Retry' : 'Thử lại'}
                             </Button>

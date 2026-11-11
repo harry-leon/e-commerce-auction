@@ -24,6 +24,32 @@ describe('Auctions API Adapter', () => {
         localStorage.clear()
         auctionsApi.resetMockStore()
         AUCTIONS.forEach((auction) => auctionsApi.addCreatedAuction(auction))
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = new URL(String(input), 'http://localhost')
+            if (url.pathname.endsWith('/auctions') && init?.method === 'POST') {
+                const body = JSON.parse(String(init.body))
+                return new Response(JSON.stringify({
+                    success: true,
+                    data: {
+                        id: '9b96b4ea-842c-4c91-9e9e-a91a2e55baf1',
+                        product_id: body.productId,
+                        seller_id: '1bb61969-bb72-4d69-8530-1b7eb7e30b50',
+                        seller_name: 'Test Seller',
+                        start_price: body.startPrice,
+                        current_price: body.startPrice,
+                        bid_increment: body.bidIncrement,
+                        status: 'SCHEDULED',
+                        start_time: body.startTime,
+                        end_time: body.endTime,
+                        visibility: body.visibility,
+                    },
+                }), { status: 201, headers: { 'Content-Type': 'application/json' } })
+            }
+            return new Response(JSON.stringify({ success: false, error: { message: 'Not found' } }), {
+                status: 404,
+                headers: { 'Content-Type': 'application/json' },
+            })
+        }))
     })
 
     afterEach(() => {
@@ -264,7 +290,7 @@ describe('Auctions API Adapter', () => {
             expect(serverList.items.find((auction) => auction.id === created.id)?.sellerId).toBe('seller-current')
         })
 
-        it('tự động fallback sang kho mock khi backend trả về 404 (chưa triển khai)', async () => {
+        it('không tự hiển thị fixture khi backend trả về 404', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi.fn().mockResolvedValue(
@@ -279,21 +305,30 @@ describe('Auctions API Adapter', () => {
             )
 
             const res = await auctionsApi.getAuctions({ status: 'all', page: 1, limit: 9 })
-            expect(res.items.length).toBeGreaterThan(0)
-            expect(res.total).toBeGreaterThan(0)
+            expect(res.items).toEqual([])
+            expect(res.total).toBe(0)
         })
 
-        it('áp dụng đúng bộ lọc trạng thái và khoảng giá khi chạy fallback', async () => {
+        it('không dựng dữ liệu mẫu khi API mất kết nối', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
             )
 
             const resActive = await auctionsApi.getAuctions({ status: 'active' })
-            expect(resActive.items.every((a) => a.status === 'active')).toBe(true)
+            expect(resActive.items).toEqual([])
 
             const resEnded = await auctionsApi.getAuctions({ status: 'ended' })
-            expect(resEnded.items.every((a) => a.status === 'ended')).toBe(true)
+            expect(resEnded.items).toEqual([])
+        })
+
+        it('ẩn phiên local có ID timestamp vì phiên đó không thể được Auction Service cập nhật', async () => {
+            auctionsApi.addCreatedAuction({ ...AUCTIONS[0], id: 'auc-1793977636924' })
+            vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+
+            const result = await auctionsApi.getAuctions({ status: 'all' })
+
+            expect(result.items.some((auction) => auction.id === 'auc-1793977636924')).toBe(false)
         })
     })
 
@@ -476,7 +511,7 @@ describe('Auctions API Adapter', () => {
             ).rejects.toThrow(ApiClientError)
         })
 
-        it('tạo thành công phiên đấu giá hợp lệ với trạng thái chờ Admin phê duyệt', async () => {
+        it('tạo phiên qua API, nhận status SCHEDULED từ backend và không dùng dữ liệu cục bộ', async () => {
             const start = new Date(Date.now() + 3600000)
             const end = new Date(start.getTime() + 86400000) // 24 giờ
 
@@ -490,14 +525,30 @@ describe('Auctions API Adapter', () => {
             })
 
             expect(created).toBeDefined()
-            expect(created.status).toBe('pending_approval')
+            expect(created.status).toBe('scheduled')
             expect(created.startingPrice).toBe(1000000)
             expect(created.minIncrement).toBe(50000)
             expect(created.productId).toBe('p1')
 
-            // Kiểm tra phiên vừa tạo đã có trong danh sách
-            const list = await auctionsApi.getAuctions({ sellerId: created.sellerId })
+            // Nếu list backend chưa đồng bộ ở request kế tiếp, session Seller vẫn giữ response đã được server xác nhận.
+            const list = await auctionsApi.getAuctions({ sellerId: created.sellerId, extraAuctions: [created] })
             expect(list.items.some((a) => a.id === created.id)).toBe(true)
+        })
+
+        it('không báo thành công hoặc lưu phiên local khi POST Auction API lỗi', async () => {
+            vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+            const start = new Date(Date.now() + 3600000)
+
+            await expect(auctionsApi.createAuction({
+                productId: 'p1',
+                startingPrice: 1000000,
+                minIncrement: 50000,
+                startTime: start.toISOString(),
+                endTime: new Date(start.getTime() + 86400000).toISOString(),
+            })).rejects.toThrow()
+
+            expect(JSON.parse(localStorage.getItem('nexus.auction-portal-store.v2') || '[]')
+                .some((auction: { id: string }) => /^auc-\d+$/.test(auction.id))).toBe(false)
         })
     })
 

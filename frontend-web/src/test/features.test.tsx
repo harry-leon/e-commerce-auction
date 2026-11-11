@@ -313,7 +313,8 @@ describe('IAM forms', () => {
         render(<LoginPage />)
         await ui.type(screen.getByLabelText('Email', { exact: true }), user.email)
         await ui.type(screen.getByLabelText('Password', { exact: true }), 'StrongPassword1!')
-        await ui.click(screen.getByText('Remember email'))
+        // Label đã đổi sang 'Remember me' (chuẩn industry) — tìm theo regex để không phụ thuộc vào exact string
+        await ui.click(screen.getByText(/remember/i))
         await ui.click(screen.getByRole('button', { name: 'Login' }))
         await waitFor(() => expect(holder.current.navigate).toHaveBeenCalledWith('home'))
         // Sau đăng nhập chỉ cache profile; token nằm trong cookie HttpOnly.

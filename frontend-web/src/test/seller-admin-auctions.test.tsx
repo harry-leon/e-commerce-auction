@@ -30,14 +30,50 @@ describe('[LD-S2-2] Seller Auction Creation UI & Admin Auction Management Portal
         auctionsApi.resetMockStore()
         AUCTIONS.forEach((auction) => auctionsApi.addCreatedAuction(auction))
 
-        // Giả lập fetch offline/sandbox để kích hoạt fallback logic an toàn
+        // Chức năng: Giả lập fetch cho môi trường test tích hợp giao diện.
+        // Luồng: Xử lý POST /auctions thành công (HTTP 201) trả về DTO phiên đấu giá mới ở trạng thái PENDING_APPROVAL.
+        //        Các endpoint khác trả 503 để kiểm tra tính chịu lỗi và fallback hiển thị an toàn.
         vi.stubGlobal(
             'fetch',
-            vi.fn().mockImplementation(() =>
-                Promise.resolve(
+            vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+                const url = String(input)
+                if (
+                    url.includes('/auctions') &&
+                    init?.method === 'POST' &&
+                    !url.includes('/review') &&
+                    !url.includes('/cancel') &&
+                    !url.includes('/pause') &&
+                    !url.includes('/resume') &&
+                    !url.includes('/bids')
+                ) {
+                    const body = typeof init.body === 'string' ? JSON.parse(init.body) : {}
+                    const mockId = `auc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+                    return Promise.resolve(
+                        new Response(
+                            JSON.stringify({
+                                success: true,
+                                data: {
+                                    id: mockId,
+                                    product_id: body.productId,
+                                    seller_id: DEMO_SELLER.id,
+                                    seller_name: DEMO_SELLER.fullName,
+                                    start_price: body.startPrice,
+                                    current_price: body.startPrice,
+                                    bid_increment: body.bidIncrement,
+                                    status: 'PENDING_APPROVAL',
+                                    start_time: body.startTime,
+                                    end_time: body.endTime,
+                                    visibility: body.visibility,
+                                },
+                            }),
+                            { status: 201, headers: { 'Content-Type': 'application/json' } },
+                        ),
+                    )
+                }
+                return Promise.resolve(
                     new Response(JSON.stringify({ success: false }), { status: 503 }),
-                ),
-            ),
+                )
+            }),
         )
 
         contextHolder.current = {
