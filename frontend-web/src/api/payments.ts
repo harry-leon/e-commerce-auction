@@ -5,7 +5,14 @@ import type { ApiResponse } from './client'
 export interface PaymentResult {
     paymentId: string
     orderId: string
-    status: 'PENDING' | 'EXPIRED' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
+    status:
+        | 'PENDING'
+        | 'PROCESSING'
+        | 'REQUIRES_REVIEW'
+        | 'EXPIRED'
+        | 'SUCCESS'
+        | 'FAILED'
+        | 'CANCELLED'
     amount: number
     currency: 'VND'
     paymentUrl: string | null
@@ -17,5 +24,19 @@ export async function getPayment(id: string): Promise<PaymentResult> {
     const response = await api<ApiResponse<PaymentResult>>(`/payments/${encodeURIComponent(id)}`)
     if (!response.success || !response.data)
         throw new Error('Không thể xác nhận kết quả thanh toán')
+    return response.data
+}
+
+/**
+ * Khởi tạo hoặc lấy lại URL thanh toán VNPAY sandbox cho đơn hàng.
+ * POST /api/v1/payments với body { orderId }.
+ * Backend tự kiểm tra quyền sở hữu đơn hàng, winner, giá và tính hợp lệ trước khi sinh paymentUrl sandbox.
+ */
+export async function startPayment(orderId: string): Promise<PaymentResult> {
+    const response = await api<ApiResponse<PaymentResult>>('/payments', {
+        method: 'POST',
+        body: JSON.stringify({ orderId }),
+    })
+    if (!response.success || !response.data) throw new Error('Không thể tạo thanh toán')
     return response.data
 }
