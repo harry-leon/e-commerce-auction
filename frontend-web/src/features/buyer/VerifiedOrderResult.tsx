@@ -1,34 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ordersApi, readLocalMockOrders, writeLocalMockOrders } from '../../api/orders'
+import { ordersApi } from '../../api/orders'
 import { useApp } from '../../context'
 import { Button, CheckCircle, Package } from '../../components/UI'
 import type { Order } from '../../types'
 
 /**
- * Component hiển thị kết quả xử lý đơn hàng khi quay về từ luồng thanh toán hoặc đặt hàng thành công.
- *
- * Chức năng:
- * - Tra cứu và hiển thị trạng thái thực tế của đơn hàng thông qua backend API hoặc kho đơn cục bộ (mock/offline).
- * - Cung cấp giao diện thông báo trực quan (icon, mã đơn, trạng thái, nút chuyển trang).
- *
- * Đầu vào và kết quả:
- * - Đầu vào: orderId (UUID hoặc mã đơn ORD-...) từ URL query params.
- * - Kết quả: Hiển thị trạng thái đơn hàng (PAID, PENDING_PAYMENT...) hoặc cảnh báo nếu hoàn toàn không tìm thấy đơn.
- *
- * Luồng xử lý:
- * 1. Nhận orderId; nếu rỗng đánh dấu lỗi và bỏ qua gọi API.
- * 2. Nếu orderId là UUID: gọi ordersApi.getOrderDetailV2(orderId) từ Backend.
- * 3. Nếu Backend lỗi hoặc orderId dạng ORD-...: fallback gọi ordersApi.getOrderById(orderId) từ localStorage.
- * 4. Nếu orderId dạng ORD-... và query status=success mà chưa có trong store: tự động khởi tạo đơn mock đã thanh toán (PAID)
- *    và lưu vào localStorage để Buyer và Admin xem được ngay trong lịch sử đơn.
- * 5. Nếu không tìm thấy và không có xác nhận thành công: hiển thị thông báo alert chưa xác nhận.
- *
- * Quy tắc và lý do:
- * - Hỗ trợ cả đơn hàng thật trên Backend và đơn hàng thử nghiệm sandbox/mock lưu tại browser.
- * - Đảm bảo dữ liệu đơn lưu vào localStorage có đầy đủ items để không bao giờ xảy ra lỗi undefined.map().
- *
- * Lỗi và giới hạn:
- * - Nếu token hết hạn, người dùng có thể bấm "Lịch sử đơn hàng" để được chuyển hướng và làm mới phiên làm việc.
+ * Chỉ công nhận trạng thái đơn từ Commerce; query thành công và đơn local PAID không chứng minh đã thu tiền.
+ * Đổi ID hoặc API lỗi bỏ kết quả cũ và báo chưa xác nhận, không fallback sang dữ liệu demo.
  */
 export function VerifiedOrderResult({ orderId }: { orderId: string }) {
     const { lang, navigate, user, pageParams } = useApp()
@@ -38,6 +16,8 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
 
     useEffect(() => {
         let cancelled = false
+        setOrder(null)
+        setError(false)
         if (!orderId) {
             setError(true)
             return
@@ -52,89 +32,8 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                     setError(false)
                 }
             })
-            .catch(async () => {
-                // Bước 2: Khi Backend trả lỗi (ví dụ mã đơn mock ORD-... hoặc mạng chậm),
-                // fallback tìm kiếm trong kho lưu trữ cục bộ (localStorage)
-                try {
-                    const fallbackOrder = await ordersApi.getOrderById(orderId)
-                    if (!cancelled && fallbackOrder) {
-                        setOrder(fallbackOrder)
-                        setError(false)
-                        return
-                    }
-                } catch {
-                    // Bỏ qua lỗi tìm kiếm cục bộ
-                }
-
-                // Bước 3: Nếu là đơn sandbox ORD-... và URL mang cờ status=success / 00
-                if (!cancelled) {
-                    if (
-                        orderId.startsWith('ORD-') &&
-                        (queryStatus === 'success' || queryStatus === '00')
-                    ) {
-                        const syntheticOrder: Order = {
-                            id: orderId,
-                            orderNo: orderId,
-                            buyerId: user?.id || 'u1',
-                            buyerName: user?.fullName || 'Minh Tran',
-                            sellerId: 'u2',
-                            sellerName: 'TechZone Store',
-                            items: [
-                                {
-                                    productId: 'p1',
-                                    productName:
-                                        lang === 'vi'
-                                            ? 'Đơn hàng mua sắm trực tuyến'
-                                            : 'Online Purchase Order',
-                                    image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100',
-                                    quantity: 1,
-                                    unitPrice: 0,
-                                    subtotal: 0,
-                                },
-                            ],
-                            subtotal: 0,
-                            tax: 0,
-                            discount: 0,
-                            shipping: 0,
-                            total: 0,
-                            status: 'PAID',
-                            refundStatus: 'none',
-                            paymentStatus: 'held',
-                            shippingAddress: '123 Nguyen Hue, District 1, Ho Chi Minh City',
-                            paymentMethod: 'VNPAY Sandbox',
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                            disputeStatus: 'none',
-                            reviewed: false,
-                        }
-                        try {
-                            const localOrders = readLocalMockOrders()
-                            const existingIdx = localOrders.findIndex(
-                                (o) => o.id === orderId || (o as any).orderNo === orderId,
-                            )
-                            if (existingIdx === -1) {
-                                localOrders.unshift(syntheticOrder)
-                            } else {
-                                localOrders[existingIdx].status = 'PAID'
-                                localOrders[existingIdx].paymentStatus = 'held'
-                                if (
-                                    !localOrders[existingIdx].items ||
-                                    localOrders[existingIdx].items.length === 0
-                                ) {
-                                    localOrders[existingIdx].items = syntheticOrder.items
-                                }
-                            }
-                            writeLocalMockOrders(localOrders)
-                        } catch {
-                            // Bỏ qua
-                        }
-                        setOrder(syntheticOrder)
-                        setError(false)
-                        return
-                    }
-
-                    setError(true)
-                }
+            .catch(() => {
+                if (!cancelled) setError(true)
             })
 
         return () => {
@@ -142,18 +41,17 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
         }
     }, [orderId, queryStatus, user, lang])
 
-    const isPaid = order && (order.status === 'PAID' || order.status === 'COMPLETED')
-    const isUnverified = !orderId || (error && !order)
+    const current = order?.id === orderId ? order : null
+    const isPaid = current && (current.status === 'PAID' || current.status === 'COMPLETED')
+    const isUnverified = !orderId || (error && !current)
 
     return (
         <div className="max-w-lg mx-auto text-center py-12 px-4">
-            {!isUnverified && order && (
+            {!isUnverified && current && (
                 <div className="flex justify-center mb-4">
                     <div
                         className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                            isPaid
-                                ? 'bg-emerald-100 text-emerald-600'
-                                : 'bg-blue-100 text-blue-600'
+                            isPaid ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
                         }`}
                     >
                         {isPaid ? <CheckCircle size={36} /> : <Package size={36} />}
@@ -162,7 +60,7 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
             )}
 
             <h1 className="text-2xl font-bold mb-3 text-gray-900">
-                {order
+                {current
                     ? isPaid
                         ? lang === 'vi'
                             ? 'Thanh toán thành công'
@@ -175,19 +73,19 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                       : 'Order not verified'}
             </h1>
 
-            {order && (
+            {current && (
                 <div className="text-sm font-medium text-gray-600 mb-6 font-mono bg-gray-50 py-2.5 px-4 rounded-xl border border-gray-200 inline-block">
-                    {(order as any).orderNo || order.id} ·{' '}
+                    {current.orderNo || current.id} ·{' '}
                     <span
                         className={
                             isPaid
                                 ? 'text-emerald-600 font-semibold'
-                                : order.status === 'CANCELLED'
+                                : current.status === 'CANCELLED'
                                   ? 'text-red-600 font-semibold'
                                   : 'text-blue-600 font-semibold'
                         }
                     >
-                        {order.status}
+                        {current.status}
                     </span>
                 </div>
             )}
@@ -207,7 +105,7 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                 <Button variant="outline" onClick={() => navigate('order-history')}>
                     {lang === 'vi' ? 'Lịch sử đơn hàng' : 'Order history'}
                 </Button>
-                {order && (
+                {current && (
                     <Button variant="primary" onClick={() => navigate('home')}>
                         {lang === 'vi' ? 'Tiếp tục mua sắm' : 'Continue shopping'}
                     </Button>
