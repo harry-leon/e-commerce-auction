@@ -28,10 +28,13 @@ import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
 import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import com.nexus.fulfillment.service.InventoryService;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -365,8 +368,19 @@ class InventoryControllerTest {
     @DisplayName("POST /api/v1/inventory/inbound - Nhập kho yêu cầu quyền ADMIN hoặc SELLER")
     void testInboundStock_Success() throws Exception {
         UUID skuId = UUID.randomUUID();
+        UUID sellerSkuId = UUID.randomUUID();
         UUID warehouseId = UUID.randomUUID();
-        InventoryStockResponse stock = new InventoryStockResponse(skuId, warehouseId, "WH_001", 50, 50, 0, 0);
+        InventoryStockResponse stock = new InventoryStockResponse(
+                skuId,
+                sellerSkuId,
+                "FSKU-00000001",
+                warehouseId,
+                "WH_001",
+                50,
+                50,
+                0,
+                0
+        );
 
         when(inventoryService.inboundStock(any())).thenReturn(stock);
 
@@ -378,7 +392,99 @@ class InventoryControllerTest {
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.sellerSkuId").value(sellerSkuId.toString()))
+                .andExpect(jsonPath("$.data.skuCode").value("FSKU-00000001"))
                 .andExpect(jsonPath("$.data.totalQty").value(50));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/inventory/inbound - Số lượng <= 0 bị chặn validation 422")
+    void testInboundStock_InvalidQuantity_Returns422() throws Exception {
+        StockInboundRequest req = new StockInboundRequest(UUID.randomUUID(), UUID.randomUUID(), 0, null);
+
+        mockMvc.perform(post("/api/v1/inventory/inbound")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_SELLER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/inventory/skus & /skus/{id} - Trả danh sách/chi tiết seller_skus cho SELLER và chặn BUYER/vô danh")
+    void testSellerSkusEndpoints_SuccessAndRbac() throws Exception {
+        UUID sellerId = UUID.randomUUID();
+        UUID sellerSkuId = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        Instant now = Instant.now();
+
+        SellerSkuResponse item = new SellerSkuResponse(
+                sellerSkuId,
+                sellerSkuId,
+                sellerId,
+                skuId,
+                "FSKU-00000012",
+                SellerSkuStatus.ACTIVE,
+                25,
+                20,
+                5,
+                0,
+                1,
+                now,
+                now
+        );
+        when(inventoryService.getSellerSkus(any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(item), PageRequest.of(0, 20), 1));
+
+        InventoryStockResponse wh = new InventoryStockResponse(
+                skuId,
+                sellerSkuId,
+                "FSKU-00000012",
+                warehouseId,
+                "WH_001",
+                25,
+                20,
+                5,
+                0
+        );
+        SellerSkuDetailResponse detail = new SellerSkuDetailResponse(
+                sellerSkuId,
+                sellerSkuId,
+                sellerId,
+                skuId,
+                "FSKU-00000012",
+                SellerSkuStatus.ACTIVE,
+                25,
+                20,
+                5,
+                0,
+                List.of(wh),
+                now,
+                now
+        );
+        when(inventoryService.getSellerSkuDetail(sellerSkuId)).thenReturn(detail);
+
+        mockMvc.perform(get("/api/v1/inventory/skus")
+                        .with(jwt().jwt(j -> j.subject(sellerId.toString()))
+                                .authorities(new SimpleGrantedAuthority("ROLE_SELLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].skuCode").value("FSKU-00000012"))
+                .andExpect(jsonPath("$.data[0].totalQty").value(25))
+                .andExpect(jsonPath("$.meta.pagination.totalElements").value(1));
+
+        mockMvc.perform(get("/api/v1/inventory/skus/" + sellerSkuId)
+                        .with(jwt().jwt(j -> j.subject(sellerId.toString()))
+                                .authorities(new SimpleGrantedAuthority("ROLE_SELLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.skuCode").value("FSKU-00000012"))
+                .andExpect(jsonPath("$.data.warehouses[0].warehouseCode").value("WH_001"));
+
+        mockMvc.perform(get("/api/v1/inventory/skus")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/v1/inventory/skus")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_BUYER"))))
+                .andExpect(status().isForbidden());
     }
 
     @Test

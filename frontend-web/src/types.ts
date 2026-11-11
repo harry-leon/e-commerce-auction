@@ -363,7 +363,7 @@ export interface AuctionReview {
  */
 export interface ApiOrderItem {
     skuId: string
-    skuCode: string
+    skuCode?: string | null
     productName: string
     thumbnailUrl: string | null
     unitPrice: number

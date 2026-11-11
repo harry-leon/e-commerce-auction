@@ -11,33 +11,43 @@ import com.nexus.catalog.dto.response.ProductResponse;
 import com.nexus.catalog.dto.response.SkuResponse;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ResourceNotFoundException;
+import com.nexus.catalog.entity.PricingRule;
 import com.nexus.catalog.entity.Product;
 import com.nexus.catalog.entity.ProductImage;
 import com.nexus.catalog.entity.Sku;
 import com.nexus.catalog.enums.ProductStatus;
+import com.nexus.catalog.enums.SkuStatus;
 import com.nexus.catalog.repository.CategoryRepository;
 import com.nexus.catalog.repository.ProductImageRepository;
 import com.nexus.catalog.repository.ProductRepository;
 import com.nexus.catalog.repository.SkuRepository;
+import com.nexus.catalog.service.CatalogEventOutboxService;
+import com.nexus.catalog.service.DynamicPricingService;
 import com.nexus.catalog.service.ProductService;
 import com.nexus.catalog.specification.ProductSpecification;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.lang.Nullable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Transactional
@@ -50,6 +60,8 @@ public class ProductServiceImpl implements ProductService {
     private final Validator validator;
     // Cấu hình tham số nghiệp vụ catalog từ Spring Cloud Config Server / application.yml
     private final CatalogProperties catalogProperties;
+    private final DynamicPricingService dynamicPricingService;
+    private final CatalogEventOutboxService catalogEventOutboxService;
 
     public ProductServiceImpl(
             ProductRepository productRepository,
@@ -58,19 +70,11 @@ public class ProductServiceImpl implements ProductService {
             ProductImageRepository productImageRepository,
             ProductMapper productMapper,
             Validator validator) {
-        this.productRepository = productRepository;
-        this.skuRepository = skuRepository;
-        this.categoryRepository = categoryRepository;
-        this.productImageRepository = productImageRepository;
-        this.productMapper = productMapper != null ? productMapper : ProductMapper.INSTANCE;
-        this.validator = validator;
-        this.catalogProperties = new CatalogProperties();
+        this(productRepository, skuRepository, categoryRepository, productImageRepository,
+                productMapper, validator, new CatalogProperties(), new DynamicPricingService(null), null);
     }
 
-    /**
-     * Khởi tạo ProductServiceImpl với đầy đủ dependencies bao gồm CatalogProperties động.
-     */
-    @org.springframework.beans.factory.annotation.Autowired
+    /** Khởi tạo ProductServiceImpl giữ tương thích constructor cũ kèm CatalogProperties. */
     public ProductServiceImpl(
             ProductRepository productRepository,
             SkuRepository skuRepository,
@@ -79,6 +83,36 @@ public class ProductServiceImpl implements ProductService {
             ProductMapper productMapper,
             Validator validator,
             CatalogProperties catalogProperties) {
+        this(productRepository, skuRepository, categoryRepository, productImageRepository,
+                productMapper, validator, catalogProperties, new DynamicPricingService(null), null);
+    }
+
+    /** Khởi tạo ProductServiceImpl tương thích với phiên bản chưa truyền Outbox Service. */
+    public ProductServiceImpl(
+            ProductRepository productRepository,
+            SkuRepository skuRepository,
+            CategoryRepository categoryRepository,
+            ProductImageRepository productImageRepository,
+            ProductMapper productMapper,
+            Validator validator,
+            CatalogProperties catalogProperties,
+            DynamicPricingService dynamicPricingService) {
+        this(productRepository, skuRepository, categoryRepository, productImageRepository,
+                productMapper, validator, catalogProperties, dynamicPricingService, null);
+    }
+
+    /** Khởi tạo ProductServiceImpl đầy đủ dependencies gồm DynamicPricingService và Outbox phát ProductSkuCreated. */
+    @Autowired
+    public ProductServiceImpl(
+            ProductRepository productRepository,
+            SkuRepository skuRepository,
+            CategoryRepository categoryRepository,
+            ProductImageRepository productImageRepository,
+            ProductMapper productMapper,
+            Validator validator,
+            CatalogProperties catalogProperties,
+            DynamicPricingService dynamicPricingService,
+            @Nullable CatalogEventOutboxService catalogEventOutboxService) {
         this.productRepository = productRepository;
         this.skuRepository = skuRepository;
         this.categoryRepository = categoryRepository;
@@ -86,6 +120,10 @@ public class ProductServiceImpl implements ProductService {
         this.productMapper = productMapper != null ? productMapper : ProductMapper.INSTANCE;
         this.validator = validator;
         this.catalogProperties = catalogProperties != null ? catalogProperties : new CatalogProperties();
+        this.dynamicPricingService = dynamicPricingService != null
+                ? dynamicPricingService
+                : new DynamicPricingService(null);
+        this.catalogEventOutboxService = catalogEventOutboxService;
     }
 
     @Override
@@ -95,23 +133,9 @@ public class ProductServiceImpl implements ProductService {
         }
         validateRequest(request);
 
-        Set<String> seenCodes = new HashSet<>();
-        for (SkuRequest skuReq : request.skus()) {
-            if (!seenCodes.add(skuReq.skuCode().toLowerCase())) {
-                throw new BusinessException("Duplicate SKU code in request: " + skuReq.skuCode());
-            }
-        }
-        for (SkuRequest skuReq : request.skus()) {
-            validateOriginalPrice(skuReq);
-        }
         var category = categoryRepository.findById(request.categoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Category not found: " + request.categoryId()));
-        for (SkuRequest skuReq : request.skus()) {
-            if (skuRepository.existsBySkuCode(skuReq.skuCode())) {
-                throw new BusinessException("SKU code already exists: " + skuReq.skuCode());
-            }
-        }
-        // Save DB
+        // Catalog chỉ sinh skuId UUID và lưu originalPrice; không nhận hoặc kiểm tra trùng skuCode.
         Product product = productMapper.toEntity(request);
         product.setSellerId(sellerId);
         product.setCategory(category);
@@ -119,43 +143,64 @@ public class ProductServiceImpl implements ProductService {
         if (request.images() != null && !request.images().isEmpty()) {
             product.setImages(buildImages(request.images(), product));
         }
-        return productMapper.toResponse(productRepository.save(product));
+        Product saved = productRepository.save(product);
+        if (catalogEventOutboxService != null) {
+            catalogEventOutboxService.enqueueSkuCreated(saved, saved.getSkus());
+        }
+        return dynamicPricingService.toEnrichedProductResponse(saved, productMapper);
     }
 
     @Override
     public ProductResponse update(UUID id, ProductRequest request) {
-        // Validate request
         validateRequest(request);
         Product product = findProductById(id);
         verifyProductOwnership(product);
-        Set<String> existingCodes = product.getSkus().stream().map(Sku::getSkuCode).collect(Collectors.toSet());
 
-        // check dub
-        Set<String> seenCodes = new HashSet<>();
-        for (SkuRequest skuReq : request.skus()) {
-            if (!seenCodes.add(skuReq.skuCode().toLowerCase())) {
-                throw new BusinessException("Duplicate SKU code in request: " + skuReq.skuCode());
-            }
-        }
-        for (SkuRequest skuReq : request.skus()) {
-            validateOriginalPrice(skuReq);
-            if (!existingCodes.contains(skuReq.skuCode()) && skuRepository.existsBySkuCode(skuReq.skuCode())) {
-                throw new BusinessException("SKU code already exists: " + skuReq.skuCode());
-            }
-        }
         var category = categoryRepository.findById(request.categoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("Category not found: " + request.categoryId()));
 
-        // save db
+        // Bảo toàn skuId của các biến thể hiện có khi cập nhật sản phẩm; chỉ tạo mới đối với SKU không truyền id.
+        Map<UUID, Sku> existingById = new HashMap<>();
+        for (Sku existing : product.getSkus()) {
+            if (existing.getId() != null) {
+                existingById.put(existing.getId(), existing);
+            }
+        }
+        Set<UUID> retainedIds = new HashSet<>();
+        List<Sku> newSkus = new ArrayList<>();
+        for (SkuRequest skuReq : request.skus()) {
+            if (skuReq.id() != null) {
+                if (!retainedIds.add(skuReq.id())) {
+                    throw new BusinessException("Duplicate SKU id in request: " + skuReq.id());
+                }
+                Sku target = existingById.get(skuReq.id());
+                if (target == null) {
+                    throw new BusinessException("SKU does not belong to product: " + skuReq.id());
+                }
+                productMapper.updateSkuFromRequest(skuReq, target);
+            } else {
+                Sku created = productMapper.toSkuEntity(skuReq);
+                created.setProduct(product);
+                newSkus.add(created);
+            }
+        }
+
         productMapper.updateProductFromRequest(request, product);
         product.setCategory(category);
-        product.getSkus().clear();
-        product.getSkus().addAll(buildSkus(request.skus(), product));
+        product.getSkus().removeIf(existing -> existing.getId() != null && !retainedIds.contains(existing.getId()));
+        product.getSkus().addAll(newSkus);
         product.getImages().clear();
         if (request.images() != null && !request.images().isEmpty()) {
             product.getImages().addAll(buildImages(request.images(), product));
         }
-        return productMapper.toResponse(productRepository.save(product));
+        Product saved = productRepository.save(product);
+        if (catalogEventOutboxService != null && !newSkus.isEmpty()) {
+            List<Sku> emitted = saved.getSkus().stream()
+                    .filter(sku -> sku.getId() != null && !retainedIds.contains(sku.getId()))
+                    .toList();
+            catalogEventOutboxService.enqueueSkuCreated(saved, emitted.isEmpty() ? newSkus : emitted);
+        }
+        return dynamicPricingService.toEnrichedProductResponse(saved, productMapper);
     }
 
     @Override
@@ -173,24 +218,27 @@ public class ProductServiceImpl implements ProductService {
             // Chi tiết ACTIVE được đọc công khai; sản phẩm chưa công bố phải qua kiểm tra chủ sở hữu/quản trị.
             verifyProductOwnership(product);
         }
-        return productMapper.toResponse(product);
+        return dynamicPricingService.toEnrichedProductResponse(product, productMapper);
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<ProductResponse> list(ProductStatus status, Pageable pageable) {
+        List<PricingRule> activeRules = dynamicPricingService.loadActiveRules(Instant.now());
         if (status != null) {
             return productRepository.findByStatus(status, pageable)
-                    .map(productMapper::toResponse);
+                    .map(p -> dynamicPricingService.toEnrichedProductResponse(p, productMapper, activeRules));
         }
-        return productRepository.findAll(pageable).map(productMapper::toResponse);
+        return productRepository.findAll(pageable)
+                .map(p -> dynamicPricingService.toEnrichedProductResponse(p, productMapper, activeRules));
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<ProductResponse> listBySeller(UUID sellerId, Pageable pageable) {
+        List<PricingRule> activeRules = dynamicPricingService.loadActiveRules(Instant.now());
         return productRepository.findBySellerId(sellerId, pageable)
-                .map(productMapper::toResponse);
+                .map(p -> dynamicPricingService.toEnrichedProductResponse(p, productMapper, activeRules));
     }
 
     @Override
@@ -207,7 +255,7 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException("Product is already in status: " + target);
         }
         product.setStatus(target);
-        return productMapper.toResponse(productRepository.save(product));
+        return dynamicPricingService.toEnrichedProductResponse(productRepository.save(product), productMapper);
     }
 
     @Override
@@ -217,35 +265,38 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException("Product is already ACTIVE");
         }
         product.setStatus(ProductStatus.ACTIVE);
-        return productMapper.toResponse(productRepository.save(product));
+        return dynamicPricingService.toEnrichedProductResponse(productRepository.save(product), productMapper);
     }
 
     @Override
     public SkuResponse addSku(UUID productId, SkuRequest request) {
-        validateOriginalPrice(request);
         Product product = findProductById(productId);
         verifyProductOwnership(product);
-        if (skuRepository.existsBySkuCode(request.skuCode())) {
-            throw new BusinessException("SKU code already exists: " + request.skuCode());
-        }
+        Set<UUID> beforeIds = product.getSkus().stream()
+                .map(Sku::getId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
         Sku sku = productMapper.toSkuEntity(request);
         sku.setProduct(product);
         product.getSkus().add(sku);
-        productRepository.save(product);
-        return productMapper.toSku(sku);
+        Product saved = productRepository.save(product);
+        Sku persistedSku = saved.getSkus().stream()
+                .filter(s -> s.getId() != null && !beforeIds.contains(s.getId()))
+                .reduce((first, second) -> second)
+                .orElse(sku);
+        if (catalogEventOutboxService != null) {
+            catalogEventOutboxService.enqueueSkuCreated(saved, List.of(persistedSku));
+        }
+        return dynamicPricingService.toEnrichedSkuResponse(persistedSku, productMapper);
     }
 
     @Override
     public SkuResponse updateSku(UUID skuId, SkuRequest request) {
-        validateOriginalPrice(request);
         Sku sku = skuRepository.findById(skuId)
                 .orElseThrow(() -> new ResourceNotFoundException("SKU not found: " + skuId));
         verifyProductOwnership(sku.getProduct());
-        if (skuRepository.existsBySkuCodeAndIdNot(request.skuCode(), skuId)) {
-            throw new BusinessException("SKU code already exists: " + request.skuCode());
-        }
         productMapper.updateSkuFromRequest(request, sku);
-        return productMapper.toSku(skuRepository.save(sku));
+        return dynamicPricingService.toEnrichedSkuResponse(skuRepository.save(sku), productMapper);
     }
 
     @Override
@@ -310,14 +361,6 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
-    private void validateOriginalPrice(SkuRequest skuReq) {
-        if (skuReq.originalPrice() != null && skuReq.price() != null
-                && skuReq.originalPrice().compareTo(skuReq.price()) < 0) {
-            throw new BusinessException(
-                    "Original price must be >= price for SKU: " + skuReq.skuCode());
-        }
-    }
-
     private List<Sku> buildSkus(List<SkuRequest> skuRequests, Product product) {
         List<Sku> result = new ArrayList<>();
         for (SkuRequest req : skuRequests) {
@@ -349,7 +392,33 @@ public class ProductServiceImpl implements ProductService {
         }
 
         Specification<Product> spec = ProductSpecification.build(request);
-        return productRepository.findAll(spec, pageable).map(productMapper::toResponse);
+        List<PricingRule> activeRules = dynamicPricingService.loadActiveRules(Instant.now());
+        boolean hasPriceFilter = request != null && (request.minPrice() != null || request.maxPrice() != null);
+        if (!hasPriceFilter) {
+            return productRepository.findAll(spec, pageable)
+                    .map(p -> dynamicPricingService.toEnrichedProductResponse(p, productMapper, activeRules));
+        }
+        // Khi có lọc minPrice/maxPrice, tính giá bán động theo quy tắc đang bật trước khi cắt trang chính xác.
+        List<ProductResponse> matched = productRepository.findAll(spec, pageable.getSort()).stream()
+                .map(p -> dynamicPricingService.toEnrichedProductResponse(p, productMapper, activeRules))
+                .filter(p -> matchesPriceRange(p, request.minPrice(), request.maxPrice()))
+                .toList();
+        if (pageable.isUnpaged()) {
+            return new PageImpl<>(matched, pageable, matched.size());
+        }
+        int start = (int) Math.min(pageable.getOffset(), matched.size());
+        int end = Math.min(start + pageable.getPageSize(), matched.size());
+        return new PageImpl<>(matched.subList(start, end), pageable, matched.size());
+    }
+
+    private boolean matchesPriceRange(ProductResponse product, BigDecimal minPrice, BigDecimal maxPrice) {
+        if (product.skus() == null) {
+            return false;
+        }
+        return product.skus().stream()
+                .filter(sku -> sku.status() == SkuStatus.ACTIVE && sku.price() != null)
+                .anyMatch(sku -> (minPrice == null || sku.price().compareTo(minPrice) >= 0)
+                        && (maxPrice == null || sku.price().compareTo(maxPrice) <= 0));
     }
 
     // ==============

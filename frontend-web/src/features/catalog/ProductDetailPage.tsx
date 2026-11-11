@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { readSession, type ApiProduct, type Envelope } from '../../api/client'
+import { formatSkuDisplay, readSession, type ApiProduct, type Envelope } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
 import { addGuestCartItem, clearGuestCart } from '../buyer/guestCart'
 import { useApp } from '../../context'
@@ -54,7 +54,7 @@ export function ProductDetailPage() {
               categoryId: apiProduct.categoryId,
               price: apiProduct.skus?.[0]?.price ?? 0,
               originalPrice: apiProduct.skus?.[0]?.originalPrice,
-              sku: apiProduct.skus?.[0]?.skuCode ?? '',
+              sku: formatSkuDisplay(apiProduct.skus?.[0]?.id, apiProduct.skus?.[0]?.skuCode),
               images:
                   apiProduct.images && apiProduct.images.length > 0
                       ? apiProduct.images.map((img) => img.url)
@@ -119,7 +119,7 @@ export function ProductDetailPage() {
             categoryId: p.categoryId,
             price: p.skus?.[0]?.price ?? 0,
             originalPrice: p.skus?.[0]?.originalPrice,
-            sku: p.skus?.[0]?.skuCode ?? '',
+            sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
             images:
                 p.images && p.images.length > 0
                     ? p.images.map((img) => img.url)
@@ -195,7 +195,9 @@ export function ProductDetailPage() {
         }
         const guestCart = addGuestCartItem({
             skuId: skuId || product.id,
-            skuCode: product.skus?.[0]?.skuCode || `SKU-${product.id}`,
+            skuCode:
+                formatSkuDisplay(product.skus?.[0]?.id, product.skus?.[0]?.skuCode) ||
+                `SKU-${product.id}`,
             productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: productImages[0],
             unitPrice: product.price,
@@ -638,11 +640,13 @@ export function ProductDetailPage() {
                                     <ul className="space-y-1">
                                         {product.skus.map((sku) => (
                                             <li
-                                                key={sku.id || sku.skuCode}
+                                                key={
+                                                    sku.id || formatSkuDisplay(sku.id, sku.skuCode)
+                                                }
                                                 className="text-xs text-gray-600"
                                             >
                                                 <span className="font-semibold text-gray-800">
-                                                    {sku.skuCode}
+                                                    {formatSkuDisplay(sku.id, sku.skuCode)}
                                                 </span>{' '}
                                                 · {Number(sku.price).toLocaleString('vi-VN')} ₫ ·{' '}
                                                 <span className="badge badge-green text-[10px]">

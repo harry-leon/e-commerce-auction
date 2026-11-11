@@ -1,7 +1,9 @@
 package com.nexus.fulfillment.service.impl;
 
+import com.nexus.common.exception.ApiException;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.client.CatalogSkuClient;
 import com.nexus.fulfillment.config.FulfillmentProperties;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ExtendAuctionReservationRequest;
@@ -16,14 +18,18 @@ import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationItemResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
 import com.nexus.fulfillment.entity.Inventory;
 import com.nexus.fulfillment.entity.InventoryLedger;
 import com.nexus.fulfillment.entity.InventoryReservation;
+import com.nexus.fulfillment.entity.SellerSku;
 import com.nexus.fulfillment.entity.Warehouse;
 import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import com.nexus.fulfillment.event.InventoryCheckedEvent;
 import com.nexus.fulfillment.event.InventoryCommittedEvent;
 import com.nexus.fulfillment.event.InventoryReleasedEvent;
@@ -32,21 +38,40 @@ import com.nexus.fulfillment.event.InventoryReservedEvent;
 import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
+import com.nexus.fulfillment.repository.SellerSkuRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
+import com.nexus.fulfillment.service.FulfillmentEventOutboxService;
 import com.nexus.fulfillment.service.InventoryService;
+import com.nexus.fulfillment.service.SellerSkuRegistrar;
+import jakarta.persistence.criteria.Predicate;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.lang.Nullable;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Cài đặt nghiệp vụ quản trị tồn kho và vòng đời giữ hàng Checkout / Đấu giá (SRS §3.6.1).
@@ -73,12 +98,22 @@ public class InventoryServiceImpl implements InventoryService {
 
     private static final Logger log = LoggerFactory.getLogger(InventoryServiceImpl.class);
 
+    // Danh sách thuộc tính sắp xếp hợp lệ của entity SellerSku nhằm ngăn lỗi 500 từ Swagger hoặc sort không hợp lệ
+    private static final Set<String> ALLOWED_SELLER_SKU_SORTS = Set.of(
+            "id", "sellerId", "skuId", "skuCode", "status", "createdAt", "updatedAt"
+    );
+
     private final InventoryRepository inventoryRepository;
     private final InventoryReservationRepository reservationRepository;
     private final InventoryLedgerRepository ledgerRepository;
     private final WarehouseRepository warehouseRepository;
     private final FulfillmentProperties properties;
     private final ApplicationEventPublisher eventPublisher;
+    private final SellerSkuRepository sellerSkuRepository;
+    private final SellerSkuRegistrar sellerSkuRegistrar;
+    private final CatalogSkuClient catalogSkuClient;
+    private final FulfillmentEventOutboxService outboxService;
+    private final TransactionTemplate transactionTemplate;
 
     public InventoryServiceImpl(
             InventoryRepository inventoryRepository,
@@ -88,12 +123,46 @@ public class InventoryServiceImpl implements InventoryService {
             FulfillmentProperties properties,
             ApplicationEventPublisher eventPublisher
     ) {
+        this(
+                inventoryRepository,
+                reservationRepository,
+                ledgerRepository,
+                warehouseRepository,
+                properties,
+                eventPublisher,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    @Autowired
+    public InventoryServiceImpl(
+            InventoryRepository inventoryRepository,
+            InventoryReservationRepository reservationRepository,
+            InventoryLedgerRepository ledgerRepository,
+            WarehouseRepository warehouseRepository,
+            FulfillmentProperties properties,
+            ApplicationEventPublisher eventPublisher,
+            @Nullable SellerSkuRepository sellerSkuRepository,
+            @Nullable SellerSkuRegistrar sellerSkuRegistrar,
+            @Nullable CatalogSkuClient catalogSkuClient,
+            @Nullable FulfillmentEventOutboxService outboxService,
+            @Nullable PlatformTransactionManager transactionManager
+    ) {
         this.inventoryRepository = inventoryRepository;
         this.reservationRepository = reservationRepository;
         this.ledgerRepository = ledgerRepository;
         this.warehouseRepository = warehouseRepository;
         this.properties = properties;
         this.eventPublisher = eventPublisher;
+        this.sellerSkuRepository = sellerSkuRepository;
+        this.sellerSkuRegistrar = sellerSkuRegistrar;
+        this.catalogSkuClient = catalogSkuClient;
+        this.outboxService = outboxService;
+        this.transactionTemplate = transactionManager != null ? new TransactionTemplate(transactionManager) : null;
     }
 
     /**
@@ -1083,39 +1152,71 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     /**
-     * Nhập thêm hàng hóa vào kho cho SKU và ghi sổ cái INBOUND.
+     * Nhập hàng hóa vào kho theo quy trình HG-S2-6:
+     * xác thực quyền + tồn tại SKU bên Catalog qua HTTP, sinh/tái sử dụng mã skuCode (FSKU-XXXXXXXX) trên seller_skus,
+     * cộng tồn kho tại kho chỉ định, ghi sổ cái INBOUND và lưu sự kiện outbox InventoryInboundCompleted.
+     * Giao tiếp Catalog và đăng ký seller_skus chạy ngoài transaction chính để tránh giữ khóa DB lâu khi gọi mạng
+     * và tránh làm hỏng transaction khi xử lý race condition tạo seller_skus đồng thời.
      */
     @Override
-    @Transactional
     public InventoryStockResponse inboundStock(StockInboundRequest request) {
-        Warehouse warehouse = resolveWarehouse(request.warehouseId());
+        if (catalogSkuClient == null || sellerSkuRegistrar == null
+                || sellerSkuRepository == null || outboxService == null) {
+            throw new IllegalStateException("Chưa cấu hình đầy đủ thành phần seller_skus/Catalog cho luồng nhập kho");
+        }
 
-        Inventory inventory = inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(request.skuId(), warehouse.getId())
-                .orElseGet(() -> new Inventory(
-                        UUID.randomUUID(),
-                        request.skuId(),
-                        warehouse,
-                        0,
-                        0,
-                        0
-                ));
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isGlobalOperator = isGlobalInventoryOperator(auth);
+        UUID callerUserId = extractUserId(auth);
+        if (!isGlobalOperator && callerUserId == null) {
+            throw new BusinessException(
+                    ErrorCode.AUTH_UNAUTHORIZED,
+                    "Yêu cầu định danh người bán hợp lệ để thực hiện nhập kho"
+            );
+        }
 
-        inventory.setTotalQty(inventory.getTotalQty() + request.quantity());
-        inventory = inventoryRepository.save(inventory);
+        CatalogSkuClient.CatalogSkuSnapshot catalogSku = catalogSkuClient.getSku(request.skuId());
+        if (catalogSku == null || catalogSku.sellerId() == null) {
+            throw new ApiException(
+                    "CATALOG_INVALID_RESPONSE",
+                    HttpStatus.BAD_GATEWAY,
+                    "Catalog Service trả về thông tin SKU không hợp lệ hoặc thiếu sellerId",
+                    null
+            );
+        }
+        if (!isGlobalOperator && !callerUserId.equals(catalogSku.sellerId())) {
+            throw new BusinessException(
+                    ErrorCode.AUTH_FORBIDDEN,
+                    "Bạn không có quyền nhập kho cho SKU thuộc người bán khác"
+            );
+        }
 
-        // Ghi sổ cái INBOUND
-        InventoryLedger ledger = new InventoryLedger(
-                UUID.randomUUID(),
-                inventory,
-                LedgerMovementType.INBOUND,
-                request.quantity(),
-                "INBOUND",
-                request.refId(),
-                Instant.now()
-        );
-        ledgerRepository.save(ledger);
+        SellerSku existingSellerSku = sellerSkuRepository.findBySkuId(request.skuId()).orElse(null);
+        SellerSku sellerSku;
+        boolean firstInbound;
+        if (existingSellerSku != null) {
+            sellerSku = existingSellerSku;
+            firstInbound = false;
+        } else {
+            try {
+                SellerSkuRegistrar.RegistrationResult registration =
+                        sellerSkuRegistrar.registerIfAbsent(request.skuId(), catalogSku.sellerId());
+                sellerSku = registration.sellerSku();
+                firstInbound = registration.newlyCreated();
+            } catch (DataIntegrityViolationException ex) {
+                // Nếu luồng đồng thời vừa tạo seller_skus trước cho cùng skuId, đọc lại bản ghi đã commit.
+                sellerSku = sellerSkuRepository.findBySkuId(request.skuId())
+                        .orElseThrow(() -> ex);
+                firstInbound = false;
+            }
+        }
 
-        return toStockResponse(inventory);
+        try {
+            return executeInboundInTransaction(request, sellerSku, firstInbound);
+        } catch (DataIntegrityViolationException ex) {
+            // Hai luồng đồng thời cùng nhập kho lần đầu tại cùng warehouse: thử lại để khóa dòng inventories đã commit.
+            return executeInboundInTransaction(request, sellerSku, false);
+        }
     }
 
     /**
@@ -1180,6 +1281,160 @@ public class InventoryServiceImpl implements InventoryService {
                 l.getRefId(),
                 l.getCreatedAt()
         ));
+    }
+
+    /**
+     * Tra cứu danh sách seller_skus và tổng tồn kho từ tất cả kho trực thuộc.
+     * Seller chỉ được xem danh sách của chính mình; Admin/vận hành kho có thể lọc theo sellerId bất kỳ.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<SellerSkuResponse> getSellerSkus(
+            String keyword,
+            SellerSkuStatus status,
+            UUID sellerId,
+            Pageable pageable
+    ) {
+        if (sellerSkuRepository == null) {
+            throw new IllegalStateException("Chưa cấu hình SellerSkuRepository trong InventoryServiceImpl");
+        }
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isGlobalOperator = isGlobalInventoryOperator(auth);
+        UUID effectiveSellerId;
+        if (isGlobalOperator) {
+            effectiveSellerId = sellerId;
+        } else {
+            UUID callerId = extractUserId(auth);
+            if (callerId == null) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_UNAUTHORIZED,
+                        "Yêu cầu định danh người bán hợp lệ để xem danh sách SKU kho"
+                );
+            }
+            if (sellerId != null && !sellerId.equals(callerId)) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_FORBIDDEN,
+                        "Bạn không có quyền xem tồn kho của người bán khác"
+                );
+            }
+            effectiveSellerId = callerId;
+        }
+
+        String normalizedKeyword = (keyword != null && !keyword.isBlank()) ? keyword.trim() : null;
+        Pageable safePageable = sanitizeSellerSkuPageable(pageable);
+        // Dùng Criteria Specification chỉ ghép điều kiện khác null để tránh lỗi suy diễn kiểu null bytea trên PostgreSQL
+        Specification<SellerSku> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (effectiveSellerId != null) {
+                predicates.add(cb.equal(root.get("sellerId"), effectiveSellerId));
+            }
+            if (status != null) {
+                predicates.add(cb.equal(root.get("status"), status));
+            }
+            if (normalizedKeyword != null) {
+                String escaped = normalizedKeyword.toLowerCase(Locale.ROOT)
+                        .replace("\\", "\\\\")
+                        .replace("%", "\\%")
+                        .replace("_", "\\_");
+                String pattern = "%" + escaped + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("skuCode")), pattern, '\\'),
+                        cb.like(cb.lower(root.get("skuId").as(String.class)), pattern, '\\')
+                ));
+            }
+            return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(Predicate[]::new));
+        };
+        Page<SellerSku> page = sellerSkuRepository.findAll(spec, safePageable);
+
+        List<UUID> sellerSkuIds = page.getContent().stream().map(SellerSku::getId).toList();
+        Map<UUID, List<Inventory>> inventoriesBySellerSku = sellerSkuIds.isEmpty()
+                ? Map.of()
+                : inventoryRepository.findBySellerSkuIdInWithWarehouse(sellerSkuIds).stream()
+                        .collect(Collectors.groupingBy(inv -> inv.getSellerSku().getId()));
+
+        return page.map(sellerSku -> {
+            List<Inventory> invs = inventoriesBySellerSku.getOrDefault(sellerSku.getId(), List.of());
+            int totalQty = invs.stream().mapToInt(Inventory::getTotalQty).sum();
+            int availableQty = invs.stream().mapToInt(Inventory::getAvailableQty).sum();
+            int reservedQty = invs.stream().mapToInt(Inventory::getReservedQty).sum();
+            int unavailableQty = invs.stream().mapToInt(Inventory::getUnavailableQty).sum();
+            return new SellerSkuResponse(
+                    sellerSku.getId(),
+                    sellerSku.getId(),
+                    sellerSku.getSellerId(),
+                    sellerSku.getSkuId(),
+                    sellerSku.getSkuCode(),
+                    sellerSku.getStatus(),
+                    totalQty,
+                    availableQty,
+                    reservedQty,
+                    unavailableQty,
+                    invs.size(),
+                    sellerSku.getCreatedAt(),
+                    sellerSku.getUpdatedAt()
+            );
+        });
+    }
+
+    /**
+     * Tra cứu chi tiết một bản ghi seller_skus theo id hoặc skuId, kèm danh sách tồn kho theo từng kho hàng.
+     * Seller chỉ được xem chi tiết SKU thuộc quyền sở hữu của mình.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public SellerSkuDetailResponse getSellerSkuDetail(UUID id) {
+        if (sellerSkuRepository == null) {
+            throw new IllegalStateException("Chưa cấu hình SellerSkuRepository trong InventoryServiceImpl");
+        }
+
+        SellerSku sellerSku = sellerSkuRepository.findByIdOrSkuId(id, id)
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND,
+                        "Không tìm thấy mã SKU kho với ID " + id
+                ));
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (!isGlobalInventoryOperator(auth)) {
+            UUID callerId = extractUserId(auth);
+            if (callerId == null) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_UNAUTHORIZED,
+                        "Yêu cầu định danh người bán hợp lệ để xem chi tiết SKU kho"
+                );
+            }
+            if (!callerId.equals(sellerSku.getSellerId())) {
+                throw new BusinessException(
+                        ErrorCode.AUTH_FORBIDDEN,
+                        "Bạn không có quyền xem chi tiết SKU kho của người bán khác"
+                );
+            }
+        }
+
+        List<Inventory> inventories = inventoryRepository.findBySellerSkuIdInWithWarehouse(List.of(sellerSku.getId()));
+        List<InventoryStockResponse> warehouses = inventories.stream()
+                .map(this::toStockResponse)
+                .toList();
+        int totalQty = inventories.stream().mapToInt(Inventory::getTotalQty).sum();
+        int availableQty = inventories.stream().mapToInt(Inventory::getAvailableQty).sum();
+        int reservedQty = inventories.stream().mapToInt(Inventory::getReservedQty).sum();
+        int unavailableQty = inventories.stream().mapToInt(Inventory::getUnavailableQty).sum();
+
+        return new SellerSkuDetailResponse(
+                sellerSku.getId(),
+                sellerSku.getId(),
+                sellerSku.getSellerId(),
+                sellerSku.getSkuId(),
+                sellerSku.getSkuCode(),
+                sellerSku.getStatus(),
+                totalQty,
+                availableQty,
+                reservedQty,
+                unavailableQty,
+                warehouses,
+                sellerSku.getCreatedAt(),
+                sellerSku.getUpdatedAt()
+        );
     }
 
     // ==========================================
@@ -1258,9 +1513,117 @@ public class InventoryServiceImpl implements InventoryService {
         }
     }
 
+    private InventoryStockResponse executeInboundInTransaction(
+            StockInboundRequest request,
+            SellerSku sellerSku,
+            boolean firstInbound
+    ) {
+        if (transactionTemplate != null) {
+            return transactionTemplate.execute(status -> persistInbound(request, sellerSku, firstInbound));
+        }
+        return persistInbound(request, sellerSku, firstInbound);
+    }
+
+    private InventoryStockResponse persistInbound(
+            StockInboundRequest request,
+            SellerSku sellerSku,
+            boolean firstInbound
+    ) {
+        Warehouse warehouse = resolveWarehouse(request.warehouseId());
+
+        Inventory inventory = inventoryRepository
+                .findBySellerSkuIdAndWarehouseIdForUpdate(sellerSku.getId(), warehouse.getId())
+                .or(() -> inventoryRepository.findBySkuIdAndWarehouseIdForUpdate(request.skuId(), warehouse.getId()))
+                .orElseGet(() -> new Inventory(
+                        UUID.randomUUID(),
+                        request.skuId(),
+                        warehouse,
+                        0,
+                        0,
+                        0
+                ));
+        if (inventory.getSellerSku() == null) {
+            inventory.setSellerSku(sellerSku);
+        }
+
+        inventory.setTotalQty(inventory.getTotalQty() + request.quantity());
+        inventory = inventoryRepository.save(inventory);
+
+        // Ghi sổ cái INBOUND
+        InventoryLedger ledger = new InventoryLedger(
+                UUID.randomUUID(),
+                inventory,
+                LedgerMovementType.INBOUND,
+                request.quantity(),
+                "INBOUND",
+                request.refId(),
+                Instant.now()
+        );
+        ledgerRepository.save(ledger);
+
+        // Ghi sự kiện InventoryInboundCompleted vào bảng Transactional Outbox cùng transaction.
+        outboxService.enqueueInboundCompleted(sellerSku, inventory, request.quantity(), firstInbound);
+        return toStockResponse(inventory);
+    }
+
+    /** Kiểm tra quyền quản trị kho toàn cục (Admin hoặc vận hành kho không bị giới hạn theo Seller). */
+    private boolean isGlobalInventoryOperator(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            return false;
+        }
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()) || "ADMIN".equals(a.getAuthority()));
+        if (isAdmin) {
+            return true;
+        }
+        boolean isSeller = auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SELLER".equals(a.getAuthority()) || "SELLER".equals(a.getAuthority()));
+        boolean hasManagePrivilege = auth.getAuthorities().stream()
+                .anyMatch(a -> "INVENTORY.MANAGE".equals(a.getAuthority()));
+        return !isSeller && hasManagePrivilege;
+    }
+
+    /** Trích xuất UUID người dùng từ SecurityContext (tương ứng sub trong Keycloak JWT). */
+    private UUID extractUserId(Authentication auth) {
+        if (auth == null || auth.getName() == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(auth.getName());
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Chuẩn hóa Pageable cho truy vấn seller_skus: lọc bỏ trường sort không hợp lệ (ví dụ placeholder Swagger '["string"]')
+     * và giới hạn pageSize trong khoảng [1, 100] để tránh lỗi InvalidDataAccessApiUsageException hoặc tải trang quá lớn.
+     */
+    private Pageable sanitizeSellerSkuPageable(Pageable pageable) {
+        if (pageable == null || pageable.isUnpaged()) {
+            return PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "createdAt"));
+        }
+        List<Sort.Order> validOrders = pageable.getSort().stream()
+                .filter(order -> ALLOWED_SELLER_SKU_SORTS.contains(order.getProperty()))
+                .toList();
+        boolean hadInvalidSort = validOrders.size() != (int) pageable.getSort().stream().count();
+        int safePage = Math.max(pageable.getPageNumber(), 0);
+        int safeSize = Math.min(Math.max(pageable.getPageSize(), 1), 100);
+        if (!hadInvalidSort && safePage == pageable.getPageNumber() && safeSize == pageable.getPageSize()) {
+            return pageable;
+        }
+        Sort safeSort = validOrders.isEmpty()
+                ? (pageable.getSort().isSorted() ? Sort.by(Sort.Direction.DESC, "createdAt") : Sort.unsorted())
+                : Sort.by(validOrders);
+        return PageRequest.of(safePage, safeSize, safeSort);
+    }
+
     private InventoryStockResponse toStockResponse(Inventory inv) {
+        SellerSku sellerSku = inv.getSellerSku();
         return new InventoryStockResponse(
                 inv.getSkuId(),
+                sellerSku != null ? sellerSku.getId() : null,
+                sellerSku != null ? sellerSku.getSkuCode() : null,
                 inv.getWarehouse().getId(),
                 inv.getWarehouse().getCode(),
                 inv.getTotalQty(),

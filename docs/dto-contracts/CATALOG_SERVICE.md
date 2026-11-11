@@ -1,6 +1,6 @@
 # Catalog Service DTO Contract
 
-> **Gateway paths:** `/api/v1/products/**`, `/api/v1/categories/**`
+> **Gateway paths:** `/api/v1/products/**`, `/api/v1/skus/**`, `/api/v1/categories/**`, `/api/v1/pricing-rules/**`
 >
 > **Success wrapper:** `ApiResponse<T>`; xem [COMMON.md](COMMON.md)
 >
@@ -10,10 +10,10 @@
 
 | DTO trong source | Vai trò | Có được controller expose |
 |---|---|---|
-| `ProductRequest`, `SkuRequest`, `ImageRequest`, `CategoryRequest` | Request body thao tác ghi | Có |
+| `ProductRequest`, `SkuRequest`, `ImageRequest`, `CategoryRequest`, `PricingRuleRequest` | Request body thao tác ghi | Có |
 | `ProductFilterRequest` | Query object cho `/products/search` | Có |
-| `ProductResponse`, `SkuResponse`, `ImageResponse`, `CategoryResponse` | Public response | Có |
-| `SkuSnapshot` | Read model Catalog → Commerce | Có qua lookup endpoint |
+| `ProductResponse`, `SkuResponse`, `ImageResponse`, `CategoryResponse`, `PricingRuleResponse`, `PricePreviewResponse` | Public response | Có |
+| `SkuSnapshot` | Read model Catalog → Commerce & Fulfillment | Có qua lookup endpoint (`/api/v1/skus/{id}`, `/api/v1/products/skus/{id}`) |
 | `PageResponse<T>` | Wrapper phân trang cục bộ | **Không**; controller dùng `ApiResponse.ok(Page<T>)` |
 
 ## 1. Endpoint matrix
@@ -34,10 +34,21 @@
 | `POST` | `/products/{productId}/skus` | `SkuRequest` | `SkuResponse` | `201` | Seller/Admin hoặc quyền create/update |
 | `PUT` | `/products/skus/{skuId}` | `SkuRequest` | `SkuResponse` | `200` | Seller/Admin hoặc `PRODUCT.UPDATE` |
 | `DELETE` | `/products/skus/{skuId}` | — | Không có body | `204` | Seller/Admin hoặc quyền delete/update |
-| `GET` | `/products/skus/{id}` | — | `SkuSnapshot` | `200` | Public; chủ yếu dùng nội bộ bởi Commerce |
+| `GET` | `/skus/{id}` (alias `/products/skus/{id}`) | — | `SkuSnapshot` | `200` | Public; dùng bởi Commerce (checkout) & Fulfillment (xác thực chủ sở hữu khi nhập kho) |
 | `POST` | `/products/{productId}/images` | `ImageRequest` | `ImageResponse` | `201` | Seller/Admin hoặc quyền create/update |
 | `PUT` | `/products/images/{imageId}` | `ImageRequest` | `ImageResponse` | `200` | Seller/Admin hoặc `PRODUCT.UPDATE` |
 | `DELETE` | `/products/images/{imageId}` | — | Không có body | `204` | Seller/Admin hoặc quyền delete/update |
+
+### Pricing Rules (`/api/v1/pricing-rules`)
+
+| Method | Path | Request | `data` khi success | HTTP | Quyền |
+|---|---|---|---|---|---|
+| `GET` | `/pricing-rules` | — | `PricingRuleResponse[]` | `200` | Public |
+| `GET` | `/pricing-rules/all` | — | `PricingRuleResponse[]` | `200` | `ADMIN` |
+| `GET` | `/pricing-rules/preview` | Query `originalPrice` (`>= 0`), `categoryId?` | `PricePreviewResponse` | `200` | Public |
+| `POST` | `/pricing-rules` | `PricingRuleRequest` | `PricingRuleResponse` | `201` | `ADMIN` |
+| `PUT` | `/pricing-rules/{id}` | `PricingRuleRequest` | `PricingRuleResponse` | `200` | `ADMIN` |
+| `DELETE` | `/pricing-rules/{id}` | — | Không có body | `204` | `ADMIN` |
 
 ### Category
 
@@ -51,7 +62,7 @@
 
 ## 2. Request DTO
 
-Lookup `GET /api/v1/products/skus/{id}` bổ sung `sellerId` UUID từ Product vào `SkuSnapshot` để Commerce kiểm tra chủ shop khi checkout. Các field cũ giữ nguyên: `skuId`, `skuCode`, `productName`, `thumbnailUrl`, `price`, `stockQuantity`, `isActive`. `stockQuantity` vẫn null vì tồn kho thuộc Fulfillment. Triển khai Catalog mới trước Commerce checkout; Cart cũ vẫn đọc được snapshot có thêm field.
+Lookup `GET /api/v1/skus/{id}` (và alias `/api/v1/products/skus/{id}`) trả `SkuSnapshot` gồm `skuId`, `productId`, `productName`, `thumbnailUrl`, `price` (giá bán động từ `DynamicPricingService`), `originalPrice`, `stockQuantity` (luôn `null` vì tồn kho thuộc Fulfillment), `isActive`, `sellerId`. Catalog **không** lưu và không trả `skuCode` (mã kho do Fulfillment tự cấp qua `seller_skus`).
 
 ### `ProductRequest`
 
@@ -64,7 +75,7 @@ Lookup `GET /api/v1/products/skus/{id}` bổ sung `sellerId` UUID từ Product v
 | `skus` | `SkuRequest[]` | Có | Ít nhất `1` phần tử; từng phần tử không null và được validate |
 | `images` | `ImageRequest[]` | Không | Tối đa `5` phần tử; từng phần tử không null và được validate |
 
-Create luôn tạo product ở trạng thái `DRAFT`; client không gửi `sellerId`, `status`, `id` hoặc timestamps. Endpoint update hiện dùng cùng DTO nên vẫn yêu cầu `name`, `categoryId` và ít nhất một SKU.
+Create luôn tạo product ở trạng thái `DRAFT`; client không gửi `sellerId`, `status`, `id` hoặc timestamps. Endpoint update hiện dùng cùng DTO nên vẫn yêu cầu `name`, `categoryId` và ít nhất một SKU; khi update, client truyền `skus[].id` hiện có để **bảo toàn `skuId`** đang liên kết với `seller_skus` bên Fulfillment.
 
 Ví dụ body dùng chung cho create/update product:
 
@@ -76,10 +87,9 @@ Ví dụ body dùng chung cho create/update product:
   "auctionEnabled": false,
   "skus": [
     {
-      "skuCode": "NEXUS-BLACK-M",
+      "id": "ba844bf3-8ead-4a83-9c36-b418c07a5f13",
       "attributes": "{\"color\":\"BLACK\",\"size\":\"M\"}",
-      "price": 250000.00,
-      "originalPrice": 300000.00,
+      "originalPrice": 250000.00,
       "status": "ACTIVE"
     }
   ],
@@ -92,26 +102,25 @@ Ví dụ body dùng chung cho create/update product:
 }
 ```
 
-`attributes` là một JSON string nên JSON bên trong phải escape như ví dụ; không gửi trực tiếp object cho field này.
+`attributes` nhận chuỗi JSON (như `"{\"color\":\"BLACK\",\"size\":\"M\"}"`) hoặc plain text và được `ProductMapper` chuẩn hóa sang `jsonb` khi lưu DB.
 
 ### `SkuRequest`
 
 | Field | Kiểu | Bắt buộc | Validation/quy tắc |
 |---|---|---|---|
-| `skuCode` | `string` | Có | Không blank, tối đa `100` ký tự |
-| `attributes` | `string` | Không | Chuỗi thuộc tính; hiện chưa phải JSON object có schema |
-| `price` | `number` | Có | `>= 0` |
-| `originalPrice` | `number` | Không | `>= 0` |
+| `id` | `string` UUID | Không | Truyền khi cập nhật Product để giữ nguyên `skuId` đã cấp |
+| `attributes` | `string` | Không | Chuỗi JSON thuộc tính hoặc mô tả biến thể |
+| `originalPrice` | `number` | Có | `>= 0` (giá nhập / giá tối thiểu do Seller khai báo) |
 | `status` | `"ACTIVE" \| "INACTIVE"` | Không | Khi tạo, mặc định `ACTIVE` |
+
+> **Lưu ý HG-S2-6 & Định giá động:** `SkuRequest` đã bỏ `skuCode` (thuộc Fulfillment `seller_skus`) và `price` (không do client gửi; server tự tính động bằng `DynamicPricingService`: `sellingPrice = originalPrice * (1 + max(0, marginRate + seasonFactor + marketAdjustmentRate))`).
 
 Ví dụ body khi thêm/cập nhật riêng một SKU:
 
 ```json
 {
-  "skuCode": "NEXUS-BLACK-L",
   "attributes": "{\"color\":\"BLACK\",\"size\":\"L\"}",
-  "price": 260000.00,
-  "originalPrice": 310000.00,
+  "originalPrice": 260000.00,
   "status": "ACTIVE"
 }
 ```
@@ -172,7 +181,9 @@ Ví dụ body khi thêm/cập nhật riêng một image:
 | `status` | `ProductStatus` | Không | `DRAFT`, `ACTIVE`, `INACTIVE` |
 | `auctionEnabled` | `boolean` | Không theo entity hợp lệ | Có cho phép đấu giá |
 | `createdAt` | `string` | Có | ISO-8601 Instant |
-| `skus` | `SkuResponse[]` | Không theo mapper hợp lệ | Danh sách SKU |
+| `minPrice` | `number` | Có | Giá bán động thấp nhất trong các SKU `ACTIVE` (null nếu không có SKU active) |
+| `maxPrice` | `number` | Có | Giá bán động cao nhất trong các SKU `ACTIVE` (null nếu không có SKU active) |
+| `skus` | `SkuResponse[]` | Không theo mapper hợp lệ | Danh sách SKU (không chứa `skuCode`) |
 | `images` | `ImageResponse[]` | Không theo mapper hợp lệ | Danh sách ảnh |
 
 Ví dụ success của create/get/update product; các endpoint dùng cùng `ProductResponse`:
@@ -189,13 +200,14 @@ Ví dụ success của create/get/update product; các endpoint dùng cùng `Pro
     "status": "DRAFT",
     "auctionEnabled": false,
     "createdAt": "2026-10-25T08:30:00Z",
+    "minPrice": 287500.00,
+    "maxPrice": 287500.00,
     "skus": [
       {
         "id": "ba844bf3-8ead-4a83-9c36-b418c07a5f13",
-        "skuCode": "NEXUS-BLACK-M",
         "attributes": "{\"color\":\"BLACK\",\"size\":\"M\"}",
-        "price": 250000.00,
-        "originalPrice": 300000.00,
+        "price": 287500.00,
+        "originalPrice": 250000.00,
         "status": "ACTIVE"
       }
     ],
@@ -219,12 +231,21 @@ Ví dụ success của create/get/update product; các endpoint dùng cùng `Pro
 
 | Field | Kiểu JSON | Có thể null | Ghi chú |
 |---|---|---|---|
-| `id` | `string` UUID | Không | SKU ID |
-| `skuCode` | `string` | Không | Mã SKU |
-| `attributes` | `string` | Có | Chuỗi thuộc tính |
-| `price` | `number` | Không | Giá hiện tại |
-| `originalPrice` | `number` | Có | Giá gốc |
+| `id` | `string` UUID | Không | Catalog SKU ID (`skuId` liên kết sang Fulfillment `seller_skus`) |
+| `attributes` | `string` | Có | Chuỗi JSON thuộc tính biến thể |
+| `price` | `number` | Có | Giá bán động do `DynamicPricingService` tính từ `originalPrice` |
+| `originalPrice` | `number` | Không | Giá nhập / giá tối thiểu |
 | `status` | `"ACTIVE" \| "INACTIVE"` | Không | Trạng thái SKU |
+
+### `PricePreviewResponse` & `PricingRuleResponse`
+
+| Field (`PricePreviewResponse`) | Kiểu JSON | Ghi chú |
+|---|---|---|
+| `originalPrice` | `number` | Giá nhập tối thiểu đầu vào |
+| `sellingPrice` | `number` | Giá bán động tính theo quy tắc ưu tiên |
+| `appliedRuleId` | `string` UUID \| null | ID quy tắc được chọn (`null` nếu dùng fallback không quy tắc) |
+| `appliedRuleName` | `string` \| null | Tên quy tắc được chọn |
+| `marginRate`, `seasonFactor`, `marketAdjustmentRate`, `effectiveRate` | `number` | Biên lợi nhuận, hệ số mùa, điều chỉnh thị trường và tổng tỉ lệ hiệu lực (`>= 0`) |
 
 ### `ImageResponse`
 
@@ -285,33 +306,37 @@ Ví dụ `GET /categories`:
 }
 ```
 
-### `SkuSnapshot` — contract nội bộ Catalog → Commerce
+### `SkuSnapshot` — contract nội bộ Catalog → Commerce & Fulfillment
 
 | Field | Kiểu JSON | Có thể null | Ghi chú |
 |---|---|---|---|
-| `skuId` | `string` UUID | Không | SKU ID |
-| `skuCode` | `string` | Không | Mã SKU |
+| `skuId` | `string` UUID | Không | Catalog SKU ID |
+| `productId` | `string` UUID | Không | Product ID sở hữu SKU |
 | `productName` | `string` | Không | Tên sản phẩm |
 | `thumbnailUrl` | `string` | Có | Ảnh đầu tiên nếu có |
-| `price` | `number` | Không | Giá hiện tại |
-| `stockQuantity` | `number` | Có | Hiện luôn `null` vì tồn kho thuộc Fulfillment |
+| `price` | `number` | Không | Giá bán động hiện tại từ `DynamicPricingService` |
+| `originalPrice` | `number` | Không | Giá nhập tối thiểu (`minPrice`) |
+| `stockQuantity` | `number` | Có | Luôn `null` vì tồn kho thuộc Fulfillment |
 | `isActive` | `boolean` | Không | Chỉ true khi cả SKU và product đều active |
+| `sellerId` | `string` UUID | Không | ID chủ shop từ Product; dùng để Fulfillment kiểm tra quyền sở hữu khi nhập kho và Commerce tách đơn theo Seller |
 
-`stockQuantity: null` nghĩa là **chưa kiểm tra tồn kho**, không có nghĩa hết hàng hoặc không giới hạn.
+`stockQuantity: null` nghĩa là **chưa kiểm tra tồn kho**, không có nghĩa hết hàng hoặc không giới hạn. Catalog không cấp hay trả `skuCode` trong snapshot này.
 
-Ví dụ `GET /products/skus/{id}`:
+Ví dụ `GET /api/v1/skus/{id}`:
 
 ```json
 {
   "success": true,
   "data": {
     "skuId": "ba844bf3-8ead-4a83-9c36-b418c07a5f13",
-    "skuCode": "NEXUS-BLACK-M",
+    "productId": "681efbd3-4741-4e02-a2dd-67d8e1766805",
     "productName": "Nexus T-Shirt",
     "thumbnailUrl": "https://cdn.example.com/products/nexus-black-m.jpg",
-    "price": 250000.00,
+    "price": 287500.00,
+    "originalPrice": 250000.00,
     "stockQuantity": null,
-    "isActive": true
+    "isActive": true,
+    "sellerId": "26d7aa54-8284-45cd-b07b-5ca1581ba72f"
   },
   "error": null,
   "meta": {
@@ -338,6 +363,8 @@ Ví dụ `GET /products/skus/{id}`:
       "status": "ACTIVE",
       "auctionEnabled": false,
       "createdAt": "2026-10-25T08:30:00Z",
+      "minPrice": 287500.00,
+      "maxPrice": 287500.00,
       "skus": [],
       "images": []
     }
@@ -366,6 +393,14 @@ Các endpoint delete Product/SKU/Image/Category thành công trả HTTP `204 No 
 type ProductStatus = 'DRAFT' | 'ACTIVE' | 'INACTIVE'
 type SkuStatus = 'ACTIVE' | 'INACTIVE'
 
+interface SkuResponse {
+  id: string
+  attributes: string | null
+  price: number
+  originalPrice: number
+  status: SkuStatus
+}
+
 interface ProductResponse {
   id: string
   sellerId: string
@@ -375,6 +410,8 @@ interface ProductResponse {
   status: ProductStatus
   auctionEnabled: boolean
   createdAt: string | null
+  minPrice: number | null
+  maxPrice: number | null
   skus: SkuResponse[]
   images: ImageResponse[]
 }

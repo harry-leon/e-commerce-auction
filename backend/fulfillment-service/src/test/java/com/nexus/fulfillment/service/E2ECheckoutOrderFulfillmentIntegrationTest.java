@@ -4,9 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
+import com.nexus.fulfillment.client.CatalogSkuClient;
 import com.nexus.fulfillment.dto.request.CreateReservationRequest;
 import com.nexus.fulfillment.dto.request.ReservationItemRequest;
 import com.nexus.fulfillment.dto.request.StockInboundRequest;
@@ -25,16 +28,22 @@ import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Kiểm thử tích hợp toàn luồng End-to-End (E2E Integration Test) Sprint 1 (SRS §3.2.3, §3.6.1, §5.2, §5.3).
@@ -81,7 +90,10 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
     @Autowired
     private InventoryEventListener inventoryEventListener;
 
+    @MockitoBean
+    private CatalogSkuClient catalogSkuClient;
 
+    private UUID sellerId;
     private UUID skuId;
     private Warehouse warehouse;
 
@@ -92,7 +104,25 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
         inventoryRepository.deleteAll();
         warehouseRepository.deleteAll();
 
+        sellerId = UUID.randomUUID();
         skuId = UUID.randomUUID();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(
+                        sellerId.toString(),
+                        "n/a",
+                        List.of(new SimpleGrantedAuthority("ROLE_SELLER"))
+                )
+        );
+        when(catalogSkuClient.getSku(any(UUID.class))).thenAnswer(inv -> new CatalogSkuClient.CatalogSkuSnapshot(
+                inv.getArgument(0),
+                UUID.randomUUID(),
+                "E2E Product",
+                new BigDecimal("100000"),
+                new BigDecimal("90000"),
+                true,
+                sellerId
+        ));
+
         warehouse = new Warehouse(
                 UUID.randomUUID(),
                 "WH_E2E_01",
@@ -110,6 +140,11 @@ class E2ECheckoutOrderFulfillmentIntegrationTest {
                 10,
                 UUID.randomUUID()
         ));
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test

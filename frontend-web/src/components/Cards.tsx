@@ -3,7 +3,7 @@ import { useApp } from '../context'
 import { tr, formatCurrency } from '../i18n'
 import { CountdownTimer, StarRating, StatusBadge, Gavel, ShoppingCart } from './UI'
 import type { Product, Auction } from '../types'
-import { readSession } from '../api/client'
+import { formatSkuDisplay, readSession } from '../api/client'
 import { addItemToCart } from '../api/cart'
 
 // ─── Product Card ──────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ export function ProductCard({ product }: { product: Product }) {
         }
         const guestCart = addGuestCartItem({
             skuId,
-            skuCode: product.sku || `SKU-${product.id}`,
+            skuCode: product.sku || formatSkuDisplay(skuId),
             productName: lang === 'en' ? product.name : product.nameVi || product.name,
             thumbnailUrl: product.images?.[0],
             unitPrice: product.price,

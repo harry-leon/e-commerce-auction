@@ -29,19 +29,23 @@ class SkuLookupServiceTest {
     // Snapshot phải mang seller từ Product thật để Commerce kiểm tra chủ shop, không dùng ID client.
     void returnsPriceAndMarksInactiveProductUnavailable() {
         UUID id = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
         var product = new Product();
+        product.setId(productId);
         product.setName("Product");
         product.setSellerId(UUID.randomUUID());
         product.setStatus(ProductStatus.DRAFT);
         var sku = new Sku();
         sku.setId(id);
         sku.setProduct(product);
-        sku.setSkuCode("SKU");
-        sku.setPrice(new BigDecimal("125000"));
+        sku.setOriginalPrice(new BigDecimal("125000"));
         sku.setStatus(SkuStatus.ACTIVE);
         when(skus.findById(id)).thenReturn(Optional.of(sku));
         var snapshot = new SkuLookupService(skus).get(id);
-        assertEquals(new BigDecimal("125000"), snapshot.price());
+        assertEquals(id, snapshot.skuId());
+        assertEquals(productId, snapshot.productId());
+        assertEquals(new BigDecimal("125000.00"), snapshot.price());
+        assertEquals(new BigDecimal("125000"), snapshot.originalPrice());
         assertEquals(product.getSellerId(), snapshot.sellerId());
         assertNull(snapshot.stockQuantity());
         assertNull(snapshot.thumbnailUrl());

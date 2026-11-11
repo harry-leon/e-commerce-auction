@@ -360,13 +360,44 @@ export interface ApiProduct {
     status: string
     auctionEnabled: boolean
     createdAt: string
+    minPrice?: number
+    maxPrice?: number
     skus: {
         id: string
-        skuCode: string
+        skuCode?: string | null
         price: number
         originalPrice?: number
         status: string
         attributes?: string
     }[]
     images: { id: string; url: string; sortOrder: number }[]
+}
+
+/** Kết quả xem trước giá bán động từ Catalog /api/v1/pricing-rules/preview. */
+export interface ApiPricePreview {
+    originalPrice: number
+    sellingPrice: number
+    appliedRuleId?: string | null
+    appliedRuleName?: string | null
+    marginRate?: number
+    seasonFactor?: number
+    marketAdjustmentRate?: number
+    effectiveRate?: number
+}
+
+/**
+ * Chuẩn hóa mã SKU hiển thị trên UI sau HG-S2-6:
+ * ưu tiên skuCode (do Fulfillment cấp khi nhập kho), nếu chưa có thì hiển thị tiền tố từ Catalog skuId.
+ */
+export function formatSkuDisplay(skuId?: string | null, skuCode?: string | null): string {
+    if (skuCode && skuCode.trim().length > 0) {
+        return skuCode.trim()
+    }
+    if (skuId && skuId.trim().length > 0) {
+        return `SKU-${skuId
+            .replace(/[^a-zA-Z0-9]/g, '')
+            .slice(0, 8)
+            .toUpperCase()}`
+    }
+    return ''
 }

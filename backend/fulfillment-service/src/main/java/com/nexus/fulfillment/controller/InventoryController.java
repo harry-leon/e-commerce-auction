@@ -14,7 +14,10 @@ import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import com.nexus.fulfillment.service.InventoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,8 +25,10 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -264,9 +269,36 @@ public class InventoryController {
     public ApiResponse<List<InventoryLedgerResponse>> getLedger(
             @RequestParam(required = false) UUID skuId,
             @RequestParam(required = false) UUID refId,
-            @PageableDefault(size = 20) Pageable pageable
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
         Page<InventoryLedgerResponse> page = inventoryService.getLedger(skuId, refId, pageable);
         return ApiResponse.ok(page);
+    }
+
+    @GetMapping("/skus")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SELLER') or hasAuthority('INVENTORY.MANAGE')")
+    @Operation(
+            summary = "Danh sách SKU kho của người bán",
+            description = "Tra cứu danh sách seller_skus kèm tồn kho tổng hợp trên các kho (Seller chỉ xem SKU của mình)"
+    )
+    public ApiResponse<List<SellerSkuResponse>> getSellerSkus(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) SellerSkuStatus status,
+            @RequestParam(required = false) UUID sellerId,
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        Page<SellerSkuResponse> page = inventoryService.getSellerSkus(keyword, status, sellerId, pageable);
+        return ApiResponse.ok(page);
+    }
+
+    @GetMapping("/skus/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SELLER') or hasAuthority('INVENTORY.MANAGE')")
+    @Operation(
+            summary = "Chi tiết SKU kho",
+            description = "Tra cứu thông tin seller_skus theo id hoặc skuId kèm phân bổ tồn kho theo từng kho hàng"
+    )
+    public ApiResponse<SellerSkuDetailResponse> getSellerSkuDetail(@PathVariable UUID id) {
+        SellerSkuDetailResponse detail = inventoryService.getSellerSkuDetail(id);
+        return ApiResponse.ok(detail);
     }
 }

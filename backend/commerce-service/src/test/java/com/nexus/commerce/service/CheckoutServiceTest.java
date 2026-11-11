@@ -240,4 +240,19 @@ class CheckoutServiceTest {
     private void assertCode(String code, org.junit.jupiter.api.function.Executable action) {
         assertEquals(code, assertThrows(ApiException.class, action).getCode());
     }
+
+    /** Khi Catalog không còn trả skuCode (HG-S2-6), Checkout vẫn thành công với mã fallback từ skuId. */
+    @Test
+    void createsOrderWhenCatalogOmitsSkuCodeUsingFallbackPrefix() {
+        when(catalog.getSkuDetails(any())).thenReturn(Map.of(
+                item.getSkuId(),
+                new SkuInfo(item.getSkuId(), null, "Sản phẩm mới", null, new BigDecimal("150000"), null, true, seller)
+        ));
+        var result = service.create(buyer, key, request(), "jwt");
+        ArgumentCaptor<Order> saved = ArgumentCaptor.forClass(Order.class);
+        verify(orders).saveAndFlush(saved.capture());
+        String expectedCode = "SKU-" + item.getSkuId().toString().substring(0, 8).toUpperCase(java.util.Locale.ROOT);
+        assertEquals(expectedCode, saved.getValue().getItems().getFirst().getSkuCode());
+        assertEquals("PENDING_PAYMENT", result.status());
+    }
 }

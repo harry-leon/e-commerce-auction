@@ -2,10 +2,14 @@
 
 > **Gateway paths đã dành:** `/api/v1/inventory/**`, `/api/v1/warehouses/**`, `/api/v1/shipping/**`, `/api/v1/shipments/**`
 >
-> **Trạng thái:** `CURRENT` — Đã hoàn thành nghiệp vụ Quản lý tồn kho cấp SKU, Khóa giữ hàng Checkout với Concurrency Control ([KH-S1-2]) và Vòng đời tồn kho đấu giá chuyên biệt Auction Inventory Lifecycle ([KH-S2-1])
+> **Trạng thái:** `CURRENT` — Đã hoàn thành nghiệp vụ Quản lý tồn kho cấp SKU, Khóa giữ hàng Checkout với Concurrency Control ([KH-S1-2]), Vòng đời tồn kho đấu giá ([KH-S2-1]), và Tách biệt `skuCode` nội bộ qua `seller_skus` khi nhập kho lần đầu ([HG-S2-6])
 
 ## 1. Tổng quan kiến trúc & Quy tắc nghiệp vụ
 
+- **Tách biệt Catalog `skuId` và Fulfillment `skuCode` (`seller_skus`) — [HG-S2-6]:**
+  - Catalog Service chỉ sinh `skuId` (UUID) và lưu thông tin biến thể/giá gốc; **không** sinh hay lưu `skuCode`.
+  - Fulfillment Service sở hữu độc quyền bảng `seller_skus` (`id`, `seller_id`, `sku_id` unique, `sku_code`, `status`) và sequence `fulfillment_sku_code_seq`.
+  - Khi gọi `POST /api/v1/inventory/inbound` lần đầu cho một `skuId`, `CatalogSkuClient` tra cứu `GET /api/v1/skus/{id}` để xác thực SKU tồn tại (`404 RESOURCE_NOT_FOUND` nếu thiếu) và xác thực quyền sở hữu Seller (`403 AUTH_FORBIDDEN` nếu khác chủ shop; Admin bỏ qua kiểm tra chủ sở hữu), sau đó `SellerSkuRegistrar` (`REQUIRES_NEW`) cấp phát mã duy nhất dạng `FSKU-XXXXXXXX` (8 chữ số padding 0). Các lần nhập kho tiếp theo cho cùng `skuId` tái sử dụng nguyên bản ghi `seller_skus` và `skuCode` đó.
 - **Quản lý tồn kho cấp SKU:** Theo dõi chính xác 4 trạng thái tồn theo từng SKU và kho hàng:
   - `total_qty`: Tổng số lượng thực tế trong kho.
   - `available_qty`: Tồn khả dụng có thể đặt mua = `total_qty - reserved_qty - unavailable_qty`.
@@ -53,9 +57,11 @@
 | `POST` | `/api/v1/inventory/events/order-paid` | `Authenticated` | Webhook/Sync: Tiếp nhận sự kiện `OrderPaid`, trừ vĩnh viễn reserved_qty và total_qty (Idempotent) |
 | `POST` | `/api/v1/inventory/events/order-payment-failed` | `Authenticated` | Webhook/Sync: Tiếp nhận sự kiện `OrderPaymentFailed`, hoàn trả reserved_qty về available_qty (Idempotent) |
 | `POST` | `/api/v1/inventory/events/order-cancelled` | `Authenticated` | Webhook/Sync: Tiếp nhận sự kiện `OrderCancelled`, hoàn trả reserved_qty về available_qty (Idempotent) |
-| `POST` | `/api/v1/inventory/inbound` | `ADMIN`, `SELLER` | Nhập kho hàng hóa cho SKU, tăng `total_qty` và ghi sổ cái `INBOUND` |
+| `POST` | `/api/v1/inventory/inbound` | `ADMIN`, `SELLER` | Nhập kho hàng hóa cho Catalog `skuId`, xác thực chủ sở hữu với Catalog, cấp phát/tái sử dụng `skuCode` trong `seller_skus`, tăng `total_qty` và ghi sổ cái `INBOUND` |
 | `POST` | `/api/v1/inventory/adjust` | `ADMIN` | Điều chỉnh kiểm kê tồn kho thực tế, ghi sổ cái `ADJUSTMENT` |
-| `GET` | `/api/v1/inventory/ledger` | `ADMIN`, `SUPPORT` | Tra cứu lịch sử Sổ cái tồn kho bất biến (phân trang, lọc theo `skuId`/`refId`) |
+| `GET` | `/api/v1/inventory/ledger` | `ADMIN`, `SUPPORT` | Tra cứu lịch sử Sổ cái tồn kho bất biến (phân trang `@ParameterObject`, lọc theo `skuId`/`refId`) |
+| `GET` | `/api/v1/inventory/skus` | `ADMIN`, `SELLER` | Danh sách `seller_skus` tổng hợp tồn kho theo các kho (lọc `keyword`, `status`, `sellerId`; Seller tự giới hạn theo bản thân) |
+| `GET` | `/api/v1/inventory/skus/{id}` | `ADMIN`, `SELLER` | Chi tiết `seller_skus` theo `id` hoặc `skuId` kèm phân bổ tồn kho từng kho hàng |
 | `POST` | `/api/v1/inventory/reservations/expire-sweeper` | `ADMIN`, `SUPPORT` | Kích hoạt quét giải phóng phiếu quá hạn thủ công (QA / Dev) |
 
 ---
@@ -68,6 +74,8 @@
   "success": true,
   "data": {
     "skuId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "sellerSkuId": "a73088a4-5007-4c17-b278-4fdad9679cf8",
+    "skuCode": "FSKU-00000047",
     "warehouseId": "a0000000-0000-0000-0000-000000000001",
     "warehouseCode": "WH_001",
     "totalQty": 100,
@@ -171,6 +179,57 @@
   }
 }
 ```
+
+### 3.8. Yêu cầu nhập kho & cấp phát `skuCode` (`StockInboundRequest`)
+```json
+{
+  "skuId": "26579df2-d4db-4b35-ad06-4f491b122a9e",
+  "warehouseId": null,
+  "quantity": 10,
+  "refId": null,
+  "unitCost": 150000
+}
+```
+
+- `skuId` (`UUID`, bắt buộc): Mã biến thể thuộc Catalog. Fulfillment gọi `GET /api/v1/skus/{id}` tới Catalog; nếu không tồn tại trả `404 RESOURCE_NOT_FOUND`, nếu Seller không phải chủ sở hữu trả `403 AUTH_FORBIDDEN` (`ADMIN` bỏ qua kiểm tra chủ sở hữu).
+- `warehouseId` (`UUID`, tùy chọn): Mặc định chọn kho `WH_001` khi truyền `null`.
+- `quantity` (`integer`, bắt buộc, `>= 1`), `unitCost` (`number`, tùy chọn, `>= 0`), `refId` (`UUID`, tùy chọn).
+
+### 3.9. Danh sách & chi tiết SKU kho (`SellerSkuResponse` / `SellerSkuDetailResponse`)
+```json
+{
+  "success": true,
+  "data": {
+    "id": "a73088a4-5007-4c17-b278-4fdad9679cf8",
+    "sellerSkuId": "a73088a4-5007-4c17-b278-4fdad9679cf8",
+    "sellerId": "8a8a1950-f5f0-4fd8-8001-ea1a39ccd3f9",
+    "skuId": "26579df2-d4db-4b35-ad06-4f491b122a9e",
+    "skuCode": "FSKU-00000047",
+    "status": "ACTIVE",
+    "totalQty": 15,
+    "availableQty": 15,
+    "reservedQty": 0,
+    "unavailableQty": 0,
+    "warehouses": [
+      {
+        "skuId": "26579df2-d4db-4b35-ad06-4f491b122a9e",
+        "sellerSkuId": "a73088a4-5007-4c17-b278-4fdad9679cf8",
+        "skuCode": "FSKU-00000047",
+        "warehouseId": "a0000000-0000-0000-0000-000000000001",
+        "warehouseCode": "WH_001",
+        "totalQty": 15,
+        "availableQty": 15,
+        "reservedQty": 0,
+        "unavailableQty": 0
+      }
+    ],
+    "createdAt": "2026-11-11T12:53:55Z",
+    "updatedAt": "2026-11-11T12:53:58Z"
+  }
+}
+```
+
+- Với `GET /api/v1/inventory/skus`, từng phần tử `SellerSkuResponse` thay `warehouses` bằng trường `warehouseCount` (số lượng kho đang lưu trữ SKU này) và bọc `ApiResponse<List<SellerSkuResponse>>` kèm `meta.pagination`. Các trường sort hợp lệ gồm `id`, `sellerId`, `skuId`, `skuCode`, `status`, `createdAt`, `updatedAt`.
 
 ---
 

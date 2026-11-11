@@ -11,7 +11,10 @@ import com.nexus.fulfillment.dto.request.TransitionAuctionToOrderRequest;
 import com.nexus.fulfillment.dto.response.InventoryLedgerResponse;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
 import com.nexus.fulfillment.dto.response.ReservationResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuDetailResponse;
+import com.nexus.fulfillment.dto.response.SellerSkuResponse;
 import com.nexus.fulfillment.dto.response.SkuAvailabilityResponse;
+import com.nexus.fulfillment.enums.SellerSkuStatus;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -167,4 +170,14 @@ public interface InventoryService {
      * Đọc lịch sử sổ cái tồn kho bất biến (chỉ đọc, phân trang, lọc theo SKU hoặc ref_id).
      */
     Page<InventoryLedgerResponse> getLedger(UUID skuId, UUID refId, Pageable pageable);
+
+    /**
+     * Tra cứu danh sách seller_skus và tổng tồn kho các kho trực thuộc theo quyền Seller/Admin.
+     */
+    Page<SellerSkuResponse> getSellerSkus(String keyword, SellerSkuStatus status, UUID sellerId, Pageable pageable);
+
+    /**
+     * Tra cứu chi tiết một seller_skus theo id hoặc skuId kèm tồn kho theo từng kho hàng.
+     */
+    SellerSkuDetailResponse getSellerSkuDetail(UUID id);
 }

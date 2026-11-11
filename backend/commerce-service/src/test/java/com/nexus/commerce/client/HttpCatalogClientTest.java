@@ -51,6 +51,16 @@ class HttpCatalogClientTest {
     }
 
     @Test
+    void acceptsCatalogSnapshotWithoutSkuCodeAfterDecoupling() {
+        UUID id = UUID.randomUUID();
+        body = "{\"success\":true,\"data\":{\"skuId\":\"" + id
+                + "\",\"productName\":\"Product Without SkuCode\",\"price\":95000,\"isActive\":true}}";
+        var sku = client.getSkuInfo(id);
+        assertNull(sku.skuCode());
+        assertEquals("Product Without SkuCode", sku.productName());
+    }
+
+    @Test
     void returnsMissingOn404ButFailsClosedOnProviderFailure() {
         body = "{}";
         status = 404;

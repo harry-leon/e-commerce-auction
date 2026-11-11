@@ -39,8 +39,7 @@ class ProductMapperTest {
 
         Sku sku = new Sku();
         sku.setId(UUID.randomUUID());
-        sku.setSkuCode("SKU-1");
-        sku.setPrice(new BigDecimal("99.99"));
+        sku.setOriginalPrice(new BigDecimal("99.99"));
         sku.setStatus(SkuStatus.ACTIVE);
         product.getSkus().add(sku);
 
@@ -62,7 +61,8 @@ class ProductMapperTest {
         assertEquals(true, response.auctionEnabled());
         assertEquals(product.getCreatedAt(), response.createdAt());
         assertEquals(1, response.skus().size());
-        assertEquals("SKU-1", response.skus().get(0).skuCode());
+        assertEquals(sku.getId(), response.skus().get(0).id());
+        assertEquals(new BigDecimal("99.99"), response.skus().get(0).originalPrice());
         assertEquals(1, response.images().size());
         assertEquals("https://example.com/pic.jpg", response.images().get(0).url());
     }
@@ -82,17 +82,15 @@ class ProductMapperTest {
     @Test
     void toSkuEntity_MapsRequestCorrectly() {
         SkuRequest request = new SkuRequest(
-                "SKU-NEW", "{\"size\":\"L\"}",
-                new BigDecimal("50.00"), new BigDecimal("60.00"), SkuStatus.ACTIVE);
+                null, "{\"size\":\"L\"}",
+                new BigDecimal("50.00"), SkuStatus.ACTIVE);
 
         Sku sku = mapper.toSkuEntity(request);
 
         assertNotNull(sku);
         assertNull(sku.getId());
-        assertEquals("SKU-NEW", sku.getSkuCode());
         assertEquals("{\"size\":\"L\"}", sku.getAttributes());
-        assertEquals(new BigDecimal("50.00"), sku.getPrice());
-        assertEquals(new BigDecimal("60.00"), sku.getOriginalPrice());
+        assertEquals(new BigDecimal("50.00"), sku.getOriginalPrice());
         assertEquals(SkuStatus.ACTIVE, sku.getStatus());
     }
 
@@ -110,20 +108,19 @@ class ProductMapperTest {
 
     @Test
     void updateSkuFromRequest_UpdatesFields() {
+        UUID existingId = UUID.randomUUID();
         Sku sku = new Sku();
-        sku.setId(UUID.randomUUID());
-        sku.setSkuCode("OLD-CODE");
-        sku.setPrice(new BigDecimal("10.00"));
+        sku.setId(existingId);
+        sku.setOriginalPrice(new BigDecimal("10.00"));
 
         SkuRequest request = new SkuRequest(
-                "UPDATED-CODE", "{\"color\":\"red\"}",
-                new BigDecimal("20.00"), new BigDecimal("25.00"), SkuStatus.INACTIVE);
+                existingId, "{\"color\":\"red\"}",
+                new BigDecimal("25.00"), SkuStatus.INACTIVE);
 
         mapper.updateSkuFromRequest(request, sku);
 
-        assertEquals("UPDATED-CODE", sku.getSkuCode());
+        assertEquals(existingId, sku.getId());
         assertEquals("{\"color\":\"red\"}", sku.getAttributes());
-        assertEquals(new BigDecimal("20.00"), sku.getPrice());
         assertEquals(new BigDecimal("25.00"), sku.getOriginalPrice());
         assertEquals(SkuStatus.INACTIVE, sku.getStatus());
     }
@@ -141,5 +138,28 @@ class ProductMapperTest {
 
         assertEquals("https://new.url/2.png", image.getUrl());
         assertEquals(5, image.getSortOrder());
+    }
+
+    /** Bảo vệ lỗi PostgreSQL 500 jsonb khi FE/Swagger gửi thuộc tính biến thể dạng chuỗi thuần thay vì JSON object. */
+    @Test
+    void normalizeAndFormatAttributes_HandlesPlainTextAndJsonObject() {
+        SkuRequest plainReq = new SkuRequest(
+                null, "Obsidian Black / USB-C",
+                new BigDecimal("150000"), SkuStatus.ACTIVE);
+        Sku entity = mapper.toSkuEntity(plainReq);
+        assertEquals("\"Obsidian Black / USB-C\"", entity.getAttributes());
+        assertEquals("Obsidian Black / USB-C", mapper.toSku(entity).attributes());
+
+        SkuRequest blankReq = new SkuRequest(
+                null, "   ",
+                new BigDecimal("150000"), SkuStatus.ACTIVE);
+        assertNull(mapper.toSkuEntity(blankReq).getAttributes());
+
+        Sku jsonSku = new Sku();
+        jsonSku.setId(UUID.randomUUID());
+        jsonSku.setOriginalPrice(new BigDecimal("150000"));
+        jsonSku.setStatus(SkuStatus.ACTIVE);
+        jsonSku.setAttributes("{\"color\":\"Black\"}");
+        assertEquals("{\"color\":\"Black\"}", mapper.toSku(jsonSku).attributes());
     }
 }

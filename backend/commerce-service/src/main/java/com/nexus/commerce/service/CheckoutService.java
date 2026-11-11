@@ -194,7 +194,7 @@ public class CheckoutService {
             SkuInfo sku = details.get(item.getSkuId());
             if (sku == null || !Boolean.TRUE.equals(sku.isActive())) { throw new BusinessException(ErrorCode.CART_SKU_NOT_AVAILABLE); }
             if (sku.sellerId() == null || sku.price() == null || sku.price().signum() < 0
-                    || sku.productName() == null || sku.skuCode() == null) {
+                    || sku.productName() == null) {
                 throw new ApiException("CATALOG_INVALID_RESPONSE", HttpStatus.BAD_GATEWAY, "Catalog thiếu snapshot SKU", null);
             }
             if (buyer.equals(sku.sellerId())) { throw new BusinessException(ErrorCode.ORDER_SELLER_CANNOT_BUY_OWN_PRODUCT); }
@@ -206,7 +206,9 @@ public class CheckoutService {
             BigDecimal price = sku.price().setScale(2, RoundingMode.HALF_UP);
             BigDecimal total = price.multiply(BigDecimal.valueOf(item.getQuantity()));
             if (price.precision() > 15 || total.precision() > 15) { throw invalid("CHECKOUT_AMOUNT_EXCEEDED", "Giá trị đơn vượt giới hạn"); }
-            lines.add(new CheckoutPreviewResponse.Line(item.getSkuId(), sku.sellerId(), sku.productName(), sku.skuCode(), price,
+            // Sau HG-S2-6 Catalog không còn trả skuCode; fallback theo prefix skuId để snapshot đơn vẫn nhất quán.
+            String resolvedSkuCode = SkuInfo.resolveSkuCode(item.getSkuId(), sku.skuCode());
+            lines.add(new CheckoutPreviewResponse.Line(item.getSkuId(), sku.sellerId(), sku.productName(), resolvedSkuCode, price,
                     item.getUnitPrice(), item.getQuantity(), total));
         }
         return lines;

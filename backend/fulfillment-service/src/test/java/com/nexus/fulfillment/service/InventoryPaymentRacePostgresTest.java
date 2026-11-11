@@ -59,8 +59,13 @@ class InventoryPaymentRacePostgresTest {
         stock = UUID.randomUUID();
         reservation = UUID.randomUUID();
         UUID warehouse = UUID.randomUUID();
+        UUID skuId = UUID.randomUUID();
+        UUID sellerSkuId = UUID.randomUUID();
         jdbc.update("INSERT INTO warehouses(id,code,name,address) VALUES (?,?,?,?)", warehouse, warehouse.toString().substring(0, 20), "Test", "Test");
-        jdbc.update("INSERT INTO inventories(id,sku_id,warehouse_id,total_qty,reserved_qty) VALUES (?,?,?,1,1)", stock, UUID.randomUUID(), warehouse);
+        jdbc.update("INSERT INTO seller_skus(id,seller_id,sku_id,sku_code,status) VALUES (?,?,?,?,'ACTIVE')",
+                sellerSkuId, UUID.randomUUID(), skuId, "FSKU-TEST-" + sellerSkuId.toString().substring(0, 8));
+        jdbc.update("INSERT INTO inventories(id,sku_id,seller_sku_id,warehouse_id,total_qty,reserved_qty) VALUES (?,?,?,?,1,1)",
+                stock, skuId, sellerSkuId, warehouse);
         jdbc.update("INSERT INTO inventory_reservations(id,inventory_id,quantity,ref_type,ref_id,status,expires_at) "
                 + "VALUES (?,?,1,'ORDER',?,'PENDING',(CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - interval '1 minute')", reservation, stock, order);
     }
