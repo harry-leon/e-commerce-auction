@@ -183,10 +183,19 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
      * AC2: Nhập thông tin giao hàng và chuyển hướng thanh toán Sandbox thành công.
      * Tình huống nghiệp vụ:
      * - Người thắng điền đầy đủ số điện thoại và địa chỉ nhận hàng.
-     * - Nhấn thanh toán: Gọi API tạo đơn sourceType='AUCTION' rồi gọi cổng thanh toán VNPAY sandbox.
+     * - Nhấn thanh toán: Hệ thống kiểm tra đơn hàng được Backend tự động khởi tạo từ settlement và gọi cổng thanh toán VNPAY sandbox.
+     * - Backend từ chối đơn AUCTION qua POST /orders nên FE không gọi ordersApi.createOrder.
      * - Redirect trình duyệt sang URL sandbox.vnpayment.vn đã được ký hợp lệ.
      */
     it('cho phép nhập thông tin giao hàng và chuyển hướng thanh toán Sandbox thành công (AC2)', async () => {
+        // Lần đầu tải trang chưa có orderId, sau khi submit tải lại settlement server đã có orderId
+        vi.mocked(getAuctionSettlement)
+            .mockResolvedValueOnce(sampleSettlement)
+            .mockResolvedValueOnce({
+                ...sampleSettlement,
+                orderId: 'ORD-AUCTION-001',
+            })
+
         render(<AuctionPaymentPage />)
 
         await screen.findByText('Bạn đã thắng phiên đấu giá')
@@ -200,25 +209,39 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
         const submitButton = screen.getByRole('button', { name: /Tiếp tục đến thanh toán Sandbox/i })
         fireEvent.click(submitButton)
 
-        // Kỳ vọng gọi tạo đơn hàng với sourceType=AUCTION
-        await waitFor(() => {
-            expect(ordersApi.createOrder).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    sourceType: 'AUCTION',
-                    auctionId: 'auc-winner-101',
-                    recipientName: 'Nguyễn Văn Thắng',
-                    recipientPhone: '0912345678',
-                    shippingAddress: '456 Hai Bà Trưng, Phường Bến Nghé, Quận 1',
-                    paymentMethod: 'VNPAY',
-                }),
-                expect.any(String),
-            )
-        })
+        // Không gọi ordersApi.createOrder vì Backend chỉ hỗ trợ đơn REGULAR cho POST /orders
+        expect(ordersApi.createOrder).not.toHaveBeenCalled()
 
-        // Kỳ vọng gọi khởi tạo thanh toán VNPAY với orderId vừa tạo
+        // Kỳ vọng gọi khởi tạo thanh toán VNPAY với orderId sinh từ Backend
         await waitFor(() => {
-            expect(startPayment).toHaveBeenCalledWith('ORD-AUCTION-001')
+            expect(startPayment).toHaveBeenCalledWith('ORD-AUCTION-001', expect.any(String))
         })
+    })
+
+    /**
+     * Thông báo chờ khi đơn hàng đang được backend khởi tạo tự động.
+     * Tình huống nghiệp vụ:
+     * - Khi scheduler handover backend chưa xử lý xong, orderId vẫn là null.
+     * - FE hiển thị thông báo rõ ràng cho người dùng thay vì gọi lệnh tạo đơn sai hợp đồng.
+     */
+    it('hiển thị thông báo khi đơn hàng đang được backend khởi tạo tự động', async () => {
+        vi.mocked(getAuctionSettlement).mockResolvedValue(sampleSettlement)
+
+        render(<AuctionPaymentPage />)
+
+        await screen.findByText('Bạn đã thắng phiên đấu giá')
+
+        const phoneInput = screen.getByLabelText('Số điện thoại')
+        const addressInput = screen.getByLabelText('Địa chỉ giao hàng')
+        fireEvent.change(phoneInput, { target: { value: '0912345678' } })
+        fireEvent.change(addressInput, { target: { value: '456 Hai Bà Trưng, Phường Bến Nghé, Quận 1' } })
+
+        const submitButton = screen.getByRole('button', { name: /Tiếp tục đến thanh toán Sandbox/i })
+        fireEvent.click(submitButton)
+
+        expect(await screen.findByText(/Đơn hàng đang được hệ thống tạo tự động/)).toBeVisible()
+        expect(ordersApi.createOrder).not.toHaveBeenCalled()
+        expect(startPayment).not.toHaveBeenCalled()
     })
 
     /**
@@ -244,7 +267,7 @@ describe('[LD-S2-3] Winner Order Page, Shipping Information & Payment Checkout',
 
         // Không được phép gọi createOrder tạo mới đơn hàng
         await waitFor(() => {
-            expect(startPayment).toHaveBeenCalledWith('ORD-PREVIOUSLY-CREATED-888')
+            expect(startPayment).toHaveBeenCalledWith('ORD-PREVIOUSLY-CREATED-888', expect.any(String))
         })
         expect(ordersApi.createOrder).not.toHaveBeenCalled()
     })
