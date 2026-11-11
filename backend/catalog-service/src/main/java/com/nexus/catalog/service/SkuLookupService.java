@@ -9,23 +9,61 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Read model cho Cart lấy giá/trạng thái SKU thật; tồn kho thuộc Fulfillment nên stockQuantity để null. */
+/**
+ * Read model cho Cart lấy giá/trạng thái SKU thật; tồn kho thuộc Fulfillment
+ * nên stockQuantity để null.
+ */
 @Service
 public class SkuLookupService {
     private final SkuRepository skus;
-    public SkuLookupService(SkuRepository skus) { this.skus = skus; }
 
-    /** Đọc SKU/product trong transaction; trả sellerId thật để Checkout chặn tự mua và đơn nhiều shop. */
+    public SkuLookupService(SkuRepository skus) {
+        this.skus = skus;
+    }
+
+    /**
+     * Đọc SKU/product trong transaction; trả sellerId thật để Checkout chặn tự mua
+     * và đơn nhiều shop.
+     */
     @Transactional(readOnly = true)
     public SkuSnapshot get(UUID id) {
         var sku = skus.findById(id).orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy SKU"));
-        var product = sku.getProduct();
-        String image = product.getImages().isEmpty() ? null : product.getImages().getFirst().getUrl();
-        return new SkuSnapshot(id, sku.getSkuCode(), product.getName(), image, sku.getPrice(), null,
-                sku.getStatus() == SkuStatus.ACTIVE && product.getStatus() == ProductStatus.ACTIVE, product.getSellerId());
+        return toSnapshot(sku);
     }
 
-    /** Contract đọc giữa Catalog/Commerce; sellerId thuộc product, null stock chưa được kiểm tra tại Fulfillment. */
+    /**
+     * Tra cứu snapshot SKU theo mã nghiệp vụ skuCode (không phân biệt hoa thường).
+     * Đầu vào: chuỗi skuCode; đầu ra: SkuSnapshot kèm skuId và sellerId để
+     * Fulfillment xác minh quyền seller.
+     */
+    @Transactional(readOnly = true)
+    public SkuSnapshot getByCode(String skuCode) {
+        String normalized = skuCode == null ? "" : skuCode.trim();
+        if (normalized.isEmpty()) {
+            throw new ResourceNotFoundException("Không tìm thấy SKU");
+        }
+        var sku = skus.findBySkuCodeIgnoreCase(normalized)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy SKU với mã " + normalized));
+        return toSnapshot(sku);
+    }
+
+    /**
+     * Ánh xạ entity Sku sang SkuSnapshot dùng chung cho tra cứu theo UUID và
+     * skuCode.
+     */
+    private SkuSnapshot toSnapshot(com.nexus.catalog.entity.Sku sku) {
+        var product = sku.getProduct();
+        String image = product.getImages().isEmpty() ? null : product.getImages().getFirst().getUrl();
+        return new SkuSnapshot(sku.getId(), sku.getSkuCode(), product.getName(), image, sku.getPrice(), null,
+                sku.getStatus() == SkuStatus.ACTIVE && product.getStatus() == ProductStatus.ACTIVE,
+                product.getSellerId());
+    }
+
+    /**
+     * Contract đọc giữa Catalog/Commerce; sellerId thuộc product, null stock chưa
+     * được kiểm tra tại Fulfillment.
+     */
     public record SkuSnapshot(UUID skuId, String skuCode, String productName, String thumbnailUrl,
-                              BigDecimal price, Integer stockQuantity, Boolean isActive, UUID sellerId) { }
+            BigDecimal price, Integer stockQuantity, Boolean isActive, UUID sellerId) {
+    }
 }

@@ -192,3 +192,36 @@
 6. `AuctionCancelledEvent`: Nhận khi Seller hoặc Admin hủy phiên đấu giá; tức thời giải phóng phiếu giữ kho, hoàn trả về `available_qty`, ghi sổ cái `RELEASE` (Idempotent).
 7. `AuctionFailedEvent`: Nhận khi phiên đấu giá kết thúc mà không có người đặt giá; tức thời giải phóng phiếu giữ kho, hoàn trả về `available_qty`, ghi sổ cái `RELEASE` (Idempotent).
 8. `AuctionSettledEvent`: Nhận khi phiên đấu giá chốt người thắng cuộc thành công và khởi tạo đơn hàng; kích hoạt chuyển tiếp giữ hàng sang đơn hàng (`Transition to Order`), cập nhật `refType = ORDER`, `refId = orderId` và gia hạn thời hạn thanh toán 24 giờ cho người thắng mà không nhả kho rồi giữ lại từ đầu, triệt tiêu nguy cơ Double Reservation và ngăn chặn cạnh tranh từ luồng Mua ngay (Buy Now).
+
+
+---
+
+## 5. Cập nhật Contract Warehouse & Inventory Management (v2.1 - Vinh Khang)
+
+Phần bổ sung này cập nhật các endpoint mới và quy tắc phân quyền/chống lặp đã triển khai tại `WarehouseController`, `InventoryController`, `InventoryAccessPolicy`, và `SkuLookupController` (`catalog-service`).
+
+### 5.1. Endpoint tra cứu SKU theo mã nghiệp vụ (`catalog-service`)
+- `GET /api/v1/products/skus/code/{skuCode}` → `ApiResponse<SkuSnapshot>` (`skuId`, `skuCode`, `productName`, `price`, `sellerId`, `isActive`). Trả `404 SKU_NOT_FOUND` nếu không tồn tại.
+
+### 5.2. Endpoint Quản lý Kho hàng (`/api/v1/warehouses`)
+- `GET /api/v1/warehouses?activeOnly&type&q&page&size&sort` → `ApiResponse<WarehouseResponse[]>` (kèm `meta.pagination`). Quyền: `ADMIN`, `SUPPORT`, `SELLER`.
+- `GET /api/v1/warehouses/{warehouseId}` → `ApiResponse<WarehouseResponse>`.
+- `GET /api/v1/warehouses/code/{code}` → `ApiResponse<WarehouseResponse>`.
+- `GET /api/v1/warehouses/{warehouseId}/inventory?skuId&skuCode&sellerId&page&size` → `ApiResponse<InventoryStockResponse[]>` (Seller tự động lọc theo SKU thuộc sở hữu của mình).
+- `POST /api/v1/warehouses` (body `CreateWarehouseRequest`: `code`, `name`, `address`, `type?`, `active?`) → `201 ApiResponse<WarehouseResponse>` (chỉ `ADMIN` / `INVENTORY.MANAGE`; trùng mã trả `409 WAREHOUSE_CODE_ALREADY_EXISTS`).
+- `PUT /api/v1/warehouses/{warehouseId}` (body `UpdateWarehouseRequest`: `name`, `address`, `type?`, `active?`) → `200 ApiResponse<WarehouseResponse>` (chỉ `ADMIN` / `INVENTORY.MANAGE`).
+
+### 5.3. Endpoint Quản trị & Tra cứu Tồn kho mở rộng (`/api/v1/inventory`)
+- `GET /api/v1/inventory?skuId&skuCode&warehouseId&sellerId&page&size` → `ApiResponse<InventoryStockResponse[]>` (`ADMIN`, `SUPPORT`, `SELLER`; Seller bị từ chối `403` nếu truyền `sellerId` khác hoặc `skuId` thuộc Seller khác).
+- `GET /api/v1/inventory/sku/code/{skuCode}?warehouseId` → `ApiResponse<InventoryStockResponse>` (công khai).
+- `POST /api/v1/inventory/stocks/batch` (body `{ skuIds: UUID[], warehouseId?: UUID }`) → `ApiResponse<InventoryStockResponse[]>` (công khai; `skuIds` rỗng trả `422 VALIDATION_ERROR`).
+- `POST /api/v1/inventory/inbound` (header tùy chọn `Idempotency-Key`; body `StockInboundRequest`: `skuId?`, `skuCode?`, `warehouseId?`, `quantity >= 1`, `refId?`, `reason?`, `idempotencyKey?`) → `ApiResponse<InventoryStockResponse>` (`ADMIN` hoặc `SELLER` sở hữu SKU).
+- `POST /api/v1/inventory/adjust` (header tùy chọn `Idempotency-Key`; body `StockAdjustmentRequest`: `skuId?`, `skuCode?`, `warehouseId?`, `deltaQty?`, `targetTotalQty?`, `unavailableDeltaQty?`, `reason` bắt buộc, `refId?`, `idempotencyKey?`) → `ApiResponse<InventoryStockResponse>` (`ADMIN` hoặc `SELLER` sở hữu SKU; chặn âm kho bằng `409 INVENTORY_INSUFFICIENT`).
+- `GET /api/v1/inventory/ledger?skuId&skuCode&warehouseId&movementType&refType&refId&from&to&page&size` → `ApiResponse<InventoryLedgerResponse[]>` (`ADMIN`, `SUPPORT`, `SELLER`; phản hồi có thêm `warehouseCode`, `reason`, `actorId`).
+- `GET /api/v1/inventory/reconcile?skuId&warehouseId` → `ApiResponse<InventoryReconciliationResponse[]>` (kiểm tra `ledgerTotalQty`, `ledgerReservedQty`, `activeReservationQty`, `nonNegative`, `matched`).
+
+### 5.4. Quy tắc Idempotency & Tranh chấp thanh toán
+- `POST /inventory/inbound` và `POST /inventory/adjust`: chống lặp theo khóa `idempotency_key` (lưu với tiền tố `INBOUND:` / `ADJUST:` kèm unique partial index trên PostgreSQL) hoặc theo `(inventory_id, movement_type, ref_id)`. Trùng khóa khác tham số ném `ORDER_IDEMPOTENCY_CONFLICT`.
+- `reserveStock` / `reserveAuctionStock`: kiểm tra và khóa dòng theo `(refType, refId)` cho cả `ORDER` và `AUCTION`.
+- `confirmReservation` / `commitByOrder`: phiếu đã `RELEASED` hoặc `EXPIRED` đều ném `INVENTORY_RESERVATION_EXPIRED`; phiếu `CONFIRMED` trả lại kết quả cũ không xuất kho 2 lần.
+- `autoReleaseExpiredReservations`: lấy ID quá hạn bằng `findExpiredIds`, khóa từng phiếu bằng `findByIdForUpdate` và xác minh lại `PENDING && expiresAt <= now` trước khi hoàn tồn khả dụng.

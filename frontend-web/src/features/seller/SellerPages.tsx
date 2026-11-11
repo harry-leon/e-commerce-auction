@@ -35,9 +35,31 @@ import { PRODUCTS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
-import { auctionsApi } from '../../api/auctions'
-import { cacheAuctionProduct } from '../../api/auctions'
-import { api, ApiClientError, errorMessage, type ApiCategory, type ApiProduct, type Envelope, getProductStock, setProductStock } from '../../api/client'
+import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
+import {
+    api,
+    ApiClientError,
+    errorMessage,
+    getProductStock,
+    setProductStock,
+    type ApiCategory,
+    type ApiProduct,
+    type Envelope,
+} from '../../api/client'
+import {
+    adjustStock,
+    createInventoryIdempotencyKey,
+    getInventoryLedger,
+    inboundStock,
+    listInventory,
+    listWarehouses,
+    reconcileInventory,
+    type InventoryLedgerResponse,
+    type InventoryReconciliationResponse,
+    type InventoryStockResponse,
+    type LedgerMovementType,
+    type WarehouseResponse,
+} from '../../api/inventory'
 import { validateMinPrice } from '../../utils/pricingEngine'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
@@ -2743,453 +2765,798 @@ export function SellerOrdersPage() {
 }
 
 // ─── Seller Inventory ──────────────────────────────────────────────────────────
-interface InventoryLedgerItem {
-    id: string
-    date: string
-    sku: string
-    type: 'inbound' | 'adjustment' | 'sale' | 'reservation'
-    qty: number
-    notes: string
+interface SellerSkuOption {
+    skuId: string
+    skuCode: string
+    productName: string
 }
 
 /**
- * Màn hình Quản lý Kho hàng của Người bán (Seller Inventory).
- * Chức năng:
- *   - Lấy dữ liệu sản phẩm thật từ Catalog Service kết nối DB PostgreSQL/Supabase.
- *   - Hiển thị chính xác tồn kho theo SKU: Tổng tồn, Khả dụng, Đang giữ (khóa giữ cho Auction/Order).
- *   - Cung cấp thao tác "Điều chỉnh" (Adjust Stock) cập nhật số lượng tồn kho vật lý và ghi vết sổ cái.
- *   - Hiển thị Lịch sử biến động kho (Inventory Ledger) thực tế, loại bỏ hoàn toàn dữ liệu mẫu hardcode.
+ * Màn hình Quản lý Tồn kho & Sổ cái của Seller kết nối trực tiếp API Fulfillment Service (/api/v1/warehouses, /api/v1/inventory).
+ * Luồng xử lý:
+ * 1. Tải danh sách kho hoạt động, SKU thuộc seller từ Catalog, tồn kho phân trang (backend tự giới hạn phạm vi Seller) và sổ cái biến động.
+ * 2. Hỗ trợ lọc theo kho/mã SKU/loại biến động, nhập kho (Inbound), điều chỉnh tồn (targetTotalQty / deltaQty / unavailableDeltaQty) và đối soát sổ cái.
+ * 3. Mỗi lần mở modal nhập/điều chỉnh sinh một Idempotency-Key giữ cố định khi bấm Thử lại để tránh tăng/giảm kho hai lần.
  */
 export function SellerInventoryPage() {
-    const { lang, user, showToast, createdAuctions } = useApp()
-    const [refreshKey, setRefreshKey] = useState(0)
-    const [adjustItem, setAdjustItem] = useState<{
-        id: string
-        name: string
-        sku: string
-        currentStock: number
-    } | null>(null)
-    const [adjustMode, setAdjustMode] = useState<'set' | 'inbound' | 'outbound'>('set')
-    const [adjustQty, setAdjustQty] = useState('')
+    const { lang, user, showToast } = useApp()
+    const [warehouses, setWarehouses] = useState<WarehouseResponse[]>([])
+    const [stocks, setStocks] = useState<InventoryStockResponse[]>([])
+    const [ledger, setLedger] = useState<InventoryLedgerResponse[]>([])
+    const [reconciliations, setReconciliations] = useState<InventoryReconciliationResponse[]>([])
+    const [skuCatalog, setSkuCatalog] = useState<Record<string, SellerSkuOption>>({})
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState('')
+    const [skuSearch, setSkuSearch] = useState('')
+    const [movementFilter, setMovementFilter] = useState<'' | LedgerMovementType>('')
+    const [loading, setLoading] = useState(true)
+    const [loadError, setLoadError] = useState('')
+    const [reconciling, setReconciling] = useState(false)
+    const [reloadTick, setReloadTick] = useState(0)
+
+    // Trạng thái modal Nhập kho (Inbound)
+    const [inboundOpen, setInboundOpen] = useState(false)
+    const [inboundSkuId, setInboundSkuId] = useState('')
+    const [inboundSkuCode, setInboundSkuCode] = useState('')
+    const [inboundWarehouseId, setInboundWarehouseId] = useState('')
+    const [inboundQty, setInboundQty] = useState('10')
+    const [inboundReason, setInboundReason] = useState('')
+    const [inboundIdemKey, setInboundIdemKey] = useState('')
+    const [inboundSubmitting, setInboundSubmitting] = useState(false)
+    const [inboundError, setInboundError] = useState('')
+
+    // Trạng thái modal Điều chỉnh tồn (Adjust)
+    const [adjustOpen, setAdjustOpen] = useState(false)
+    const [adjustTarget, setAdjustTarget] = useState<InventoryStockResponse | null>(null)
+    const [adjustMode, setAdjustMode] = useState<'delta' | 'target'>('delta')
+    const [adjustValue, setAdjustValue] = useState('0')
+    const [adjustUnavailableDelta, setAdjustUnavailableDelta] = useState('0')
     const [adjustReason, setAdjustReason] = useState('')
-    const [savingAdjust, setSavingAdjust] = useState(false)
+    const [adjustIdemKey, setAdjustIdemKey] = useState('')
+    const [adjustSubmitting, setAdjustSubmitting] = useState(false)
+    const [adjustError, setAdjustError] = useState('')
 
-    // Đọc lịch sử biến động sổ cái kho từ localStorage (hoặc mảng rỗng nếu chưa có biến động)
-    const [ledger, setLedger] = useState<InventoryLedgerItem[]>(() => {
-        try {
-            const raw = localStorage.getItem('nexus_inventory_ledger')
-            return raw ? JSON.parse(raw) : []
-        } catch {
-            return []
+    useEffect(() => {
+        const controller = new AbortController()
+        let active = true
+        async function fetchAll() {
+            setLoading(true)
+            setLoadError('')
+            try {
+                const trimmedSearch = skuSearch.trim()
+                const catalogPath = user?.id
+                    ? `/products/seller/${encodeURIComponent(user.id)}?page=0&size=50`
+                    : '/products?page=0&size=50'
+
+                const [whRes, invRes, ledRes, prodRes] = await Promise.all([
+                    listWarehouses({ activeOnly: true, size: 50 }, controller.signal),
+                    listInventory(
+                        {
+                            warehouseId: selectedWarehouseId || undefined,
+                            skuCode: trimmedSearch || undefined,
+                            size: 50,
+                        },
+                        controller.signal,
+                    ),
+                    getInventoryLedger(
+                        {
+                            warehouseId: selectedWarehouseId || undefined,
+                            skuCode: trimmedSearch || undefined,
+                            movementType: movementFilter || undefined,
+                            size: 30,
+                        },
+                        controller.signal,
+                    ),
+                    api<Envelope<ApiProduct[]>>(catalogPath, { signal: controller.signal }).catch(
+                        () => ({ success: true, data: [] as ApiProduct[] }),
+                    ),
+                ])
+
+                if (!active) return
+
+                const skuMap: Record<string, SellerSkuOption> = {}
+                for (const product of prodRes?.data || []) {
+                    for (const sku of product.skus || []) {
+                        if (!sku?.id) continue
+                        skuMap[sku.id] = {
+                            skuId: sku.id,
+                            skuCode: sku.skuCode,
+                            productName: product.name,
+                        }
+                    }
+                }
+
+                setWarehouses(whRes.items)
+                setStocks(invRes.items)
+                setLedger(ledRes.items)
+                setSkuCatalog(skuMap)
+                if (!inboundWarehouseId && whRes.items.length > 0) {
+                    setInboundWarehouseId(whRes.items[0].id)
+                }
+                const skuKeys = Object.keys(skuMap)
+                if (!inboundSkuId && skuKeys.length > 0) {
+                    setInboundSkuId(skuKeys[0])
+                    setInboundSkuCode(skuMap[skuKeys[0]].skuCode)
+                }
+            } catch (err) {
+                if (!active || (err instanceof Error && err.name === 'AbortError')) return
+                setLoadError(
+                    err instanceof ApiClientError
+                        ? `${err.code}: ${err.message}`
+                        : errorMessage(err),
+                )
+            } finally {
+                if (active) setLoading(false)
+            }
         }
-    })
+        void fetchAll()
+        return () => {
+            active = false
+            controller.abort()
+        }
+    }, [user?.id, selectedWarehouseId, skuSearch, movementFilter, reloadTick])
 
-    // Tải danh sách sản phẩm thật của người bán từ Catalog backend
-    const isUuid = Boolean(
-        user?.id &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id),
-    )
-    const productUrl = isUuid
-        ? `/products/seller/${user?.id}?v=${refreshKey}`
-        : `/products?v=${refreshKey}`
+    const totalStock = stocks.reduce((sum, s) => sum + s.totalQty, 0)
+    const totalAvailable = stocks.reduce((sum, s) => sum + s.availableQty, 0)
+    const totalReserved = stocks.reduce((sum, s) => sum + s.reservedQty, 0)
+    const totalUnavailable = stocks.reduce((sum, s) => sum + s.unavailableQty, 0)
 
-    const { data: prodEnvelope, loading: loadingProducts } = useLoad<Envelope<ApiProduct[]> | ApiProduct[]>(productUrl)
-
-    const rawList = (prodEnvelope as any)?.data ?? prodEnvelope
-    const inventoryList = Array.isArray(rawList)
-        ? rawList.map((p: ApiProduct) => {
-              const skuCode = p.skus?.[0]?.skuCode || (p.id ? p.id.slice(0, 8).toUpperCase() : 'SKU-001')
-              const totalStock = (p.skus?.[0] as any)?.stock ?? getProductStock(skuCode, p.id) ?? 0
-
-              // Tính lượng đang giữ (Reserved): kiểm tra các phiên đấu giá scheduled hoặc active đang giữ kho theo SRS BR-AUC-04
-              const isAuctionReserved = Array.isArray(createdAuctions) && createdAuctions.some(
-                  (auc) =>
-                      (auc.productId === p.id || (p.skus?.[0]?.id && (auc as any).skuId === p.skus[0].id)) &&
-                      (auc.status === 'scheduled' || auc.status === 'active'),
-              )
-              const reserved = isAuctionReserved ? Math.min(1, totalStock) : 0
-              const available = Math.max(0, totalStock - reserved)
-
-              return {
-                  id: p.id,
-                  sku: skuCode,
-                  name: p.name,
-                  nameVi: p.name,
-                  stock: totalStock,
-                  available,
-                  reserved,
-                  unavailable: 0,
-              }
-          })
-        : []
-
-    // Tính tổng các chỉ số kho thực tế từ danh sách sản phẩm
-    const totalStockSum = inventoryList.reduce((acc, item) => acc + item.stock, 0)
-    const totalAvailableSum = inventoryList.reduce((acc, item) => acc + item.available, 0)
-    const totalReservedSum = inventoryList.reduce((acc, item) => acc + item.reserved, 0)
-
-    /**
-     * Chức năng: Mở modal điều chỉnh tồn kho cho SKU được chọn.
-     */
-    const openAdjust = (item: any) => {
-        setAdjustItem({
-            id: item.id,
-            name: item.name,
-            sku: item.sku,
-            currentStock: item.stock,
-        })
-        setAdjustMode('set')
-        setAdjustQty(String(item.stock))
-        setAdjustReason('')
+    const openInboundModal = (prefillSku?: InventoryStockResponse) => {
+        const firstSkuId = prefillSku?.skuId || Object.keys(skuCatalog)[0] || ''
+        setInboundSkuId(firstSkuId)
+        setInboundSkuCode(prefillSku?.skuCode || skuCatalog[firstSkuId]?.skuCode || '')
+        setInboundWarehouseId(
+            prefillSku?.warehouseId || selectedWarehouseId || warehouses[0]?.id || '',
+        )
+        setInboundQty('10')
+        setInboundReason('')
+        setInboundError('')
+        setInboundIdemKey(createInventoryIdempotencyKey('seller-inb'))
+        setInboundOpen(true)
     }
 
-    /**
-     * Chức năng: Lưu thay đổi điều chỉnh tồn kho và ghi nhận giao dịch vào Inventory Ledger.
-     */
-    const handleSaveAdjustment = async () => {
-        if (!adjustItem) return
-        const val = parseInt(adjustQty, 10)
-        if (isNaN(val) || val < 0) {
-            showToast({
-                type: 'error',
-                message: lang === 'en' ? 'Please enter a valid stock quantity.' : 'Vui lòng nhập số lượng tồn kho hợp lệ (>= 0).',
-            })
+    const handleInboundSubmit = async () => {
+        const qty = Number(inboundQty)
+        if (!Number.isInteger(qty) || qty < 1) {
+            setInboundError(
+                lang === 'en' ? 'Quantity must be at least 1' : 'Số lượng nhập phải tối thiểu là 1',
+            )
             return
         }
-
-        let newStock = val
-        let diff = 0
-        if (adjustMode === 'set') {
-            newStock = val
-            diff = newStock - adjustItem.currentStock
-        } else if (adjustMode === 'inbound') {
-            newStock = adjustItem.currentStock + val
-            diff = val
-        } else if (adjustMode === 'outbound') {
-            newStock = Math.max(0, adjustItem.currentStock - val)
-            diff = -val
+        if (!inboundSkuId && !inboundSkuCode.trim()) {
+            setInboundError(
+                lang === 'en'
+                    ? 'Please choose a SKU or enter skuCode'
+                    : 'Vui lòng chọn SKU hoặc nhập mã skuCode',
+            )
+            return
         }
-
-        setSavingAdjust(true)
+        setInboundSubmitting(true)
+        setInboundError('')
         try {
-            // Cập nhật tồn kho vào cache bộ nhớ cho cả mã SKU và productId
-            setProductStock(adjustItem.sku, newStock)
-            setProductStock(adjustItem.id, newStock)
-
-            // Gửi yêu cầu điều chỉnh sang Fulfillment Service nếu endpoint khả dụng
-            try {
-                await api('/inventory/inbound', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        skuCode: adjustItem.sku,
-                        quantity: diff > 0 ? diff : 0,
-                    }),
-                })
-            } catch {}
-
-            // Ghi nhật ký vào sổ cái tồn kho (Ledger)
-            const ledgerType: InventoryLedgerItem['type'] = diff >= 0 ? 'inbound' : 'adjustment'
-            const newEntry: InventoryLedgerItem = {
-                id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-                date: new Date().toISOString().split('T')[0],
-                sku: adjustItem.sku,
-                type: ledgerType,
-                qty: diff,
-                notes: adjustReason.trim() || (lang === 'en' ? 'Manual stock adjustment' : 'Điều chỉnh tồn kho thủ công'),
-            }
-
-            const updatedLedger = [newEntry, ...ledger]
-            setLedger(updatedLedger)
-            try {
-                localStorage.setItem('nexus_inventory_ledger', JSON.stringify(updatedLedger))
-            } catch {}
-
-            clearLoadCache()
-            setRefreshKey((k) => k + 1)
+            await inboundStock(
+                {
+                    skuId: inboundSkuId || undefined,
+                    skuCode: inboundSkuCode.trim() || undefined,
+                    warehouseId: inboundWarehouseId || undefined,
+                    quantity: qty,
+                    reason: inboundReason.trim() || 'Nhập kho từ cổng Seller',
+                },
+                inboundIdemKey,
+            )
+            setInboundOpen(false)
+            setReloadTick((t) => t + 1)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Stock adjusted successfully!' : 'Đã điều chỉnh tồn kho thành công!',
+                message:
+                    lang === 'en'
+                        ? 'Stock inbound recorded successfully.'
+                        : 'Nhập kho thành công và đã ghi sổ cái.',
             })
-            setAdjustItem(null)
         } catch (err) {
-            console.warn('Adjust stock failed:', err)
-            showToast({
-                type: 'error',
-                message: lang === 'en' ? 'Failed to adjust stock.' : 'Không thể điều chỉnh tồn kho.',
-            })
+            setInboundError(
+                err instanceof ApiClientError ? `${err.code}: ${err.message}` : errorMessage(err),
+            )
         } finally {
-            setSavingAdjust(false)
+            setInboundSubmitting(false)
         }
     }
+
+    const openAdjustModal = (row: InventoryStockResponse) => {
+        setAdjustTarget(row)
+        setAdjustMode('delta')
+        setAdjustValue('0')
+        setAdjustUnavailableDelta('0')
+        setAdjustReason('')
+        setAdjustError('')
+        setAdjustIdemKey(createInventoryIdempotencyKey('seller-adj'))
+        setAdjustOpen(true)
+    }
+
+    const handleAdjustSubmit = async () => {
+        if (!adjustTarget) return
+        const parsedValue = Number(adjustValue)
+        const parsedUnavailable = Number(adjustUnavailableDelta || '0')
+        if (!Number.isInteger(parsedValue) || !Number.isInteger(parsedUnavailable)) {
+            setAdjustError(lang === 'en' ? 'Quantity must be an integer' : 'Số lượng phải là số nguyên')
+            return
+        }
+        if (!adjustReason.trim()) {
+            setAdjustError(lang === 'en' ? 'Reason is required' : 'Vui lòng nhập lý do điều chỉnh')
+            return
+        }
+        setAdjustSubmitting(true)
+        setAdjustError('')
+        try {
+            await adjustStock(
+                {
+                    skuId: adjustTarget.skuId,
+                    warehouseId: adjustTarget.warehouseId,
+                    deltaQty: adjustMode === 'delta' ? parsedValue : undefined,
+                    targetTotalQty: adjustMode === 'target' ? parsedValue : undefined,
+                    unavailableDeltaQty: parsedUnavailable !== 0 ? parsedUnavailable : undefined,
+                    reason: adjustReason.trim(),
+                },
+                adjustIdemKey,
+            )
+            setAdjustOpen(false)
+            setReloadTick((t) => t + 1)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en'
+                        ? 'Inventory adjusted and reconciled with ledger.'
+                        : 'Điều chỉnh tồn kho thành công.',
+            })
+        } catch (err) {
+            setAdjustError(
+                err instanceof ApiClientError ? `${err.code}: ${err.message}` : errorMessage(err),
+            )
+        } finally {
+            setAdjustSubmitting(false)
+        }
+    }
+
+    const handleReconcile = async () => {
+        setReconciling(true)
+        try {
+            const list = await reconcileInventory({
+                warehouseId: selectedWarehouseId || undefined,
+            })
+            setReconciliations(list)
+            const unmatched = list.filter((item) => !item.matched || !item.nonNegative).length
+            showToast({
+                type: unmatched === 0 ? 'success' : 'warning',
+                message:
+                    unmatched === 0
+                        ? lang === 'en'
+                            ? `Reconciled ${list.length} SKU records: 100% matched with ledger.`
+                            : `Đối soát ${list.length} bản ghi SKU: khớp sổ cái 100%.`
+                        : lang === 'en'
+                          ? `Detected ${unmatched} mismatched records.`
+                          : `Phát hiện ${unmatched} bản ghi lệch sổ cái.`,
+            })
+        } catch (err) {
+            showToast({
+                type: 'error',
+                message:
+                    err instanceof ApiClientError
+                        ? `${err.code}: ${err.message}`
+                        : errorMessage(err),
+            })
+        } finally {
+            setReconciling(false)
+        }
+    }
+
+    const skuOptions = Object.values(skuCatalog)
 
     return (
         <SellerLayout title={tr(lang, 'inventory')}>
-            <div className="grid grid-cols-3 gap-5 mb-6">
+            {loadError && (
+                <div className="mb-4">
+                    <AlertBanner type="error" message={loadError} />
+                </div>
+            )}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 {[
                     [
                         lang === 'en' ? 'Total Stock' : 'Tổng tồn kho',
-                        totalStockSum,
+                        totalStock,
                         'bg-primary-light text-primary',
                     ],
-                    [tr(lang, 'totalAvailable'), totalAvailableSum, 'bg-success-light text-success'],
-                    [tr(lang, 'totalReserved'), totalReservedSum, 'bg-warning-light text-warning'],
-                ].map(([l, v, cls]) => (
-                    <div key={String(l)} className={`nexus-card p-5 ${cls}`}>
-                        <p className="text-sm font-semibold mb-1">{l}</p>
-                        <p className="text-3xl font-black">{v}</p>
+                    [tr(lang, 'totalAvailable'), totalAvailable, 'bg-success-light text-success'],
+                    [tr(lang, 'totalReserved'), totalReserved, 'bg-warning-light text-warning'],
+                    [tr(lang, 'totalUnavailable'), totalUnavailable, 'bg-gray-100 text-gray-700'],
+                ].map(([label, value, cls]) => (
+                    <div key={String(label)} className={`nexus-card p-5 ${cls}`}>
+                        <p className="text-sm font-semibold mb-1">{label}</p>
+                        <p className="text-3xl font-black">{value}</p>
                     </div>
                 ))}
             </div>
 
-            <div className="nexus-card">
-                <div className="p-5 border-b border-border font-bold flex items-center justify-between">
-                    <span>{lang === 'en' ? 'Inventory by SKU' : 'Kho hàng theo SKU'}</span>
-                    <span className="text-xs text-gray-500 font-normal">
-                        {inventoryList.length} {lang === 'en' ? 'SKUs' : 'mã SKU'}
-                    </span>
-                </div>
-                {loadingProducts ? (
-                    <div className="py-12 text-center text-gray-400">
-                        <div
-                            className="spinner-border text-primary mb-2"
-                            style={{ color: '#ee4d2d' }}
-                            role="status"
-                        >
-                            <span className="visually-hidden">Loading...</span>
-                        </div>
-                        <p>{lang === 'en' ? 'Loading inventory...' : 'Đang tải thông tin kho hàng...'}</p>
-                    </div>
-                ) : inventoryList.length === 0 ? (
-                    <div className="p-8">
-                        <EmptyState
-                            icon={<Package size={20} />}
-                            title={lang === 'en' ? 'No products in inventory' : 'Chưa có sản phẩm nào trong kho hàng'}
+            <div className="nexus-card p-5 mb-5 flex flex-wrap items-end gap-3 justify-between">
+                <div className="flex flex-wrap items-end gap-3 flex-1">
+                    <div className="w-56">
+                        <Select
+                            label={lang === 'en' ? 'Warehouse' : 'Kho hàng'}
+                            value={selectedWarehouseId}
+                            onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                            options={[
+                                {
+                                    value: '',
+                                    label: lang === 'en' ? 'All warehouses' : 'Tất cả kho hàng',
+                                },
+                                ...warehouses.map((w) => ({
+                                    value: w.id,
+                                    label: `${w.code} — ${w.name}`,
+                                })),
+                            ]}
                         />
                     </div>
-                ) : (
-                    <DataTable
-                        columns={[
-                            {
-                                key: 'sku',
-                                label: 'SKU',
-                                render: (r: any) => <span className="font-mono text-xs">{r.sku}</span>,
-                            },
-                            {
-                                key: 'name',
-                                label: lang === 'en' ? 'Product' : 'Sản phẩm',
-                                render: (r: any) => (
-                                    <span className="font-semibold text-sm">
-                                        {lang === 'vi' ? r.nameVi : r.name}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'stock',
-                                label: lang === 'en' ? 'Total' : 'Tổng',
-                                render: (r: any) => <span className="font-bold">{r.stock}</span>,
-                            },
-                            {
-                                key: 'available',
-                                label: tr(lang, 'totalAvailable'),
-                                render: (r: any) => (
-                                    <span className="text-success font-semibold">{r.available}</span>
-                                ),
-                            },
-                            {
-                                key: 'reserved',
-                                label: tr(lang, 'totalReserved'),
-                                render: (r: any) => (
-                                    <span className={r.reserved > 0 ? 'text-warning font-semibold' : 'text-gray-400'}>
-                                        {r.reserved}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'unavailable',
-                                label: tr(lang, 'totalUnavailable'),
-                                render: () => <span className="text-gray-400">0</span>,
-                            },
-                            {
-                                key: 'actions',
-                                label: '',
-                                render: (r: any) => (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={(e) => {
-                                            e.stopPropagation()
-                                            openAdjust(r)
-                                        }}
-                                    >
-                                        {lang === 'en' ? 'Adjust' : 'Điều chỉnh'}
-                                    </Button>
-                                ),
-                            },
-                        ]}
-                        data={inventoryList}
-                        rowKey={(r) => r.id}
-                    />
-                )}
+                    <div className="w-56">
+                        <Input
+                            label={lang === 'en' ? 'Filter by SKU Code' : 'Lọc theo mã SKU'}
+                            value={skuSearch}
+                            onChange={(e) => setSkuSearch(e.target.value)}
+                            placeholder="VD: NX-KB-01"
+                        />
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        loading={reconciling}
+                        onClick={() => void handleReconcile()}
+                    >
+                        <CheckCircle size={15} />
+                        {lang === 'en' ? 'Reconcile Ledger' : 'Đối soát sổ cái'}
+                    </Button>
+                    <Button variant="primary" onClick={() => openInboundModal()}>
+                        <Plus size={15} />
+                        {lang === 'en' ? 'Inbound Stock' : 'Nhập kho'}
+                    </Button>
+                </div>
             </div>
 
-            <div className="nexus-card mt-5">
-                <div className="p-5 border-b border-border font-bold flex items-center justify-between">
-                    <span>{lang === 'en' ? 'Inventory Ledger' : 'Lịch sử biến động kho'}</span>
-                    {ledger.length > 0 && (
-                        <button
-                            onClick={() => {
-                                setLedger([])
-                                try {
-                                    localStorage.removeItem('nexus_inventory_ledger')
-                                } catch {}
-                            }}
-                            className="text-xs text-gray-400 hover:text-danger"
-                        >
-                            {lang === 'en' ? 'Clear history' : 'Xóa lịch sử'}
-                        </button>
-                    )}
-                </div>
-                {ledger.length === 0 ? (
-                    <div className="p-8 text-center text-gray-400 text-sm">
-                        <Package size={28} className="mx-auto mb-2 opacity-30" />
-                        <p>{lang === 'en' ? 'No inventory movements recorded yet.' : 'Chưa có biến động kho nào được ghi nhận.'}</p>
+            {reconciliations.length > 0 && (
+                <div className="nexus-card mb-5">
+                    <div className="p-4 border-b border-border flex items-center justify-between">
+                        <span className="font-bold text-sm">
+                            {lang === 'en'
+                                ? 'Ledger Reconciliation Result'
+                                : 'Kết quả đối soát tồn kho & sổ cái'}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                            {reconciliations.filter((r) => r.matched).length}/
+                            {reconciliations.length}{' '}
+                            {lang === 'en' ? 'matched' : 'bản ghi khớp'}
+                        </span>
                     </div>
-                ) : (
-                    <div className="p-5">
-                        {ledger.map((entry) => (
+                    <div className="p-4 grid gap-2 text-xs">
+                        {reconciliations.map((rec) => (
                             <div
-                                key={entry.id}
-                                className="flex items-center justify-between py-3 border-b border-border last:border-0 text-sm"
+                                key={`${rec.skuId}-${rec.warehouseId}`}
+                                className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-surface-alt border border-border"
                             >
-                                <div className="flex items-center gap-4">
-                                    <span className="text-gray-400 text-xs w-24">{entry.date}</span>
-                                    <span className="font-mono text-xs text-gray-600">{entry.sku}</span>
-                                    <span
-                                        className={`badge text-xs ${
-                                            entry.type === 'inbound'
-                                                ? 'badge-success'
-                                                : entry.type === 'sale'
-                                                  ? 'badge-primary'
-                                                  : 'badge-gray'
-                                        }`}
-                                    >
-                                        {entry.type}
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                    <span className="text-xs text-gray-500">{entry.notes}</span>
-                                    <span
-                                        className={`font-bold ${entry.qty < 0 ? 'text-danger' : 'text-success'}`}
-                                    >
-                                        {entry.qty > 0 ? '+' : ''}
-                                        {entry.qty}
-                                    </span>
-                                </div>
+                                <span className="font-mono">
+                                    {rec.warehouseCode} ·{' '}
+                                    {skuCatalog[rec.skuId]?.skuCode || rec.skuId.slice(0, 8)}
+                                </span>
+                                <span>
+                                    total={rec.totalQty} (ledger={rec.ledgerTotalQty}) · reserved=
+                                    {rec.reservedQty} (ledger={rec.ledgerReservedQty}, pending=
+                                    {rec.activeReservationQty})
+                                </span>
+                                <StatusBadge
+                                    status={rec.matched && rec.nonNegative ? 'active' : 'cancelled'}
+                                    label={
+                                        rec.matched && rec.nonNegative
+                                            ? lang === 'en'
+                                                ? 'Matched'
+                                                : 'Khớp sổ cái'
+                                            : lang === 'en'
+                                              ? 'Mismatch'
+                                              : 'Lệch'
+                                    }
+                                />
                             </div>
                         ))}
                     </div>
-                )}
+                </div>
+            )}
+
+            <div className="nexus-card">
+                <div className="p-5 border-b border-border flex items-center justify-between">
+                    <span className="font-bold">
+                        {lang === 'en' ? 'Inventory by SKU & Warehouse' : 'Tồn kho theo SKU & Kho'}
+                    </span>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReloadTick((t) => t + 1)}
+                    >
+                        {lang === 'en' ? 'Refresh' : 'Tải lại'}
+                    </Button>
+                </div>
+                <DataTable
+                    loading={loading}
+                    columns={[
+                        {
+                            key: 'sku',
+                            label: 'SKU',
+                            render: (r: InventoryStockResponse) => {
+                                const info = skuCatalog[r.skuId]
+                                return (
+                                    <div>
+                                        <p className="font-mono text-xs font-bold">
+                                            {r.skuCode || info?.skuCode || r.skuId.slice(0, 8)}
+                                        </p>
+                                        {info?.productName && (
+                                            <p className="text-xs text-gray-500">
+                                                {info.productName}
+                                            </p>
+                                        )}
+                                    </div>
+                                )
+                            },
+                        },
+                        {
+                            key: 'warehouse',
+                            label: lang === 'en' ? 'Warehouse' : 'Kho hàng',
+                            render: (r: InventoryStockResponse) => (
+                                <div>
+                                    <p className="font-mono text-xs font-semibold">
+                                        {r.warehouseCode}
+                                    </p>
+                                    {r.warehouseName && (
+                                        <p className="text-xs text-gray-500">{r.warehouseName}</p>
+                                    )}
+                                </div>
+                            ),
+                        },
+                        {
+                            key: 'totalQty',
+                            label: lang === 'en' ? 'Total' : 'Tổng tồn',
+                            render: (r: InventoryStockResponse) => (
+                                <span className="font-bold">{r.totalQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'availableQty',
+                            label: tr(lang, 'totalAvailable'),
+                            render: (r: InventoryStockResponse) => (
+                                <span className="text-success font-semibold">{r.availableQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'reservedQty',
+                            label: tr(lang, 'totalReserved'),
+                            render: (r: InventoryStockResponse) => (
+                                <span className="text-warning font-semibold">{r.reservedQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'unavailableQty',
+                            label: tr(lang, 'totalUnavailable'),
+                            render: (r: InventoryStockResponse) => (
+                                <span className="text-gray-500">{r.unavailableQty}</span>
+                            ),
+                        },
+                        {
+                            key: 'actions',
+                            label: '',
+                            render: (r: InventoryStockResponse) => (
+                                <div className="flex items-center gap-2 justify-end">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openInboundModal(r)}
+                                    >
+                                        {lang === 'en' ? 'Inbound' : 'Nhập thêm'}
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openAdjustModal(r)}
+                                    >
+                                        {lang === 'en' ? 'Adjust' : 'Điều chỉnh'}
+                                    </Button>
+                                </div>
+                            ),
+                        },
+                    ]}
+                    data={stocks}
+                    rowKey={(r) => `${r.skuId}-${r.warehouseId}`}
+                />
             </div>
 
-            {/* Modal Điều chỉnh Tồn kho */}
+            <div className="nexus-card mt-5">
+                <div className="p-5 border-b border-border flex flex-wrap items-center justify-between gap-3">
+                    <span className="font-bold">
+                        {lang === 'en' ? 'Immutable Inventory Ledger' : 'Sổ cái biến động kho'}
+                    </span>
+                    <div className="w-48">
+                        <Select
+                            value={movementFilter}
+                            onChange={(e) =>
+                                setMovementFilter(e.target.value as '' | LedgerMovementType)
+                            }
+                            options={[
+                                { value: '', label: lang === 'en' ? 'All movements' : 'Tất cả loại' },
+                                { value: 'INBOUND', label: 'INBOUND' },
+                                { value: 'OUTBOUND', label: 'OUTBOUND' },
+                                { value: 'RESERVE', label: 'RESERVE' },
+                                { value: 'RELEASE', label: 'RELEASE' },
+                                { value: 'ADJUSTMENT', label: 'ADJUSTMENT' },
+                            ]}
+                        />
+                    </div>
+                </div>
+                <div className="p-5">
+                    {ledger.length === 0 ? (
+                        <EmptyState
+                            icon={<Package size={28} />}
+                            title={
+                                lang === 'en' ? 'No ledger movements yet' : 'Chưa có biến động kho'
+                            }
+                            subtitle={
+                                lang === 'en'
+                                    ? 'Inbound or stock adjustments will appear here immutably.'
+                                    : 'Mọi thao tác nhập kho, giữ hàng, xuất kho hoặc kiểm kê sẽ được ghi nhận tại đây.'
+                            }
+                        />
+                    ) : (
+                        ledger.map((entry) => {
+                            const isDecrease =
+                                entry.movementType === 'OUTBOUND' ||
+                                entry.movementType === 'RESERVE' ||
+                                entry.quantity < 0
+                            const displayQty =
+                                entry.movementType === 'OUTBOUND' ||
+                                entry.movementType === 'RESERVE'
+                                    ? -Math.abs(entry.quantity)
+                                    : entry.quantity
+                            return (
+                                <div
+                                    key={entry.id}
+                                    className="flex flex-wrap items-center justify-between gap-2 py-3 border-b border-border last:border-0 text-sm"
+                                >
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <span className="text-gray-400 text-xs">
+                                            {formatDateTime(entry.createdAt, lang)}
+                                        </span>
+                                        <span className="badge badge-gray text-xs">
+                                            {entry.warehouseCode || entry.warehouseId.slice(0, 8)}
+                                        </span>
+                                        <span className="font-mono text-xs text-gray-700">
+                                            {skuCatalog[entry.skuId]?.skuCode ||
+                                                entry.skuId.slice(0, 8)}
+                                        </span>
+                                        <StatusBadge
+                                            status={
+                                                entry.movementType === 'INBOUND' ||
+                                                entry.movementType === 'RELEASE'
+                                                    ? 'active'
+                                                    : entry.movementType === 'RESERVE'
+                                                      ? 'pending'
+                                                      : 'info'
+                                            }
+                                            label={entry.movementType}
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <span className="text-xs text-gray-500">
+                                            {entry.reason || entry.refType || '—'}
+                                            {entry.refId ? ` · #${entry.refId.slice(0, 8)}` : ''}
+                                        </span>
+                                        <span
+                                            className={`font-bold ${isDecrease ? 'text-danger' : 'text-success'}`}
+                                        >
+                                            {displayQty > 0 ? `+${displayQty}` : displayQty}
+                                        </span>
+                                    </div>
+                                </div>
+                            )
+                        })
+                    )}
+                </div>
+            </div>
+
             <Modal
-                open={Boolean(adjustItem)}
-                onClose={() => setAdjustItem(null)}
-                title={lang === 'en' ? 'Adjust Inventory' : 'Điều chỉnh Tồn kho'}
+                open={inboundOpen}
+                onClose={() => setInboundOpen(false)}
+                title={lang === 'en' ? 'Inbound Stock to Warehouse' : 'Nhập kho hàng hóa'}
+                size="sm"
                 footer={
-                    <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setAdjustItem(null)}>
+                    <>
+                        <Button variant="outline" onClick={() => setInboundOpen(false)}>
                             {tr(lang, 'cancel')}
                         </Button>
                         <Button
                             variant="primary"
-                            loading={savingAdjust}
-                            onClick={handleSaveAdjustment}
+                            loading={inboundSubmitting}
+                            onClick={() => void handleInboundSubmit()}
                         >
-                            {lang === 'en' ? 'Confirm Adjustment' : 'Xác nhận điều chỉnh'}
+                            {lang === 'en' ? 'Confirm Inbound' : 'Xác nhận nhập kho'}
                         </Button>
-                    </div>
+                    </>
                 }
             >
-                {adjustItem && (
-                    <div className="space-y-4 text-sm">
-                        <div className="bg-gray-50 p-3 rounded-lg border border-border">
-                            <p className="font-semibold text-gray-900">{adjustItem.name}</p>
-                            <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
-                                <span>SKU: <strong className="font-mono text-gray-700">{adjustItem.sku}</strong></span>
-                                <span>{lang === 'en' ? 'Current Stock' : 'Tồn kho hiện tại'}: <strong className="text-primary">{adjustItem.currentStock}</strong></span>
-                            </div>
-                        </div>
+                <div className="flex flex-col gap-3">
+                    {inboundError && <AlertBanner type="error" message={inboundError} />}
+                    {skuOptions.length > 0 && (
+                        <Select
+                            label={lang === 'en' ? 'Choose Your SKU' : 'Chọn SKU của bạn'}
+                            value={inboundSkuId}
+                            onChange={(e) => {
+                                const id = e.target.value
+                                setInboundSkuId(id)
+                                if (skuCatalog[id]) setInboundSkuCode(skuCatalog[id].skuCode)
+                            }}
+                            options={[
+                                {
+                                    value: '',
+                                    label:
+                                        lang === 'en'
+                                            ? '-- Enter skuCode manually --'
+                                            : '-- Nhập tay theo mã skuCode --',
+                                },
+                                ...skuOptions.map((s) => ({
+                                    value: s.skuId,
+                                    label: `${s.skuCode} — ${s.productName}`,
+                                })),
+                            ]}
+                        />
+                    )}
+                    <Input
+                        label={lang === 'en' ? 'SKU Code' : 'Mã SKU (skuCode)'}
+                        value={inboundSkuCode}
+                        onChange={(e) => {
+                            setInboundSkuCode(e.target.value)
+                            if (skuInboundMatch(skuOptions, e.target.value)) {
+                                setInboundSkuId(skuInboundMatch(skuOptions, e.target.value)!)
+                            } else {
+                                setInboundSkuId('')
+                            }
+                        }}
+                        placeholder="VD: NX-KB-01"
+                    />
+                    <Select
+                        label={lang === 'en' ? 'Target Warehouse' : 'Kho nhập'}
+                        value={inboundWarehouseId}
+                        onChange={(e) => setInboundWarehouseId(e.target.value)}
+                        options={warehouses.map((w) => ({
+                            value: w.id,
+                            label: `${w.code} — ${w.name}`,
+                        }))}
+                    />
+                    <Input
+                        label={lang === 'en' ? 'Inbound Quantity' : 'Số lượng nhập'}
+                        type="number"
+                        min={1}
+                        value={inboundQty}
+                        onChange={(e) => setInboundQty(e.target.value)}
+                    />
+                    <Textarea
+                        label={tr(lang, 'reason')}
+                        rows={2}
+                        value={inboundReason}
+                        onChange={(e) => setInboundReason(e.target.value)}
+                        placeholder="VD: Nhập lô hàng tháng 11"
+                    />
+                    <p className="text-[11px] font-mono text-gray-400">
+                        Idempotency-Key: {inboundIdemKey}
+                    </p>
+                </div>
+            </Modal>
 
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">
-                                {lang === 'en' ? 'Adjustment Method' : 'Hình thức điều chỉnh'}
-                            </label>
-                            <div className="grid grid-cols-3 gap-2">
-                                {[
-                                    { key: 'set', vi: 'Đặt lại tổng', en: 'Set total' },
-                                    { key: 'inbound', vi: 'Nhập thêm (+)', en: 'Add stock (+)' },
-                                    { key: 'outbound', vi: 'Giảm bớt (-)', en: 'Reduce stock (-)' },
-                                ].map((m) => (
-                                    <button
-                                        key={m.key}
-                                        type="button"
-                                        onClick={() => {
-                                            setAdjustMode(m.key as any)
-                                            if (m.key === 'set') setAdjustQty(String(adjustItem.currentStock))
-                                            else setAdjustQty('')
-                                        }}
-                                        className={`py-2 px-3 text-xs rounded-lg border font-medium transition-colors ${
-                                            adjustMode === m.key
-                                                ? 'border-primary bg-primary-light text-primary font-bold'
-                                                : 'border-border bg-white text-gray-600 hover:bg-gray-50'
-                                        }`}
-                                    >
-                                        {lang === 'en' ? m.en : m.vi}
-                                    </button>
-                                ))}
-                            </div>
+            <Modal
+                open={adjustOpen}
+                onClose={() => setAdjustOpen(false)}
+                title={
+                    lang === 'en'
+                        ? `Adjust Stock (${adjustTarget?.warehouseCode || ''})`
+                        : `Điều chỉnh tồn kho (${adjustTarget?.warehouseCode || ''})`
+                }
+                size="sm"
+                footer={
+                    <>
+                        <Button variant="outline" onClick={() => setAdjustOpen(false)}>
+                            {tr(lang, 'cancel')}
+                        </Button>
+                        <Button
+                            variant="primary"
+                            loading={adjustSubmitting}
+                            onClick={() => void handleAdjustSubmit()}
+                        >
+                            {tr(lang, 'save')}
+                        </Button>
+                    </>
+                }
+            >
+                <div className="flex flex-col gap-3">
+                    {adjustError && <AlertBanner type="error" message={adjustError} />}
+                    {adjustTarget && (
+                        <div className="p-3 rounded-lg bg-surface-alt border border-border text-xs">
+                            <p className="font-mono font-bold">
+                                {adjustTarget.skuCode ||
+                                    skuCatalog[adjustTarget.skuId]?.skuCode ||
+                                    adjustTarget.skuId}
+                            </p>
+                            <p className="text-gray-600 mt-1">
+                                Total: <b>{adjustTarget.totalQty}</b> · Available:{' '}
+                                <b>{adjustTarget.availableQty}</b> · Reserved:{' '}
+                                <b>{adjustTarget.reservedQty}</b> · Unavailable:{' '}
+                                <b>{adjustTarget.unavailableQty}</b>
+                            </p>
                         </div>
-
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">
-                                {adjustMode === 'set'
-                                    ? (lang === 'en' ? 'New Total Stock Quantity' : 'Số lượng tồn kho mới')
-                                    : adjustMode === 'inbound'
-                                      ? (lang === 'en' ? 'Quantity to Add' : 'Số lượng nhập thêm')
-                                      : (lang === 'en' ? 'Quantity to Deduct' : 'Số lượng giảm trừ')}
-                            </label>
-                            <input
-                                type="number"
-                                min="0"
-                                value={adjustQty}
-                                onChange={(e) => setAdjustQty(e.target.value)}
-                                className="nexus-input w-full"
-                                placeholder="0"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">
-                                {lang === 'en' ? 'Reason / Notes' : 'Lý do / Ghi chú điều chỉnh'}
-                            </label>
-                            <input
-                                type="text"
-                                value={adjustReason}
-                                onChange={(e) => setAdjustReason(e.target.value)}
-                                className="nexus-input w-full"
-                                placeholder={
-                                    adjustMode === 'inbound'
-                                        ? (lang === 'en' ? 'e.g., Inbound from supplier' : 'Ví dụ: Nhập hàng mới từ NCC')
-                                        : (lang === 'en' ? 'e.g., Periodic physical count' : 'Ví dụ: Kiểm kê định kỳ, hư hỏng')
-                                }
-                            />
-                        </div>
-                    </div>
-                )}
+                    )}
+                    <Select
+                        label={lang === 'en' ? 'Adjustment Mode' : 'Kiểu điều chỉnh'}
+                        value={adjustMode}
+                        onChange={(e) => setAdjustMode(e.target.value as 'delta' | 'target')}
+                        options={[
+                            {
+                                value: 'delta',
+                                label:
+                                    lang === 'en'
+                                        ? 'Relative delta (±deltaQty)'
+                                        : 'Thay đổi tương đối (±deltaQty)',
+                            },
+                            {
+                                value: 'target',
+                                label:
+                                    lang === 'en'
+                                        ? 'Exact stocktake count (targetTotalQty)'
+                                        : 'Đặt tổng tồn thực tế (targetTotalQty)',
+                            },
+                        ]}
+                    />
+                    <Input
+                        label={
+                            adjustMode === 'delta'
+                                ? lang === 'en'
+                                    ? 'Delta Quantity (±)'
+                                    : 'Số lượng tăng/giảm (±)'
+                                : lang === 'en'
+                                  ? 'Target Total Quantity'
+                                  : 'Tổng tồn mới sau kiểm kê'
+                        }
+                        type="number"
+                        value={adjustValue}
+                        onChange={(e) => setAdjustValue(e.target.value)}
+                    />
+                    <Input
+                        label={
+                            lang === 'en'
+                                ? 'Damaged / Unavailable Delta (±)'
+                                : 'Thay đổi hàng hỏng/cách ly (±)'
+                        }
+                        type="number"
+                        value={adjustUnavailableDelta}
+                        onChange={(e) => setAdjustUnavailableDelta(e.target.value)}
+                    />
+                    <Textarea
+                        label={tr(lang, 'reason')}
+                        rows={2}
+                        value={adjustReason}
+                        onChange={(e) => setAdjustReason(e.target.value)}
+                        placeholder="VD: Kiểm kê thực tế định kỳ"
+                    />
+                    <p className="text-[11px] font-mono text-gray-400">
+                        Idempotency-Key: {adjustIdemKey}
+                    </p>
+                </div>
             </Modal>
         </SellerLayout>
     )
+}
+
+function skuInboundMatch(options: SellerSkuOption[], rawCode: string): string | undefined {
+    const normalized = rawCode.trim().toLowerCase()
+    if (!normalized) return undefined
+    return options.find((o) => o.skuCode.toLowerCase() === normalized)?.skuId
 }
 
 // ─── Seller Reputation ─────────────────────────────────────────────────────────
