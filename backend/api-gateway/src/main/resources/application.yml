@@ -52,7 +52,7 @@ spring:
         - id: reputation-service
           uri: ${REPUTATION_SERVICE_URL:http://localhost:8087}
           predicates:
-            - Path=/api/v1/reputations/**
+            - Path=/api/v1/reputations/**,/api/v1/ratings/**
 
 app:
   # Danh sách origin chính xác dùng cho HTTP CORS và WebSocket; không dùng wildcard với cookie.

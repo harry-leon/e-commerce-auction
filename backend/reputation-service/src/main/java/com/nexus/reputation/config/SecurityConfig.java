@@ -1,16 +1,17 @@
 package com.nexus.reputation.config;
 
 import com.nexus.common.security.KeycloakAuthorities;
-import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -35,9 +36,9 @@ public class SecurityConfig {
                         com.nexus.common.security.ServiceIdentity.permits(auth.get(),
                             "nexus-commerce-service", "REPUTATION.PENALTY")))
                 // Lịch sử xử phạt và hồ sơ /me bắt buộc xác thực JWT trước khi mở rule public cho tóm tắt {userId}.
-                .requestMatchers(org.springframework.http.HttpMethod.GET,
+                .requestMatchers(HttpMethod.GET,
                     "/api/v1/reputations/me", "/api/v1/reputations/*/penalties").authenticated()
-                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/reputations/*").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/reputations/*", "/api/v1/ratings/user/*").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();

@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * Tham số nghiệp vụ tính điểm uy tín và xử phạt theo SRS §2.6 & §3.5.3.
+ * Tham số nghiệp vụ tính điểm uy tín, đánh giá và xử phạt theo SRS §2.6 & §3.5.3.
  * Mặc định giữ chuẩn PAYMENT_TIMEOUT_PENALTY_SCORE = 10 để áp dụng khi winner quá hạn thanh toán 24 giờ.
  */
 @Configuration
@@ -37,6 +37,12 @@ public class ReputationProperties {
     /** Ngưỡng đạt mức uy tín VIP. */
     @Min(100)
     private int vipThreshold = 150;
+
+    /** Bật/tắt xác thực đơn hàng qua commerce-service trước khi cho phép tạo đánh giá. */
+    private boolean orderVerificationEnabled = true;
+
+    /** URL gốc của commerce-service dùng để gọi GET /api/v1/orders/{orderId}. */
+    private String commerceBaseUrl = "http://localhost:8083";
 
     public int getPaymentTimeoutPenaltyScore() {
         return paymentTimeoutPenaltyScore;
@@ -76,5 +82,21 @@ public class ReputationProperties {
 
     public void setVipThreshold(int vipThreshold) {
         this.vipThreshold = vipThreshold;
+    }
+
+    public boolean isOrderVerificationEnabled() {
+        return orderVerificationEnabled;
+    }
+
+    public void setOrderVerificationEnabled(boolean orderVerificationEnabled) {
+        this.orderVerificationEnabled = orderVerificationEnabled;
+    }
+
+    public String getCommerceBaseUrl() {
+        return commerceBaseUrl;
+    }
+
+    public void setCommerceBaseUrl(String commerceBaseUrl) {
+        this.commerceBaseUrl = commerceBaseUrl;
     }
 }
