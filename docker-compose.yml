@@ -206,7 +206,8 @@ services:
       COMMERCE_SERVICE_URL: http://commerce-service:8080
       AUCTION_TOKEN_URL: http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token
       AUCTION_CLIENT_SECRET: ${AUCTION_CLIENT_SECRET:?Set AUCTION_CLIENT_SECRET in .env}
-      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
+      # Cho WebSocket từ web Docker cổng 3001 và Vite cổng 3000; chỉ mở các origin local cụ thể.
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:8080}
       # Dùng Supabase khi cấu hình AUCTION_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${AUCTION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_auction}
       DB_USERNAME: ${AUCTION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
@@ -311,7 +312,8 @@ services:
       AUCTION_WS_URL: lb:ws://auction-service
       # Route push tra cứu Notification qua Eureka; không proxy WS bằng route HTTP lb://.
       NOTIFICATION_WS_URL: lb:ws://notification-service
-      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://localhost:8080}
+      # Web Docker chạy cổng 3001: thiếu origin này khiến POST có cookie bị CORS trả 403 trước khi vào Commerce.
+      WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:8080}
       FULFILLMENT_SERVICE_URL: lb://fulfillment-service
       NOTIFICATION_SERVICE_URL: lb://notification-service
       REPUTATION_SERVICE_URL: lb://reputation-service
