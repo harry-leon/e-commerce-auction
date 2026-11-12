@@ -241,6 +241,23 @@ class CheckoutServiceTest {
         assertEquals(code, assertThrows(ApiException.class, action).getCode());
     }
 
+    /** Thiếu kho phải chặn cả COD/VNPAY trước khi ghi đơn, xóa giỏ hoặc tạo phiếu giữ kho. */
+    @Test
+    void rejectsOutOfStockBeforeCreatingAnyOrder() {
+        when(inventory.available(item.getSkuId())).thenReturn(0);
+        for (String method : List.of("COD", "VNPAY")) {
+            var error = assertThrows(ApiException.class, () -> service.create(buyer, key,
+                    request(null, "123 Lê Lợi", method, null, null), "jwt"));
+            assertEquals("CHECKOUT_OUT_OF_STOCK", error.getCode());
+            assertEquals(409, error.getHttpStatus().value());
+            assertTrue(error.getMessage().contains("đã hết hàng"));
+        }
+        verify(orders, never()).saveAndFlush(any());
+        verify(items, never()).deleteAll(any());
+        verify(inventory, never()).reserve(any(), any(), any());
+        assertEquals(1, cart.getItems().size());
+    }
+
     /** Khi Catalog không còn trả skuCode (HG-S2-6), Checkout vẫn thành công với mã fallback từ skuId. */
     @Test
     void createsOrderWhenCatalogOmitsSkuCodeUsingFallbackPrefix() {
