@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { formatSkuDisplay, readSession, type ApiProduct, type Envelope } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
 import { addGuestCartItem, clearGuestCart } from '../buyer/guestCart'
+import { purchaseAvailabilityMessage } from '../buyer/purchaseAvailability'
 import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import {
@@ -260,6 +261,7 @@ export function ProductDetailPage() {
      * Lỗi & giới hạn: Bắt lỗi nếu SKU không khả dụng hoặc hết hàng từ Catalog Service.
      */
     const handleBuyNow = async () => {
+        if (addingToCart) return
         const targetSku = selectedSku || product.skus?.[0]
         if (!targetSku?.id && product.skus && product.skus.length > 0) {
             showToast({
@@ -271,12 +273,42 @@ export function ProductDetailPage() {
             })
             return
         }
+        // Kiểm tra kho trước khi thêm hàng và chuyển trang; lỗi mạng không được xem như còn hàng.
+        setAddingToCart(true)
+        try {
+            const message = await purchaseAvailabilityMessage(
+                [{ skuId: targetSku?.id || product.id, productName: product.name, quantity: qty }],
+                lang,
+            )
+            if (message) {
+                showToast({ type: 'error', message })
+                return
+            }
+        } catch (error) {
+            showToast({
+                type: 'error',
+                message: error instanceof Error ? error.message : String(error),
+            })
+            return
+        } finally {
+            setAddingToCart(false)
+        }
         const session = readSession()
         if (session && targetSku?.id) {
             try {
                 setAddingToCart(true)
                 await addItemToCart(targetSku.id, qty)
                 clearGuestCart()
+                // Ghi nhận mục tiêu "Mua ngay" độc lập vào sessionStorage để màn hình Checkout
+                // chỉ thanh toán riêng sản phẩm này, không gom toàn bộ các sản phẩm khác đang có trong giỏ hàng.
+                try {
+                    sessionStorage.setItem(
+                        'nexus.buy-now-target',
+                        JSON.stringify({ skuId: targetSku.id, quantity: qty }),
+                    )
+                } catch {
+                    // Bỏ qua lỗi storage cục bộ
+                }
                 navigate('checkout')
                 return
             } catch (err) {
@@ -300,6 +332,15 @@ export function ProductDetailPage() {
             unitPrice: currentPrice,
             quantity: qty,
         })
+        // Ghi nhận mục tiêu "Mua ngay" cho khách vãng lai
+        try {
+            sessionStorage.setItem(
+                'nexus.buy-now-target',
+                JSON.stringify({ skuId: targetSku?.id || product.id, quantity: qty }),
+            )
+        } catch {
+            // Bỏ qua lỗi storage cục bộ
+        }
         navigate('checkout')
     }
 

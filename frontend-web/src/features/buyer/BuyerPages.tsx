@@ -1,5 +1,5 @@
 /** Các màn Buyer đang được router dùng; Catalog và Profile có module riêng. Shop/auction demo được giữ cho sprint tiếp theo. */
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useApp } from '../../context'
 import { tr, formatCurrency, formatDate } from '../../i18n'
 import { BuyerLayout } from '../../components/Layout'
@@ -41,6 +41,8 @@ import { getEffectivePaymentStatus } from '../../payment'
 import { calculateEstimatedPricing } from '../../utils/pricingEngine'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
+import { syncGuestCart } from './syncGuestCart'
+import { purchaseAvailabilityMessage } from './purchaseAvailability'
 import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import { createPaymentAttempt, redirectToGateway } from '../../api/payments'
@@ -56,6 +58,7 @@ import {
     type CreateOrderRequest,
     type CreateOrderResponse,
     type CheckoutPreviewResponse,
+    type CheckoutOrderSnapshot,
     readLocalMockOrders,
     writeLocalMockOrders,
 } from '../../api/orders'
@@ -73,7 +76,6 @@ import {
 } from '../../api/client'
 import {
     getActiveCart,
-    addItemToCart,
     updateCartItemQuantity,
     removeCartItem,
     clearCart,
@@ -530,6 +532,31 @@ export function CartPage() {
     const [appliedVoucher, setAppliedVoucher] = useState<string | null>(null)
     const [voucherError, setVoucherError] = useState('')
     const [showClearConfirm, setShowClearConfirm] = useState(false)
+    const [checkingCheckout, setCheckingCheckout] = useState(false)
+
+    /** Chặn hết hàng ngay tại giỏ trước điều hướng; không cho lỗi kết nối vượt qua bước kiểm tra kho. */
+    const beginCheckout = async () => {
+        if (!cart || checkingCheckout) return
+        setCheckingCheckout(true)
+        try {
+            // Khi đi từ Giỏ hàng, mục tiêu là thanh toán toàn bộ giỏ; dọn dẹp mục tiêu "Mua ngay" lẻ nếu có
+            try {
+                sessionStorage.removeItem('nexus.buy-now-target')
+            } catch {
+                // Bỏ qua lỗi storage
+            }
+            const message = await purchaseAvailabilityMessage(cart.items, lang)
+            if (message) {
+                setError(message)
+                return
+            }
+            navigate('checkout')
+        } catch (error) {
+            setError(errorMessage(error))
+        } finally {
+            setCheckingCheckout(false)
+        }
+    }
 
     const loadCart = useCallback(async () => {
         setLoading(true)
@@ -538,16 +565,9 @@ export function CartPage() {
             const session = readSession()
             const guestCart = getGuestCart()
 
-            // Chức năng: Nếu người dùng đã đăng nhập và trong guestCart có sản phẩm, tự động đồng bộ lên server
+            // Cart/Checkout dùng chung Promise để effect đồng thời không cộng giỏ khách hai lần.
             if (session && guestCart.items.length > 0) {
-                for (const item of guestCart.items) {
-                    try {
-                        await addItemToCart(item.skuId, item.quantity)
-                    } catch {
-                        // Bỏ qua lỗi từng item nếu SKU không còn tồn tại trên server
-                    }
-                }
-                clearGuestCart()
+                await syncGuestCart(session.user.id)
             }
 
             const data = await getActiveCart()
@@ -841,6 +861,7 @@ export function CartPage() {
                 )
             })()}
 
+            {error && <AlertBanner type="error" message={error} />}
             <div className="grid grid-cols-[1fr_360px] gap-8 mt-4">
                 {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}
                 <div className="space-y-3">
@@ -1029,7 +1050,8 @@ export function CartPage() {
                         variant="primary"
                         size="lg"
                         className="w-full"
-                        onClick={() => navigate('checkout')}
+                        onClick={beginCheckout}
+                        loading={checkingCheckout}
                     >
                         {tr(lang, 'checkout')} →
                     </Button>
@@ -1151,12 +1173,147 @@ export function CheckoutPage() {
     const [cartItems, setCartItems] = useState<CartItemResponse[]>([])
     // State lưu dữ liệu xem trước tính giá từ Backend (POST /api/v1/orders/checkout/preview)
     const [previewData, setPreviewData] = useState<CheckoutPreviewResponse | null>(null)
+    // Bỏ response cũ khi địa chỉ/giỏ đổi hoặc effect bị cleanup; không cho response đến muộn ghi đè.
+    const previewRequestRef = useRef(0)
     const [priceMismatchNotice, setPriceMismatchNotice] = useState<string | null>(null)
-    // Khôi phục đơn theo tài khoản sau reload; backend luôn kiểm tra lại quyền và trạng thái thanh toán.
-    const [createdOrder, setCreatedOrder] = useState<CreateOrderResponse | null>(
-        () => readCheckoutCommand(readSession()?.user.id || 'guest')?.order || null,
+    const [cartReloadTrigger, setCartReloadTrigger] = useState(0)
+
+    // State lưu mục tiêu "Mua ngay" độc lập (nếu có) từ ProductDetailPage.
+    // Nếu buyNowTarget có dữ liệu, CheckoutPage chỉ xử lý và thanh toán riêng mặt hàng này.
+    const [buyNowTarget, setBuyNowTarget] = useState<{ skuId: string; quantity: number } | null>(
+        () => {
+            try {
+                const raw = sessionStorage.getItem('nexus.buy-now-target')
+                return raw ? JSON.parse(raw) : null
+            } catch {
+                return null
+            }
+        },
     )
+
+    // Khôi phục đơn theo tài khoản sau reload; backend luôn kiểm tra lại quyền và trạng thái thanh toán.
+    // Nếu người dùng vừa chọn "Mua ngay" sản phẩm mới, xóa bỏ lệnh checkout dở dang cũ để không bị kẹt đơn cũ.
+    const [createdOrder, setCreatedOrder] = useState<CreateOrderResponse | null>(() => {
+        try {
+            const rawBuyNow = sessionStorage.getItem('nexus.buy-now-target')
+            if (rawBuyNow) {
+                const uid = readSession()?.user.id || 'guest'
+                clearCheckoutCommand(uid)
+                return null
+            }
+        } catch {
+            // Bỏ qua lỗi storage
+        }
+        return readCheckoutCommand(readSession()?.user.id || 'guest')?.order || null
+    })
     const [authExpired, setAuthExpired] = useState(false)
+    const [orderSnapshot, setOrderSnapshot] = useState<CheckoutOrderSnapshot | null>(null)
+    const [orderSnapshotError, setOrderSnapshotError] = useState<string | null>(null)
+
+    // Danh sách sản phẩm thực sự tham gia đơn checkout:
+    // - Nếu người dùng bấm "Mua ngay" tại trang chi tiết sản phẩm, chỉ checkout riêng SKU đó.
+    // - Nếu người dùng đi từ Giỏ hàng, checkout toàn bộ các mặt hàng trong giỏ.
+    const activeCheckoutItems: CartItemResponse[] = useMemo(() => {
+        if (!buyNowTarget?.skuId) return cartItems
+        const matched = cartItems.filter((i) => i.skuId === buyNowTarget.skuId)
+        return matched.length > 0 ? matched : cartItems
+    }, [cartItems, buyNowTarget])
+
+    // Khi đã có đơn, mọi dòng hàng và tổng dự kiến phải lấy từ đơn đó; giỏ mới thuộc lần mua khác.
+    const summaryItems: CartItemResponse[] = createdOrder
+        ? (orderSnapshot?.items || []).map((item) => ({
+              ...item,
+              thumbnailUrl: null,
+              stockAvailable: null,
+              isAvailable: true,
+              unitPrice: item.unitPrice ?? item.estimatedUnitPrice,
+              subtotal: (item.unitPrice ?? item.estimatedUnitPrice) * item.quantity,
+          }))
+        : activeCheckoutItems
+    const savedPricing = orderSnapshot || createdOrder
+    const savedTotal = savedPricing?.total ?? savedPricing?.estimatedTotal
+    const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+    const [checkingAvailability, setCheckingAvailability] = useState(true)
+    const [availabilityChecked, setAvailabilityChecked] = useState(false)
+    const [availabilityRetry, setAvailabilityRetry] = useState(0)
+    const purchaseBlocked = checkingAvailability || !availabilityChecked || !!availabilityError
+
+    /**
+     * Chức năng: Hủy bỏ đơn hàng dở dang đang lưu trong session để quay lại đặt đơn mới.
+     * Đầu vào: userId hiện tại.
+     * Kết quả: Xóa command đơn cũ, reset createdOrder/orderSnapshot, nạp lại giỏ hàng active.
+     */
+    const handleDiscardPendingOrder = () => {
+        const uid = readSession()?.user.id || 'guest'
+        clearCheckoutCommand(uid)
+        setCreatedOrder(null)
+        setOrderSnapshot(null)
+        setAvailabilityError(null)
+        try {
+            sessionStorage.removeItem('nexus.buy-now-target')
+        } catch {
+            // Bỏ qua lỗi storage
+        }
+        setBuyNowTarget(null)
+        setCartReloadTrigger((v) => v + 1)
+    }
+
+    /** Kiểm tra ngay khi nạp giỏ/đơn cũ, không chờ tới bước xác nhận; cleanup bỏ response của giỏ trước. */
+    useEffect(() => {
+        const lines = createdOrder ? orderSnapshot?.items : activeCheckoutItems
+        let active = true
+        setAvailabilityChecked(false)
+        setAvailabilityError(null)
+        if (!lines?.length) {
+            setCheckingAvailability(false)
+            return
+        }
+        setCheckingAvailability(true)
+        purchaseAvailabilityMessage(lines, lang)
+            .then((message) => {
+                if (active) {
+                    setAvailabilityError(message)
+                    setAvailabilityChecked(true)
+                }
+            })
+            .catch((error) => {
+                if (active) setAvailabilityError(errorMessage(error))
+            })
+            .finally(() => {
+                if (active) setCheckingAvailability(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [createdOrder, orderSnapshot, activeCheckoutItems, lang, availabilityRetry])
+
+    /** Reload/retry chỉ đọc snapshot đơn đã tạo; cleanup bỏ kết quả muộn và lỗi không hiển thị giỏ ACTIVE thay thế. */
+    useEffect(() => {
+        if (!createdOrder) return
+        let active = true
+        setOrderSnapshot(null)
+        setOrderSnapshotError(null)
+        setPreviewData(null)
+        ordersApi
+            .getCheckoutOrderSnapshot(createdOrder.id)
+            .then((snapshot) => {
+                if (active) setOrderSnapshot(snapshot)
+            })
+            .catch((error) => {
+                // Đơn đã xóa/không tìm thấy phải báo ngay lúc phục hồi, không đợi người dùng thử thanh toán.
+                if (active)
+                    setOrderSnapshotError(
+                        error instanceof ApiClientError && error.status === 404
+                            ? lang === 'vi'
+                                ? 'Đơn hàng không còn tồn tại. Vui lòng kiểm tra lịch sử đơn hàng.'
+                                : 'This order no longer exists. Please check your order history.'
+                            : errorMessage(error),
+                    )
+            })
+        return () => {
+            active = false
+        }
+    }, [createdOrder, lang])
 
     /**
      * Kiểm tra tính giá thực tế và điều kiện đặt hàng từ Backend (POST /api/v1/orders/checkout/preview).
@@ -1170,24 +1327,49 @@ export function CheckoutPage() {
      * 5. Lỗi & giới hạn: Bắt lỗi nếu mạng chậm hoặc endpoint gặp sự cố; không chặn người dùng nhập liệu.
      */
     const fetchCheckoutPreview = useCallback(async () => {
+        const requestId = ++previewRequestRef.current
         const fullAddress = `${shippingData.street.trim()}, ${shippingData.ward.trim()}, ${shippingData.district.trim()}, ${shippingData.city.trim()}`
         if (!fullAddress.trim() || fullAddress.trim().length < 5) return
 
-        const hasLocalId = cartItems.some((item) => !item.id || item.id.startsWith('guest-item-'))
-        const itemIds = hasLocalId ? undefined : cartItems.map((item) => item.id)
+        const hasLocalId = activeCheckoutItems.some(
+            (item) => !item.id || item.id.startsWith('guest-item-'),
+        )
+        const itemIds = hasLocalId ? undefined : activeCheckoutItems.map((item) => item.id)
 
         try {
             const preview = await ordersApi.checkoutPreview({
                 shippingAddress: fullAddress,
                 itemIds,
             })
+            if (requestId !== previewRequestRef.current) return
             setPreviewData(preview)
+            // Nếu không phải chế độ Mua ngay lẻ, badge cũng dùng số lượng đã được server xác nhận.
+            if (!buyNowTarget && preview.items) {
+                setCartCount(preview.items.reduce((total, line) => total + line.quantity, 0))
+            }
 
-            const clientSubtotal = cartItems.reduce((acc, i) => acc + i.unitPrice * i.quantity, 0)
+            const clientSubtotal = activeCheckoutItems.reduce(
+                (acc, i) => acc + i.unitPrice * i.quantity,
+                0,
+            )
             const isDiff = Math.abs(preview.subtotal - clientSubtotal) > 0.01
             const warnings = preview.warnings || []
 
-            if (isDiff || warnings.length > 0) {
+            const quantityChanged = preview.items?.some(
+                (line) =>
+                    activeCheckoutItems.find((item) => item.skuId === line.skuId)?.quantity !==
+                    line.quantity,
+            )
+            if (quantityChanged) {
+                setPriceMismatchNotice(
+                    [
+                        lang === 'vi'
+                            ? 'Số lượng trong giỏ đã thay đổi. Vui lòng kiểm tra lại tóm tắt đơn hàng trước khi đặt.'
+                            : 'Cart quantities have changed. Please review the order summary before placing your order.',
+                        ...warnings,
+                    ].join('; '),
+                )
+            } else if (isDiff || warnings.length > 0) {
                 const warningMsg =
                     warnings.length > 0
                         ? warnings.join('; ')
@@ -1201,20 +1383,23 @@ export function CheckoutPage() {
         } catch {
             // Không chặn form nếu preview lỗi mạng
         }
-    }, [shippingData, cartItems, lang])
+    }, [shippingData, activeCheckoutItems, buyNowTarget, lang, setCartCount])
 
     useEffect(() => {
-        if (step === 4 && cartItems.length > 0 && !createdOrder) {
+        if (step === 4 && activeCheckoutItems.length > 0 && !createdOrder) {
             void fetchCheckoutPreview()
         }
-    }, [step, cartItems, fetchCheckoutPreview, createdOrder])
+        return () => {
+            previewRequestRef.current++
+        }
+    }, [step, activeCheckoutItems, fetchCheckoutPreview, createdOrder])
 
     /**
      * Chức năng: Nạp và tự động đồng bộ giỏ hàng trước khi thực hiện Checkout.
      * Đầu vào và kết quả: Đọc session, guestCart từ localStorage; nạp giỏ hàng thực tế từ Commerce Service backend.
      * Luồng xử lý:
      *   1. Nếu đã đăng nhập và guestCart còn sản phẩm tạm (ví dụ bấm Thêm vào giỏ trước khi login hoặc Mua ngay offline),
-     *      tự động gọi addItemToCart đồng bộ toàn bộ sản phẩm lên Backend và dọn dẹp guestCart.
+     *      dùng syncGuestCart để cộng từng dòng một lần giữa các effect, chỉ dọn dòng đã nhận ACK.
      *   2. Gọi getActiveCart() lấy giỏ hàng chính xác từ Database với đầy đủ mã cart_item.id thật.
      *   3. Cập nhật state cartItems và cartCount.
      * Quy tắc: Đảm bảo toàn bộ sản phẩm hiển thị trên màn hình Checkout đều đã được lưu vào Database của Backend,
@@ -1225,21 +1410,22 @@ export function CheckoutPage() {
 
         async function initCheckoutCart() {
             const session = readSession()
+            const rawBuyNow = sessionStorage.getItem('nexus.buy-now-target')
+            // Đơn cũ đang thanh toán có snapshot riêng; không nạp giỏ mới vào phần tóm tắt của đơn (trừ khi đang Mua ngay).
+            if (session && !rawBuyNow && readCheckoutCommand(session.user.id)?.order) return
             const guestCart = getGuestCart()
 
             if (
                 session &&
                 guestCart.items.length > 0 &&
-                !readCheckoutCommand(session.user.id)?.order
+                (!readCheckoutCommand(session.user.id)?.order || rawBuyNow)
             ) {
-                for (const item of guestCart.items) {
-                    try {
-                        await addItemToCart(item.skuId, item.quantity)
-                    } catch {
-                        // Bỏ qua lỗi từng item nếu SKU không hợp lệ
-                    }
+                try {
+                    await syncGuestCart(session.user.id)
+                } catch (error) {
+                    if (isMounted) setCheckoutError(errorMessage(error))
+                    return
                 }
-                clearGuestCart()
             }
 
             try {
@@ -1266,7 +1452,7 @@ export function CheckoutPage() {
         return () => {
             isMounted = false
         }
-    }, [setCartCount])
+    }, [setCartCount, cartReloadTrigger])
 
     const STEPS = [
         tr(lang, 'shippingAddress'),
@@ -1415,6 +1601,8 @@ export function CheckoutPage() {
     const placeOrder = async () => {
         // Hạn chế việc gửi yêu cầu nhiều lần ngoài ý muốn (Accept Criteria 4)
         if (isSubmittingRef.current || loading) return
+        // Không gửi Create Order/Payment khi kiểm tra sớm đang chạy, thất bại hoặc đã xác nhận hết hàng.
+        if (purchaseBlocked) return
 
         const userId = readSession()?.user.id || 'guest'
         const restored = readCheckoutCommand(userId)
@@ -1436,7 +1624,7 @@ export function CheckoutPage() {
         try {
             const fullAddress = `${shippingData.street.trim()}, ${shippingData.ward.trim()}, ${shippingData.district.trim()}, ${shippingData.city.trim()}`
 
-            // Đồng bộ nhanh nếu guestCart phát sinh thêm món hàng trước khi bấm đặt hàng
+            // Giỏ khách thay đổi sau lúc xem: đồng bộ một lần rồi yêu cầu xem lại, chưa tạo đơn từ số lượng mới.
             const session = readSession()
             const guestCart = getGuestCart()
             if (
@@ -1444,31 +1632,41 @@ export function CheckoutPage() {
                 guestCart.items.length > 0 &&
                 !readCheckoutCommand(session.user.id)?.order
             ) {
-                for (const item of guestCart.items) {
-                    try {
-                        await addItemToCart(item.skuId, item.quantity)
-                    } catch {
-                        // Bỏ qua lỗi
-                    }
-                }
-                clearGuestCart()
+                await syncGuestCart(session.user.id)
+                const refreshed = await getActiveCart()
+                setCartItems(refreshed.items)
+                setCartCount(refreshed.totalQuantity)
+                setPreviewData(null)
+                setCheckoutError(
+                    lang === 'vi'
+                        ? 'Giỏ hàng đã cập nhật. Vui lòng kiểm tra lại số lượng trước khi đặt.'
+                        : 'Cart updated. Please review quantities before placing your order.',
+                )
+                return
             }
 
-            // Kiểm tra xem danh sách sản phẩm có chứa ID tạm client (guest-item-) hay không
-            const hasLocalId = cartItems.some(
+            // Nếu đang trong chế độ Mua ngay (buyNowTarget), chỉ chọn những item thuộc về target SKU
+            const isBuyNow = !!buyNowTarget?.skuId
+            const checkoutItems = isBuyNow ? activeCheckoutItems : cartItems
+            const hasLocalId = checkoutItems.some(
                 (item) => !item.id || item.id.startsWith('guest-item-'),
             )
 
-            // Theo đặc tả Backend CreateOrderRequest (§4.2): Không truyền selectedItemIds (undefined)
-            // nghĩa là mua toàn bộ giỏ hàng hiện tại trong Database. Điều này tránh tuyệt đối lỗi
-            // CART_ITEM_NOT_FOUND do gửi ID tạm từ client không khớp với Database.
+            // Theo đặc tả Backend CreateOrderRequest (§4.2): selectedItemIds chỉ định rõ các cart_item cần mua.
+            // Nếu Mua ngay, truyền ID của riêng sản phẩm đó để Backend chỉ gom dòng này và xóa khỏi giỏ, giữ lại các món khác.
+            // Nếu mua toàn bộ giỏ thông thường, truyền toàn bộ ID của cartItems (hoặc undefined nếu dùng guestCart local).
             const orderPayload: CreateOrderRequest = {
                 shippingAddress: fullAddress,
                 recipientName: shippingData.fullName.trim(),
                 recipientPhone: shippingData.phone.replace(/[\s-]/g, ''),
                 paymentMethod: paymentData.method,
                 sourceType: 'REGULAR',
-                selectedItemIds: hasLocalId ? undefined : cartItems.map((item) => item.id),
+                selectedItemIds:
+                    isBuyNow && !hasLocalId
+                        ? checkoutItems.map((item) => item.id)
+                        : hasLocalId
+                          ? undefined
+                          : cartItems.map((item) => item.id),
             }
 
             // Lưu key/payload trước Create Order; mất ACK/reload không được sinh đơn mới từ giỏ đã rỗng.
@@ -1482,6 +1680,11 @@ export function CheckoutPage() {
                 if (attempt.status !== 'PENDING') {
                     // BE đã có kết quả: chuyển đến attempt thật, không báo thiếu URL hoặc replay key FAILED vô hạn.
                     clearCheckoutCommand(userId)
+                    try {
+                        sessionStorage.removeItem('nexus.buy-now-target')
+                    } catch {
+                        // Bỏ qua lỗi storage
+                    }
                     navigate('payment-result', { vnp_TxnRef: attempt.paymentId })
                     return
                 }
@@ -1490,8 +1693,17 @@ export function CheckoutPage() {
                 // Điều hướng lỗi giữ command/key để thử lại; chỉ dọn sau khi bàn giao URL thành công.
                 redirectToGateway(attempt.paymentUrl)
                 clearCheckoutCommand(userId)
-                clearGuestCart()
-                setCartCount(0)
+                if (!isBuyNow) {
+                    clearGuestCart()
+                    setCartCount(0)
+                } else if (buyNowTarget?.skuId) {
+                    removeGuestCartItem(buyNowTarget.skuId)
+                }
+                try {
+                    sessionStorage.removeItem('nexus.buy-now-target')
+                } catch {
+                    // Bỏ qua lỗi storage
+                }
                 try {
                     sessionStorage.removeItem('nexus.checkout-draft')
                 } catch {
@@ -1500,18 +1712,31 @@ export function CheckoutPage() {
                 return
             }
 
-            // Dọn sạch giỏ và bản nháp checkout sau khi đặt hàng thành công
-            if (session) {
+            // Dọn sạch giỏ hoặc sản phẩm mua ngay sau khi đặt hàng thành công
+            if (!isBuyNow) {
+                if (session) {
+                    try {
+                        await clearCart()
+                    } catch {
+                        // Bỏ qua lỗi dọn giỏ phụ
+                    }
+                }
+                clearGuestCart()
+                setCartCount(0)
+            } else {
+                // Chế độ Mua ngay: Backend chỉ xóa item được chọn khỏi giỏ; giữ nguyên các sản phẩm khác
+                if (buyNowTarget?.skuId) {
+                    removeGuestCartItem(buyNowTarget.skuId)
+                }
                 try {
-                    await clearCart()
+                    const refreshed = await getActiveCart()
+                    setCartCount(refreshed.totalQuantity)
                 } catch {
-                    // Bỏ qua lỗi dọn giỏ phụ
+                    // Bỏ qua lỗi đếm
                 }
             }
-            clearGuestCart()
-            setCartCount(0)
             try {
-                sessionStorage.removeItem('nexus.checkout-draft')
+                sessionStorage.removeItem('nexus.buy-now-target')
             } catch {
                 // Bỏ qua lỗi storage
             }
@@ -1604,14 +1829,57 @@ export function CheckoutPage() {
 
             <div className="grid grid-cols-[1fr_340px] gap-8">
                 <div className="nexus-card p-6">
-                    {/* Countdown */}
+                    {/* Chưa reserve thì không hiển thị đồng hồ giữ hàng giả; kho được kiểm tra trước bước nhập liệu. */}
                     <div className="flex items-center gap-2 mb-5 p-3 bg-warning-light rounded-xl text-sm text-yellow-800">
                         <AlertTriangle size={16} className="text-gray-500" />
                         {lang === 'en'
-                            ? 'Complete your order within 15:00 to reserve your items'
-                            : 'Hoàn tất đơn hàng trong 15:00 để giữ sản phẩm'}
-                        <span className="ml-auto font-mono font-bold text-warning">14:23</span>
+                            ? 'Stock will be reserved when payment starts. Availability may change.'
+                            : 'Hàng được giữ khi bắt đầu thanh toán. Tồn kho có thể thay đổi trước thời điểm đó.'}
                     </div>
+                    {checkingAvailability && (
+                        <p role="status">
+                            {lang === 'vi' ? 'Đang kiểm tra tồn kho…' : 'Checking stock…'}
+                        </p>
+                    )}
+                    {availabilityError && (
+                        <div className="mb-4">
+                            <AlertBanner type="error" message={availabilityError} />
+                            {/* Chỉ đọc lại kho, không tự gửi lại Create Order/Payment khi người dùng yêu cầu kiểm tra. */}
+                            <div className="flex flex-wrap gap-2 mt-3">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setAvailabilityRetry((value) => value + 1)}
+                                >
+                                    {lang === 'vi' ? 'Kiểm tra lại tồn kho' : 'Check stock again'}
+                                </Button>
+                                {createdOrder && (
+                                    <Button
+                                        variant="outline"
+                                        className="text-red-600 border-red-300 hover:bg-red-50"
+                                        onClick={handleDiscardPendingOrder}
+                                    >
+                                        {lang === 'vi'
+                                            ? 'Hủy đơn dở dang này để đặt đơn mới'
+                                            : 'Discard pending order & start new'}
+                                    </Button>
+                                )}
+                                <Button
+                                    variant="outline"
+                                    onClick={() =>
+                                        navigate(createdOrder ? 'order-history' : 'cart')
+                                    }
+                                >
+                                    {lang === 'vi'
+                                        ? createdOrder
+                                            ? 'Xem đơn hàng'
+                                            : 'Quay lại giỏ hàng'
+                                        : createdOrder
+                                          ? 'View orders'
+                                          : 'Back to cart'}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Bước 1: Địa chỉ giao hàng với Form Validation (Accept Criteria 4) */}
                     {step === 1 && (
@@ -1728,8 +1996,9 @@ export function CheckoutPage() {
                             <Button
                                 variant="primary"
                                 size="lg"
+                                disabled={purchaseBlocked}
                                 onClick={() => {
-                                    if (validateStep1()) {
+                                    if (!purchaseBlocked && validateStep1()) {
                                         setStep(2)
                                     }
                                 }}
@@ -1996,6 +2265,7 @@ export function CheckoutPage() {
                                 <Button
                                     variant="primary"
                                     size="lg"
+                                    disabled={purchaseBlocked}
                                     onClick={() => {
                                         if (validateStep3()) {
                                             setStep(4)
@@ -2102,19 +2372,21 @@ export function CheckoutPage() {
                                     [
                                         tr(lang, 'total'),
                                         formatCurrency(
-                                            previewData
-                                                ? previewData.totalAmount
-                                                : cartItems.reduce(
-                                                      (acc, i) => acc + i.unitPrice * i.quantity,
-                                                      0,
-                                                  ) +
-                                                      (shipping === 'GHN'
-                                                          ? lang === 'vi'
-                                                              ? 55000
-                                                              : 3.99
-                                                          : lang === 'vi'
-                                                            ? 35000
-                                                            : 2.49),
+                                            createdOrder
+                                                ? (savedTotal ?? 0)
+                                                : previewData
+                                                  ? previewData.totalAmount
+                                                  : activeCheckoutItems.reduce(
+                                                        (acc, i) => acc + i.unitPrice * i.quantity,
+                                                        0,
+                                                    ) +
+                                                    (shipping === 'GHN'
+                                                        ? lang === 'vi'
+                                                            ? 55000
+                                                            : 3.99
+                                                        : lang === 'vi'
+                                                          ? 35000
+                                                          : 2.49),
                                             lang,
                                         ),
                                     ],
@@ -2143,6 +2415,7 @@ export function CheckoutPage() {
                                     loading={loading}
                                     disabled={
                                         loading ||
+                                        purchaseBlocked ||
                                         (!createdOrder &&
                                             previewData !== null &&
                                             !previewData.isOrderable)
@@ -2156,6 +2429,19 @@ export function CheckoutPage() {
                                             : 'Retry Payment'
                                         : tr(lang, 'placeOrder')}
                                 </Button>
+                                {createdOrder && (
+                                    <Button
+                                        variant="outline"
+                                        size="lg"
+                                        disabled={loading}
+                                        className="text-red-600 border-red-300 hover:bg-red-50"
+                                        onClick={handleDiscardPendingOrder}
+                                    >
+                                        {lang === 'vi'
+                                            ? 'Hủy đơn dở dang'
+                                            : 'Discard pending order'}
+                                    </Button>
+                                )}
                             </div>
                         </div>
                     )}
@@ -2164,10 +2450,59 @@ export function CheckoutPage() {
                 {/* Order summary sidebar */}
                 <div className="nexus-card p-5 h-fit">
                     <h3 className="font-bold mb-4">{tr(lang, 'orderSummary')}</h3>
+                    {buyNowTarget && !createdOrder && (
+                        <div className="mb-3 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-center justify-between">
+                            <span>
+                                {lang === 'vi'
+                                    ? '⚡ Mua ngay 1 sản phẩm đã chọn'
+                                    : '⚡ Buy Now selected product'}
+                            </span>
+                            <button
+                                type="button"
+                                className="text-blue-600 underline hover:text-blue-800 font-medium ml-2 cursor-pointer"
+                                onClick={() => {
+                                    try {
+                                        sessionStorage.removeItem('nexus.buy-now-target')
+                                    } catch {
+                                        // Bỏ qua lỗi storage
+                                    }
+                                    setBuyNowTarget(null)
+                                }}
+                            >
+                                {lang === 'vi' ? 'Thanh toán cả giỏ' : 'Checkout all'}
+                            </button>
+                        </div>
+                    )}
+                    {createdOrder && (
+                        <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                            <p className="font-medium" role="status">
+                                {lang === 'vi'
+                                    ? `Đang thanh toán đơn ${createdOrder.orderNo}. Sản phẩm thêm vào giỏ sau đó không thuộc đơn này.`
+                                    : `Paying for ${createdOrder.orderNo}. Items added later belong to your new cart.`}
+                            </p>
+                            <button
+                                type="button"
+                                className="text-xs text-red-600 underline font-semibold mt-2 hover:text-red-700 block cursor-pointer"
+                                onClick={handleDiscardPendingOrder}
+                            >
+                                {lang === 'vi'
+                                    ? 'Hủy đơn dở dang này để đặt đơn mới'
+                                    : 'Discard pending order & start new'}
+                            </button>
+                        </div>
+                    )}
+                    {orderSnapshotError && (
+                        <div>
+                            <p role="alert">{orderSnapshotError}</p>
+                            <Button variant="outline" onClick={() => navigate('order-history')}>
+                                {lang === 'vi' ? 'Xem đơn hàng' : 'View orders'}
+                            </Button>
+                        </div>
+                    )}
                     {/* Danh sách sản phẩm thực tế trong giỏ hàng (không dùng PRODUCTS mock) */}
                     <div className="space-y-3 mb-4">
-                        {cartItems.length > 0 ? (
-                            cartItems.map((item) => (
+                        {summaryItems.length > 0 ? (
+                            summaryItems.map((item) => (
                                 <div key={item.id} className="flex gap-3">
                                     <img
                                         src={
@@ -2187,25 +2522,70 @@ export function CheckoutPage() {
                                                     SKU: {item.skuCode}
                                                 </span>
                                             ) : null}
-                                            x{item.quantity}
+                                            {/* Số lượng/giá cùng snapshot với tổng tiền, không trộn state giỏ cũ. */}
+                                            x
+                                            {(!createdOrder &&
+                                                previewData?.items?.find(
+                                                    (line) => line.skuId === item.skuId,
+                                                )?.quantity) ||
+                                                item.quantity}
                                         </p>
                                         <p className="text-sm font-bold text-primary mt-0.5">
-                                            {formatCurrency(item.unitPrice, lang)}
+                                            {formatCurrency(
+                                                (createdOrder
+                                                    ? undefined
+                                                    : previewData?.items?.find(
+                                                          (line) => line.skuId === item.skuId,
+                                                      )?.unitPrice) ?? item.unitPrice,
+                                                lang,
+                                            )}
                                         </p>
                                     </div>
                                 </div>
                             ))
                         ) : (
                             <p className="text-xs text-gray-400 italic py-2">
-                                {lang === 'en'
-                                    ? 'Cart is empty'
-                                    : 'Chưa có sản phẩm trong giỏ hàng'}
+                                {createdOrder
+                                    ? lang === 'vi'
+                                        ? 'Đang tải thông tin đơn đã tạo…'
+                                        : 'Loading saved order…'
+                                    : lang === 'en'
+                                      ? 'Cart is empty'
+                                      : 'Chưa có sản phẩm trong giỏ hàng'}
                             </p>
                         )}
                     </div>
                     <div className="border-t border-border pt-3 space-y-2 text-sm">
                         {(() => {
-                            const pricing = calculateEstimatedPricing(cartItems, null)
+                            // Retry hiển thị giá chính thức nếu có, nếu chưa thì dùng estimated của đúng đơn.
+                            if (createdOrder && savedPricing) {
+                                return [
+                                    [
+                                        tr(lang, 'subtotal'),
+                                        savedPricing.subtotal ?? savedPricing.estimatedSubtotal,
+                                    ],
+                                    [
+                                        tr(lang, 'shipping'),
+                                        savedPricing.shippingFee ??
+                                            savedPricing.estimatedShippingFee,
+                                    ],
+                                    [
+                                        tr(lang, 'discount'),
+                                        savedPricing.discount ?? savedPricing.estimatedDiscount,
+                                    ],
+                                    [tr(lang, 'total'), savedTotal],
+                                ].map(([label, amount]) => (
+                                    <div key={String(label)} className="flex justify-between">
+                                        <span>{label}</span>
+                                        <span>
+                                            {typeof amount === 'number'
+                                                ? formatCurrency(amount, lang)
+                                                : '—'}
+                                        </span>
+                                    </div>
+                                ))
+                            }
+                            const pricing = calculateEstimatedPricing(activeCheckoutItems, null)
                             // Ưu tiên hiển thị giá, phí ship và tổng tiền do Backend tính toán qua checkoutPreview
                             const subtotal = previewData
                                 ? previewData.subtotal
