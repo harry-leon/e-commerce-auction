@@ -303,7 +303,29 @@ public class GhtkCarrierAdapter implements ShippingCarrierAdapter {
         return new ApiException(ErrorCode.SHIPMENT_CARRIER_ERROR, "GHTK từ chối yêu cầu: " + msg);
     }
 
-    /** Ánh xạ mã trạng thái số của GHTK sang ShipmentStatus nội bộ. */
+    @Override
+    public ShipmentStatus mapCarrierStatus(String rawStatus) {
+        if (rawStatus == null) {
+            return ShipmentStatus.PENDING;
+        }
+        try {
+            int code = Integer.parseInt(rawStatus.trim());
+            return mapGhtkStatus(code);
+        } catch (NumberFormatException ex) {
+            return switch (rawStatus.trim().toLowerCase(Locale.ROOT)) {
+                case "created" -> ShipmentStatus.CREATED;
+                case "picking" -> ShipmentStatus.PICKING;
+                case "picked", "picked_up" -> ShipmentStatus.PICKED_UP;
+                case "in_transit", "delivering" -> ShipmentStatus.IN_TRANSIT;
+                case "delivered" -> ShipmentStatus.DELIVERED;
+                case "failed", "cancel" -> ShipmentStatus.FAILED;
+                case "returned" -> ShipmentStatus.RETURNED;
+                default -> ShipmentStatus.IN_TRANSIT;
+            };
+        }
+    }
+
+    /** Ánh xạ mã trạng thái số của GHTK sang ShipmentStatus nội bộ chuẩn hóa (SRS §3.6.2, KH-S3-2). */
     public static ShipmentStatus mapGhtkStatus(Integer status) {
         if (status == null) {
             return ShipmentStatus.PENDING;
@@ -312,7 +334,7 @@ public class GhtkCarrierAdapter implements ShippingCarrierAdapter {
             case -1 -> ShipmentStatus.CANCELLED;
             case 1 -> ShipmentStatus.PENDING;
             case 2, 12 -> ShipmentStatus.PICKING;
-            case 3 -> ShipmentStatus.PACKED;
+            case 3 -> ShipmentStatus.PICKED_UP;
             case 4 -> ShipmentStatus.IN_TRANSIT;
             case 5, 6 -> ShipmentStatus.DELIVERED;
             case 7, 8, 10, 410 -> ShipmentStatus.FAILED;

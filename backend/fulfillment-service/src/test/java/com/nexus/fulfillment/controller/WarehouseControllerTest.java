@@ -60,6 +60,9 @@ class WarehouseControllerTest {
     private InventoryService inventoryService;
 
     @MockitoBean
+    private com.nexus.fulfillment.service.WarehouseStockAllocationService allocationService;
+
+    @MockitoBean
     private JwtDecoder jwtDecoder;
 
     @Test

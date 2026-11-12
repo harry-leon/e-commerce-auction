@@ -294,22 +294,28 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
         return new ApiException(ErrorCode.SHIPMENT_CARRIER_ERROR, "GHN từ chối yêu cầu: " + message);
     }
 
-    /** Ánh xạ trạng thái gốc của GHN sang ShipmentStatus nội bộ. */
+    @Override
+    public ShipmentStatus mapCarrierStatus(String rawStatus) {
+        return mapGhnStatus(rawStatus);
+    }
+
+    /** Ánh xạ trạng thái gốc của GHN sang ShipmentStatus nội bộ chuẩn hóa (SRS §3.6.2, KH-S3-2). */
     public static ShipmentStatus mapGhnStatus(String ghnStatus) {
         if (ghnStatus == null) {
             return ShipmentStatus.PENDING;
         }
         return switch (ghnStatus.trim().toLowerCase(Locale.ROOT)) {
+            case "created" -> ShipmentStatus.CREATED;
             case "ready_to_pick" -> ShipmentStatus.PENDING;
             case "picking", "money_collect_picking" -> ShipmentStatus.PICKING;
-            case "picked", "storing", "sorting" -> ShipmentStatus.PACKED;
+            case "picked", "storing", "sorting", "picked_up" -> ShipmentStatus.PICKED_UP;
             case "transporting" -> ShipmentStatus.SHIPPED;
-            case "delivering", "money_collect_delivering" -> ShipmentStatus.IN_TRANSIT;
+            case "delivering", "money_collect_delivering", "in_transit" -> ShipmentStatus.IN_TRANSIT;
             case "delivered" -> ShipmentStatus.DELIVERED;
             case "return", "returning", "returned", "return_transporting", "return_sorting", "waiting_to_return" ->
                     ShipmentStatus.RETURNED;
-            case "delivery_fail", "damage", "lost", "exception" -> ShipmentStatus.FAILED;
-            case "cancel" -> ShipmentStatus.CANCELLED;
+            case "delivery_fail", "damage", "lost", "exception", "failed" -> ShipmentStatus.FAILED;
+            case "cancel", "cancelled" -> ShipmentStatus.CANCELLED;
             default -> ShipmentStatus.IN_TRANSIT;
         };
     }
