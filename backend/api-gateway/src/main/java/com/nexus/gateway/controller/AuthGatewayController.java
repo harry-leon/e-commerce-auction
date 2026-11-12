@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -40,6 +41,21 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthGatewayController {
+
+    /**
+     * Cho UI biết có cookie để khôi phục phiên, tránh gọi me/refresh khi khách chưa đăng nhập.
+     * Không trả token hoặc xác nhận JWT hợp lệ; me/refresh vẫn xác thực ở bước sau.
+     * Không cache kết quả vì cookie có thể đổi ngay sau login/logout.
+     */
+    @GetMapping("/session")
+    public ResponseEntity<Map<String, Boolean>> session(
+            @CookieValue(name = "nexus_access", required = false) String access,
+            @CookieValue(name = "nexus_refresh", required = false) String refresh) {
+        boolean present = (access != null && !access.isBlank())
+                || (refresh != null && !refresh.isBlank());
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+                .body(Map.of("hasSessionCookies", present));
+    }
 
     /** Logger điều phối, không ghi token hay mật khẩu. */
     private static final Logger LOG =

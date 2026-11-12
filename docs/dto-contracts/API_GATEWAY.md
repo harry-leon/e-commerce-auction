@@ -14,6 +14,7 @@
 
 | Method | Path | Request | Success response | HTTP | Xác thực |
 |---|---|---|---|---|---|
+| `GET` | `/auth/session` | Cookie HttpOnly nếu có | `{ "hasSessionCookies": boolean }` | `200` | Public |
 | `POST` | `/auth/login` | `LoginRequest` | `ApiResponse<AuthPayload>` | `200` | Public |
 | `POST` | `/auth/refresh` | `{}` + cookie HttpOnly | `ApiResponse<AuthPayload>` | `200` | Public |
 | `POST` | `/auth/refresh-token` | `{}` + cookie HttpOnly | `ApiResponse<AuthPayload>` | `200` | Public, alias |
@@ -21,6 +22,11 @@
 | `POST` | `/auth/register` | `RegisterRequest` | `ApiResponse<UserResponse>` | `201` | Public |
 
 Login/register dùng Content-Type: application/json. Refresh không cần body.
+
+`GET /auth/session` là probe khôi phục UI, trả JSON trực tiếp và `Cache-Control: no-store`.
+Chỉ báo có cookie access/refresh không rỗng, không trả token và không xác nhận JWT còn hạn.
+FE chỉ gọi `/users/me` và thử refresh khi probe báo có cookie; không có cookie thì xóa profile cache.
+Nếu probe lỗi mạng/5xx, FE giữ profile hiện tại để có thể thử lại, không tự gửi logout.
 
 ### Cookie và chống CSRF
 
