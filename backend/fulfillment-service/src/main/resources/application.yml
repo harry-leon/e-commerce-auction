@@ -60,6 +60,20 @@ app:
       default-delivery-days: ${FULFILLMENT_DEFAULT_DELIVERY_DAYS:3}
       max-retry-attempts: ${FULFILLMENT_MAX_RETRY_ATTEMPTS:3}
       auto-confirm-days: ${FULFILLMENT_AUTO_CONFIRM_DAYS:7}
+      supported-carriers: ${SUPPORTED_CARRIERS:GHN,GHTK}
+      default-carrier: ${DEFAULT_CARRIER:GHN}
+      free-shipping-threshold: ${FREE_SHIPPING_THRESHOLD:100}
+      ghn:
+        base-url: ${GHN_API_URL:https://dev-online-gateway.ghn.vn}
+        token: ${GHN_API_TOKEN:}
+        shop-id: ${GHN_SHOP_ID:}
+        connect-timeout-ms: ${GHN_CONNECT_TIMEOUT_MS:5000}
+        read-timeout-ms: ${GHN_READ_TIMEOUT_MS:5000}
+      ghtk:
+        base-url: ${GHTK_API_URL:https://services.giaohangtietkiem.vn}
+        token: ${GHTK_API_TOKEN:}
+        connect-timeout-ms: ${GHTK_CONNECT_TIMEOUT_MS:5000}
+        read-timeout-ms: ${GHTK_READ_TIMEOUT_MS:5000}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.
