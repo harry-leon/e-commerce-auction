@@ -183,9 +183,18 @@ public class PaymentService {
                         }
                     });
         }
-        order.setReservationIds(new java.util.ArrayList<>(inventory.reserve(payment.getInventoryRefId(),
-                order.getItems().stream().map(item -> new com.nexus.commerce.client.InventoryClient.Item(
-                        item.getSkuId(), null, item.getQuantity())).toList(), null)));
+        try {
+            order.setReservationIds(new java.util.ArrayList<>(inventory.reserve(payment.getInventoryRefId(),
+                    order.getItems().stream().map(item -> new com.nexus.commerce.client.InventoryClient.Item(
+                            item.getSkuId(), null, item.getQuantity())).toList(), null)));
+        } catch (ApiException error) {
+            // Hàng có thể hết sau kiểm tra sớm; giữ rollback/release và trả lỗi nghiệp vụ thay cho chi tiết kho nội bộ.
+            if ("INVENTORY_NOT_FOUND".equals(error.getCode()) || "INVENTORY_INSUFFICIENT".equals(error.getCode())) {
+                throw new ApiException("CHECKOUT_OUT_OF_STOCK", HttpStatus.CONFLICT,
+                        "Sản phẩm trong đơn đã hết hàng hoặc không đủ số lượng. Vui lòng quay lại kiểm tra đơn hàng.", null);
+            }
+            throw error;
+        }
         if (order.getReservationIds().isEmpty()) {
             throw new ApiException("PAYMENT_RESERVATIONS_MISSING", HttpStatus.CONFLICT, "Không có phiếu giữ kho", null);
         }

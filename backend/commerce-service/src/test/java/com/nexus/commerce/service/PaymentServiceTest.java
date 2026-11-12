@@ -3,6 +3,7 @@ package com.nexus.commerce.service;
 import com.nexus.commerce.entity.PaymentPriceSnapshot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
@@ -104,6 +105,19 @@ class PaymentServiceTest {
                 "vnp_Amount", amount, "vnp_ResponseCode", code, "vnp_TransactionStatus", status, "vnp_TransactionNo", "123456"));
         params.put("vnp_SecureHash", gateway.sign(params));
         return params;
+    }
+
+    /** Hàng hết sau kiểm tra sớm phải trả 409 dễ hiểu; không lưu payment hoặc lộ SKU/kho nội bộ. */
+    @Test
+    void translatesMissingInventoryBeforeSavingPayment() {
+        when(inventory.reserve(any(), any(), any())).thenThrow(new ApiException(
+                "INVENTORY_NOT_FOUND", org.springframework.http.HttpStatus.NOT_FOUND, "warehouse internal", null));
+        var error = assertThrows(ApiException.class, () -> service.start(
+                order.getBuyerId(), order.getId(), "127.0.0.1", UUID.randomUUID().toString()));
+        assertEquals("CHECKOUT_OUT_OF_STOCK", error.getCode());
+        assertEquals(409, error.getHttpStatus().value());
+        assertFalse(error.getMessage().contains("warehouse internal"));
+        verify(payments, never()).saveAndFlush(any());
     }
 
     /** URL chỉ dùng total DB; cùng order trả lại attempt cũ, callback mới là nguồn trạng thái. */

@@ -84,6 +84,8 @@ class CheckoutPostgresTest {
         jdbc.update("INSERT INTO cart_items(id,cart_id,sku_id,quantity,unit_price) VALUES (?,?,?,2,80)", item, cart, sku);
         when(catalog.getSkuDetails(any())).thenReturn(Map.of(sku,
                 new SkuInfo(sku, "SKU", "Sản phẩm", null, new BigDecimal("100.00"), null, true, UUID.randomUUID())));
+        // Các ca transaction này bắt đầu với kho đủ hàng để đi tới bước ghi đơn/reserve cần kiểm chứng.
+        when(inventory.available(sku)).thenReturn(10);
     }
 
     private CreateOrderRequest request() {

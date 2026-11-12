@@ -131,6 +131,17 @@ public class CheckoutService {
         Cart cart = carts.findActiveForCheckout(buyer).orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
         var selected = select(cart, cartItems.findForCheckout(cart.getId()), request.selectedItemIds());
         var lines = snapshots(buyer, selected);
+        // Kiểm tra kho thật trước khi ghi đơn/xóa giỏ cho cả COD và VNPAY; chưa reserve ở bước này.
+        // Kho vẫn có thể thay đổi sau kiểm tra, nên reserve của COD/Payment tiếp tục là bước quyết định cuối.
+        for (var line : lines) {
+            int available = inventory.available(line.skuId());
+            if (available < line.quantity()) {
+                throw new ApiException("CHECKOUT_OUT_OF_STOCK", HttpStatus.CONFLICT,
+                        "Sản phẩm \"" + line.productName() + "\" "
+                                + (available <= 0 ? "đã hết hàng" : "chỉ còn " + available + " sản phẩm")
+                                + ". Vui lòng cập nhật giỏ hàng trước khi đặt.", null);
+            }
+        }
         Order order = buildOrder(buyer, normalizedKey, hash, request, lines);
         order.setBuyerEmail(email == null || email.isBlank() ? null : email);
         // Flush trước gọi kho để lỗi constraint/schema không gây reservation thừa; vẫn chưa commit đơn.

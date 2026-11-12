@@ -61,6 +61,20 @@ class HttpCatalogClientTest {
     }
 
     @Test
+    // Snapshot HTTP phải giữ sellerId thật để checkout kiểm tra chủ shop, kể cả khi Catalog bỏ skuCode.
+    void preservesSellerFromFullCatalogSnapshot() {
+        UUID id = UUID.randomUUID();
+        UUID seller = UUID.randomUUID();
+        body = "{\"success\":true,\"data\":{\"skuId\":\"" + id
+                + "\",\"productId\":\"" + UUID.randomUUID()
+                + "\",\"productName\":\"Product\",\"price\":77280,\"originalPrice\":67200,"
+                + "\"stockQuantity\":null,\"isActive\":true,\"sellerId\":\"" + seller + "\"}}";
+        var sku = client.getSkuInfo(id);
+        assertEquals(seller, sku.sellerId());
+        assertEquals(seller, client.getSkuDetails(List.of(id)).get(id).sellerId());
+    }
+
+    @Test
     void returnsMissingOn404ButFailsClosedOnProviderFailure() {
         body = "{}";
         status = 404;
