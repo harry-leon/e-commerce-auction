@@ -404,6 +404,63 @@
   ],
   "users": [
     {
+      "id": "4928292a-14de-4d37-87f4-5fc8917cf240",
+      "username": "buyer@nexus.vn",
+      "email": "buyer@nexus.vn",
+      "firstName": "Nguyễn Văn",
+      "lastName": "Mua",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Nexus123@",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_BUYER"
+      ]
+    },
+    {
+      "id": "6433cfef-1ee8-439f-9cec-1dcf32f841e0",
+      "username": "seller@nexus.vn",
+      "email": "seller@nexus.vn",
+      "firstName": "Seller",
+      "lastName": "Nexus",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Nexus123@",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_SELLER"
+      ]
+    },
+    {
+      "id": "c213041d-94d0-421d-8b24-8552faaac017",
+      "username": "admin@nexus.vn",
+      "email": "admin@nexus.vn",
+      "firstName": "Admin",
+      "lastName": "Nexus",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Nexus123@",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_ADMIN"
+      ]
+    },
+    {
       "username": "service-account-nexus-admin-cli",
       "enabled": true,
       "serviceAccountClientId": "nexus-admin-cli",

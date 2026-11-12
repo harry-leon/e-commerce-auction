@@ -198,6 +198,8 @@ export function ProductDetailPage() {
             price: p.skus?.[0]?.price ?? 0,
             originalPrice: p.skus?.[0]?.originalPrice,
             sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
+            skuId: p.skus?.[0]?.id,
+            skus: p.skus,
             images:
                 p.images && p.images.length > 0
                     ? p.images.map((img) => img.url)

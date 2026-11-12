@@ -66,7 +66,8 @@ services:
       POSTGRES_USER: ${LOCAL_DB_USERNAME:-nexus}
       POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
     ports:
-      - "5432:5432"
+      # Map sang 5433 ở host để tránh xung đột với service PostgreSQL nội bộ của Windows (chạy port 5432).
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
@@ -78,6 +79,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.5
+    # Khởi chạy Keycloak và tự động nạp cấu hình realm, clients và các tài khoản demo (buyer, seller, admin) từ nexus-realm.json
     command: start-dev --import-realm
     environment:
       # Realm import đọc secret từ biến môi trường; hostname cố định giữ issuer giống nhau qua Gateway/local.
@@ -94,9 +96,9 @@ services:
       KC_DB_USERNAME: ${KEYCLOAK_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-${LOCAL_DB_PASSWORD:-nexus}}
       # Giới hạn số kết nối IAM để không chiếm hết session pool của Supabase dùng chung.
-      KC_DB_POOL_INITIAL_SIZE: 1
-      KC_DB_POOL_MIN_SIZE: 1
-      KC_DB_POOL_MAX_SIZE: ${KEYCLOAK_DB_POOL_MAX_SIZE:-5}
+      KC_DB_POOL_INITIAL_SIZE: 5
+      KC_DB_POOL_MIN_SIZE: 5
+      KC_DB_POOL_MAX_SIZE: ${KEYCLOAK_DB_POOL_MAX_SIZE:-20}
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports:
@@ -380,3 +382,11 @@ services:
 
 volumes:
   pgdata:
+
+# Cấu hình MTU 1300 cho Docker bridge network nhằm ngăn chặn tình trạng rớt gói tin TLS (PMTU black hole)
+# khi các container Docker trên Windows giao tiếp với cơ sở dữ liệu Supabase qua Internet.
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1300"
