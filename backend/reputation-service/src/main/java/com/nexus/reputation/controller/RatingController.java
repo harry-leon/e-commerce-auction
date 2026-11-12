@@ -4,6 +4,7 @@ import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.response.ApiResponse;
 import com.nexus.reputation.dto.CreateRatingRequest;
+import com.nexus.reputation.dto.DisputeRatingRequest;
 import com.nexus.reputation.dto.RatingResponse;
 import com.nexus.reputation.service.ReputationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,6 +19,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,10 +30,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Controller tiếp nhận và tra cứu đánh giá hai chiều giữa Buyer và Seller sau khi đơn hàng giao thành công.
+ * Controller tiếp nhận, tra cứu và khiếu nại đánh giá hai chiều giữa Buyer và Seller sau giao dịch.
  * - POST /api/v1/ratings: bắt buộc JWT, lấy raterId từ sub của token.
  * - GET /api/v1/ratings/user/{userId}: công khai danh sách đánh giá hợp lệ (không bị khiếu nại).
  * - GET /api/v1/ratings/order/{orderId}: tra cứu các đánh giá gắn với một đơn hàng (yêu cầu đăng nhập).
+ * - POST /api/v1/ratings/{ratingId}/dispute: chỉ ratee hoặc ADMIN/SUPPORT được gắn cờ khiếu nại.
  */
 @RestController
 @RequestMapping("/api/v1/ratings")
@@ -73,6 +76,22 @@ public class RatingController {
     public ResponseEntity<ApiResponse<List<RatingResponse>>> getRatingsForOrder(
             @PathVariable UUID orderId) {
         return ResponseEntity.ok(ApiResponse.ok(reputationService.getRatingsForOrder(orderId)));
+    }
+
+    /** Gắn cờ khiếu nại đánh giá; chỉ người nhận đánh giá (rateeId) hoặc ADMIN/SUPPORT có quyền. */
+    @PostMapping("/{ratingId}/dispute")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Gắn cờ khiếu nại đánh giá")
+    public ResponseEntity<ApiResponse<RatingResponse>> flagDispute(
+            @PathVariable UUID ratingId,
+            @Valid @RequestBody(required = false) DisputeRatingRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            Authentication authentication) {
+        boolean isPrivileged = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SUPPORT".equals(a.getAuthority()));
+        UUID actorId = parseSubject(jwt);
+        return ResponseEntity.ok(ApiResponse.ok(
+                reputationService.flagRatingDispute(ratingId, actorId, isPrivileged, request)));
     }
 
     private UUID parseSubject(Jwt jwt) {
