@@ -37,16 +37,67 @@ export default defineConfig(({ mode }) => {
                     target: process.env.API_PROXY_TARGET || 'http://localhost:8080',
                     ws: true,
                     changeOrigin: true,
+                    configure: (proxy) => {
+                        proxy.on('error', (_err, _req, socket) => {
+                            // Chức năng: Ngắt socket an toàn khi Gateway/Notification service offline, tránh unhandled crash.
+                            if (
+                                socket &&
+                                'destroy' in socket &&
+                                typeof socket.destroy === 'function'
+                            ) {
+                                socket.destroy()
+                            }
+                        })
+                    },
                 },
                 // Dev chuyển WebSocket cùng origin tới Gateway; giữ Origin để Auction kiểm tra allowlist.
                 '/ws/auctions': {
                     target: process.env.API_PROXY_TARGET || 'http://localhost:8080',
                     ws: true,
                     changeOrigin: true,
+                    configure: (proxy) => {
+                        proxy.on('error', (_err, _req, socket) => {
+                            // Chức năng: Ngắt socket an toàn khi Gateway/Auction service offline, tránh unhandled crash.
+                            if (
+                                socket &&
+                                'destroy' in socket &&
+                                typeof socket.destroy === 'function'
+                            ) {
+                                socket.destroy()
+                            }
+                        })
+                    },
                 },
                 '/api': {
                     target: process.env.API_PROXY_TARGET || 'http://localhost:8080',
                     changeOrigin: true,
+                    configure: (proxy) => {
+                        // Loại bỏ header Connection từ client/proxy để tránh Node.js HTTP parser (llhttp)
+                        // gặp lỗi "Data after Connection: close" khi nhận phản hồi từ Spring Cloud Gateway.
+                        proxy.on('proxyReq', (proxyReq) => {
+                            proxyReq.removeHeader('connection')
+                        })
+                        // Bắt lỗi kết nối proxy khi Backend Gateway không chạy (ECONNREFUSED / ETIMEDOUT / ENOTFOUND).
+                        // Luồng xử lý: Trả về HTTP 200 kèm envelope BACKEND_OFFLINE (status: 503 trong body JSON)
+                        // để client.ts phân loại lỗi chính xác sang ApiClientError mà trình duyệt KHÔNG log lỗi đỏ 500 rác console DevTools.
+                        proxy.on('error', (_err, _req, res) => {
+                            if (res && 'writeHead' in res && !res.headersSent) {
+                                res.writeHead(200, {
+                                    'Content-Type': 'application/json',
+                                })
+                                res.end(
+                                    JSON.stringify({
+                                        success: false,
+                                        code: 'BACKEND_OFFLINE',
+                                        message:
+                                            'Dịch vụ Backend chưa khởi chạy hoặc không thể kết nối',
+                                        status: 503,
+                                        data: null,
+                                    }),
+                                )
+                            }
+                        })
+                    },
                 },
             },
             host: process.env.FIGMA_DEV_SERVER_HOST || '0.0.0.0',

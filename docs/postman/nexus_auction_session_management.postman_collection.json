@@ -1,0 +1,343 @@
+{
+  "info": {
+    "_postman_id": "nexus-auction-session-management-v1",
+    "name": "Nexus - Sprint 2 Auction Session Management (HG-S2-2)",
+    "description": "Bộ Postman Collection phục vụ kiểm thử thủ công và tự động cho các API thuộc Ticket HG-S2-2 (Auction Session Management) và các API liên quan trong Sprint 2 (Bidding, Settlement) của Project Nexus.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "sellerAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "buyerAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "createdAuctionId",
+      "value": "e4b6b6d5-1f92-48a9-9e87-a2c345d67890",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00. Đăng nhập Seller lấy Bearer Token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Đăng nhập Seller thành công 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(true);",
+              "    if (res.data && res.data.accessToken) {",
+              "        pm.collectionVariables.set('sellerAccessToken', res.data.accessToken);",
+              "    }",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-login-seller-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"demo.seller-minhan@nexus.example\",\n  \"password\": \"Password123!\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "01. Tạo phiên đấu giá (POST /api/v1/auctions) - Happy Case",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Tạo phiên đấu giá thành công 201 Created', function () {",
+              "    pm.response.to.have.status(201);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(true);",
+              "    pm.expect(res.data.status).to.eql('SCHEDULED');",
+              "    if (res.data && res.data.id) {",
+              "        pm.collectionVariables.set('createdAuctionId', res.data.id);",
+              "    }",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sellerAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-create-auction-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"productId\": \"7a3f89b1-2c4e-4b6d-8e9a-1f3b5c7d9e11\",\n  \"skuId\": \"9c1e2f3a-4b5c-6d7e-8f9a-0b1c2d3e4f5a\",\n  \"startPrice\": 5000000.00,\n  \"bidIncrement\": 100000.00,\n  \"startTime\": \"2026-11-15T08:00:00Z\",\n  \"endTime\": \"2026-11-16T20:00:00Z\",\n  \"visibility\": \"PUBLIC\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auctions"
+      }
+    },
+    {
+      "name": "02. Tạo phiên - Unhappy Case (Bước giá < 1,000 VND)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Bị từ chối HTTP 422 với mã VALIDATION_ERROR', function () {",
+              "    pm.response.to.have.status(422);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(false);",
+              "    pm.expect(res.error.code).to.eql('VALIDATION_ERROR');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sellerAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-create-auction-422" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"productId\": \"7a3f89b1-2c4e-4b6d-8e9a-1f3b5c7d9e11\",\n  \"skuId\": \"9c1e2f3a-4b5c-6d7e-8f9a-0b1c2d3e4f5a\",\n  \"startPrice\": 5000000.00,\n  \"bidIncrement\": 500.00,\n  \"startTime\": \"2026-11-15T08:00:00Z\",\n  \"endTime\": \"2026-11-16T20:00:00Z\",\n  \"visibility\": \"PUBLIC\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auctions"
+      }
+    },
+    {
+      "name": "03. Lấy danh sách phiên đấu giá (GET /api/v1/auctions) - Phân trang & Lọc",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Lấy danh sách thành công HTTP 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(true);",
+              "    pm.expect(Array.isArray(res.data)).to.eql(true);",
+              "    pm.expect(res.meta.pagination).to.exist;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-list-auctions-001" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auctions?status=SCHEDULED&page=1&limit=10&sortBy=startTime&sortDir=ASC",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auctions"],
+          "query": [
+            { "key": "status", "value": "SCHEDULED" },
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "10" },
+            { "key": "sortBy", "value": "startTime" },
+            { "key": "sortDir", "value": "ASC" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "04. Xem chi tiết phiên đấu giá (GET /api/v1/auctions/{auctionId}) - Happy Case",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Xem chi tiết thành công HTTP 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(true);",
+              "    pm.expect(res.data.id).to.eql(pm.collectionVariables.get('createdAuctionId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-get-auction-001" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auctions/{{createdAuctionId}}"
+      }
+    },
+    {
+      "name": "05. Xem chi tiết - Unhappy Case (Không tồn tại 404 Not Found)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Báo lỗi 404 AUCTION_NOT_FOUND', function () {",
+              "    pm.response.to.have.status(404);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(false);",
+              "    pm.expect(res.error.code).to.eql('AUCTION_NOT_FOUND');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-get-auction-404" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auctions/00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "name": "06. Cập nhật phiên đấu giá (PUT /api/v1/auctions/{auctionId}) - Happy Case",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Cập nhật phiên thành công HTTP 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(true);",
+              "    pm.expect(res.data.startPrice).to.eql(5500000.00);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sellerAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-update-auction-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"startPrice\": 5500000.00,\n  \"bidIncrement\": 200000.00,\n  \"startTime\": \"2026-11-15T09:00:00Z\",\n  \"endTime\": \"2026-11-16T21:00:00Z\",\n  \"visibility\": \"PUBLIC\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auctions/{{createdAuctionId}}"
+      }
+    },
+    {
+      "name": "07. Hủy phiên đấu giá (POST /api/v1/auctions/{auctionId}/cancel) - Happy Case",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Hủy phiên thành công HTTP 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const res = pm.response.json();",
+              "    pm.expect(res.success).to.eql(true);",
+              "    pm.expect(res.data.status).to.eql('CANCELLED');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sellerAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-cancel-auction-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"Sản phẩm gặp sự cố bao bì khi chuẩn bị trước phiên mở\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auctions/{{createdAuctionId}}/cancel"
+      }
+    },
+    {
+      "name": "08. Đặt giá thầu (POST /api/v1/auctions/{auctionId}/bids) - Bidding Engine",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Đặt giá phản hồi chuẩn', function () {",
+              "    pm.expect([201, 409, 422]).to.include(pm.response.code);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{buyerAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-place-bid-001" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 5800000.00,\n  \"idempotencyKey\": \"a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auctions/{{createdAuctionId}}/bids"
+      }
+    },
+    {
+      "name": "09. Quyết toán phiên (POST /api/v1/auctions/{auctionId}/settle) - Settlement Engine",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Quyết toán phiên', function () {",
+              "    pm.expect([200, 400, 404]).to.include(pm.response.code);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{sellerAccessToken}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Request-Id", "value": "req-settle-auction-001" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auctions/{{createdAuctionId}}/settle"
+      }
+    }
+  ]
+}

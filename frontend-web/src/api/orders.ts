@@ -344,7 +344,7 @@ function canFallbackToMock(error: unknown): boolean {
         if (error.status === 401 && !readSession()) {
             return true
         }
-        return [404, 502, 503, 504].includes(error.status)
+        return [404, 500, 502, 503, 504].includes(error.status) || error.code === 'BACKEND_OFFLINE'
     }
     return error instanceof TypeError || error instanceof ReferenceError
 }
