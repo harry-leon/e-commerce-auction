@@ -20,10 +20,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
-# Tham số xử phạt uy tín và đánh giá theo SRS §2.6 & §3.5.3
+# Tham số xử phạt uy tín, ngưỡng đấu giá và đánh giá theo SRS §2.6 & §3.5.3
 app:
   reputation:
     payment-timeout-penalty-score: ${PAYMENT_TIMEOUT_PENALTY_SCORE:10}
+    min-reputation-to-bid: ${MIN_REPUTATION_TO_BID:40}
+    min-reputation-to-sell: ${MIN_REPUTATION_TO_SELL:50}
+    reputation-enforcement-enabled: ${FEATURE_REPUTATION_ENFORCEMENT:true}
     order-verification-enabled: ${ORDER_VERIFICATION_ENABLED:true}
     commerce-base-url: ${COMMERCE_SERVICE_URL:http://localhost:8083}
 

@@ -8,8 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * Tham số nghiệp vụ tính điểm uy tín, đánh giá và xử phạt theo SRS §2.6 & §3.5.3.
- * Mặc định giữ chuẩn PAYMENT_TIMEOUT_PENALTY_SCORE = 10 để áp dụng khi winner quá hạn thanh toán 24 giờ.
+ * Tham số nghiệp vụ tính điểm uy tín, đánh giá, kiểm tra điều kiện đấu giá và xử phạt theo SRS §2.6 & §3.5.3.
  */
 @Configuration
 @ConfigurationProperties(prefix = "app.reputation")
@@ -37,6 +36,17 @@ public class ReputationProperties {
     /** Ngưỡng đạt mức uy tín VIP. */
     @Min(100)
     private int vipThreshold = 150;
+
+    /** Điểm uy tín tối thiểu để tham gia đặt giá đấu giá (SRS §3.5.3). */
+    @Min(0)
+    private int minReputationToBid = 40;
+
+    /** Điểm uy tín tối thiểu để mở phiên đấu giá mới (SRS §3.5.3). */
+    @Min(0)
+    private int minReputationToSell = 50;
+
+    /** Cờ bật/tắt kiểm tra điều kiện uy tín trước khi tạo phiên hoặc đặt giá đấu giá. */
+    private boolean reputationEnforcementEnabled = true;
 
     /** Bật/tắt xác thực đơn hàng qua commerce-service trước khi cho phép tạo đánh giá. */
     private boolean orderVerificationEnabled = true;
@@ -82,6 +92,30 @@ public class ReputationProperties {
 
     public void setVipThreshold(int vipThreshold) {
         this.vipThreshold = vipThreshold;
+    }
+
+    public int getMinReputationToBid() {
+        return minReputationToBid;
+    }
+
+    public void setMinReputationToBid(int minReputationToBid) {
+        this.minReputationToBid = minReputationToBid;
+    }
+
+    public int getMinReputationToSell() {
+        return minReputationToSell;
+    }
+
+    public void setMinReputationToSell(int minReputationToSell) {
+        this.minReputationToSell = minReputationToSell;
+    }
+
+    public boolean isReputationEnforcementEnabled() {
+        return reputationEnforcementEnabled;
+    }
+
+    public void setReputationEnforcementEnabled(boolean reputationEnforcementEnabled) {
+        this.reputationEnforcementEnabled = reputationEnforcementEnabled;
     }
 
     public boolean isOrderVerificationEnabled() {
