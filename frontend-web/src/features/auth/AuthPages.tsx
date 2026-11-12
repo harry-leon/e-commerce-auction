@@ -59,7 +59,7 @@ function AuthCard({
 }
 
 // ─── Login Page ────────────────────────────────────────────────────────────────
-/** Gửi tài khoản tới IAM, giữ token trong tab và chỉ ghi nhớ email nếu được chọn, sau đó điều hướng theo vai trò hoặc redirect dở dang. */
+/** Gửi thông tin đăng nhập qua Gateway, cookie HttpOnly giữ phiên; UI chỉ lưu profile/email, không lưu mật khẩu/token. */
 export function LoginPage() {
     const { lang, navigate, setUser, pageParams } = useApp()
     const [email, setEmail] = useState(readRememberedEmail)
@@ -126,8 +126,9 @@ export function LoginPage() {
                         type="info"
                         message={
                             lang === 'vi'
-                                ? 'Vui lòng đăng nhập tài khoản Buyer (gợi ý: buyer@nexus.vn / Nexus123@) để hoàn tất thanh toán đơn hàng.'
-                                : 'Please sign in to your Buyer account (e.g. buyer@nexus.vn / Nexus123@) to complete checkout.'
+                                ? // Không hiển thị thông tin đăng nhập demo trên UI công khai.
+                                  'Vui lòng đăng nhập tài khoản người mua của bạn để hoàn tất thanh toán.'
+                                : 'Please sign in to your Buyer account to complete checkout.'
                         }
                     />
                 </div>

@@ -20,6 +20,8 @@ const MOCK_VERSION_KEY = 'nexus.mock-orders-version'
  * Khớp với đặc tả API_SPEC_CART_ORDER.md §4.1.
  */
 export interface CheckoutPreviewRequest {
+    /** Mua trực tiếp: server đọc giá/kho theo SKU, không dùng hoặc thay đổi giỏ. */
+    buyNow?: { skuId: string; quantity: number }
     itemIds?: string[]
     shippingAddress: string
     voucherCode?: string
@@ -59,6 +61,8 @@ export interface CheckoutPreviewResponse {
  * Khớp với đặc tả API_SPEC_CART_ORDER.md §4.2.
  */
 export interface CreateOrderRequest {
+    /** Cùng mục tiêu với preview; không truyền selectedItemIds khi dùng chế độ này. */
+    buyNow?: { skuId: string; quantity: number }
     shippingAddress: string
     recipientName: string
     recipientPhone: string
