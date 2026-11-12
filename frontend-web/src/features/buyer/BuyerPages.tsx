@@ -112,6 +112,8 @@ export function HomePage() {
      */
     useEffect(() => {
         let mounted = true
+        let pollTimer: ReturnType<typeof setTimeout> | undefined
+        let failureCount = 0
         setLoadingAuctions(true)
         const refreshAuctions = () => {
             auctionsApi
@@ -124,6 +126,7 @@ export function HomePage() {
                 })
                 .then((response) => {
                     if (!mounted) return
+                    failureCount = 0
                     setHomeAuctions(
                         response.items.filter(
                             (auction) =>
@@ -131,20 +134,25 @@ export function HomePage() {
                                 auction.product?.images?.[0],
                         ),
                     )
+                    // Thành công: lên lịch làm mới sau 5 giây theo chu kỳ scheduler
+                    pollTimer = setTimeout(refreshAuctions, 5000)
                 })
                 .catch(() => {
-                    if (mounted) setHomeAuctions([])
+                    if (!mounted) return
+                    failureCount++
+                    setHomeAuctions([])
+                    // Khi API lỗi hoặc backend offline: backoff (15s, 30s, tối đa 60s) để tránh spam request liên tục làm nghẽn console
+                    const backoffMs = Math.min(15000 * failureCount, 60000)
+                    pollTimer = setTimeout(refreshAuctions, backoffMs)
                 })
                 .finally(() => {
                     if (mounted) setLoadingAuctions(false)
                 })
         }
         refreshAuctions()
-        // Trang chủ dùng cùng Auction API và làm mới status theo chu kỳ scheduler.
-        const refreshTimer = window.setInterval(refreshAuctions, 5000)
         return () => {
             mounted = false
-            window.clearInterval(refreshTimer)
+            clearTimeout(pollTimer)
         }
     }, [auctionReviews, createdAuctions])
 

@@ -273,10 +273,13 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
         const code =
             errorObj.code ||
             (response.status === 401 ? 'AUTH_UNAUTHORIZED' : 'INTERNAL_SERVER_ERROR')
+        // Khi Backend Gateway trả envelope BACKEND_OFFLINE (từ dev proxy), ánh xạ status sang 503
+        // để tầng gọi API (canFallbackToMock, UI load) xử lý chuyển sang dữ liệu dự phòng/offline một cách đồng bộ.
+        const effectiveStatus = payload.code === 'BACKEND_OFFLINE' ? 503 : response.status
         throw new ApiClientError(
             msg,
             code,
-            response.status,
+            effectiveStatus,
             errorObj.details ?? payload.details ?? null,
             payload.meta?.requestId,
             payload.meta?.timestamp,

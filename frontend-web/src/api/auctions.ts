@@ -399,12 +399,19 @@ function resolveAuctionStatus(
  * Luồng: Nếu là lỗi kết nối mạng (TypeError/ReferenceError), 404 (chưa triển khai route),
  *        502/503/504 (service tạm ngắt kết nối) hoặc 401 khi chưa đăng nhập (khách vãng lai xem đấu giá).
  */
+/**
+ * Trạng thái Circuit Breaker cho Auction Service:
+ * Khi API /auctions trả về lỗi 5xx hoặc BACKEND_OFFLINE hoặc lỗi mạng,
+ * ghi nhớ mốc thời gian tạm ngưng gửi request lên network trong 30 giây để tránh làm nghẽn mạng và rác console trình duyệt.
+ */
+let auctionServiceOfflineUntil = 0
+
 function canFallbackToMock(error: unknown): boolean {
     if (error instanceof ApiClientError) {
         if (error.status === 401 && !readSession()) {
             return true
         }
-        return [404, 500, 502, 503, 504].includes(error.status)
+        return [404, 500, 502, 503, 504].includes(error.status) || error.code === 'BACKEND_OFFLINE'
     }
     const err = error as Error | undefined
     return (
@@ -701,6 +708,125 @@ export function validateAndNormalizeAuctionList(raw: unknown): Auction[] {
 /**
  * API Adapter chính cho Auction Service
  */
+/**
+ * Chức năng: Trả về danh sách phiên đấu giá từ kho dữ liệu local/offline khi Auction Service chưa sẵn sàng.
+ * Đầu vào: params tìm kiếm, phân trang và bộ lọc từ getAuctions.
+ * Kết quả: PaginatedResult<Auction> chuẩn hóa theo phân trang và bộ lọc.
+ * Luồng xử lý: Kết hợp extraAuctions và localAuctionsStore, loại bỏ bản ghi trùng, lọc theo trạng thái/người bán/giá và phân trang.
+ */
+function resolveFallbackAuctions(params: AuctionQueryParams): AuctionListResponse {
+    const {
+        status = 'all',
+        search = '',
+        sortBy = 'ending-soon',
+        minPrice,
+        maxPrice,
+        sellerId,
+        sellerName,
+        includePending = false,
+        page = 1,
+        limit = 9,
+        extraAuctions = [],
+        reviews = {},
+    } = params
+
+    const combined = [...extraAuctions, ...localAuctionsStore]
+    const seen = new Set<string>()
+    const submittedIds = new Set(extraAuctions.map((auction: Auction) => auction.id))
+    const seededIds = new Set(AUCTIONS.map((auction) => auction.id))
+    let filtered = combined
+        .filter((a) => {
+            if (seededIds.has(a.id) && !submittedIds.has(a.id)) return false
+            if (
+                isLocalFallbackAuction(a) &&
+                !sellerId &&
+                !includePending &&
+                !submittedIds.has(a.id)
+            )
+                return false
+            if (seen.has(a.id)) return false
+            seen.add(a.id)
+            return true
+        })
+        .map((a) => ({
+            ...a,
+            status: resolveAuctionStatus(a.id, a.status, reviews),
+        }))
+
+    // Phiên chờ duyệt, bị từ chối hoặc tạm dừng không xuất hiện trong danh sách Buyer.
+    if (status && status !== 'all') {
+        filtered = filtered.filter((a) => a.status === status)
+    }
+    if (!sellerId && !includePending) {
+        filtered = filtered.filter(
+            (a) => !['pending_approval', 'rejected', 'paused'].includes(a.status),
+        )
+    }
+
+    // Lọc theo người bán nếu có yêu cầu (phía Seller Portal)
+    if (sellerId) {
+        filtered = filtered
+            .filter(
+                (auction) =>
+                    auction.sellerId === sellerId ||
+                    (!seededIds.has(auction.id) &&
+                        Boolean(
+                            sellerName &&
+                            [auction.sellerName, auction.sellerAccountName].some(
+                                (name) =>
+                                    name?.trim().toLowerCase() === sellerName.trim().toLowerCase(),
+                            ),
+                        )),
+            )
+            .map((auction) => ({ ...auction, sellerId }))
+    }
+
+    // Lọc tìm kiếm từ khóa
+    if (search.trim()) {
+        const q = search.trim().toLowerCase()
+        filtered = filtered.filter(
+            (a) =>
+                a.product.name.toLowerCase().includes(q) ||
+                (a.product.nameVi && a.product.nameVi.toLowerCase().includes(q)) ||
+                a.sellerName.toLowerCase().includes(q),
+        )
+    }
+
+    // Lọc khoảng giá (currentBid hoặc startingPrice)
+    if (minPrice !== undefined && Number.isFinite(minPrice)) {
+        filtered = filtered.filter((a) => a.currentBid >= minPrice)
+    }
+    if (maxPrice !== undefined && Number.isFinite(maxPrice)) {
+        filtered = filtered.filter((a) => a.currentBid <= maxPrice)
+    }
+
+    // Sắp xếp
+    if (sortBy === 'ending-soon') {
+        filtered.sort((a, b) => new Date(a.endTime).getTime() - new Date(b.endTime).getTime())
+    } else if (sortBy === 'most-bids') {
+        filtered.sort((a, b) => b.bidCount - a.bidCount)
+    } else if (sortBy === 'newest') {
+        filtered.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
+    } else if (sortBy === 'price-asc') {
+        filtered.sort((a, b) => a.currentBid - b.currentBid)
+    } else if (sortBy === 'price-desc') {
+        filtered.sort((a, b) => b.currentBid - a.currentBid)
+    }
+
+    const total = filtered.length
+    const totalPages = Math.max(1, Math.ceil(total / limit))
+    const startIndex = (page - 1) * limit
+    const paginatedItems = filtered.slice(startIndex, startIndex + limit)
+
+    return {
+        items: paginatedItems,
+        total,
+        page,
+        limit,
+        totalPages,
+    }
+}
+
 export const auctionsApi = {
     /**
      * Chức năng: Lấy danh sách các phiên đấu giá với bộ lọc trạng thái, tìm kiếm, sắp xếp và phân trang.
@@ -741,8 +867,15 @@ export const auctionsApi = {
         queryParts.push(`limit=${limit}`)
         const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
 
+        // Nếu circuit breaker đang mở do lần trước service lỗi hoặc backend offline:
+        // Lập tức trả về dữ liệu fallback local mà không gửi fetch lên network, tránh phát sinh lỗi 500 rác console.
+        if (Date.now() < auctionServiceOfflineUntil) {
+            return resolveFallbackAuctions(params)
+        }
+
         try {
             const envelope = await api<ApiResponse<unknown> | unknown[]>(`/auctions${qs}`)
+            auctionServiceOfflineUntil = 0
             const rawData =
                 envelope && typeof envelope === 'object' && 'data' in envelope
                     ? (envelope as ApiResponse<unknown>).data
@@ -900,107 +1033,17 @@ export const auctionsApi = {
             if (!canFallbackToMock(error)) {
                 throw error
             }
+            // Chỉ mở Circuit Breaker khi lỗi server (5xx), backend offline hoặc lỗi mạng; không mở khi 404 hoặc 401
+            if (
+                (error instanceof ApiClientError &&
+                    (error.status >= 500 || error.code === 'BACKEND_OFFLINE')) ||
+                !(error instanceof ApiClientError)
+            ) {
+                auctionServiceOfflineUntil = Date.now() + 30_000
+            }
         }
 
-        // Khi API không khả dụng, chỉ giữ phiên do người dùng tạo trong browser; fixture không đại diện cho dữ liệu đấu giá thật.
-        const combined = [...extraAuctions, ...localAuctionsStore]
-        const seen = new Set<string>()
-        const submittedIds = new Set(extraAuctions.map((auction) => auction.id))
-        const seededIds = new Set(AUCTIONS.map((auction) => auction.id))
-        let filtered = combined
-            .filter((a) => {
-                if (seededIds.has(a.id) && !submittedIds.has(a.id)) return false
-                if (
-                    isLocalFallbackAuction(a) &&
-                    !sellerId &&
-                    !includePending &&
-                    !submittedIds.has(a.id)
-                )
-                    return false
-                if (seen.has(a.id)) return false
-                seen.add(a.id)
-                return true
-            })
-            .map((a) => ({
-                ...a,
-                status: resolveAuctionStatus(a.id, a.status, reviews),
-            }))
-
-        // Phiên chờ duyệt, bị từ chối hoặc tạm dừng không xuất hiện trong danh sách Buyer.
-        if (status && status !== 'all') {
-            filtered = filtered.filter((a) => a.status === status)
-        }
-        if (!sellerId && !includePending) {
-            filtered = filtered.filter(
-                (a) => !['pending_approval', 'rejected', 'paused'].includes(a.status),
-            )
-        }
-
-        // Lọc theo người bán nếu có yêu cầu (phía Seller Portal)
-        if (sellerId) {
-            filtered = filtered
-                .filter(
-                    (auction) =>
-                        auction.sellerId === sellerId ||
-                        (!seededIds.has(auction.id) &&
-                            Boolean(
-                                sellerName &&
-                                [auction.sellerName, auction.sellerAccountName].some(
-                                    (name) =>
-                                        name?.trim().toLowerCase() ===
-                                        sellerName.trim().toLowerCase(),
-                                ),
-                            )),
-                )
-                .map((auction) => ({ ...auction, sellerId }))
-        }
-
-        // Lọc tìm kiếm từ khóa
-        if (search.trim()) {
-            const q = search.trim().toLowerCase()
-            filtered = filtered.filter(
-                (a) =>
-                    a.product.name.toLowerCase().includes(q) ||
-                    (a.product.nameVi && a.product.nameVi.toLowerCase().includes(q)) ||
-                    a.sellerName.toLowerCase().includes(q),
-            )
-        }
-
-        // Lọc khoảng giá (currentBid hoặc startingPrice)
-        if (minPrice !== undefined && Number.isFinite(minPrice)) {
-            filtered = filtered.filter((a) => a.currentBid >= minPrice)
-        }
-        if (maxPrice !== undefined && Number.isFinite(maxPrice)) {
-            filtered = filtered.filter((a) => a.currentBid <= maxPrice)
-        }
-
-        // Sắp xếp
-        if (sortBy === 'ending-soon') {
-            filtered.sort((a, b) => new Date(a.endTime).getTime() - new Date(b.endTime).getTime())
-        } else if (sortBy === 'most-bids') {
-            filtered.sort((a, b) => b.bidCount - a.bidCount)
-        } else if (sortBy === 'newest') {
-            filtered.sort(
-                (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime(),
-            )
-        } else if (sortBy === 'price-asc') {
-            filtered.sort((a, b) => a.currentBid - b.currentBid)
-        } else if (sortBy === 'price-desc') {
-            filtered.sort((a, b) => b.currentBid - a.currentBid)
-        }
-
-        const total = filtered.length
-        const totalPages = Math.max(1, Math.ceil(total / limit))
-        const startIndex = (page - 1) * limit
-        const paginatedItems = filtered.slice(startIndex, startIndex + limit)
-
-        return {
-            items: paginatedItems,
-            total,
-            page,
-            limit,
-            totalPages,
-        }
+        return resolveFallbackAuctions(params)
     },
 
     /** Tải lịch sử bid phân trang từ Auction Service và chuẩn hóa về AuctionBid cho các màn chi tiết. */
@@ -1053,6 +1096,22 @@ export const auctionsApi = {
         if (!id || typeof id !== 'string') {
             throw new ApiClientError('Mã phiên đấu giá không hợp lệ', 'INVALID_AUCTION_ID', 400)
         }
+        // Nếu circuit breaker đang mở do service offline, tra cứu nhanh trong kho local mà không gửi request
+        if (Date.now() < auctionServiceOfflineUntil) {
+            const localOnly =
+                extraAuctions.find((auction) => auction.id === id) ||
+                localAuctionsStore.find(
+                    (auction) => auction.id === id && !isLocalFallbackAuction(auction),
+                ) ||
+                AUCTIONS.find((auction) => auction.id === id)
+            if (localOnly) {
+                return {
+                    ...localOnly,
+                    status: resolveAuctionStatus(localOnly.id, localOnly.status, reviews),
+                }
+            }
+        }
+
         try {
             const envelope = await api<ApiResponse<unknown> | unknown>(`/auctions/${id}`)
             const rawData =
@@ -1800,6 +1859,7 @@ export const auctionsApi = {
         localAuctionsStore = []
         persistStoredAuctions(localAuctionsStore)
         localAuctionReviews = {}
+        auctionServiceOfflineUntil = 0
         try {
             localStorage.removeItem(AUCTION_REVIEWS_STORAGE_KEY)
         } catch {

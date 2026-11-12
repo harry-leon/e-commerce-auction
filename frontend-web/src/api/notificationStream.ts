@@ -27,15 +27,15 @@ export function connectNotificationStream(
     const seen = new Set<string>()
 
     /** Một reconnect đang chờ tại mỗi thời điểm; logout/unmount không khởi động lại socket. */
-    function scheduleRetry() {
+    function scheduleRetry(longer = false) {
         if (stopped || retry) return
-        retry = setTimeout(
-            () => {
-                retry = undefined
-                void connect()
-            },
-            Math.min(1000 * 2 ** Math.min(attempt++, 5), 30_000),
-        )
+        // Khi lỗi liên tiếp hoặc backend offline, giãn thời gian thử lại tối đa 60s để tránh làm nghẽn console và hao tổn CPU
+        const delay =
+            longer || attempt > 3 ? 60_000 : Math.min(1000 * 2 ** Math.min(attempt++, 5), 30_000)
+        retry = setTimeout(() => {
+            retry = undefined
+            void connect()
+        }, delay)
     }
 
     /** Dọn timer của một transport trước khi tạo transport tiếp theo hoặc khi component unmount. */
@@ -122,13 +122,27 @@ export function connectNotificationStream(
         } catch (error) {
             // Hết phiên/thiếu quyền dừng retry; lỗi hạ tầng giữ HTTP inbox và thử lại với backoff.
             if (error instanceof ApiClientError && [401, 403].includes(error.status)) return
-            scheduleRetry()
+            const isServerOrOffline =
+                error instanceof ApiClientError &&
+                ([500, 502, 503, 504].includes(error.status) || error.code === 'BACKEND_OFFLINE')
+            scheduleRetry(isServerOrOffline)
         }
     }
+
+    const onOnline = () => {
+        attempt = 0
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            clearTimeout(retry)
+            retry = undefined
+            void connect()
+        }
+    }
+    window.addEventListener('online', onOnline)
 
     void connect()
     return () => {
         stopped = true
+        window.removeEventListener('online', onOnline)
         controller.abort()
         clearTimeout(retry)
         clearTransportTimers()
