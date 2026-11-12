@@ -1,10 +1,12 @@
 package com.nexus.reputation.config;
 
 import com.nexus.common.security.KeycloakAuthorities;
+import com.nexus.common.security.ServiceIdentity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -30,15 +32,26 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                // Kiểm tra điều kiện uy tín và cập nhật thống kê nội bộ: cho phép nexus-auction-service hoặc nexus-commerce-service.
+                .requestMatchers(HttpMethod.GET, "/api/v1/internal/reputations/*/eligibility")
+                .access((auth, context) -> new AuthorizationDecision(
+                    ServiceIdentity.permits(auth.get(), "nexus-auction-service", "COMMERCE.AUCTION")
+                        || ServiceIdentity.permits(auth.get(), "nexus-commerce-service", "REPUTATION.PENALTY")))
+                .requestMatchers(HttpMethod.POST, "/api/v1/internal/reputations/transactions")
+                .access((auth, context) -> new AuthorizationDecision(
+                    ServiceIdentity.permits(auth.get(), "nexus-commerce-service", "REPUTATION.PENALTY")
+                        || ServiceIdentity.permits(auth.get(), "nexus-auction-service", "COMMERCE.AUCTION")))
                 // API trừ điểm uy tín nội bộ bắt buộc token của nexus-commerce-service kèm privilege REPUTATION.PENALTY.
                 .requestMatchers("/api/v1/internal/reputations/**").access((auth, context) ->
-                    new org.springframework.security.authorization.AuthorizationDecision(
-                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
-                            "nexus-commerce-service", "REPUTATION.PENALTY")))
+                    new AuthorizationDecision(
+                        ServiceIdentity.permits(auth.get(), "nexus-commerce-service", "REPUTATION.PENALTY")))
                 // Lịch sử xử phạt và hồ sơ /me bắt buộc xác thực JWT trước khi mở rule public cho tóm tắt {userId}.
                 .requestMatchers(HttpMethod.GET,
                     "/api/v1/reputations/me", "/api/v1/reputations/*/penalties").authenticated()
-                .requestMatchers(HttpMethod.GET, "/api/v1/reputations/*", "/api/v1/ratings/user/*").permitAll()
+                .requestMatchers(HttpMethod.GET,
+                    "/api/v1/reputations/*",
+                    "/api/v1/reputations/*/eligibility",
+                    "/api/v1/ratings/user/*").permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(jwtConverter())));
         return http.build();

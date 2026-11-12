@@ -4,7 +4,9 @@ import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.response.ApiResponse;
 import com.nexus.reputation.dto.PenaltyResponse;
+import com.nexus.reputation.dto.ReputationEligibilityResponse;
 import com.nexus.reputation.dto.ReputationSummaryResponse;
+import com.nexus.reputation.enums.EligibilityAction;
 import com.nexus.reputation.service.ReputationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,12 +24,14 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Controller tra cứu điểm uy tín và lịch sử xử phạt cho người dùng và quản trị viên.
+ * Controller tra cứu điểm uy tín, điều kiện tham gia đấu giá và lịch sử xử phạt cho người dùng.
  * Quy tắc:
  * - GET /api/v1/reputations/{userId}: công khai tóm tắt uy tín (phục vụ hiển thị shop/uy tín).
+ * - GET /api/v1/reputations/{userId}/eligibility: kiểm tra ngưỡng điểm tối thiểu cho BID hoặc CREATE_AUCTION.
  * - GET /api/v1/reputations/me: tra cứu hồ sơ uy tín của chính tài khoản đang đăng nhập.
  * - GET /api/v1/reputations/{userId}/penalties: chỉ chính chủ hoặc ADMIN/SUPPORT mới được xem biên bản phạt.
  */
@@ -57,6 +61,15 @@ public class ReputationController {
     @Operation(summary = "Xem điểm uy tín theo userId")
     public ResponseEntity<ApiResponse<ReputationSummaryResponse>> getReputation(@PathVariable UUID userId) {
         return ResponseEntity.ok(ApiResponse.ok(reputationService.getReputation(userId)));
+    }
+
+    /** Kiểm tra người dùng có đủ điểm uy tín tối thiểu để tham gia đấu giá hoặc mở phiên không. */
+    @GetMapping("/{userId}/eligibility")
+    @Operation(summary = "Kiểm tra điều kiện điểm uy tín cho đấu giá")
+    public ResponseEntity<ApiResponse<ReputationEligibilityResponse>> checkEligibility(
+            @PathVariable UUID userId,
+            @RequestParam(defaultValue = "BID") EligibilityAction action) {
+        return ResponseEntity.ok(ApiResponse.ok(reputationService.checkEligibility(userId, action)));
     }
 
     /** Tra cứu lịch sử biên bản trừ điểm uy tín của chính chủ hoặc ADMIN/SUPPORT. */
