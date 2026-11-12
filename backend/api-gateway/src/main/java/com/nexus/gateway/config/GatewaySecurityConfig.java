@@ -63,6 +63,8 @@ public class GatewaySecurityConfig {
                 // VNPAY dùng HMAC tại Commerce, các API khác vẫn cần JWT.
                 .pathMatchers(HttpMethod.GET,
                     "/api/v1/payments/vnpay/ipn").permitAll()
+                // Probe chỉ báo có cookie, không cấp quyền; khách cần truy cập trước khi khôi phục phiên.
+                .pathMatchers(HttpMethod.GET, "/api/v1/auth/session").permitAll()
                 .pathMatchers("/api/v1/auth/login",
                     "/api/v1/auth/logout",
                     "/api/v1/auth/refresh-token", "/api/v1/auth/refresh")
