@@ -16,6 +16,12 @@ import * as paymentsApi from '../api/payments'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
+/** Form chỉ được chuyển bước sau khi API kiểm tra tồn kho hoàn tất. */
+async function nextCheckoutStep() {
+    const next = screen.getByRole('button', { name: /next|tiếp/i })
+    await waitFor(() => expect(next).toBeEnabled())
+    fireEvent.click(next)
+}
 const user = {
     id: 'user-1',
     fullName: 'Buyer',
@@ -129,6 +135,9 @@ beforeEach(() => {
                     success: true,
                     data: init.method && init.method !== 'GET' ? category : [category],
                 }
+            // Fixture kho đủ hàng cho các ca form; ca hết hàng được kiểm tra riêng trong buyer-checkout-payment.
+            else if (path.includes('/inventory/sku/'))
+                payload = { success: true, data: { availableQty: 10 } }
             else if (path.endsWith('/products/product-1'))
                 payload = { success: true, data: product }
             else if (path.includes('/cart/items') && init.method === 'DELETE') {
@@ -487,7 +496,7 @@ describe('Cart, Checkout và Payment Result', () => {
         render(<CartPage />)
         const checkoutBtn = await screen.findByRole('button', { name: /checkout|thanh toán/i })
         fireEvent.click(checkoutBtn)
-        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+        await waitFor(() => expect(holder.current.navigate).toHaveBeenCalledWith('checkout'))
     })
 
     /**
@@ -572,7 +581,7 @@ describe('Cart, Checkout và Payment Result', () => {
         fireEvent.change(streetInput, { target: { value: '' } })
 
         // Bấm Next
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
 
         // Vẫn ở bước 1 và hiển thị lỗi validation
         await waitFor(() => {
@@ -589,11 +598,11 @@ describe('Cart, Checkout và Payment Result', () => {
     it('CheckoutPage: kiểm tra dữ liệu bắt buộc tại Bước 3 (Thông tin thẻ)', async () => {
         render(<CheckoutPage />)
         // Sang bước 2
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
 
         // Sang bước 3
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
 
         // Nhập sai số thẻ và mã CVV
@@ -603,7 +612,7 @@ describe('Cart, Checkout và Payment Result', () => {
         fireEvent.change(cvvInput, { target: { value: '9' } })
 
         // Bấm Next
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
 
         // Hiển thị lỗi validation thẻ
         await waitFor(() => {
@@ -624,18 +633,18 @@ describe('Cart, Checkout và Payment Result', () => {
         render(<CheckoutPage />)
         // Bước 1: Địa chỉ giao hàng
         expect(screen.getByRole('heading', { name: /checkout|thanh toán/i })).toBeVisible()
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
 
         // Bước 2: Phương thức vận chuyển
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
         // Chọn GHTK
         const radios = screen.getAllByRole('radio')
         fireEvent.click(radios[1])
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
 
         // Bước 3: Thanh toán
         await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
 
         // Bước 4: Xác nhận – hiển thị GHTK Standard
         await waitFor(() => expect(screen.getByText(/GHTK Standard/i)).toBeVisible())
@@ -644,7 +653,7 @@ describe('Cart, Checkout và Payment Result', () => {
     it('CheckoutPage: nút Back đưa về bước trước', async () => {
         render(<CheckoutPage />)
         // Vào bước 2
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
         // Back về bước 1
         fireEvent.click(screen.getByRole('button', { name: /back|quay lại/i }))
@@ -678,11 +687,11 @@ describe('Cart, Checkout và Payment Result', () => {
         const redirectSpy = vi.spyOn(paymentsApi, 'redirectToGateway').mockImplementation(() => {})
         render(<CheckoutPage />)
         // Bước 1 -> Bước 2
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
 
         // Bước 2 -> Bước 3
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
 
         // Chọn VNPAY
@@ -690,7 +699,7 @@ describe('Cart, Checkout và Payment Result', () => {
         fireEvent.click(vnpayRadio)
 
         // Bước 3 -> Bước 4
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
         )
@@ -722,11 +731,11 @@ describe('Cart, Checkout và Payment Result', () => {
             .mockRejectedValueOnce(new Error('Gateway connection timeout'))
         render(<CheckoutPage />)
         // 1 -> 2 -> 3 -> 4
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
         )
@@ -765,11 +774,11 @@ describe('Cart, Checkout và Payment Result', () => {
             )
         render(<CheckoutPage />)
         // 1 -> 2 -> 3 -> 4
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/stripe/i)).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /next|tiếp/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /place order|đặt hàng/i })).toBeVisible(),
         )
@@ -890,7 +899,7 @@ describe('ProductDetailPage (catalog) – Add to Cart và Tab', () => {
 
         const buyBtn = screen.getByRole('button', { name: /mua ngay|buy now/i })
         fireEvent.click(buyBtn)
-        expect(holder.current.navigate).toHaveBeenCalledWith('checkout')
+        await waitFor(() => expect(holder.current.navigate).toHaveBeenCalledWith('checkout'))
     })
 
     it('chuyển tab sang Specifications hiển thị thông số kỹ thuật', async () => {

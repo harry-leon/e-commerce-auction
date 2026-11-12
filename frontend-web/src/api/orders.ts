@@ -29,6 +29,17 @@ export interface CheckoutPreviewRequest {
  * DTO kết quả xem trước đơn hàng từ Backend.
  */
 export interface CheckoutPreviewResponse {
+    /** Snapshot Catalog/giỏ tại lúc preview; dùng cùng số lượng và giá với tổng tiền server. */
+    items?: {
+        skuId: string
+        sellerId: string
+        productName: string
+        skuCode: string
+        unitPrice: number
+        cartUnitPrice: number | null
+        quantity: number
+        itemTotal: number
+    }[]
     subtotal: number
     discountAmount: number
     shippingFee: number
@@ -72,6 +83,33 @@ export interface CreateOrderResponse {
     total: number
     paymentMethod: 'CARD' | 'VNPAY' | 'COD'
     paymentUrl?: string
+    /** Giá dự kiến của đơn chưa thu tiền; không đổi null giá chính thức thành giá 0. */
+    estimatedSubtotal?: number
+    estimatedShippingFee?: number
+    estimatedDiscount?: number
+    estimatedTotal?: number
+}
+
+/** Snapshot thật của đơn đang retry; độc lập với giỏ ACTIVE mới và không fallback sang dữ liệu demo. */
+export interface CheckoutOrderSnapshot {
+    id: string
+    subtotal: number | null
+    shippingFee: number | null
+    discount: number | null
+    total: number | null
+    estimatedSubtotal: number
+    estimatedShippingFee: number
+    estimatedDiscount: number
+    estimatedTotal: number
+    items: {
+        id: string
+        skuId: string
+        skuCode: string
+        productName: string
+        quantity: number
+        unitPrice: number | null
+        estimatedUnitPrice: number
+    }[]
 }
 
 export type OrderDetailResponse = Order
@@ -917,6 +955,21 @@ export const ordersApi = {
         const envelope = await api<ApiResponse<OrderDetailResponse>>(`/orders/${orderId}`)
         if (!envelope?.data) {
             throw new Error(`Không tìm thấy đơn hàng ${orderId}`)
+        }
+        return envelope.data
+    },
+
+    /** Đọc đúng dòng hàng/giá dự kiến từ DB cho màn retry; lỗi trả ra caller, không lấy giỏ mới thay đơn cũ. */
+    async getCheckoutOrderSnapshot(orderId: string): Promise<CheckoutOrderSnapshot> {
+        const envelope = await api<ApiResponse<CheckoutOrderSnapshot>>(
+            `/orders/${encodeURIComponent(orderId)}`,
+        )
+        if (
+            !envelope?.data ||
+            envelope.data.id !== orderId ||
+            !Array.isArray(envelope.data.items)
+        ) {
+            throw new Error('Không tải được thông tin đơn đang thanh toán')
         }
         return envelope.data
     },

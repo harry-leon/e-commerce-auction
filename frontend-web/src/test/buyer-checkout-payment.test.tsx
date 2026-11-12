@@ -4,12 +4,14 @@ import type { AppState } from '../types'
 import { DEMO_BUYER } from '../mockData'
 import { VerifiedOrderResult } from '../features/buyer/VerifiedOrderResult'
 import { ProductDetailPage } from '../features/catalog/ProductDetailPage'
-import { CheckoutPage, PaymentResultPage } from '../features/buyer/BuyerPages'
+import { ProductCard } from '../components/Cards'
+import { CartPage, CheckoutPage, PaymentResultPage } from '../features/buyer/BuyerPages'
 import { ordersApi } from '../api/orders'
 import * as cartApi from '../api/cart'
 import * as paymentsApi from '../api/payments'
 import { ApiClientError, saveSession } from '../api/client'
 import { clearLoadCache } from '../hooks/useLoad'
+import { purchaseAvailabilityMessage } from '../features/buyer/purchaseAvailability'
 
 /**
  * Bộ kiểm thử toàn diện luồng Buyer, Cart & Checkout (Task 4 - Quốc Hào):
@@ -24,10 +26,20 @@ import { clearLoadCache } from '../hooks/useLoad'
 
 const contextHolder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => contextHolder.current }))
+vi.mock('../features/buyer/purchaseAvailability', () => ({ purchaseAvailabilityMessage: vi.fn() }))
+
+/** Các bước chỉ được tiếp tục khi lần kiểm tra tồn kho bất đồng bộ đã kết thúc. */
+async function nextCheckoutStep() {
+    const next = screen.getByRole('button', { name: /tiếp theo|next/i })
+    await waitFor(() => expect(next).toBeEnabled())
+    fireEvent.click(next)
+}
 
 describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
     beforeEach(() => {
         vi.resetAllMocks()
+        // Các ca thanh toán thông thường bắt đầu với kho đủ; từng ca hết hàng sẽ đổi kết quả kiểm tra sớm.
+        vi.mocked(purchaseAvailabilityMessage).mockResolvedValue(null)
         clearLoadCache()
         sessionStorage.clear()
         localStorage.clear()
@@ -37,6 +49,29 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         saveSession({
             user: DEMO_BUYER,
         })
+        // Các ca retry có snapshot đơn thật đủ dữ liệu để kiểm tra kho, độc lập giỏ ACTIVE.
+        vi.spyOn(ordersApi, 'getCheckoutOrderSnapshot').mockImplementation(async (id) => ({
+            id,
+            subtotal: null,
+            total: null,
+            shippingFee: null,
+            discount: null,
+            estimatedSubtotal: 500000,
+            estimatedShippingFee: 55000,
+            estimatedDiscount: 0,
+            estimatedTotal: 555000,
+            items: [
+                {
+                    id: 'saved-line',
+                    skuId: 'sku-1',
+                    skuCode: 'NK-AF1',
+                    productName: 'Nike Air Force',
+                    quantity: 1,
+                    unitPrice: null,
+                    estimatedUnitPrice: 500000,
+                },
+            ],
+        }))
 
         contextHolder.current = {
             lang: 'vi',
@@ -56,6 +91,141 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             createdAuctions: [],
             submitAuction: vi.fn(),
         }
+    })
+
+    /** POST có thể đã commit trước timeout: không tạo giỏ khách để Checkout tự cộng lại một lần nữa. */
+    it('ProductCard: lỗi thêm giỏ khi đã đăng nhập không được lưu thành giỏ khách', async () => {
+        vi.spyOn(cartApi, 'addItemToCart').mockRejectedValue(new Error('timeout'))
+        render(
+            <ProductCard
+                product={
+                    {
+                        id: 'product-timeout',
+                        skuId: 'sku-timeout',
+                        name: 'Giày',
+                        nameVi: 'Giày',
+                        price: 77280,
+                        stock: 5,
+                        images: ['/shoe.png'],
+                    } as Parameters<typeof ProductCard>[0]['product']
+                }
+            />,
+        )
+        fireEvent.click(screen.getByRole('button'))
+        await waitFor(() =>
+            expect(contextHolder.current.showToast).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'error' }),
+            ),
+        )
+        expect(localStorage.getItem('nexus_guest_cart')).toBeNull()
+    })
+
+    /** Hết hàng phải báo trước bước nhập địa chỉ; cả mở link checkout và phục hồi đơn cũ đều không gửi payment. */
+    it.each(['fresh', 'retry', 'cart'])(
+        'chặn hết hàng trước checkout/payment (%s)',
+        async (mode) => {
+            const message = 'Sản phẩm "Giày" đã hết hàng. Vui lòng cập nhật giỏ hàng.'
+            vi.mocked(purchaseAvailabilityMessage).mockResolvedValue(message)
+            vi.spyOn(cartApi, 'getActiveCart').mockResolvedValue({
+                cartId: 'cart-stock',
+                userId: DEMO_BUYER.id,
+                status: 'ACTIVE',
+                items: [
+                    {
+                        id: 'line-stock',
+                        skuId: 'shoe',
+                        skuCode: 'SHOE',
+                        productName: 'Giày',
+                        quantity: 4,
+                        unitPrice: 77280,
+                        subtotal: 309120,
+                        thumbnailUrl: null,
+                        stockAvailable: null,
+                        isAvailable: true,
+                    },
+                ],
+                totalItems: 1,
+                totalQuantity: 4,
+                subtotal: 309120,
+                totalAmount: 309120,
+                shippingFee: 0,
+                taxAmount: 0,
+                discountAmount: 0,
+                expiresAt: null,
+            })
+            if (mode === 'retry') {
+                sessionStorage.setItem(
+                    `nexus.checkout-command:${DEMO_BUYER.id}`,
+                    JSON.stringify({
+                        userId: DEMO_BUYER.id,
+                        key: crypto.randomUUID(),
+                        request: {
+                            shippingAddress: '123 Nguyen Hue',
+                            recipientName: 'Buyer',
+                            recipientPhone: '0901234567',
+                            paymentMethod: 'VNPAY',
+                        },
+                        order: {
+                            id: 'out-of-stock-order',
+                            orderNo: 'ORD-STOCK',
+                            status: 'PENDING_PAYMENT',
+                            paymentMethod: 'VNPAY',
+                        },
+                    }),
+                )
+            }
+            const create = vi.spyOn(ordersApi, 'createOrder')
+            const payment = vi.spyOn(paymentsApi, 'createPaymentAttempt')
+            if (mode === 'cart') {
+                render(<CartPage />)
+                await screen.findByText('Giày')
+                fireEvent.click(screen.getByRole('button', { name: /thanh toán|checkout/i }))
+            } else {
+                render(<CheckoutPage />)
+            }
+            expect(await screen.findByText(message)).toBeVisible()
+            if (mode !== 'cart') {
+                expect(screen.getByRole('button', { name: /tiếp theo|next/i })).toBeDisabled()
+                expect(screen.queryByText('14:23')).not.toBeInTheDocument()
+            }
+            expect(contextHolder.current.navigate).not.toHaveBeenCalledWith('checkout')
+            expect(create).not.toHaveBeenCalled()
+            expect(payment).not.toHaveBeenCalled()
+        },
+    )
+
+    /** Đơn phục hồi đã bị xóa phải báo ngay, không cho gửi payment hoặc tự tạo đơn mới từ giỏ khác. */
+    it('báo ngay đơn không còn tồn tại khi phục hồi checkout', async () => {
+        sessionStorage.setItem(
+            `nexus.checkout-command:${DEMO_BUYER.id}`,
+            JSON.stringify({
+                userId: DEMO_BUYER.id,
+                key: crypto.randomUUID(),
+                request: {
+                    shippingAddress: '123 Nguyen Hue',
+                    recipientName: 'Buyer',
+                    recipientPhone: '0901234567',
+                    paymentMethod: 'VNPAY',
+                },
+                order: {
+                    id: 'deleted-order',
+                    orderNo: 'ORD-DELETED',
+                    status: 'PENDING_PAYMENT',
+                    paymentMethod: 'VNPAY',
+                },
+            }),
+        )
+        vi.spyOn(ordersApi, 'getCheckoutOrderSnapshot').mockRejectedValue(
+            new ApiClientError('missing', 'ORDER_NOT_FOUND', 404),
+        )
+        const payment = vi.spyOn(paymentsApi, 'createPaymentAttempt')
+        const create = vi.spyOn(ordersApi, 'createOrder')
+        render(<CheckoutPage />)
+        expect(await screen.findByText(/Đơn hàng không còn tồn tại/)).toBeVisible()
+        expect(screen.getByRole('button', { name: /tiếp theo|next/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: 'Xem đơn hàng' })).toBeVisible()
+        expect(payment).not.toHaveBeenCalled()
+        expect(create).not.toHaveBeenCalled()
     })
 
     /**
@@ -156,55 +326,74 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
     /**
      * Tình huống 2: Mua ngay với biến thể SKU đã chọn chuyển thẳng tới Checkout.
      */
-    it('ProductDetailPage: bấm Mua ngay với SKU đã chọn đồng bộ giỏ hàng và chuyển sang checkout', async () => {
-        const multiSkuProduct = {
-            id: 'multi-sku-product',
-            name: 'Áo thun thể thao Nexus Pro',
-            description: 'Áo thun thoáng khí',
-            categoryId: 'cat-fashion',
-            sellerId: 'seller-1',
-            status: 'ACTIVE',
-            auctionEnabled: false,
-            createdAt: '2026-11-01T00:00:00Z',
-            skus: [
-                { id: 'sku-size-s', skuCode: 'TSHIRT-S', price: 150000, status: 'ACTIVE' },
-                { id: 'sku-size-l', skuCode: 'TSHIRT-L', price: 180000, status: 'ACTIVE' },
-            ],
-            images: [{ id: 'img-1', url: '/tshirt.jpg', sortOrder: 0 }],
-        }
+    it.each([true, false])(
+        'ProductDetailPage: Mua ngay chỉ chuyển checkout khi còn hàng (%s)',
+        async (inStock) => {
+            if (!inStock)
+                vi.mocked(purchaseAvailabilityMessage).mockResolvedValue('Sản phẩm đã hết hàng')
+            const multiSkuProduct = {
+                id: 'multi-sku-product',
+                name: 'Áo thun thể thao Nexus Pro',
+                description: 'Áo thun thoáng khí',
+                categoryId: 'cat-fashion',
+                sellerId: 'seller-1',
+                status: 'ACTIVE',
+                auctionEnabled: false,
+                createdAt: '2026-11-01T00:00:00Z',
+                skus: [
+                    { id: 'sku-size-s', skuCode: 'TSHIRT-S', price: 150000, status: 'ACTIVE' },
+                    { id: 'sku-size-l', skuCode: 'TSHIRT-L', price: 180000, status: 'ACTIVE' },
+                ],
+                images: [{ id: 'img-1', url: '/tshirt.jpg', sortOrder: 0 }],
+            }
 
-        vi.stubGlobal(
-            'fetch',
-            vi.fn(async (input: string) => {
-                if (input.includes('/products/multi-sku-product')) {
-                    return new Response(JSON.stringify({ success: true, data: multiSkuProduct }), {
+            vi.stubGlobal(
+                'fetch',
+                vi.fn(async (input: string) => {
+                    if (input.includes('/products/multi-sku-product')) {
+                        return new Response(
+                            JSON.stringify({ success: true, data: multiSkuProduct }),
+                            {
+                                status: 200,
+                            },
+                        )
+                    }
+                    return new Response(JSON.stringify({ success: true, data: [] }), {
                         status: 200,
                     })
+                }),
+            )
+
+            const addItemSpy = vi.spyOn(cartApi, 'addItemToCart').mockResolvedValueOnce({} as any)
+
+            render(<ProductDetailPage />)
+            expect(await screen.findByText('Áo thun thoáng khí')).toBeVisible()
+
+            // Chọn TSHIRT-L
+            const variantLBtn = screen.getByRole('radio', { name: /TSHIRT-L/i })
+            fireEvent.click(variantLBtn)
+
+            // Bấm Mua ngay
+            const buyBtn = screen.getByRole('button', { name: /mua ngay|buy now/i })
+            fireEvent.click(buyBtn)
+
+            await waitFor(() => {
+                if (inStock) {
+                    expect(addItemSpy).toHaveBeenCalledWith('sku-size-l', 1)
+                    expect(contextHolder.current.navigate).toHaveBeenCalledWith('checkout')
+                } else {
+                    expect(contextHolder.current.showToast).toHaveBeenCalledWith({
+                        type: 'error',
+                        message: 'Sản phẩm đã hết hàng',
+                    })
+                    expect(addItemSpy).not.toHaveBeenCalled()
+                    expect(contextHolder.current.navigate).not.toHaveBeenCalledWith('checkout')
                 }
-                return new Response(JSON.stringify({ success: true, data: [] }), { status: 200 })
-            }),
-        )
+            })
 
-        const addItemSpy = vi.spyOn(cartApi, 'addItemToCart').mockResolvedValueOnce({} as any)
-
-        render(<ProductDetailPage />)
-        expect(await screen.findByText('Áo thun thoáng khí')).toBeVisible()
-
-        // Chọn TSHIRT-L
-        const variantLBtn = screen.getByRole('radio', { name: /TSHIRT-L/i })
-        fireEvent.click(variantLBtn)
-
-        // Bấm Mua ngay
-        const buyBtn = screen.getByRole('button', { name: /mua ngay|buy now/i })
-        fireEvent.click(buyBtn)
-
-        await waitFor(() => {
-            expect(addItemSpy).toHaveBeenCalledWith('sku-size-l', 1)
-            expect(contextHolder.current.navigate).toHaveBeenCalledWith('checkout')
-        })
-
-        addItemSpy.mockRestore()
-    })
+            addItemSpy.mockRestore()
+        },
+    )
 
     /**
      * Tình huống 3: Checkout Preview thông báo khi giá Backend tính khác với giá hiển thị client.
@@ -257,13 +446,13 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await screen.findByText('Nike Air Force 1')
 
         // Đi từ Bước 1 -> 2 -> 3 -> 4
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
 
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText('Thẻ quốc tế')).toBeVisible())
 
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('heading', { name: /xác nhận|confirmation/i })).toBeVisible(),
         )
@@ -277,6 +466,134 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         })
 
         previewSpy.mockRestore()
+    })
+
+    /** Preview đọc giỏ mới hơn phải hiển thị x4 cùng tổng tiền, không giữ x3 từ lần tải đầu và vẫn chặn thiếu kho. */
+    it('CheckoutPage: dùng số lượng và giá preview cho tóm tắt khi giỏ server thay đổi', async () => {
+        const item = {
+            id: 'item-quantity-drift',
+            skuId: 'sku-drift',
+            skuCode: 'SKU-DRIFT',
+            productName: 'Giày kiểm tra số lượng',
+            thumbnailUrl: null,
+            unitPrice: 77280,
+            quantity: 3,
+            stockAvailable: 3,
+            isAvailable: true,
+            subtotal: 231840,
+        }
+        vi.spyOn(cartApi, 'getActiveCart').mockResolvedValueOnce({
+            cartId: 'cart-drift',
+            userId: DEMO_BUYER.id,
+            status: 'ACTIVE',
+            items: [item],
+            totalItems: 1,
+            totalQuantity: 3,
+            subtotal: 231840,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            totalAmount: 231840,
+            expiresAt: null,
+        })
+        vi.spyOn(ordersApi, 'checkoutPreview').mockResolvedValue({
+            subtotal: 309120,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            totalAmount: 309120,
+            isOrderable: false,
+            warnings: ['Không đủ tồn kho'],
+            items: [
+                {
+                    skuId: item.skuId,
+                    sellerId: 'seller',
+                    productName: item.productName,
+                    skuCode: item.skuCode,
+                    unitPrice: 77280,
+                    cartUnitPrice: 77280,
+                    quantity: 4,
+                    itemTotal: 309120,
+                },
+            ],
+        })
+        const create = vi.spyOn(ordersApi, 'createOrder')
+        render(<CheckoutPage />)
+        await screen.findByText(item.productName)
+        for (let index = 0; index < 3; index++) {
+            await nextCheckoutStep()
+        }
+        await waitFor(() => expect(screen.getByText(/x4/)).toBeVisible())
+        expect(contextHolder.current.setCartCount).toHaveBeenLastCalledWith(4)
+        expect(screen.queryByText(/x3/)).not.toBeInTheDocument()
+        expect(screen.getByText(/Số lượng trong giỏ đã thay đổi/)).toBeVisible()
+        expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeDisabled()
+        expect(create).not.toHaveBeenCalled()
+    })
+
+    /** Reload retry đơn giày cũ không được hiển thị iPhone của giỏ ACTIVE mới hoặc tạo thêm đơn. */
+    it('CheckoutPage: retry dùng snapshot đơn cũ thay vì giỏ mới', async () => {
+        const order = {
+            id: 'old-shoe-order',
+            orderNo: 'ORD-SHOE',
+            status: 'PENDING_PAYMENT',
+            paymentMethod: 'VNPAY',
+            subtotal: null,
+            shippingFee: null,
+            discount: null,
+            total: null,
+            estimatedSubtotal: 309120,
+            estimatedShippingFee: 0,
+            estimatedDiscount: 0,
+            estimatedTotal: 309120,
+        }
+        sessionStorage.setItem(
+            `nexus.checkout-command:${DEMO_BUYER.id}`,
+            JSON.stringify({
+                userId: DEMO_BUYER.id,
+                key: crypto.randomUUID(),
+                order,
+                request: {
+                    shippingAddress: '123 Nguyen Hue',
+                    recipientName: 'Buyer',
+                    recipientPhone: '0901234567',
+                    paymentMethod: 'VNPAY',
+                },
+            }),
+        )
+        const cart = vi.spyOn(cartApi, 'getActiveCart')
+        vi.spyOn(ordersApi, 'getCheckoutOrderSnapshot').mockResolvedValue({
+            ...order,
+            items: [
+                {
+                    id: 'old-line',
+                    skuId: 'shoe',
+                    skuCode: 'SHOE',
+                    productName: 'Giày trong đơn cũ',
+                    quantity: 4,
+                    unitPrice: null,
+                    estimatedUnitPrice: 77280,
+                },
+            ],
+        })
+        const create = vi.spyOn(ordersApi, 'createOrder')
+        const payment = vi
+            .spyOn(paymentsApi, 'createPaymentAttempt')
+            .mockRejectedValue(new Error('Không có tồn kho'))
+        render(<CheckoutPage />)
+        expect(await screen.findByText('Giày trong đơn cũ')).toBeVisible()
+        expect(screen.getByText(/x4/)).toBeVisible()
+        expect(screen.getByText(/Sản phẩm thêm vào giỏ sau đó không thuộc đơn này/)).toBeVisible()
+        expect(cart).not.toHaveBeenCalled()
+        for (let index = 0; index < 3; index++) {
+            await nextCheckoutStep()
+        }
+        fireEvent.click(screen.getByRole('button', { name: /thử lại thanh toán/i }))
+        await waitFor(() =>
+            expect(payment).toHaveBeenCalledWith('old-shoe-order', expect.any(String)),
+        )
+        expect(create).not.toHaveBeenCalled()
+        expect(screen.getAllByText(/309\.120/).length).toBeGreaterThan(0)
     })
 
     /**
@@ -327,18 +644,18 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await screen.findByText('Nike Air Force')
 
         // Bước 1 -> 2
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
 
         // Bước 2 -> 3
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
 
         // Chọn VNPAY
         fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
 
         // Bước 3 -> 4
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
         )
@@ -417,14 +734,14 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         render(<CheckoutPage />)
         await screen.findByText('Nike Air Force')
 
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
 
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
 
         fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
         )
@@ -574,16 +891,16 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await screen.findByText('Nike Air Force')
 
         // Bước 1 -> 2
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
 
         // Bước 2 -> 3
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/VNPAY QR/i)).toBeVisible())
 
         // Chọn VNPAY
         fireEvent.click(screen.getByLabelText(/VNPAY QR/i))
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
         )
@@ -613,9 +930,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             expiresAt: null,
         })
         render(<CheckoutPage />)
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
+        await nextCheckoutStep()
+        await nextCheckoutStep()
         const retryBtn = screen.getByRole('button', { name: /thử lại thanh toán|retry payment/i })
         expect(retryBtn).toBeVisible()
 
@@ -680,11 +997,11 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         render(<CheckoutPage />)
         await screen.findByText('Nike Air Force')
 
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText(/GHN/i)).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() => expect(screen.getByText('Thẻ quốc tế')).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: /tiếp theo|next/i }))
+        await nextCheckoutStep()
         await waitFor(() =>
             expect(screen.getByRole('button', { name: /đặt hàng|place order/i })).toBeVisible(),
         )
