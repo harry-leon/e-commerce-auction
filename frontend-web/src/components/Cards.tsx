@@ -15,13 +15,16 @@ export function ProductCard({ product }: { product: Product }) {
     /**
      * Chức năng: Thêm nhanh sản phẩm từ thẻ card vào giỏ hàng mà không cần mở trang chi tiết.
      * Đầu vào và kết quả: Sự kiện click `e`; lưu sản phẩm vào giỏ hàng backend (nếu đã đăng nhập) hoặc guestCart (nếu chưa).
-     * Luồng xử lý: Có session thì gọi addItemToCart; chỉ khách chưa đăng nhập mới lưu guestCart.
-     * POST mất ACK có thể đã cộng trên server, nên lỗi không được lưu local rồi tự cộng lại ở Checkout.
+     * Luồng xử lý: Xác định skuId từ product.skuId hoặc biến thể skus[0].id; nếu có session gọi addItemToCart; khách chưa đăng nhập lưu guestCart.
+     * Quy tắc: Ưu tiên SKU hợp lệ; nếu sản phẩm có nhiều biến thể mà chưa chọn, điều hướng vào chi tiết sản phẩm.
+     * Lỗi và giới hạn: Bắt lỗi nếu API backend từ chối hoặc hết hàng; không ghi đè giỏ local khi lỗi POST có session.
      */
     const addToCart = async (e: React.MouseEvent) => {
         e.stopPropagation()
         const session = readSession()
-        const skuId = product.skuId || product.id
+        const rawSkus = (product as any).skus
+        const skuId =
+            product.skuId || (Array.isArray(rawSkus) && rawSkus[0]?.id ? rawSkus[0].id : product.id)
         if (session && skuId) {
             try {
                 const res = await addItemToCart(skuId, 1)

@@ -8,6 +8,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.ParameterizedTypeReference;
@@ -22,13 +24,15 @@ import org.springframework.web.client.RestClientException;
 @Component
 @Profile("!catalog-mock")
 public class HttpCatalogClient implements CatalogClient {
+    private static final Logger LOG = LoggerFactory.getLogger(HttpCatalogClient.class);
     private final RestClient client;
 
     public HttpCatalogClient(@Value("${CATALOG_SERVICE_URL:http://localhost:8082}") String url) {
-        // Giới hạn kết nối và đọc riêng; lỗi mạng không được thay thế bằng giá SKU demo.
+        // Tăng timeout kết nối lên 10s và đọc lên 30s để đáp ứng độ trễ mạng khi Catalog Service
+        // truy vấn cơ sở dữ liệu Supabase tại Tokyo; tránh lỗi 502 CATALOG_UNAVAILABLE khi thêm giỏ hàng.
         var factory = new JdkClientHttpRequestFactory(java.net.http.HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5)).build());
-        factory.setReadTimeout(Duration.ofSeconds(5));
+                .connectTimeout(Duration.ofSeconds(10)).build());
+        factory.setReadTimeout(Duration.ofSeconds(30));
         client = RestClient.builder().baseUrl(url).requestFactory(factory).build();
     }
 
@@ -45,7 +49,10 @@ public class HttpCatalogClient implements CatalogClient {
         } catch (HttpClientErrorException.NotFound error) {
             return null;
         } catch (RestClientException error) {
-            throw new ApiException("CATALOG_UNAVAILABLE", HttpStatus.BAD_GATEWAY, "Catalog tạm thời không phản hồi", null);
+            // Ghi log chi tiết lỗi khi giao tiếp Catalog Service (timeout, connection refused, parse error)
+            // để hỗ trợ chẩn đoán chính xác nguyên nhân lỗi 502 trong luồng thêm giỏ hàng.
+            LOG.error("Lỗi khi gọi Catalog Service cho SKU {}: {}", id, error.getMessage(), error);
+            throw new ApiException("CATALOG_UNAVAILABLE", HttpStatus.BAD_GATEWAY, "Catalog tạm thời không phản hồi: " + error.getMessage(), null);
         }
     }
 

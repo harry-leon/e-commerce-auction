@@ -1,11 +1,13 @@
 package com.nexus.commerce.client.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.math.BigDecimal;
 import java.util.Locale;
 import java.util.UUID;
 
 /**
  * Data Transfer Object representing SKU variant details fetched from Catalog Service.
+ * Bỏ qua các trường mở rộng không sử dụng (như productId, originalPrice) từ Catalog Service.
  *
  * @param skuId         Unique identifier of the SKU variant
  * @param skuCode       Mã SKU tùy chọn (có thể null sau HG-S2-6 khi Catalog không còn lưu sku_code)
@@ -16,6 +18,7 @@ import java.util.UUID;
  * @param isActive      Whether the SKU variant is currently active for purchase
  * @param sellerId      Chủ shop từ Catalog; Checkout không chấp nhận giá trị do client tự khai báo
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record SkuInfo(
         UUID skuId,
         String skuCode,

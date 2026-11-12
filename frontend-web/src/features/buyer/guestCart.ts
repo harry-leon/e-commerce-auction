@@ -148,10 +148,13 @@ export function updateGuestCartItem(itemId: string, quantity: number): CartRespo
 }
 
 /**
- * Xóa một dòng sản phẩm khỏi giỏ hàng khách.
+ * Xóa một dòng sản phẩm khỏi giỏ hàng khách theo itemId hoặc skuId.
+ * Hỗ trợ cả việc xóa theo itemId dòng hàng giỏ hoặc theo skuId khi hủy đơn/dọn hàng mua ngay.
  */
-export function removeGuestCartItem(itemId: string): CartResponse {
-    const items = readStorageItems().filter((it) => it.id !== itemId)
+export function removeGuestCartItem(itemIdOrSkuId: string): CartResponse {
+    const items = readStorageItems().filter(
+        (it) => it.id !== itemIdOrSkuId && it.skuId !== itemIdOrSkuId,
+    )
     writeStorageItems(items)
     return buildCartResponse(items)
 }
