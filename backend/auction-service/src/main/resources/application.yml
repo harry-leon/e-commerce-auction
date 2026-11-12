@@ -67,6 +67,7 @@ app:
       max-active-auctions-per-seller: ${AUCTION_MAX_ACTIVE_PER_SELLER:20}
       min-duration-seconds: ${AUCTION_MIN_DURATION_SECONDS:3600}
       max-duration-seconds: ${AUCTION_MAX_DURATION_SECONDS:604800}
+      reputation-enforcement-enabled: ${FEATURE_REPUTATION_ENFORCEMENT:true}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.
