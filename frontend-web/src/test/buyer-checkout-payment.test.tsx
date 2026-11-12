@@ -264,6 +264,11 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         vi.stubGlobal(
             'fetch',
             vi.fn(async (input: string) => {
+                // Kho đủ cho ca chọn SKU; phải chờ response kho trước khi bấm mua.
+                if (input.includes('/inventory/sku/'))
+                    return new Response(
+                        JSON.stringify({ success: true, data: { availableQty: 10 } }),
+                    )
                 if (input.includes('/products/multi-sku-product')) {
                     return new Response(JSON.stringify({ success: true, data: multiSkuProduct }), {
                         status: 200,
@@ -313,6 +318,7 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
         // Bấm Thêm vào giỏ
         const addBtn = screen.getByRole('button', { name: /thêm vào giỏ|add to cart/i })
+        await waitFor(() => expect(addBtn).toBeEnabled())
         fireEvent.click(addBtn)
 
         // Kiểm tra đúng SKU ID 'sku-size-l' được gửi đi
@@ -350,6 +356,11 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
             vi.stubGlobal(
                 'fetch',
                 vi.fn(async (input: string) => {
+                    // Ban đầu đủ hàng; ca false mô phỏng kho hết ở lần kiểm tra lại lúc bấm mua.
+                    if (input.includes('/inventory/sku/'))
+                        return new Response(
+                            JSON.stringify({ success: true, data: { availableQty: 10 } }),
+                        )
                     if (input.includes('/products/multi-sku-product')) {
                         return new Response(
                             JSON.stringify({ success: true, data: multiSkuProduct }),
@@ -375,6 +386,7 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
             // Bấm Mua ngay
             const buyBtn = screen.getByRole('button', { name: /mua ngay|buy now/i })
+            await waitFor(() => expect(buyBtn).toBeEnabled())
             fireEvent.click(buyBtn)
 
             await waitFor(() => {

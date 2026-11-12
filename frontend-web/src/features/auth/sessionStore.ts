@@ -33,7 +33,7 @@ export const useSessionStore = create<{
     },
     /**
      * Khôi phục thông tin phiên người dùng khi component mount hoặc trở về từ cổng thanh toán VNPAY.
-     * Luồng: Cho phép thử refresh một lần từ cookie HttpOnly (setCanAttemptRefresh(true)) → gọi GET /users/me
+     * Luồng: Probe cookie tại Gateway; không có cookie thì xóa cache profile, có cookie mới gọi GET /users/me.
      * → nếu thành công lưu hồ sơ vào session store; nếu thất bại (401/400) client tự động dừng thử refresh tiếp.
      */
     restoreSession: () => {
@@ -42,7 +42,20 @@ export const useSessionStore = create<{
         setCanAttemptRefresh(true)
         const revision = sessionRevision
         // Tải một lần cho các component cùng mount; không ghi đè login/logout xảy ra khi request còn đang chạy.
-        restoring = api<ApiUser | ApiResponse<ApiUser>>('/users/me')
+        restoring = api<{ hasSessionCookies: boolean }>(
+            '/auth/session',
+            { cache: 'no-store' },
+            false,
+        )
+            .then((status) => {
+                // Không để probe cũ xóa phiên vừa login; lỗi mạng đi vào catch và giữ profile để thử lại.
+                if (revision !== sessionRevision) return
+                if (!status.hasSessionCookies) {
+                    saveSession(null)
+                    return
+                }
+                return api<ApiUser | ApiResponse<ApiUser>>('/users/me')
+            })
             .then((payload) => {
                 const profile = payload && 'data' in payload ? payload.data : payload
                 if (profile?.id && revision === sessionRevision)
