@@ -14,6 +14,18 @@
 
 ## 0. DTO inventory
 
+### Mua ngay độc lập với giỏ
+
+`POST /orders/checkout/preview` và `POST /orders` nhận thêm field tùy chọn
+`buyNow: { "skuId": "<UUID>", "quantity": 1 }`. Khi truyền field này, không truyền
+`itemIds` (preview) hoặc `selectedItemIds` (tạo đơn); trộn hai chế độ trả 422.
+SKU bắt buộc và số lượng phải lớn hơn 0. Server lấy tên/giá/seller từ Catalog,
+kiểm tra quyền mua, tồn kho và giới hạn tiền như checkout giỏ. Không đọc, cộng,
+xóa hay chuyển trạng thái giỏ, kể cả khi giỏ đã có cùng SKU. COD giữ kho theo đơn;
+VNPAY giữ kho lúc tạo payment attempt như luồng hiện có.
+Idempotency fingerprint bao gồm `buyNow`; đổi SKU/số lượng với cùng key trả conflict.
+Payload checkout giỏ cũ vẫn tương thích và giữ nguyên fingerprint khi không có `buyNow`.
+
 | DTO trong source | Vai trò | Có được controller expose |
 |---|---|---|
 | `AddToCartRequest`, `UpdateCartItemRequest`, `MergeCartRequest` | Request body Cart | Có |

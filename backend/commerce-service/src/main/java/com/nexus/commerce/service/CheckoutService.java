@@ -45,7 +45,8 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Điều phối tạo đơn: khóa key/buyer → validate giỏ → lưu giá dự kiến → giữ kho COD → xóa item đã mua.
+ * Tạo đơn: khóa key/buyer → validate giỏ hoặc SKU Mua ngay → lưu giá dự kiến → giữ kho COD.
+ * Chỉ checkout giỏ mới xóa item đã mua; Mua ngay dùng dòng tạm, không thay đổi giỏ.
  * VNPAY chỉ tạo đơn, buyer gọi POST /payments để tính giá mới/giữ kho theo attempt; chưa ghi giá chính thức.
  * PostgreSQL commit toàn bộ đơn/items/giỏ; rollback gọi release theo orderId kể cả lỗi commit hoặc reserve timeout.
  * Nếu process chết hoặc release lỗi mạng, TTL 15 phút của Fulfillment là phương án hoàn kho cuối; chưa có outbox retry.
@@ -70,9 +71,11 @@ public class CheckoutService {
     @Transactional(readOnly = true)
     public CheckoutPreviewResponse preview(UUID buyer, CheckoutPreviewRequest request) {
         rejectVoucher(request.voucherCode());
-        Cart cart = carts.findByUserIdAndStatus(buyer, CartStatus.ACTIVE)
+        // Mua ngay tạo dòng tạm trong bộ nhớ, không đọc/ghi giỏ; giá và tồn vẫn kiểm tra bằng service thật.
+        Cart cart = request.buyNow() != null ? null : carts.findByUserIdAndStatus(buyer, CartStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
-        var selected = select(cart, cartItems.findByCartId(cart.getId()), request.itemIds());
+        var selected = request.buyNow() != null ? directItems(request.buyNow(), request.itemIds())
+                : select(cart, cartItems.findByCartId(cart.getId()), request.itemIds());
         var lines = snapshots(buyer, selected);
         List<String> warnings = new ArrayList<>();
         boolean orderable = true;
@@ -128,8 +131,11 @@ public class CheckoutService {
         if (orders.countByBuyerIdAndCreatedAtGreaterThanEqual(buyer, start) >= properties.getOrder().getMaxDailyOrders()) {
             throw invalid("ORDER_DAILY_LIMIT_EXCEEDED", "Đã đạt giới hạn số đơn trong ngày");
         }
-        Cart cart = carts.findActiveForCheckout(buyer).orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
-        var selected = select(cart, cartItems.findForCheckout(cart.getId()), request.selectedItemIds());
+        // Mua trực tiếp độc lập với giỏ, kể cả khi SKU này đã có số lượng khác trong giỏ.
+        Cart cart = request.buyNow() != null ? null : carts.findActiveForCheckout(buyer)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CART_NOT_FOUND));
+        var selected = request.buyNow() != null ? directItems(request.buyNow(), request.selectedItemIds())
+                : select(cart, cartItems.findForCheckout(cart.getId()), request.selectedItemIds());
         var lines = snapshots(buyer, selected);
         // Kiểm tra kho thật trước khi ghi đơn/xóa giỏ cho cả COD và VNPAY; chưa reserve ở bước này.
         // Kho vẫn có thể thay đổi sau kiểm tra, nên reserve của COD/Payment tiếp tục là bước quyết định cuối.
@@ -169,14 +175,24 @@ public class CheckoutService {
             order.setReservationIds(new ArrayList<>(inventory.reserve(orderId,
                     selected.stream().map(i -> new InventoryClient.Item(i.getSkuId(), null, i.getQuantity())).toList(), token)));
         }
-        // Chỉ xóa items đã mua; những sản phẩm không được chọn vẫn giữ trong giỏ.
+        // Chỉ checkout từ giỏ mới xóa dòng đã mua; Mua ngay không thay đổi bất kỳ số lượng/trạng thái giỏ nào.
+        if (cart != null) {
         cart.getItems().removeIf(i -> selected.stream().anyMatch(s -> s.getId().equals(i.getId())));
         cartItems.deleteAll(selected);
         cartItems.flush();
         if (cartItems.findByCartId(cart.getId()).isEmpty()) { cart.setStatus(CartStatus.CONVERTED); }
+        }
         // Snapshot cùng transaction; worker chỉ gửi sau commit, rollback không tạo thông báo ma.
         notifications.enqueue(order, "ORDER_CREATED");
         return response(order, ip);
+    }
+
+    /** Chặn payload trộn hai chế độ; dòng Mua ngay chỉ dùng nội bộ và tuyệt đối không persist thành CartItem. */
+    private List<CartItem> directItems(com.nexus.commerce.dto.request.BuyNowRequest target, List<UUID> ids) {
+        if (ids != null || target.skuId() == null || target.quantity() < 1) {
+            throw invalid("CHECKOUT_INVALID_ITEMS", "Mua ngay cần một SKU/số lượng hợp lệ, không kèm item giỏ");
+        }
+        return List.of(CartItem.builder().skuId(target.skuId()).quantity(target.quantity()).build());
     }
 
     /** Chặn giỏ hết hạn, chọn trùng hoặc item thuộc giỏ khác trước khi gọi service kho. */
@@ -313,9 +329,13 @@ public class CheckoutService {
     private String fingerprint(UUID buyer, CreateOrderRequest request) {
         var canonical = new CreateOrderRequest(request.shippingAddress(), request.recipientName(), request.recipientPhone(),
                 request.voucherCode(), request.paymentMethod(), Objects.requireNonNullElse(request.sourceType(), "REGULAR"),
-                request.auctionId(), request.selectedItemIds() == null ? null : request.selectedItemIds().stream().sorted().toList());
+                request.auctionId(), request.selectedItemIds() == null ? null : request.selectedItemIds().stream().sorted().toList(),
+                request.buyNow());
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(List.of(buyer, canonical))));
+            // Bỏ field mới khi không dùng để key checkout giỏ đã lưu trước nâng cấp vẫn replay đúng hash cũ.
+            com.fasterxml.jackson.databind.node.ObjectNode payload = mapper.valueToTree(canonical);
+            if (request.buyNow() == null) { payload.remove("buyNow"); }
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(List.of(buyer, payload))));
         } catch (JsonProcessingException | NoSuchAlgorithmException error) {
             throw new IllegalStateException("Không thể tạo fingerprint checkout", error);
         }

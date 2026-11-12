@@ -95,6 +95,32 @@ class CheckoutServiceTest {
 
     private CreateOrderRequest request() { return request(null, "123 Lê Lợi", "COD", null, null); }
 
+    /** Cùng SKU đang có 2 trong giỏ nhưng Mua ngay 1 chỉ tạo/reserve 1 và không đọc/xóa/sửa giỏ. */
+    @Test
+    void buysExactQuantityWithoutTouchingExistingCart() {
+        var target = new com.nexus.commerce.dto.request.BuyNowRequest(item.getSkuId(), 1);
+        var preview = service.preview(buyer, new CheckoutPreviewRequest(null, "123 Lê Lợi", null, target));
+        assertEquals(1, preview.items().getFirst().quantity());
+        when(inventory.reserve(any(), any(), any())).thenReturn(List.of(UUID.randomUUID()));
+        var request = new CreateOrderRequest("123 Lê Lợi", "Người nhận", "0901234567", null,
+                "COD", "REGULAR", null, null, target);
+        service.create(buyer, key, request, "jwt");
+        var saved = ArgumentCaptor.forClass(Order.class);
+        verify(orders).saveAndFlush(saved.capture());
+        assertEquals(1, saved.getValue().getItems().getFirst().getQuantity());
+        assertEquals(2, item.getQuantity());
+        assertEquals(1, cart.getItems().size());
+        org.mockito.Mockito.verifyNoInteractions(carts, items);
+    }
+
+    /** Không cho payload Mua ngay trộn item giỏ để backend vô tình chuyển sang mua cả giỏ. */
+    @Test
+    void rejectsMixedBuyNowAndCartSelection() {
+        var target = new com.nexus.commerce.dto.request.BuyNowRequest(item.getSkuId(), 1);
+        assertThrows(ApiException.class, () -> service.preview(buyer,
+                new CheckoutPreviewRequest(List.of(item.getId()), "123 Lê Lợi", null, target)));
+    }
+
     private void complete(int status) {
         TransactionSynchronizationManager.getSynchronizations().forEach(s -> s.afterCompletion(status));
     }
