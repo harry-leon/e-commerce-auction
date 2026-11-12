@@ -21,7 +21,10 @@ afterEach(() => vi.unstubAllGlobals())
 
 /** Return từ VNPAY/tab mới có cookie nhưng thiếu cache profile: nạp lại từ /users/me và chỉ lưu user. */
 it('restores the UI from authenticated cookies without a sessionStorage profile', async () => {
-    const fetcher = vi.fn().mockResolvedValue(reply({ success: true, data: profile }))
+    const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(reply({ hasSessionCookies: true }))
+        .mockResolvedValue(reply({ success: true, data: profile }))
     vi.stubGlobal('fetch', fetcher)
     await useSessionStore.getState().restoreSession()
     expect(useSessionStore.getState().user?.id).toBe(profile.id)
@@ -38,6 +41,7 @@ it('restores the UI from authenticated cookies without a sessionStorage profile'
 it('refreshes from cookies even when the UI has no cached user', async () => {
     const fetcher = vi
         .fn()
+        .mockResolvedValueOnce(reply({ hasSessionCookies: true }))
         .mockResolvedValueOnce(reply({}, 401))
         .mockResolvedValueOnce(reply({ success: true, data: { user: profile } }))
         .mockResolvedValueOnce(reply({ success: true, data: profile }))
@@ -45,10 +49,23 @@ it('refreshes from cookies even when the UI has no cached user', async () => {
     await useSessionStore.getState().restoreSession()
     expect(useSessionStore.getState().user?.id).toBe(profile.id)
     expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+        '/api/v1/auth/session',
         '/api/v1/users/me',
         '/api/v1/auth/refresh',
         '/api/v1/users/me',
     ])
+})
+
+/** Khách không có cookie phải về UI chưa đăng nhập mà không gọi me hoặc refresh dù cache còn profile cũ. */
+it('clears stale cached profiles without unauthorized requests when cookies are absent', async () => {
+    saveSession({ user: mapUser(profile) })
+    const fetcher = vi.fn().mockResolvedValue(reply({ hasSessionCookies: false }))
+    vi.stubGlobal('fetch', fetcher)
+    await useSessionStore.getState().restoreSession()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher.mock.calls[0][0]).toBe('/api/v1/auth/session')
+    expect(readSession()).toBeNull()
+    expect(useSessionStore.getState().user).toBeNull()
 })
 
 /** Lỗi mạng/service lúc refresh không được coi là thao tác đăng xuất. */

@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { formatSkuDisplay, readSession, type ApiProduct, type Envelope } from '../../api/client'
+import {
+    api,
+    formatSkuDisplay,
+    readSession,
+    type ApiProduct,
+    type Envelope,
+} from '../../api/client'
 import { addItemToCart } from '../../api/cart'
 import { addGuestCartItem, clearGuestCart } from '../buyer/guestCart'
 import { purchaseAvailabilityMessage } from '../buyer/purchaseAvailability'
@@ -62,7 +68,7 @@ export function ProductDetailPage() {
                       : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
               skus: apiProduct.skus || [],
               enableAuction: apiProduct.auctionEnabled ?? false,
-              stock: 50,
+              stock: 0,
               rating: 5.0,
               reviewCount: 12,
               location: 'ho-chi-minh',
@@ -132,6 +138,52 @@ export function ProductDetailPage() {
     const currentOriginalPrice = selectedSku?.originalPrice ?? product.originalPrice
     const currentSkuCode = selectedSku?.skuCode ?? product.sku
 
+    // Tồn bán lấy từ Fulfillment theo đúng SKU, không dùng số demo của Catalog.
+    // Gắn kết quả với SKU và bỏ response muộn để không hiển thị kho biến thể cũ khi đổi lựa chọn.
+    const [inventory, setInventory] = useState<{ skuId: string; quantity: number } | null>(null)
+    const [inventoryError, setInventoryError] = useState(false)
+    const inventorySkuId = selectedSku?.id || ''
+    const availableStock = inventory?.skuId === inventorySkuId ? inventory.quantity : null
+    useEffect(() => {
+        let active = true
+        setInventory(null)
+        setInventoryError(false)
+        if (!inventorySkuId) return
+        api<Envelope<{ availableQty: number }>>(
+            `/inventory/sku/${encodeURIComponent(inventorySkuId)}`,
+        )
+            .then((response) => {
+                const quantity = response?.data?.availableQty
+                if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity < 0) {
+                    throw new Error('Tồn kho không hợp lệ')
+                }
+                if (active) {
+                    setInventory({ skuId: inventorySkuId, quantity })
+                    setQty((previous) => Math.max(1, Math.min(previous, quantity)))
+                }
+            })
+            .catch(() => {
+                if (active) setInventoryError(true)
+            })
+        return () => {
+            active = false
+        }
+    }, [inventorySkuId])
+
+    // Chưa kiểm tra được kho không đồng nghĩa còn hàng; kiểm tra lại lúc Mua ngay vẫn bảo vệ thay đổi đồng thời.
+    const stockMessage =
+        availableStock === null
+            ? inventoryError
+                ? lang === 'vi'
+                    ? 'Chưa kiểm tra được tồn kho'
+                    : 'Stock unavailable'
+                : lang === 'vi'
+                  ? 'Đang kiểm tra tồn kho…'
+                  : 'Checking stock…'
+            : availableStock > 0
+              ? `${availableStock} ${lang === 'en' ? 'units available' : 'sản phẩm còn hàng'}`
+              : tr(lang, 'outOfStock')
+
     // Tải danh sách sản phẩm khác từ Catalog Service backend để làm gợi ý liên quan
     const { data: allProductsEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
     const relatedProducts = (allProductsEnvelope?.data || [])
@@ -152,7 +204,8 @@ export function ProductDetailPage() {
             description: p.description || '',
             descriptionVi: p.description || '',
             enableAuction: p.auctionEnabled || false,
-            stock: 50,
+            // Card gợi ý chưa tải kho riêng; không gán tồn demo để dùng làm căn cứ mua hàng.
+            stock: 0,
             rating: 5.0,
             reviewCount: 12,
             location: 'ho-chi-minh',
@@ -525,7 +578,11 @@ export function ProductDetailPage() {
                         <span className="text-sm font-semibold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
                             {product.category || 'General'}
                         </span>
-                        <span className="badge badge-green">{tr(lang, 'inStock')}</span>
+                        <span
+                            className={`badge ${availableStock && availableStock > 0 ? 'badge-green' : 'badge-red'}`}
+                        >
+                            {stockMessage}
+                        </span>
                         {product.enableAuction && (
                             <span className="badge badge-indigo">
                                 {lang === 'en' ? 'Auction Eligible' : 'Hỗ trợ đấu giá'}
@@ -616,21 +673,18 @@ export function ProductDetailPage() {
                             <NumberStepper
                                 value={qty}
                                 min={1}
-                                max={product.stock || 99}
+                                max={Math.max(1, availableStock ?? 1)}
                                 onChange={setQty}
                             />
                         </div>
-                        <div className="text-xs text-gray-500">
-                            {(product.stock || 8) > 0
-                                ? `${product.stock || 8} ${lang === 'en' ? 'units available' : 'sản phẩm còn hàng'}`
-                                : tr(lang, 'outOfStock')}
-                        </div>
+                        <div className="text-xs text-gray-500">{stockMessage}</div>
                         <div className="flex gap-3">
                             <Button
                                 variant="secondary"
                                 size="lg"
                                 className="flex-1"
                                 onClick={addToCart}
+                                disabled={availableStock === null || availableStock < qty}
                                 loading={addingToCart}
                             >
                                 {tr(lang, 'addToCart')}
@@ -640,6 +694,9 @@ export function ProductDetailPage() {
                                 size="lg"
                                 className="flex-1 bg-primary hover:bg-primary-dark"
                                 onClick={handleBuyNow}
+                                disabled={
+                                    addingToCart || availableStock === null || availableStock < qty
+                                }
                             >
                                 {tr(lang, 'buyNow')}
                             </Button>

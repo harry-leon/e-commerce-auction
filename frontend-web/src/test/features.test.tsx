@@ -875,6 +875,33 @@ describe('Cart, Checkout và Payment Result', () => {
 })
 
 describe('ProductDetailPage (catalog) – Add to Cart và Tab', () => {
+    /** Kho thật bằng 0 không được hiển thị tồn demo 50 hoặc cho người mua thêm/checkout. */
+    it('shows zero live stock instead of demo quantities and disables purchase', async () => {
+        holder.current.lang = 'vi'
+        holder.current.pageParams = { id: 'product-1' }
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(
+                async (input: string) =>
+                    new Response(
+                        JSON.stringify({
+                            success: true,
+                            data: input.includes('/inventory/sku/')
+                                ? { availableQty: 0 }
+                                : input.includes('/products/product-1')
+                                  ? product
+                                  : [],
+                        }),
+                    ),
+            ),
+        )
+        render(<ProductDetailPage />)
+        await waitFor(() => expect(screen.getAllByText(/hết hàng/i).length).toBeGreaterThan(0))
+        expect(screen.queryByText(/50 sản phẩm còn hàng/)).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /mua ngay|buy now/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: /thêm vào giỏ|add to cart/i })).toBeDisabled()
+    })
+
     /**
      * Kiểm tra các luồng trong ProductDetailPage của catalog chưa được cover:
      * - Nút Add to Cart gọi setCartCount và showToast
@@ -888,6 +915,8 @@ describe('ProductDetailPage (catalog) – Add to Cart và Tab', () => {
 
         // Bấm nút Thêm vào giỏ
         const addBtn = screen.getByRole('button', { name: /thêm vào giỏ|add to cart/i })
+        // Kho được tải bất đồng bộ; chỉ cho thêm sau khi xác nhận số lượng thật.
+        await waitFor(() => expect(addBtn).toBeEnabled())
         fireEvent.click(addBtn)
         expect(holder.current.showToast).toHaveBeenCalled()
     })
