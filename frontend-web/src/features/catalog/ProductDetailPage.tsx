@@ -7,8 +7,9 @@ import {
     type Envelope,
 } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
-import { addGuestCartItem, clearGuestCart } from '../buyer/guestCart'
+import { addGuestCartItem } from '../buyer/guestCart'
 import { purchaseAvailabilityMessage } from '../buyer/purchaseAvailability'
+import { clearCheckoutCommand } from '../buyer/checkoutRecovery'
 import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import {
@@ -309,8 +310,8 @@ export function ProductDetailPage() {
     /**
      * Chức năng: Mua ngay sản phẩm và SKU đang xem, đồng bộ vào giỏ hàng backend thật nếu đã đăng nhập và chuyển sang màn hình Checkout.
      * Đầu vào và kết quả: targetSku.id từ biến thể SKU sản phẩm, số lượng qty; điều hướng sang trang checkout.
-     * Luồng xử lý: Nếu đã đăng nhập -> gọi addItemToCart đồng bộ vào Database -> xóa guestCart -> chuyển sang checkout.
-     * Quy tắc: Bắt buộc tạo giỏ hàng thật trên server trước khi Checkout để tránh lỗi CART_ITEM_NOT_FOUND.
+     * Luồng xử lý: Kiểm tra kho → lưu SKU/số lượng và snapshot UI vào sessionStorage → checkout trực tiếp, không sửa giỏ.
+     * Quy tắc: Preview và Create Order dùng buyNow; giá và quyền mua được server kiểm tra lại, không tin giá client.
      * Lỗi & giới hạn: Bắt lỗi nếu SKU không khả dụng hoặc hết hàng từ Catalog Service.
      */
     const handleBuyNow = async () => {
@@ -346,57 +347,40 @@ export function ProductDetailPage() {
         } finally {
             setAddingToCart(false)
         }
-        const session = readSession()
-        if (session && targetSku?.id) {
-            try {
-                setAddingToCart(true)
-                await addItemToCart(targetSku.id, qty)
-                clearGuestCart()
-                // Ghi nhận mục tiêu "Mua ngay" độc lập vào sessionStorage để màn hình Checkout
-                // chỉ thanh toán riêng sản phẩm này, không gom toàn bộ các sản phẩm khác đang có trong giỏ hàng.
-                try {
-                    sessionStorage.setItem(
-                        'nexus.buy-now-target',
-                        JSON.stringify({ skuId: targetSku.id, quantity: qty }),
-                    )
-                } catch {
-                    // Bỏ qua lỗi storage cục bộ
-                }
-                navigate('checkout')
-                return
-            } catch (err) {
-                showToast({
-                    type: 'error',
-                    message:
-                        lang === 'en'
-                            ? `Cannot proceed to checkout: ${err instanceof Error ? err.message : String(err)}`
-                            : `Không thể chuyển sang thanh toán: ${err instanceof Error ? err.message : String(err)}`,
-                })
-                return
-            } finally {
-                setAddingToCart(false)
-            }
-        }
-        addGuestCartItem({
-            skuId: targetSku?.id || product.id,
-            skuCode: targetSku?.skuCode || `SKU-${product.id}`,
-            productName: lang === 'en' ? product.name : product.nameVi || product.name,
-            thumbnailUrl: productImages[0],
-            unitPrice: currentPrice,
-            quantity: qty,
-        })
-        // Ghi nhận mục tiêu "Mua ngay" cho khách vãng lai
+        // Chỉ lưu mục tiêu/snapshot giao diện; không POST cộng giỏ hoặc xóa giỏ khách.
+        // Nếu storage lỗi thì dừng, tránh chuyển checkout mà mất chế độ mua riêng.
         try {
+            if (!targetSku?.id)
+                throw new Error(lang === 'vi' ? 'Vui lòng chọn SKU' : 'Please select a SKU')
+            // Chỉ mua mới mới bỏ command cũ; reload checkout phải giữ key để tránh tạo đơn lặp.
+            clearCheckoutCommand(readSession()?.user.id || 'guest')
             sessionStorage.setItem(
                 'nexus.buy-now-target',
-                JSON.stringify({ skuId: targetSku?.id || product.id, quantity: qty }),
+                JSON.stringify({
+                    skuId: targetSku.id,
+                    quantity: qty,
+                    item: {
+                        id: `buy-now-${targetSku.id}`,
+                        skuId: targetSku.id,
+                        skuCode: currentSkuCode,
+                        productName: product.name,
+                        thumbnailUrl: productImages[0] || null,
+                        unitPrice: currentPrice,
+                        quantity: qty,
+                        subtotal: currentPrice * qty,
+                        stockAvailable: availableStock,
+                        isAvailable: true,
+                    },
+                }),
             )
-        } catch {
-            // Bỏ qua lỗi storage cục bộ
+            navigate('checkout')
+        } catch (error) {
+            showToast({
+                type: 'error',
+                message: error instanceof Error ? error.message : String(error),
+            })
         }
-        navigate('checkout')
     }
-
     const TABS = [
         { id: 'description', label: tr(lang, 'description') },
         { id: 'reviews', label: `${tr(lang, 'reviews')} (0)` },

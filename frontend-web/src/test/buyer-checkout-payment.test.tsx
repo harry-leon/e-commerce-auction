@@ -93,6 +93,65 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         }
     })
 
+    /** Mua ngay 1 không tải giỏ đang có SKU x2; preview chỉ gửi SKU/số lượng riêng, không gửi itemIds. */
+    it('previews buy now independently of the existing cart quantity', async () => {
+        const item = {
+            id: 'buy-now-sku',
+            skuId: 'sku-direct',
+            skuCode: 'DIRECT',
+            productName: 'Mua riêng',
+            unitPrice: 100,
+            quantity: 1,
+            subtotal: 100,
+            thumbnailUrl: null,
+            stockAvailable: 10,
+            isAvailable: true,
+        }
+        sessionStorage.setItem(
+            'nexus.buy-now-target',
+            JSON.stringify({ skuId: item.skuId, quantity: 1, item }),
+        )
+        const cart = vi.spyOn(cartApi, 'getActiveCart')
+        const add = vi.spyOn(cartApi, 'addItemToCart')
+        const preview = vi.spyOn(ordersApi, 'checkoutPreview').mockResolvedValue({
+            subtotal: 100,
+            totalAmount: 100,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 0,
+            isOrderable: true,
+        })
+        render(<CheckoutPage />)
+        expect(await screen.findByText('Mua riêng')).toBeVisible()
+        await nextCheckoutStep()
+        await nextCheckoutStep()
+        await nextCheckoutStep()
+        await waitFor(() =>
+            expect(preview).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    buyNow: { skuId: 'sku-direct', quantity: 1 },
+                    itemIds: undefined,
+                }),
+            ),
+        )
+        expect(cart).not.toHaveBeenCalled()
+        expect(add).not.toHaveBeenCalled()
+    })
+
+    /** Mục tiêu cũ thiếu snapshot phải chặn, không fallback nạp cả giỏ để mua nhầm. */
+    it('does not fall back to the whole cart when a buy now snapshot is missing', async () => {
+        sessionStorage.setItem(
+            'nexus.buy-now-target',
+            JSON.stringify({ skuId: 'sku-missing', quantity: 1 }),
+        )
+        const cart = vi.spyOn(cartApi, 'getActiveCart')
+        render(<CheckoutPage />)
+        await waitFor(() =>
+            expect(screen.getByRole('button', { name: /tiếp theo|next/i })).toBeDisabled(),
+        )
+        expect(cart).not.toHaveBeenCalled()
+    })
+
     /** POST có thể đã commit trước timeout: không tạo giỏ khách để Checkout tự cộng lại một lần nữa. */
     it('ProductCard: lỗi thêm giỏ khi đã đăng nhập không được lưu thành giỏ khách', async () => {
         vi.spyOn(cartApi, 'addItemToCart').mockRejectedValue(new Error('timeout'))
@@ -391,7 +450,11 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
 
             await waitFor(() => {
                 if (inStock) {
-                    expect(addItemSpy).toHaveBeenCalledWith('sku-size-l', 1)
+                    // Mua ngay không cộng giỏ; SKU/số lượng được lưu riêng cho API checkout trực tiếp.
+                    expect(addItemSpy).not.toHaveBeenCalled()
+                    expect(
+                        JSON.parse(sessionStorage.getItem('nexus.buy-now-target') || 'null'),
+                    ).toMatchObject({ skuId: 'sku-size-l', quantity: 1 })
                     expect(contextHolder.current.navigate).toHaveBeenCalledWith('checkout')
                 } else {
                     expect(contextHolder.current.showToast).toHaveBeenCalledWith({

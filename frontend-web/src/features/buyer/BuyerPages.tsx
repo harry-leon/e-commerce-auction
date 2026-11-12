@@ -1191,21 +1191,10 @@ export function CheckoutPage() {
         },
     )
 
-    // Khôi phục đơn theo tài khoản sau reload; backend luôn kiểm tra lại quyền và trạng thái thanh toán.
-    // Nếu người dùng vừa chọn "Mua ngay" sản phẩm mới, xóa bỏ lệnh checkout dở dang cũ để không bị kẹt đơn cũ.
-    const [createdOrder, setCreatedOrder] = useState<CreateOrderResponse | null>(() => {
-        try {
-            const rawBuyNow = sessionStorage.getItem('nexus.buy-now-target')
-            if (rawBuyNow) {
-                const uid = readSession()?.user.id || 'guest'
-                clearCheckoutCommand(uid)
-                return null
-            }
-        } catch {
-            // Bỏ qua lỗi storage
-        }
-        return readCheckoutCommand(readSession()?.user.id || 'guest')?.order || null
-    })
+    // Reload giữ command/idempotency của đơn đang mua; chỉ click Mua ngay mới mới xóa command tại trang chi tiết.
+    const [createdOrder, setCreatedOrder] = useState<CreateOrderResponse | null>(
+        () => readCheckoutCommand(readSession()?.user.id || 'guest')?.order || null,
+    )
     const [authExpired, setAuthExpired] = useState(false)
     const [orderSnapshot, setOrderSnapshot] = useState<CheckoutOrderSnapshot | null>(null)
     const [orderSnapshotError, setOrderSnapshotError] = useState<string | null>(null)
@@ -1215,8 +1204,17 @@ export function CheckoutPage() {
     // - Nếu người dùng đi từ Giỏ hàng, checkout toàn bộ các mặt hàng trong giỏ.
     const activeCheckoutItems: CartItemResponse[] = useMemo(() => {
         if (!buyNowTarget?.skuId) return cartItems
-        const matched = cartItems.filter((i) => i.skuId === buyNowTarget.skuId)
-        return matched.length > 0 ? matched : cartItems
+        // Dòng Mua ngay độc lập với giỏ: chỉ dùng snapshot UI và số lượng vừa chọn; không fallback cả giỏ.
+        const target = buyNowTarget as typeof buyNowTarget & { item?: CartItemResponse }
+        return target.item
+            ? [
+                  {
+                      ...target.item,
+                      quantity: target.quantity,
+                      subtotal: target.item.unitPrice * target.quantity,
+                  },
+              ]
+            : []
     }, [cartItems, buyNowTarget])
 
     // Khi đã có đơn, mọi dòng hàng và tổng dự kiến phải lấy từ đơn đó; giỏ mới thuộc lần mua khác.
@@ -1339,7 +1337,10 @@ export function CheckoutPage() {
         try {
             const preview = await ordersApi.checkoutPreview({
                 shippingAddress: fullAddress,
-                itemIds,
+                itemIds: buyNowTarget ? undefined : itemIds,
+                buyNow: buyNowTarget
+                    ? { skuId: buyNowTarget.skuId, quantity: buyNowTarget.quantity }
+                    : undefined,
             })
             if (requestId !== previewRequestRef.current) return
             setPreviewData(preview)
@@ -1409,6 +1410,17 @@ export function CheckoutPage() {
         let isMounted = true
 
         async function initCheckoutCart() {
+            // Mua ngay không cần tải/hợp nhất giỏ: dòng hiển thị đã lưu khi chọn sản phẩm.
+            if (buyNowTarget) {
+                if (!(buyNowTarget as typeof buyNowTarget & { item?: CartItemResponse }).item) {
+                    setCheckoutError(
+                        lang === 'vi'
+                            ? 'Lựa chọn Mua ngay đã cũ. Vui lòng chọn lại sản phẩm.'
+                            : 'Your Buy Now selection is outdated. Please select the product again.',
+                    )
+                }
+                return
+            }
             const session = readSession()
             const rawBuyNow = sessionStorage.getItem('nexus.buy-now-target')
             // Đơn cũ đang thanh toán có snapshot riêng; không nạp giỏ mới vào phần tóm tắt của đơn (trừ khi đang Mua ngay).
@@ -1452,7 +1464,7 @@ export function CheckoutPage() {
         return () => {
             isMounted = false
         }
-    }, [setCartCount, cartReloadTrigger])
+    }, [setCartCount, cartReloadTrigger, buyNowTarget, lang])
 
     const STEPS = [
         tr(lang, 'shippingAddress'),
@@ -1629,6 +1641,7 @@ export function CheckoutPage() {
             const guestCart = getGuestCart()
             if (
                 session &&
+                !buyNowTarget &&
                 guestCart.items.length > 0 &&
                 !readCheckoutCommand(session.user.id)?.order
             ) {
@@ -1652,21 +1665,23 @@ export function CheckoutPage() {
                 (item) => !item.id || item.id.startsWith('guest-item-'),
             )
 
-            // Theo đặc tả Backend CreateOrderRequest (§4.2): selectedItemIds chỉ định rõ các cart_item cần mua.
-            // Nếu Mua ngay, truyền ID của riêng sản phẩm đó để Backend chỉ gom dòng này và xóa khỏi giỏ, giữ lại các món khác.
-            // Nếu mua toàn bộ giỏ thông thường, truyền toàn bộ ID của cartItems (hoặc undefined nếu dùng guestCart local).
+            // Hai chế độ tách biệt: Mua ngay gửi buyNow, checkout giỏ gửi selectedItemIds.
+            // Không dùng ID dòng giỏ cho Mua ngay vì số lượng dòng đó có thể khác số lượng vừa chọn.
             const orderPayload: CreateOrderRequest = {
+                // Backend tự xác thực giá/quyền/kho, không đọc hoặc xóa dòng giỏ của cùng SKU.
+                buyNow: buyNowTarget
+                    ? { skuId: buyNowTarget.skuId, quantity: buyNowTarget.quantity }
+                    : undefined,
                 shippingAddress: fullAddress,
                 recipientName: shippingData.fullName.trim(),
                 recipientPhone: shippingData.phone.replace(/[\s-]/g, ''),
                 paymentMethod: paymentData.method,
                 sourceType: 'REGULAR',
-                selectedItemIds:
-                    isBuyNow && !hasLocalId
-                        ? checkoutItems.map((item) => item.id)
-                        : hasLocalId
-                          ? undefined
-                          : cartItems.map((item) => item.id),
+                selectedItemIds: isBuyNow
+                    ? undefined
+                    : hasLocalId
+                      ? undefined
+                      : cartItems.map((item) => item.id),
             }
 
             // Lưu key/payload trước Create Order; mất ACK/reload không được sinh đơn mới từ giỏ đã rỗng.
@@ -1696,8 +1711,6 @@ export function CheckoutPage() {
                 if (!isBuyNow) {
                     clearGuestCart()
                     setCartCount(0)
-                } else if (buyNowTarget?.skuId) {
-                    removeGuestCartItem(buyNowTarget.skuId)
                 }
                 try {
                     sessionStorage.removeItem('nexus.buy-now-target')
@@ -1724,16 +1737,7 @@ export function CheckoutPage() {
                 clearGuestCart()
                 setCartCount(0)
             } else {
-                // Chế độ Mua ngay: Backend chỉ xóa item được chọn khỏi giỏ; giữ nguyên các sản phẩm khác
-                if (buyNowTarget?.skuId) {
-                    removeGuestCartItem(buyNowTarget.skuId)
-                }
-                try {
-                    const refreshed = await getActiveCart()
-                    setCartCount(refreshed.totalQuantity)
-                } catch {
-                    // Bỏ qua lỗi đếm
-                }
+                // Mua ngay không thay đổi giỏ backend/local nên giữ nguyên badge hiện tại.
             }
             try {
                 sessionStorage.removeItem('nexus.buy-now-target')
