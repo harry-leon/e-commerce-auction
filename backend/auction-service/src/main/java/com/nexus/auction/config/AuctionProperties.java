@@ -16,7 +16,8 @@ import org.springframework.validation.annotation.Validated;
  * - Hỗ trợ cập nhật tham số tại runtime thông qua @RefreshScope và actuator refresh endpoint.
  *
  * Quy tắc và lý do:
- * - Quản lý tập trung bước giá đấu giá, cơ chế chống sniping, giới hạn số phiên mở và khung thời lượng phiên.
+ * - Quản lý tập trung bước giá đấu giá, cơ chế chống sniping, giới hạn số phiên mở, khung thời lượng phiên
+ *   và cờ kiểm tra điểm uy tín trước khi tạo phiên/đặt giá.
  * - Tự quản lý getter/setter thuần theo chuẩn thiết kế không Lombok của auction-service.
  * - Có sẵn giá trị mặc định để ứng dụng và các unit test vẫn chạy độc lập an toàn khi Config Server chưa bật.
  * - Dùng Bean Validation (@Validated, @NotNull, @Min) ngăn chặn cấu hình sai giá trị âm hoặc không hợp lệ.
@@ -114,6 +115,9 @@ public class AuctionProperties {
         @Min(value = 60, message = "Thời lượng tối đa của phiên đấu giá phải từ 60 giây trở lên")
         private Long maxDurationSeconds = 604800L; // Mặc định 7 ngày = 7 * 24 * 3600
 
+        /** Cờ bật/tắt kiểm tra điểm uy tín (BID >= 40, CREATE_AUCTION >= 50) qua reputation-service. */
+        private boolean reputationEnforcementEnabled = true;
+
         public Integer getMaxActiveAuctionsPerSeller() {
             return maxActiveAuctionsPerSeller;
         }
@@ -136,6 +140,14 @@ public class AuctionProperties {
 
         public void setMaxDurationSeconds(Long maxDurationSeconds) {
             this.maxDurationSeconds = maxDurationSeconds;
+        }
+
+        public boolean isReputationEnforcementEnabled() {
+            return reputationEnforcementEnabled;
+        }
+
+        public void setReputationEnforcementEnabled(boolean reputationEnforcementEnabled) {
+            this.reputationEnforcementEnabled = reputationEnforcementEnabled;
         }
     }
 

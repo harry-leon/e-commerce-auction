@@ -1,5 +1,6 @@
 package com.nexus.auction.service.impl;
 
+import com.nexus.auction.client.ReputationEligibilityClient;
 import com.nexus.auction.config.AuctionProperties;
 import com.nexus.auction.dto.mapper.AuctionMapper;
 import com.nexus.auction.dto.request.CancelAuctionRequest;
@@ -25,6 +26,7 @@ import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -56,10 +58,22 @@ public class AuctionServiceImpl implements AuctionService {
 
     private final AuctionRepository auctionRepository;
     private final AuctionProperties auctionProperties;
+    private final ReputationEligibilityClient reputationEligibilityClient;
 
     public AuctionServiceImpl(AuctionRepository auctionRepository, AuctionProperties auctionProperties) {
         this.auctionRepository = auctionRepository;
         this.auctionProperties = auctionProperties;
+        this.reputationEligibilityClient = null;
+    }
+
+    @Autowired
+    public AuctionServiceImpl(
+            AuctionRepository auctionRepository,
+            AuctionProperties auctionProperties,
+            @Autowired(required = false) ReputationEligibilityClient reputationEligibilityClient) {
+        this.auctionRepository = auctionRepository;
+        this.auctionProperties = auctionProperties;
+        this.reputationEligibilityClient = reputationEligibilityClient;
     }
 
     /**
@@ -81,6 +95,11 @@ public class AuctionServiceImpl implements AuctionService {
         Instant now = Instant.now();
         validateAuctionTiming(request.getStartTime(), request.getEndTime(), now, true);
         validateBidIncrement(request.getBidIncrement());
+
+        // Kiểm tra điểm uy tín tối thiểu của người bán trước khi mở phiên đấu giá (SRS §3.5.3)
+        if (reputationEligibilityClient != null && auctionProperties.getRules().isReputationEnforcementEnabled()) {
+            reputationEligibilityClient.assertEligible(sellerId, "CREATE_AUCTION");
+        }
 
         // Kiểm tra hạn mức phiên đang hoạt động của người bán
         int maxActive = auctionProperties.getRules().getMaxActiveAuctionsPerSeller();

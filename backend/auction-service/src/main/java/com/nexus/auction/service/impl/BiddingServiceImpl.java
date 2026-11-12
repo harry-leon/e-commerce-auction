@@ -1,5 +1,6 @@
 package com.nexus.auction.service.impl;
 
+import com.nexus.auction.client.ReputationEligibilityClient;
 import com.nexus.auction.config.AuctionProperties;
 import com.nexus.auction.dto.mapper.BidMapper;
 import com.nexus.auction.dto.request.PlaceBidRequest;
@@ -26,6 +27,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
@@ -64,6 +66,7 @@ public class BiddingServiceImpl implements BiddingService {
     private final AuctionProperties auctionProperties;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
+    private final ReputationEligibilityClient reputationEligibilityClient;
 
     public BiddingServiceImpl(
             AuctionRepository auctionRepository,
@@ -78,6 +81,25 @@ public class BiddingServiceImpl implements BiddingService {
         this.auctionProperties = auctionProperties;
         this.eventPublisher = eventPublisher;
         this.clock = clock;
+        this.reputationEligibilityClient = null;
+    }
+
+    @Autowired
+    public BiddingServiceImpl(
+            AuctionRepository auctionRepository,
+            BidRepository bidRepository,
+            AuctionSettlementRepository auctionSettlementRepository,
+            AuctionProperties auctionProperties,
+            ApplicationEventPublisher eventPublisher,
+            Clock clock,
+            @Autowired(required = false) ReputationEligibilityClient reputationEligibilityClient) {
+        this.auctionRepository = auctionRepository;
+        this.bidRepository = bidRepository;
+        this.auctionSettlementRepository = auctionSettlementRepository;
+        this.auctionProperties = auctionProperties;
+        this.eventPublisher = eventPublisher;
+        this.clock = clock;
+        this.reputationEligibilityClient = reputationEligibilityClient;
     }
 
     /**
@@ -148,6 +170,11 @@ public class BiddingServiceImpl implements BiddingService {
         // Người đang giữ giá cao nhất không được tự nâng giá tiếp khi chưa có ai vượt qua
         if (Objects.equals(auction.getHighestBidderId(), bidderId)) {
             throw new BusinessException(ErrorCode.BID_AMOUNT_TOO_LOW, "Bạn đang là người trả giá cao nhất, không thể tự nâng giá khi chưa bị vượt");
+        }
+
+        // Kiểm tra điểm uy tín tối thiểu của người đặt giá thầu trước khi xử lý mức giá (SRS §3.5.3)
+        if (reputationEligibilityClient != null && auctionProperties.getRules().isReputationEnforcementEnabled()) {
+            reputationEligibilityClient.assertEligible(bidderId, "BID");
         }
 
         // 5. Kiểm tra giá đặt tối thiểu (BR-AUC-07)
