@@ -2,6 +2,7 @@ package com.nexus.gateway.controller;
 
 import com.nexus.common.response.ApiResponse;
 import com.nexus.gateway.config.PasswordPolicy;
+import com.nexus.gateway.config.RsaCryptoService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,14 +62,20 @@ public class AuthGatewayController {
     private static final Logger LOG =
         LoggerFactory.getLogger(AuthGatewayController.class);
 
-    /** Timeout hiện có cho mỗi request IAM/profile, giữ nguyên 15 giây. */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    /**
+     * Timeout cho mỗi request IAM/profile. Tăng từ 15s lên 60s để đáp ứng độ trễ
+     * của chuỗi truy vấn xác thực người dùng tới cơ sở dữ liệu Supabase tại Tokyo.
+     */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
 
     /** Hạn dự phòng khi IAM không trả refresh_expires_in, tính bằng giây. */
     private static final int DEFAULT_REFRESH_SECONDS = 1800;
 
     /** Client reactive dùng chung cho IAM và profile. */
     private final WebClient webClient;
+
+    /** Dịch vụ cung cấp Public Key và giải mã mật khẩu RSA từ Frontend. */
+    private final RsaCryptoService rsaCryptoService;
 
     /** Endpoint cấp token Keycloak. */
     @Value("${app.keycloak.token-uri}")
@@ -103,12 +110,34 @@ public class AuthGatewayController {
     private boolean cookieSecure = true;
 
     /**
-     * Dùng builder đã cấu hình connector/timeout của Gateway.
+     * Dùng builder đã cấu hình connector/timeout của Gateway và nạp RsaCryptoService.
      *
      * @param webClientBuilder builder do Spring cấp
+     * @param rsaCryptoService dịch vụ giải mã RSA mật khẩu phía client
      */
-    public AuthGatewayController(final WebClient.Builder webClientBuilder) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public AuthGatewayController(final WebClient.Builder webClientBuilder,
+            final RsaCryptoService rsaCryptoService) {
         this.webClient = webClientBuilder.build();
+        this.rsaCryptoService = rsaCryptoService;
+    }
+
+    /** Constructor tương thích ngược cho unit test. */
+    public AuthGatewayController(final WebClient.Builder webClientBuilder) {
+        this(webClientBuilder, new RsaCryptoService());
+    }
+
+    /**
+     * Cung cấp Public Key RSA của Gateway cho Frontend để mã hóa mật khẩu trước khi gửi request.
+     * Cho phép client cache key trong 1 giờ để giảm tải cho Gateway.
+     *
+     * @return ApiResponse chứa publicKey Base64
+     */
+    @GetMapping("/public-key")
+    public ResponseEntity<ApiResponse<Map<String, String>>> getPublicKey() {
+        return ResponseEntity.ok()
+            .cacheControl(org.springframework.http.CacheControl.maxAge(Duration.ofHours(1)))
+            .body(ApiResponse.ok(Map.of("publicKey", rsaCryptoService.getPublicKeyBase64())));
     }
 
     /**
@@ -121,7 +150,12 @@ public class AuthGatewayController {
     public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>>
         login(@RequestBody final Map<String, String> body) {
         String username = body.getOrDefault("username", body.get("email"));
-        String password = body.get("password");
+        // Ưu tiên đọc encryptedPassword được mã hóa RSA từ Frontend; nếu không có thì đọc password thường.
+        String rawPassword = body.get("encryptedPassword");
+        if (rawPassword == null || rawPassword.isBlank()) {
+            rawPassword = body.get("password");
+        }
+        String password = rsaCryptoService.decrypt(rawPassword);
 
         if (username == null || password == null) {
             return Mono.just(ResponseEntity.badRequest().body(
@@ -206,8 +240,12 @@ public class AuthGatewayController {
         // trả 500 cho payload không hợp lệ.
         String email = body.get("email") instanceof String value
             ? value.trim().toLowerCase(java.util.Locale.ROOT) : null;
-        String password = body.get("password") instanceof String value ? value
-            : null;
+        // Ưu tiên giải mã RSA nếu nhận encryptedPassword từ Frontend
+        Object encryptedPwdObj = body.get("encryptedPassword");
+        Object plainPwdObj = body.get("password");
+        String passwordRaw = encryptedPwdObj instanceof String s && !s.isBlank() ? s
+            : (plainPwdObj instanceof String s2 ? s2 : null);
+        String password = rsaCryptoService.decrypt(passwordRaw);
         String fullName = body.get("fullName") instanceof String value
             ? value.trim() : null;
 

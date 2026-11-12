@@ -25,6 +25,7 @@ import {
     PasswordRequirementsChecklist,
     PasswordConfirmIndicator,
 } from './PasswordValidation'
+import { encryptPassword } from '../../utils/crypto'
 import type { Page } from '../../types'
 import { Gavel } from '../../components/UI'
 
@@ -75,10 +76,12 @@ export function LoginPage() {
         setLoading(true)
         setError('')
         try {
-            // Chức năng: Gửi yêu cầu đăng nhập với email đã loại bỏ khoảng trắng thừa để tránh lỗi nhập liệu
+            // Chức năng: Mã hóa mật khẩu bằng RSA trước khi gửi request để bảo vệ an toàn và ẩn khỏi DevTools Network tab.
+            // Đầu vào: password plain text người dùng nhập; Kết quả: chuỗi Base64 RSA-OAEP.
+            const encryptedPassword = await encryptPassword(password)
             const rawResponse = await post<AuthPayload | { data: AuthPayload }>('/auth/login', {
                 email: email.trim(),
-                password,
+                encryptedPassword,
             })
             const payload: AuthPayload = (rawResponse as any)?.data || rawResponse
             const user = mapUser(payload.user)
@@ -308,8 +311,13 @@ export function RegisterPage() {
         if (!validate3()) return
         setLoading(true)
         try {
+            // Chức năng: Mã hóa mật khẩu bằng RSA trước khi gửi request đăng ký tài khoản mới.
+            // Đầu vào: form.password plain text; Kết quả: chuỗi Base64 RSA-OAEP gửi vào encryptedPassword, ẩn hoàn toàn mật khẩu thô.
+            const encryptedPassword = await encryptPassword(form.password)
+            const { password, confirmPassword, ...restForm } = form
             await post<AuthPayload>('/auth/register', {
-                ...form,
+                ...restForm,
+                encryptedPassword,
                 identifyNumber: form.idNumber,
                 gender: form.gender.toUpperCase(),
             })

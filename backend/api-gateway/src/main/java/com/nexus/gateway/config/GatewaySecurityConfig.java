@@ -65,6 +65,8 @@ public class GatewaySecurityConfig {
                     "/api/v1/payments/vnpay/ipn").permitAll()
                 // Probe chỉ báo có cookie, không cấp quyền; khách cần truy cập trước khi khôi phục phiên.
                 .pathMatchers(HttpMethod.GET, "/api/v1/auth/session").permitAll()
+                // Public Key cho Frontend mã hóa mật khẩu trước khi gửi qua mạng.
+                .pathMatchers(HttpMethod.GET, "/api/v1/auth/public-key").permitAll()
                 .pathMatchers("/api/v1/auth/login",
                     "/api/v1/auth/logout",
                     "/api/v1/auth/refresh-token", "/api/v1/auth/refresh")
