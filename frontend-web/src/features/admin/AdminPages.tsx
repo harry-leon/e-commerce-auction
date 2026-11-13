@@ -100,88 +100,152 @@ function useAdminActivity(userId?: string) {
 export function AdminDashboardPage() {
     const { lang, navigate } = useApp()
     const recentEvents = useAdminActivity()
-    const KPIs = [
+    const [dashboard, setDashboard] = useState<any>(null)
+    const [refreshing, setRefreshing] = useState(true)
+    const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+
+    // Tổng hợp snapshot từ API nghiệp vụ hiện có; polling 30 giây giúp số liệu cập nhật mà không dựng API báo cáo giả.
+    useEffect(() => {
+        let active = true
+        const loadDashboard = async () => {
+            setRefreshing(true)
+            const results = await Promise.allSettled([
+                api<any>('/orders?role=admin&page=0&size=100'),
+                api<any>('/users?page=0&size=100'),
+                api<any>('/auctions?status=ACTIVE&page=1&limit=100'),
+            ])
+            if (!active) return
+
+            const unpack = (result: PromiseSettledResult<any>) => {
+                if (result.status !== 'fulfilled') return { ok: false, rows: [], total: null }
+                const response = result.value
+                const payload = response?.data ?? response
+                const rows = Array.isArray(payload) ? payload : payload?.content ?? []
+                return {
+                    ok: true,
+                    rows,
+                    total: response?.meta?.pagination?.totalElements ?? rows.length,
+                }
+            }
+            const [orders, users, auctions] = results.map(unpack)
+            const paidStatuses = new Set(['PAID', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'COMPLETED'])
+            const recentGmv = orders.rows.reduce((sum: number, order: any) => {
+                const status = String(order.status || '').toUpperCase()
+                const amount = Number(order.totalAmount ?? order.total ?? 0)
+                return paidStatuses.has(status) && Number.isFinite(amount) ? sum + amount : sum
+            }, 0)
+            const today = new Date()
+            const days = Array.from({ length: 7 }, (_, index) => {
+                const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (6 - index))
+                const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+                const count = orders.rows.filter((order: any) => {
+                    const created = new Date(order.createdAt)
+                    return Number.isFinite(created.getTime()) &&
+                        `${created.getFullYear()}-${created.getMonth()}-${created.getDate()}` === key
+                }).length
+                return { label: date.toLocaleDateString(lang === 'en' ? 'en-US' : 'vi-VN', { weekday: 'short' }), count }
+            })
+            setDashboard({
+                orders: { ...orders, gmv: recentGmv },
+                users,
+                auctions,
+                days,
+            })
+            setUpdatedAt(new Date())
+            setRefreshing(false)
+        }
+
+        void loadDashboard()
+        const timer = window.setInterval(loadDashboard, 30_000)
+        return () => {
+            active = false
+            window.clearInterval(timer)
+        }
+    }, [lang])
+
+    const sources = dashboard
+        ? [
+              { label: lang === 'en' ? 'Orders' : 'Đơn hàng', ok: dashboard.orders.ok },
+              { label: lang === 'en' ? 'User profiles' : 'Hồ sơ người dùng', ok: dashboard.users.ok },
+              { label: lang === 'en' ? 'Auctions' : 'Phiên đấu giá', ok: dashboard.auctions.ok },
+          ]
+        : []
+    const maxDayCount = Math.max(1, ...(dashboard?.days.map((day: any) => day.count) ?? [0]))
+    const kpis = [
         {
             icon: <TrendingUp size={20} />,
-            label: 'Gross Merchandise Value',
-            value: '—',
-            change: '',
+            label: lang === 'en' ? 'GMV (latest 100 orders)' : 'GMV (100 đơn mới nhất)',
+            value: dashboard?.orders.ok ? formatCurrency(dashboard.orders.gmv, lang) : '—',
         },
         {
             icon: <Package size={20} />,
             label: lang === 'en' ? 'Total Orders' : 'Tổng đơn hàng',
-            value: '—',
-            change: '',
+            value: dashboard?.orders.ok ? String(dashboard.orders.total) : '—',
         },
         {
             icon: <Users size={20} />,
-            label: lang === 'en' ? 'Active Users' : 'Người dùng hoạt động',
-            value: '—',
-            change: '',
+            label: lang === 'en' ? 'User Profiles' : 'Hồ sơ người dùng',
+            value: dashboard?.users.ok ? String(dashboard.users.total) : '—',
         },
         {
             icon: <Gavel size={20} />,
-            label: lang === 'en' ? 'Running Auctions' : 'Đang đấu giá',
-            value: '—',
-            change: '',
+            label: lang === 'en' ? 'Running Auctions' : 'Phiên đang đấu giá',
+            value: dashboard?.auctions.ok ? String(dashboard.auctions.total) : '—',
         },
     ]
-    const DOWN_SERVICES: any[] = []
     return (
         <AdminLayout title={tr(lang, 'dashboard')}>
-            {DOWN_SERVICES.length > 0 && (
+            {sources.some((source) => !source.ok) && (
                 <div className="mb-5">
                     <AlertBanner
                         type="error"
                         message={
                             lang === 'en'
-                                ? `Service(s) down: ${DOWN_SERVICES.map((s) => s.name).join(', ')}`
-                                : `Dịch vụ bị sập: ${DOWN_SERVICES.map((s) => s.name).join(', ')}`
+                                ? `Could not load: ${sources.filter((source) => !source.ok).map((source) => source.label).join(', ')}`
+                                : `Không tải được dữ liệu: ${sources.filter((source) => !source.ok).map((source) => source.label).join(', ')}`
                         }
                     />
                 </div>
             )}
-            <div className="grid grid-cols-4 gap-5 mb-6">
-                {KPIs.map((k) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 mb-6">
+                {kpis.map((k) => (
                     <div key={k.label} className="nexus-card p-5">
                         <div className="flex items-center gap-3 mb-3">
                             <span className="text-gray-500">{k.icon}</span>
                             <span className="text-xs text-gray-500">{k.label}</span>
                         </div>
                         <p className="text-2xl font-black text-gray-900">{k.value}</p>
-                        {k.change && (
-                            <p className="text-xs text-success font-semibold mt-1">{k.change}</p>
-                        )}
                     </div>
                 ))}
             </div>
-            <div className="grid grid-cols-[1fr_320px] gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6">
                 <div className="nexus-card p-5">
-                    <h3 className="font-bold mb-4">
-                        {lang === 'en' ? 'GMV Overview' : 'Tổng quan GMV'}
-                    </h3>
-                    <div className="flex items-end gap-1.5 h-40">
-                        {[30, 50, 40, 70, 55, 85, 65, 90, 75, 95, 80, 100].map((h, i) => (
-                            <div
-                                key={i}
-                                className="flex-1 rounded-t-sm"
-                                style={{
-                                    height: `${h}%`,
-                                    background: i === 11 ? '#4F46E5' : '#EEF2FF',
-                                }}
-                            />
-                        ))}
+                    <div className="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                            <h3 className="font-bold">{lang === 'en' ? 'Recent order activity' : 'Đơn hàng gần đây'}</h3>
+                            <p className="text-xs text-gray-500 mt-1">
+                                {lang === 'en' ? 'Last 7 days from the latest 100 orders' : '7 ngày gần nhất trong 100 đơn mới nhất'}
+                            </p>
+                        </div>
+                        {updatedAt && <span className="text-xs text-gray-400">
+                            {lang === 'en' ? 'Updated ' : 'Cập nhật '}{updatedAt.toLocaleTimeString(lang === 'en' ? 'en-US' : 'vi-VN')}
+                        </span>}
                     </div>
-                    <div className="flex justify-between text-xs text-gray-400 mt-2">
-                        <span>Jan</span>
-                        <span>Jun</span>
-                        <span>Dec</span>
+                    <svg viewBox="0 0 700 180" role="img" aria-label={lang === 'en' ? 'Order count by day' : 'Số đơn theo ngày'} className="w-full h-40 overflow-visible">
+                        {[0, 1, 2, 3].map((line) => <line key={line} x1="0" x2="700" y1={20 + line * 45} y2={20 + line * 45} stroke="#e5e7eb" strokeDasharray="4 5" />)}
+                        {(dashboard?.days ?? Array.from({ length: 7 }, () => ({ count: 0 }))).map((day: any, index: number) => {
+                            const height = Math.max(day.count > 0 ? 8 : 0, (day.count / maxDayCount) * 145)
+                            return <rect key={index} x={20 + index * 98} y={165 - height} width="54" height={height} rx="5" fill="#f04b2b" opacity={refreshing ? 0.55 : 0.9}><title>{`${day.count} ${lang === 'en' ? 'orders' : 'đơn hàng'}`}</title></rect>
+                        })}
+                    </svg>
+                    <div className="grid grid-cols-7 text-center text-xs text-gray-400 mt-1">
+                        {(dashboard?.days ?? Array.from({ length: 7 }, (_, index) => ({ label: `—${6 - index}` }))).map((day: any, index: number) => <span key={index}>{day.label}</span>)}
                     </div>
                 </div>
                 <div className="nexus-card p-5">
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="font-bold">
-                            {lang === 'en' ? 'System Health' : 'Trạng thái hệ thống'}
+                            {lang === 'en' ? 'Data sources' : 'Nguồn dữ liệu'}
                         </h3>
                         <button
                             onClick={() => navigate('admin-system-health')}
@@ -190,28 +254,29 @@ export function AdminDashboardPage() {
                             {tr(lang, 'viewAll')}
                         </button>
                     </div>
-                    <div className="space-y-2">
-                        {([] as any[]).map((s) => (
-                            <div key={s.name} className="flex items-center justify-between">
+                    <div className="space-y-3">
+                        {sources.map((s) => (
+                            <div key={s.label} className="flex items-center justify-between">
                                 <span className="text-xs text-gray-700 truncate flex-1">
-                                    {s.name}
+                                    {s.label}
                                 </span>
                                 <span
-                                    className={`badge ml-2 ${s.status === 'up' ? 'badge-green' : 'badge-red'}`}
+                                    className={`badge ml-2 ${s.ok ? 'badge-green' : 'badge-red'}`}
                                 >
-                                    {s.status === 'up'
+                                    {s.ok
                                         ? tr(lang, 'serviceUp')
                                         : tr(lang, 'serviceDown')}
                                 </span>
                             </div>
                         ))}
+                        {refreshing && <p className="text-xs text-gray-400">{lang === 'en' ? 'Refreshing…' : 'Đang làm mới…'}</p>}
                     </div>
                 </div>
             </div>
             <div className="nexus-card mt-6">
                 <div className="flex items-center justify-between p-5 pb-0">
                     <h3 className="font-bold">
-                        {lang === 'en' ? 'Recent Events' : 'Sự kiện gần đây'}
+                        {lang === 'en' ? 'Recent Admin Activity' : 'Hoạt động Admin gần đây'}
                     </h3>
                     <button
                         onClick={() => navigate('admin-event-logs')}
@@ -249,6 +314,7 @@ export function AdminDashboardPage() {
                             </div>
                         </div>
                     ))}
+                    {!recentEvents.length && <p className="text-sm text-gray-500">{lang === 'en' ? 'No recent activity.' : 'Chưa có hoạt động gần đây.'}</p>}
                 </div>
             </div>
         </AdminLayout>
@@ -264,13 +330,17 @@ export function AdminUsersPage() {
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [apiUsers, setApiUsers] = useState<ApiUser[]>([])
     const [refreshKey, setRefreshKey] = useState(0)
+    const [usersLoading, setUsersLoading] = useState(true)
+    const [usersLoadError, setUsersLoadError] = useState(false)
 
-    // Tải danh sách người dùng thật từ User Service (/api/v1/users) theo từ khóa tìm kiếm
-    // Chức năng: Đọc danh sách người dùng phân trang từ backend User Service.
-    // Luồng & Quy tắc: Chuẩn hóa bóc tách cả ApiResponse { data: [...] }, Pageable { content: [...] } và mảng trần để tránh lỗi undefined khi gọi .map.
+    // Tải danh sách profile thật từ User Service; giữ riêng trạng thái lỗi để không nhầm lỗi xác thực với danh sách rỗng.
     useEffect(() => {
-        const query = search ? `?keyword=${encodeURIComponent(search)}` : ''
-        api<any>('/users' + query)
+        let active = true
+        const query = new URLSearchParams({ page: '0', size: '100' })
+        if (search) query.set('keyword', search)
+        setUsersLoading(true)
+        setUsersLoadError(false)
+        api<any>(`/users?${query.toString()}`)
             .then((res) => {
                 const rawList = res?.data ?? res?.content ?? res
                 const list = Array.isArray(rawList)
@@ -278,9 +348,16 @@ export function AdminUsersPage() {
                     : Array.isArray(rawList?.content)
                       ? rawList.content
                       : []
-                setApiUsers(list)
+                if (active) setApiUsers(list)
             })
-            .catch(() => setApiUsers([]))
+            .catch(() => {
+                if (active) {
+                    setApiUsers([])
+                    setUsersLoadError(true)
+                }
+            })
+            .finally(() => { if (active) setUsersLoading(false) })
+        return () => { active = false }
     }, [search, refreshKey])
 
     /**
@@ -331,7 +408,23 @@ export function AdminUsersPage() {
                 </Button>
             </div>
             <div className="nexus-card">
-                {filtered.length === 0 ? (
+                {usersLoadError ? (
+                    <div className="p-8 flex flex-col items-center gap-4">
+                        <AlertBanner
+                            type="error"
+                            message={lang === 'en'
+                                ? 'Could not load accounts. Sign in with an Admin account and check that the backend is running.'
+                                : 'Không tải được tài khoản. Hãy đăng nhập bằng tài khoản Admin và kiểm tra backend đang chạy.'}
+                        />
+                        <Button variant="outline" onClick={() => setRefreshKey((key) => key + 1)}>
+                            {lang === 'en' ? 'Try again' : 'Thử lại'}
+                        </Button>
+                    </div>
+                ) : usersLoading ? (
+                    <div className="p-8 text-center text-gray-500">
+                        {lang === 'en' ? 'Loading accounts...' : 'Đang tải tài khoản...'}
+                    </div>
+                ) : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState icon={<Users size={20} />} title={tr(lang, 'noData')} />
                     </div>
@@ -1000,17 +1093,15 @@ export function AdminOrdersPage() {
         : []
     const withdrawalRequest = withdrawalRequests[0]
 
-    // Admin xử lý giải quyết tranh chấp ký quỹ Escrow
+    // Chỉ báo thành công khi API xác nhận; không dùng mock local cho quyết định ảnh hưởng tiền ký quỹ.
     const resolvePayment = async (resolution: 'refunded' | 'released' | 'partial_refund') => {
         if (!selectedOrder) return
         setSubmitting(true)
         try {
-            const updated = await ordersApi.resolveOrderDispute(
-                selectedOrder.id,
-                resolution,
-                adminNotes,
-            )
-            setSelectedOrder(updated)
+            await api(`/orders/${encodeURIComponent(selectedOrder.id)}/resolve-dispute`, {
+                method: 'POST',
+                body: JSON.stringify({ resolution, note: adminNotes }),
+            })
             showToast({
                 type: 'success',
                 message:
@@ -1018,6 +1109,7 @@ export function AdminOrdersPage() {
                         ? `Dispute decision recorded: ${paymentLabel(resolution)}.`
                         : `Đã xử lý tranh chấp: ${paymentLabel(resolution)}.`,
             })
+            setSelectedOrder(null)
             await loadAdminOrders()
         } catch (err: any) {
             showToast({
@@ -2451,21 +2543,72 @@ export function AdminAuctionsPage() {
 
 // ─── Admin Reputation ──────────────────────────────────────────────────────────
 export function AdminReputationPage() {
-    const { lang } = useApp()
-    const [penaltyOpen, setPenaltyOpen] = useState(false)
+    const { lang, showToast } = useApp()
     const [adjustOpen, setAdjustOpen] = useState(false)
+    const [selectedUser, setSelectedUser] = useState<any | null>(null)
     const [users, setUsers] = useState<any[]>([])
+    const [penalties, setPenalties] = useState<any[]>([])
+    const [scoreDelta, setScoreDelta] = useState('')
+    const [reason, setReason] = useState('')
+    const [submitting, setSubmitting] = useState(false)
+    const [loading, setLoading] = useState(true)
+
+    // Nạp danh sách uy tín và nhật ký xử phạt từ API Admin; điều chỉnh chỉ ghi delta có lý do rồi tải lại dữ liệu đã lưu.
     useEffect(() => {
         let active = true
-        api<any>('/users?page=0&size=100')
-            .then((response) => {
-                const payload = response?.data ?? response
-                const rows = Array.isArray(payload) ? payload : payload?.content ?? []
-                if (active) setUsers(rows.map(mapUser))
+        setLoading(true)
+        Promise.all([
+            api<any>('/reputations/admin/users?page=0&size=100'),
+            api<any>('/reputations/admin/penalties?page=0&size=100'),
+        ])
+            .then(([userResponse, penaltyResponse]) => {
+                const userPayload = userResponse?.data ?? userResponse
+                const penaltyPayload = penaltyResponse?.data ?? penaltyResponse
+                if (active) {
+                    setUsers(Array.isArray(userPayload) ? userPayload : userPayload?.content ?? [])
+                    setPenalties(Array.isArray(penaltyPayload) ? penaltyPayload : penaltyPayload?.content ?? [])
+                }
             })
-            .catch(() => { if (active) setUsers([]) })
+            .catch(() => {
+                if (active) {
+                    setUsers([])
+                    setPenalties([])
+                }
+            })
+            .finally(() => { if (active) setLoading(false) })
         return () => { active = false }
     }, [])
+
+    const submitAdjustment = async () => {
+        const delta = Number(scoreDelta)
+        if (!selectedUser || !Number.isInteger(delta) || delta === 0 || !reason.trim()) return
+        setSubmitting(true)
+        try {
+            await api('/reputations/admin/adjustments', {
+                method: 'POST',
+                body: JSON.stringify({ userId: selectedUser.userId, scoreDelta: delta, reason: reason.trim() }),
+            })
+            showToast({ type: 'success', message: lang === 'en' ? 'Reputation score updated.' : 'Đã cập nhật điểm uy tín.' })
+            setAdjustOpen(false)
+            setScoreDelta('')
+            setReason('')
+            setSelectedUser(null)
+            // Cập nhật UI từ nguồn dữ liệu chuẩn sau khi backend xác nhận giao dịch.
+            const [userResponse, penaltyResponse] = await Promise.all([
+                api<any>('/reputations/admin/users?page=0&size=100'),
+                api<any>('/reputations/admin/penalties?page=0&size=100'),
+            ])
+            const userPayload = userResponse?.data ?? userResponse
+            const penaltyPayload = penaltyResponse?.data ?? penaltyResponse
+            setUsers(Array.isArray(userPayload) ? userPayload : userPayload?.content ?? [])
+            setPenalties(Array.isArray(penaltyPayload) ? penaltyPayload : penaltyPayload?.content ?? [])
+        } catch (error) {
+            showToast({ type: 'error', message: errorMessage(error) })
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
     return (
         <AdminLayout title={tr(lang, 'reputationManagement')}>
             <div className="grid grid-cols-2 gap-6">
@@ -2480,12 +2623,7 @@ export function AdminReputationPage() {
                                 label: lang === 'en' ? 'User' : 'Người dùng',
                                 render: (r: any) => (
                                     <div className="flex items-center gap-2">
-                                        <img
-                                            src={r.avatar}
-                                            alt=""
-                                            className="w-7 h-7 rounded-full object-cover"
-                                        />
-                                        <span className="font-semibold text-sm">{r.fullName}</span>
+                                        <span className="font-semibold text-sm">{r.userId}</span>
                                     </div>
                                 ),
                             },
@@ -2494,7 +2632,7 @@ export function AdminReputationPage() {
                                 label: lang === 'en' ? 'Score' : 'Điểm',
                                 render: (r: any) => (
                                     <span className="font-bold text-primary">
-                                        {r.reputationScore}
+                                        {r.score}
                                     </span>
                                 ),
                             },
@@ -2503,10 +2641,9 @@ export function AdminReputationPage() {
                                 label: lang === 'en' ? 'Level' : 'Cấp',
                                 render: (r: any) => (
                                     <StatusBadge
-                                        status={r.trustLevel}
+                                        status={String(r.trustLevel || '').toLowerCase()}
                                         label={
-                                            r.trustLevel.charAt(0).toUpperCase() +
-                                            r.trustLevel.slice(1)
+                                            String(r.trustLevel || '').replace(/_/g, ' ')
                                         }
                                     />
                                 ),
@@ -2514,16 +2651,11 @@ export function AdminReputationPage() {
                             {
                                 key: 'actions',
                                 label: '',
-                                render: () => (
+                                render: (r: any) => (
                                     <div className="flex gap-1">
                                         <button
-                                            onClick={() => setPenaltyOpen(true)}
-                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
-                                        >
-                                            <AlertTriangle size={13} />
-                                        </button>
-                                        <button
-                                            onClick={() => setAdjustOpen(true)}
+                                            aria-label={lang === 'en' ? 'Adjust reputation' : 'Điều chỉnh uy tín'}
+                                            onClick={() => { setSelectedUser(r); setAdjustOpen(true) }}
                                             className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5"
                                         >
                                             <Pencil size={13} />
@@ -2533,7 +2665,8 @@ export function AdminReputationPage() {
                             },
                         ]}
                         data={users}
-                        rowKey={(r) => r.id}
+                        loading={loading}
+                        rowKey={(r) => r.userId}
                     />
                 </div>
                 <div className="nexus-card">
@@ -2541,73 +2674,56 @@ export function AdminReputationPage() {
                         {lang === 'en' ? 'Recent Penalties' : 'Hình phạt gần đây'}
                     </div>
                     <div className="p-4">
-                        {([] as any[]).map((p, i) => (
-                            <div key={i} className="py-3 border-b border-border last:border-0">
+                        {penalties.length ? penalties.map((p) => (
+                            <div key={p.penaltyId} className="py-3 border-b border-border last:border-0">
                                 <div className="flex items-center justify-between mb-1">
-                                    <span className="font-semibold text-sm">{p.user}</span>
-                                    <span className="font-bold text-danger">{p.points} pts</span>
+                                    <span className="font-semibold text-sm">{p.userId}</span>
+                                    <span className={`font-bold ${p.scoreDelta < 0 ? 'text-danger' : 'text-success'}`}>{p.scoreDelta > 0 ? '+' : ''}{p.scoreDelta} pts</span>
                                 </div>
                                 <p className="text-xs text-gray-500">{p.reason}</p>
-                                <p className="text-xs text-gray-400 mt-0.5">{p.date}</p>
+                                <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(p.createdAt, lang)}</p>
                             </div>
-                        ))}
+                        )) : <EmptyState icon={<AlertTriangle size={18} />} title={lang === 'en' ? 'No reputation history' : 'Chưa có lịch sử uy tín'} />}
                     </div>
                 </div>
             </div>
             <Modal
-                open={penaltyOpen}
-                onClose={() => setPenaltyOpen(false)}
-                title={tr(lang, 'applyPenalty')}
-                size="sm"
-                footer={
-                    <>
-                        <Button variant="outline" onClick={() => setPenaltyOpen(false)}>
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button
-                            variant="danger"
-                            disabled
-                        >
-                            {tr(lang, 'applyPenalty')}
-                        </Button>
-                    </>
-                }
-            >
-                <Input
-                    label={lang === 'en' ? 'Points to deduct' : 'Số điểm trừ'}
-                    type="number"
-                    placeholder="-10"
-                />
-                <div className="mt-3">
-                    <Textarea label={tr(lang, 'reason')} rows={2} />
-                </div>
-            </Modal>
-            <Modal
                 open={adjustOpen}
-                onClose={() => setAdjustOpen(false)}
+                onClose={() => { setAdjustOpen(false); setSelectedUser(null) }}
                 title={tr(lang, 'adjustReputation')}
                 size="sm"
                 footer={
                     <>
-                        <Button variant="outline" onClick={() => setAdjustOpen(false)}>
+                        <Button variant="outline" onClick={() => { setAdjustOpen(false); setSelectedUser(null) }}>
                             {tr(lang, 'cancel')}
                         </Button>
                         <Button
                             variant="primary"
-                            disabled
+                            onClick={submitAdjustment}
+                            disabled={submitting || !Number.isInteger(Number(scoreDelta)) || Number(scoreDelta) === 0 || !reason.trim()}
                         >
-                            {tr(lang, 'save')}
+                            {submitting ? (lang === 'en' ? 'Saving...' : 'Đang lưu...') : tr(lang, 'save')}
                         </Button>
                     </>
                 }
             >
                 <Input
-                    label={lang === 'en' ? 'Adjust by (±)' : 'Điều chỉnh (±)'}
+                    label={lang === 'en' ? 'Adjust by (±200)' : 'Điều chỉnh (±200)'}
                     type="number"
                     placeholder="+5 or -5"
+                    min={-200}
+                    max={200}
+                    value={scoreDelta}
+                    onChange={(event) => setScoreDelta(event.target.value)}
                 />
                 <div className="mt-3">
-                    <Textarea label={tr(lang, 'reason')} rows={2} />
+                    <Textarea
+                        label={tr(lang, 'reason')}
+                        rows={2}
+                        value={reason}
+                        onChange={(event) => setReason(event.target.value)}
+                        maxLength={500}
+                    />
                 </div>
             </Modal>
         </AdminLayout>
