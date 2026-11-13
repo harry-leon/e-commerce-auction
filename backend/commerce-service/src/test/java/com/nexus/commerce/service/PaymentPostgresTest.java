@@ -55,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -68,6 +68,53 @@ class PaymentPostgresTest {
     @Autowired private RefundResolutionService resolutions;
     @Autowired private RefundNotificationReplayService notificationReplays;
     @Autowired private ShippingEventInboxService shippingInbox;
+    @Autowired private ShippingNotificationReplayService shippingReplays;
+
+    /** Replay chỉ DEAD_LETTER, audit/key giữ nguyên sau ACK; payload không đổi và key khác nội dung bị chặn. */
+    @Test
+    void shippingReplayPreservesSnapshotAndStableAudit() {
+        UUID id = shippingDeadLetter(); UUID actor = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        String payload = jdbc.queryForObject("SELECT payload::text FROM shipping_notification_outbox WHERE id=?", String.class, id);
+        UUID audit = shippingReplays.replay(id, actor, key, "Đã sửa OAuth");
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        assertEquals(0, jdbc.queryForObject("SELECT attempts FROM shipping_notification_outbox WHERE id=?", Integer.class, id));
+        assertEquals(payload, jdbc.queryForObject("SELECT payload::text FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        jdbc.update("UPDATE shipping_notification_outbox SET status='DELIVERED' WHERE id=?", id);
+        assertEquals(audit, shippingReplays.replay(id, actor, key, "Đã sửa OAuth"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingReplays.replay(id, actor, key, "Khác nội dung"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingReplays.replay(id, actor, UUID.randomUUID(), "Đã sửa OAuth"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingReplays.replay(id, actor, key, " "));
+    }
+
+    /** Rollback không rò audit/reset; hai Admin cùng event chỉ một lần reset thành công. */
+    @Test
+    void shippingReplayIsAtomicAndConcurrentSafe() throws Exception {
+        UUID id = shippingDeadLetter();
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            shippingReplays.replay(id, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra"); tx.setRollbackOnly();
+        });
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_replays WHERE event_id=?", Integer.class, id));
+        CountDownLatch start = new CountDownLatch(1);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.concurrent.Callable<Boolean> replay = () -> {
+                start.await();
+                try { shippingReplays.replay(id, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra"); return true; }
+                catch (com.nexus.common.exception.ApiException conflict) { return false; }
+            };
+            var first = pool.submit(replay); var second = pool.submit(replay); start.countDown();
+            assertEquals(1, (first.get(5, TimeUnit.SECONDS) ? 1 : 0) + (second.get(5, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_replays WHERE event_id=?", Integer.class, id));
+    }
+
+    /** Fixture giữ event/snapshot do inbox thật tạo; chỉ mô phỏng kết quả delivery đã hết retry, không gọi Notification thật. */
+    private UUID shippingDeadLetter() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP"); shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        jdbc.update("UPDATE shipping_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", id);
+        return id;
+    }
 
     /** Mất ACK gửi lại cùng notification snapshot/id; backoff chặn retry tức thì và không gọi luồng email. */
     @Test

@@ -12,7 +12,7 @@ Payload giữ nguyên id/userId/orderId/orderNo/type/amount/occurredAt từ snap
 
 Lỗi delivery tăng attempts và backoff 2–256 giây; lần lỗi thứ tám DEAD_LETTER. Chỉ lưu tên class/INVALID_SNAPSHOT, không message/body/token. Không retry liên tục trong cùng tick hoặc xóa sự kiện. Chưa phân loại HTTP status riêng trong worker này; lỗi consumer/OAuth đều retry hữu hạn rồi giữ để operator đối soát.
 
-Truy vấn chỉ đọc `SELECT id,order_id,event_type,attempts,last_error_type FROM shipping_notification_outbox WHERE status='DEAD_LETTER';`. Chưa có API/UI replay Shipping notification có audit; không reset id/payload hoặc coi SQL UPDATE attempts là quy trình replay hoàn chỉnh. Health/alert HTTP và vận hành dead letter vẫn cần bổ sung.
+Truy vấn chỉ đọc `SELECT id,order_id,event_type,attempts,last_error_type FROM shipping_notification_outbox WHERE status='DEAD_LETTER';`. V20 có [API replay Admin với audit](TT_S3_SHIPPING_NOTIFICATION_REPLAY.md); không reset id/payload bằng SQL để né dedup. UI/list và health/alert HTTP vẫn cần bổ sung.
 
 ## Bằng chứng và giới hạn
 
