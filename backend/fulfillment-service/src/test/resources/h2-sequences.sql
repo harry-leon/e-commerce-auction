@@ -6,3 +6,5 @@ CREATE TABLE IF NOT EXISTS shipment_dispatch_attempts (
     last_error_type varchar(100), created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
+-- Khóa lifecycle cùng transaction shipment; không thay thế test PostgreSQL concurrency thực.
+CREATE TABLE IF NOT EXISTS shipment_dispatch_locks (order_id uuid PRIMARY KEY);

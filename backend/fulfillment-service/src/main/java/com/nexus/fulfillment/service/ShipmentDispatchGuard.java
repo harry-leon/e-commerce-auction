@@ -47,12 +47,22 @@ public class ShipmentDispatchGuard {
         UUID attempt = UUID.randomUUID();
         var acknowledged = new java.util.concurrent.atomic.AtomicBoolean();
         try {
-            independent.executeWithoutResult(tx -> jdbc.update("INSERT INTO shipment_dispatch_attempts"
+            independent.executeWithoutResult(tx -> {
+                jdbc.update("INSERT INTO shipment_dispatch_attempts"
                     + "(id,order_id,carrier_code,request_payload,status) VALUES (?,?,?,?,'UNKNOWN')",
-                    attempt, request.orderId(), carrier, payload));
+                    attempt, request.orderId(), carrier, payload);
+                jdbc.update("INSERT INTO shipment_dispatch_locks(order_id) VALUES (?)", request.orderId());
+            });
         } catch (DataIntegrityViolationException conflict) {
             throw new ApiException("SHIPMENT_DISPATCH_UNRESOLVED", HttpStatus.CONFLICT,
                     "Đơn đã có lần gửi carrier; cần đối soát trước khi gửi lại", null);
+        }
+        // Giữ khóa lifecycle trong transaction shipment để Admin chờ request đang gửi/lưu kết thúc.
+        // Row attempt vẫn tự do cho các ghi nhận độc lập; tránh tự deadlock với REQUIRES_NEW của chính guard.
+        jdbc.queryForList("SELECT order_id FROM shipment_dispatch_locks WHERE order_id=? FOR UPDATE", request.orderId());
+        // Admin có thể lấy lifecycle lock ngay sau claim commit nhưng trước bước này: đọc lại để không gửi sau khi đã recovery.
+        if (!"UNKNOWN".equals(jdbc.queryForObject("SELECT status FROM shipment_dispatch_attempts WHERE id=?", String.class, attempt))) {
+            throw new ApiException("SHIPMENT_DISPATCH_RESOLVED", HttpStatus.CONFLICT, "Dispatch đã được đối soát", null);
         }
         // Callback chạy cả khi lưu shipment/history/outbox lỗi. Nếu callback DB lỗi, UNKNOWN vẫn chặn gửi lặp an toàn.
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

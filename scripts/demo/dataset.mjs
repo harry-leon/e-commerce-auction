@@ -16,7 +16,7 @@ export const VERSIONS = {
     user: 6,
     catalog: 7,
     // V7/V8 chỉ bổ sung carrier/tracking và mở rộng trạng thái; fixture cũ dùng được với default mới.
-    fulfillment: 9,
+    fulfillment: 10,
     // V13 thêm bảng refund, không seed refund vì bộ demo không chứng minh tiền thật đã được hoàn.
     commerce: 13,
     auction: 3,
