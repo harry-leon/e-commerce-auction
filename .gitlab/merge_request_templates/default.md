@@ -6,7 +6,7 @@
 
 ## Ticket
 NEX-
-Closes #xx(Issue đang làm)
+<!-- Gắn issue liên quan; dùng "Closes #<IID>" chỉ khi DoD của issue đã hoàn tất khi merge. -->
 
 ## Cách test
 <!-- Các bước test thủ công / test tự động đã thêm -->
