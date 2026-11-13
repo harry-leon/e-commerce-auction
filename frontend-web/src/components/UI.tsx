@@ -496,16 +496,21 @@ export function Tabs({
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
+/** Phân trang danh sách tại client; nhãn nút điều hướng do trang gọi truyền vào để giữ i18n. */
 export function Pagination({
     page,
     total,
     perPage,
     onChange,
+    previousLabel,
+    nextLabel,
 }: {
     page: number
     total: number
     perPage: number
     onChange: (p: number) => void
+    previousLabel?: string
+    nextLabel?: string
 }) {
     const pages = Math.ceil(total / perPage)
     if (pages <= 1) return null
@@ -514,6 +519,7 @@ export function Pagination({
             <button
                 onClick={() => onChange(page - 1)}
                 disabled={page === 1}
+                aria-label={previousLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronLeft size={14} />
@@ -533,6 +539,7 @@ export function Pagination({
             <button
                 onClick={() => onChange(page + 1)}
                 disabled={page === pages}
+                aria-label={nextLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronRight size={14} />

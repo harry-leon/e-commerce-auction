@@ -34,6 +34,7 @@ import {
     Shield,
     ClipboardList,
     BootstrapSpinner,
+    Pagination,
 } from '../../components/UI'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Auction, Order, OrderStatus } from '../../types'
@@ -348,6 +349,7 @@ export function AdminUsersPage() {
     const { lang, navigate, showToast } = useApp()
     const [search, setSearch] = useState('')
     const [roleFilter, setRoleFilter] = useState('all')
+    const [usersPage, setUsersPage] = useState(1)
     const [createOpen, setCreateOpen] = useState(false)
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [apiUsers, setApiUsers] = useState<ApiUser[]>([])
@@ -395,6 +397,12 @@ export function AdminUsersPage() {
                 u.fullName.toLowerCase().includes(search.toLowerCase()) ||
                 u.email.includes(search)),
     )
+    const usersPerPage = 10
+    const totalPages = Math.max(1, Math.ceil(filtered.length / usersPerPage))
+    const currentPage = Math.min(usersPage, totalPages)
+    const firstUser = filtered.length === 0 ? 0 : (currentPage - 1) * usersPerPage + 1
+    const lastUser = Math.min(currentPage * usersPerPage, filtered.length)
+    const visibleUsers = filtered.slice(firstUser - 1, lastUser)
 
     // Tab lọc dùng cùng tập user từ API; số lượng phản ánh danh sách hiện tải về và không gọi thêm endpoint.
     const roleTabs = [
@@ -413,7 +421,10 @@ export function AdminUsersPage() {
                         icon={<Search size={14} />}
                         placeholder={lang === 'en' ? 'Search users...' : 'Tìm người dùng...'}
                         value={search}
-                        onChange={(e) => setSearch(e.target.value)}
+                        onChange={(e) => {
+                            setUsersPage(1)
+                            setSearch(e.target.value)
+                        }}
                         className="w-64"
                     />
                     <div className="flex flex-wrap gap-2" role="group" aria-label={tr(lang, 'filterUsersByRole')}>
@@ -427,7 +438,10 @@ export function AdminUsersPage() {
                                     key={tab.value}
                                     type="button"
                                     aria-pressed={selected}
-                                    onClick={() => setRoleFilter(tab.value)}
+                                    onClick={() => {
+                                        setUsersPage(1)
+                                        setRoleFilter(tab.value)
+                                    }}
                                     className={`nexus-btn nexus-btn-sm ${selected ? 'nexus-btn-primary' : 'nexus-btn-outline'}`}
                                 >
                                     {tab.label}<span aria-label={tr(lang, 'userCount', { count: String(count) })}>{count}</span>
@@ -561,10 +575,31 @@ export function AdminUsersPage() {
                                 ),
                             },
                         ]}
-                        data={filtered}
+                        data={visibleUsers}
                         rowKey={(r) => r.id}
                         onRowClick={(r) => navigate('admin-user-detail', { id: r.id })}
                     />
+                )}
+                {!usersLoadError && !usersLoading && filtered.length > usersPerPage && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
+                        <span className="text-sm text-gray-500">
+                            {tr(lang, 'showingUserRange', {
+                                from: String(firstUser),
+                                to: String(lastUser),
+                                total: String(filtered.length),
+                            })}
+                        </span>
+                        <nav aria-label={tr(lang, 'userPagination')}>
+                            <Pagination
+                                page={currentPage}
+                                total={filtered.length}
+                                perPage={usersPerPage}
+                                onChange={setUsersPage}
+                                previousLabel={tr(lang, 'previousPage')}
+                                nextLabel={tr(lang, 'nextPage')}
+                            />
+                        </nav>
+                    </div>
                 )}
             </div>
 

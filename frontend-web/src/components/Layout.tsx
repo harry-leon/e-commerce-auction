@@ -936,9 +936,10 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
     }
 
     return (
-        <div className="min-h-screen flex bg-page">
+        // Khung Admin bám viewport; sidebar và vùng nội dung tự cuộn dọc thay vì kéo dài trang ngoài.
+        <div className="h-screen w-screen flex overflow-hidden bg-page">
             <aside
-                className="w-56 min-h-screen flex flex-col shrink-0"
+                className="w-56 h-full min-h-0 flex flex-col shrink-0"
                 style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
@@ -952,7 +953,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                         {lang === 'en' ? 'Admin Console' : 'Bảng quản trị'}
                     </p>
                 </div>
-                <nav className="flex-1 p-3 overflow-y-auto space-y-1">
+                <nav className="flex-1 min-h-0 p-3 overflow-y-auto space-y-1">
                     {groups.map((g) => {
                         const items = ADMIN_NAV.filter((n) => n.group === g)
                         return (
@@ -1010,14 +1011,14 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                     </button>
                 </div>
             </aside>
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
                 <div className="h-14 bg-white border-b border-border px-8 flex items-center justify-between shrink-0">
                     <h1 className="text-lg font-bold text-gray-900">{title}</h1>
                     <div className="flex items-center gap-3">
                         <LanguageSwitcher />
                     </div>
                 </div>
-                <main className="flex-1 p-8 overflow-auto">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">{children}</main>
             </div>
         </div>
     )
