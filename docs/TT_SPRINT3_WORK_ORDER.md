@@ -58,4 +58,4 @@ Tách MR theo thành phần và ghi thứ tự phụ thuộc: contract/docs → 
 
 Làm TT-S3-01 trước: tạo bảng contract hủy/refund/events với request/response, quyền, state transition và AC lỗi. Có thể chuẩn bị fixture/provider checklist của TT-S3-02 đồng thời; chưa gọi refund thật hoặc đổi trạng thái PAID/REFUNDED trước khi có contract và adapter đã kiểm chứng.
 
-Phần nền đã có contract thiết kế, policy refund, migration V13 và API tạo/tra cứu REQUESTED, cùng test MVC/PostgreSQL. Chưa chạy provider hoặc tạo issue/MR cho Sprint 3. Refund worker/provider và workflow hủy đơn đã thu tiền vẫn chưa triển khai.
+Phần nền V13/API tiếp nhận đã có MR !138. Phần làm tiếp ở local gồm quyền Shipping, codec/HTTP Merchant API mặc định tắt, V14/worker/approval/recovery và V15/đối soát thủ công/audit/receipt registry/hold; có test MVC/PostgreSQL/mock. Chưa nghiệm thu provider sandbox, chưa bật dispatch lên môi trường đang dùng, chưa nối workflow hủy đơn đã thu tiền/notification/invoice. Các bước 5–8 vẫn cần triển khai và UAT.

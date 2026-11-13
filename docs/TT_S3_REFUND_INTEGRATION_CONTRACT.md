@@ -1,6 +1,6 @@
 # TT-S3-01/02 — Contract hủy, refund và tích hợp
 
-Trạng thái: bản thiết kế để triển khai/review, chưa phải contract đã được BA và provider duyệt. Đã có RefundStatus/RefundPolicy, migration V13, API tạo/đọc yêu cầu và route Gateway; chưa có adapter, dispatch worker, callback refund hoặc chứng từ.
+Trạng thái: bản thiết kế để triển khai/review, chưa phải contract đã được BA và provider duyệt. Đã có RefundStatus/RefundPolicy, migration V13–V15, API tạo/đọc/duyệt và đối soát thủ công. Worker/codec/HTTP mặc định tắt, chỉ test fixture; chưa có refund sandbox thật, callback refund hoặc chứng từ. Chi tiết [worker/recovery](TT_S3_REFUND_WORKER.md) và [manual resolution](TT_S3_REFUND_MANUAL_RESOLUTION.md).
 
 ## 1. Ranh giới dữ liệu
 
@@ -42,7 +42,8 @@ Mọi response sử dụng envelope/error hiện có của common. API mới c�
 | Endpoint | Caller | Đầu vào/kết quả |
 | --- | --- | --- |
 | POST /api/v1/refunds | ROLE_ADMIN, hiện thực tại controller và service | Body paymentId, reason; Idempotency-Key UUID bắt buộc; amount toàn phần do server tính; lần đầu 201, replay 200; chỉ lưu REQUESTED, chưa thực hiện hoàn tiền |
-| GET /api/v1/refunds/{id} | Buyer chủ đơn hoặc Admin | Trạng thái, amount/currency, timestamp, lý do đã lọc; không trả token, chữ ký hoặc raw provider payload |
+| POST /api/v1/refunds/{id}/manual-resolution | ROLE_ADMIN ở controller/service | Chỉ UNKNOWN/REVIEW, bắt buộc key, snapshot tiền/ref và bằng chứng; audit/receipt/status cùng transaction, 201/200 replay; không gửi tiền |
+| GET /api/v1/refunds/{id} | Buyer chủ đơn hoặc Admin | Trạng thái, amount/currency, timestamp; không trả lý do nội bộ, token, chữ ký hoặc raw provider payload |
 | POST /api/v1/internal/refunds/{id}/reconcile (chưa triển khai) | Service identity được allowlist + quyền reconcile riêng | Xếp lịch query bằng refundId đã lưu, không nhận status/amount tùy ý từ caller |
 
 Unique key gồm principal khởi tạo và idempotency UUID; replay so paymentId và reason đã trim. Amount do server chốt ở lần đầu. Cùng key khác nội dung trả 409. Transaction khóa key trước đọc replay, sau đó khóa Order → Payment để kiểm tra hạn mức. Không giữ transaction DB khi gọi provider trong worker tương lai.
@@ -55,7 +56,7 @@ Kiểm tra trước MR: Commerce `verify checkstyle:check` đạt 396 test, khô
 
 ## 5. Persistence, worker và recovery đề xuất
 
-V13 tạo refund_requests, lưu snapshot amount/currency/payment/provider reference/merchant, actor và timestamp; không backfill. Bảng attempts/tasks/inbox provider và providerRequestId ổn định sẽ bổ sung bằng migration mới khi triển khai worker. Không sửa migration đã chạy. REQUESTED hiện chưa có consumer dispatch nên không tự hoàn tiền, hủy đơn, release kho hoặc phát event thành công.
+V13 tạo refund_requests; V14 thêm approval/attempt/query audit, requestId ổn định và lease recovery. Không sửa/backfill migration cũ. REQUESTED chỉ dispatch khi được Admin duyệt riêng và hai feature flag đã bật; không tự hủy đơn, release kho hoặc phát event thành công. Chưa có inbox refund callback vì chưa chốt contract callback riêng với provider.
 
 Luồng: transaction tạo REQUESTED + giữ hạn mức + task → worker claim bằng lease/khóa ngắn → commit PROCESSING → gửi provider ngoài transaction → transaction nhận kết quả + history + notification outbox. Nếu worker chết sau claim hoặc sau gửi, lease hết hạn chuyển vào đối soát, không coi task chưa done là quyền gửi lại lệnh.
 
@@ -65,7 +66,20 @@ Order REFUNDED chỉ cập nhật khi refund toàn phần SUCCEEDED và điều 
 
 ## 6. Shipping và event contract
 
-Fulfillment hiện có `/api/v1/shipments/events/order-paid` với `isAuthenticated()` ở controller; phải kiểm tra toàn bộ filter/service ownership và bổ sung service identity + privilege trước khi coi đây là kênh Commerce tin cậy. Không để JWT Buyer/Seller tự phát OrderPaid. Không đổi endpoint này trong phần policy refund.
+`POST /api/v1/shipments/events/order-paid` bắt buộc ServiceIdentity với azp `nexus-commerce-service` và privilege `SHIPPING.ORDER_PAID`. Token Buyer/Admin, service khác hoặc chỉ có INVENTORY.ORDER đều bị chặn. Đây là lệnh nội bộ qua HTTP, không phải callback public của carrier. Realm import đã khai báo role/scope; IAM đang chạy cần người vận hành cập nhật mapping và lấy token mới, không xóa realm. Chưa có producer Commerce gửi lệnh này tự động.
+
+### Ma trận quyền kỹ thuật đang áp dụng
+
+| Thao tác | Người dùng | Service | Giới hạn |
+| --- | --- | --- | --- |
+| Hủy đơn hiện hành | Buyer sở hữu đơn/Admin | Không mở quyền service mới | Không bypass kiểm tra payment đang chờ/đã thu |
+| Tạo refund REQUESTED | Admin | Không cấp cho Commerce service account | Không thực hiện hoàn tiền |
+| Đọc refund | Chủ đơn/Admin | Không cấp quyền đọc đại trà | Ngoài phạm vi trả 404 |
+| Tạo shipment từ OrderPaid | Không nhận Buyer/Seller/Admin | azp Commerce + SHIPPING.ORDER_PAID | Tạo idempotent bởi ShippingService, chưa có transport event bền vững |
+| Mutation kho đơn | Không nhận JWT người dùng | azp Commerce + INVENTORY.ORDER | Không dùng quyền kho thay quyền shipping |
+| Notification HTTP hiện tại | Không mở thêm quyền người dùng | NOTIFICATION_WRITER theo endpoint hiện hành | Chưa chuẩn hóa thành service identity + event envelope mới |
+
+OrderStatusStateMachine thuần còn có nhánh PAID → REFUNDED cho các role lịch sử, nhưng OrderServiceImpl đang từ chối cập nhật REFUNDED vì chưa có provider. Không được gọi state machine thuần như bằng chứng rằng Buyer/Seller đã có API hoàn tiền. Worker tương lai phải có transition riêng với bằng chứng provider, audit và điều kiện return; chưa mở transition terminal state trong thay đổi này.
 
 Không phát sự kiện có thể dẫn tới xuất kho chỉ dựa vào Payment SUCCESS. Với VNPAY, phát sau Order PAID và inventory CONFIRMED; với COD cần chốt mốc riêng với Khang/BA vì trình tự tạo shipment và ghi nhận thu tiền có thể khác.
 
