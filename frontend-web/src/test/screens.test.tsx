@@ -4,7 +4,9 @@ import type { AppState, User } from '../types'
 import { AUCTIONS, PRODUCTS, DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER, DEMO_SUPPORT } from '../mockData'
 import { ORDERS, USERS } from '../mockData'
 import { auctionsApi } from '../api/auctions'
+import { clearLoadCache } from '../hooks/useLoad'
 import { AuctionCard, ProductCard } from '../components/Cards'
+import { PublicHeader } from '../components/Layout'
 import { NumberStepper, PasswordInput, Pagination, Toggle, ConfirmModal } from '../components/UI'
 import * as Admin from '../features/admin/AdminPages'
 import * as Buyer from '../features/buyer/BuyerPages'
@@ -107,6 +109,67 @@ it('shows upcoming scheduled auctions on the home page', async () => {
     expect(getAuctions).toHaveBeenCalledWith(expect.objectContaining({ status: 'all' }))
 })
 
+// Bảo vệ trang chủ khỏi quảng bá sản phẩm hết hàng; chỉ tồn kho Fulfillment dương mới được render.
+it('hides out-of-stock products from the home page', async () => {
+    clearLoadCache()
+    vi.spyOn(auctionsApi, 'getAuctions').mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 8,
+        totalPages: 0,
+    })
+    const products = [
+        {
+            id: 'product-available',
+            name: 'Available camera',
+            description: '',
+            categoryId: 'cat-1',
+            sellerId: 'seller-1',
+            status: 'ACTIVE',
+            auctionEnabled: false,
+            createdAt: '',
+            skus: [{ id: 'sku-available', price: 100, status: 'ACTIVE' }],
+            images: [],
+        },
+        {
+            id: 'product-sold-out',
+            name: 'Sold out camera',
+            description: '',
+            categoryId: 'cat-1',
+            sellerId: 'seller-1',
+            status: 'ACTIVE',
+            auctionEnabled: false,
+            createdAt: '',
+            skus: [{ id: 'sku-sold-out', price: 100, status: 'ACTIVE' }],
+            images: [],
+        },
+    ]
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string) => {
+            const url = String(input)
+            const payload = url.endsWith('/products')
+                ? { success: true, data: products }
+                : url.endsWith('/inventory/stocks/batch')
+                  ? {
+                        success: true,
+                        data: [
+                            { skuId: 'sku-available', availableQty: 3 },
+                            { skuId: 'sku-sold-out', availableQty: 0 },
+                        ],
+                    }
+                  : { success: true, data: [] }
+            return new Response(JSON.stringify(payload))
+        }),
+    )
+
+    render(<Buyer.HomePage />)
+
+    expect(await screen.findByText('Available camera')).toBeVisible()
+    expect(screen.queryByText('Sold out camera')).not.toBeInTheDocument()
+})
+
 // Đảm bảo CTA phụ trên hero luôn đưa Buyer tới danh sách đấu giá thay vì một sản phẩm mẫu.
 it('navigates from the home hero to the auction list', () => {
     vi.spyOn(auctionsApi, 'getAuctions').mockResolvedValue({
@@ -126,11 +189,111 @@ it('navigates from the home hero to the auction list', () => {
 it('adds a product to the cart without opening its detail page, then opens detail on card click', () => {
     const product = { ...PRODUCTS[0], stock: 2 }
     render(<ProductCard product={product} />)
-    fireEvent.click(screen.getByRole('button'))
+    const card = screen.getByText(product.name).closest('[role="button"]')
+    const addButton = card?.querySelector('button')
+    expect(addButton).not.toBeNull()
+    fireEvent.click(addButton!)
     expect(holder.current.setCartCount).toHaveBeenCalledWith(1)
     expect(holder.current.navigate).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText(product.name))
     expect(holder.current.navigate).toHaveBeenCalledWith('product-detail', { id: product.id })
+})
+
+// Thẻ dùng chung không được xuất hiện nếu tồn kho bằng 0, kể cả khi một màn hình quên lọc danh sách.
+it('does not render a product card when stock is zero', () => {
+    const product = { ...PRODUCTS[0], stock: 0 }
+    render(<ProductCard product={product} />)
+
+    expect(screen.queryByText(product.name)).not.toBeInTheDocument()
+})
+
+// Gợi ý bắt đầu từ ký tự đầu, chỉ hiện kết quả còn hàng; chọn gợi ý tìm theo tên và giữ query qua remount.
+it('shows matching in-stock suggestions and searches with the selected or submitted query', async () => {
+    const suggestedProducts = [
+        {
+            id: 'mouse-in-stock',
+            name: 'Mouse Pro',
+            description: '',
+            categoryId: 'cat-1',
+            sellerId: 'seller-1',
+            status: 'ACTIVE',
+            auctionEnabled: false,
+            createdAt: '',
+            skus: [{ id: 'sku-in-stock', price: 100, status: 'ACTIVE' }],
+            images: [],
+        },
+        {
+            id: 'mouse-sold-out',
+            name: 'Mouse Sold Out',
+            description: '',
+            categoryId: 'cat-1',
+            sellerId: 'seller-1',
+            status: 'ACTIVE',
+            auctionEnabled: false,
+            createdAt: '',
+            skus: [{ id: 'sku-sold-out', price: 100, status: 'ACTIVE' }],
+            images: [],
+        },
+        {
+            id: 'keyboard-in-stock',
+            name: 'Keyboard Pro',
+            description: '',
+            categoryId: 'cat-1',
+            sellerId: 'seller-1',
+            status: 'ACTIVE',
+            auctionEnabled: false,
+            createdAt: '',
+            skus: [{ id: 'sku-keyboard', price: 100, status: 'ACTIVE' }],
+            images: [],
+        },
+    ]
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string) => {
+            const url = String(input)
+            const payload = url.includes('/products?q=')
+                ? {
+                      success: true,
+                      data: url.includes('q=zzz') ? [] : suggestedProducts,
+                  }
+                : url.includes('/inventory/stocks/batch')
+                  ? {
+                        success: true,
+                        data: [
+                            { skuId: 'sku-in-stock', availableQty: 2 },
+                            { skuId: 'sku-sold-out', availableQty: 0 },
+                            { skuId: 'sku-keyboard', availableQty: 2 },
+                        ],
+                    }
+                  : { success: true, data: [] }
+            return new Response(JSON.stringify(payload))
+        }),
+    )
+
+    const view = render(<PublicHeader />)
+    const input = screen.getByPlaceholderText('Search products, auctions...')
+    fireEvent.change(input, { target: { value: 'M' } })
+
+    expect(await screen.findByRole('option', { name: 'Mouse Pro' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'Mouse Sold Out' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Keyboard Pro' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: 'Mouse Pro' }))
+    expect(holder.current.navigate).toHaveBeenCalledWith('search', { q: 'Mouse Pro' })
+    expect(input).toHaveValue('Mouse Pro')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+
+    view.unmount()
+    holder.current.pageParams = { q: 'Mouse Pro' }
+    const resultsPage = render(<PublicHeader />)
+    const resultsInput = screen.getByPlaceholderText('Search products, auctions...')
+    expect(resultsInput).toHaveValue('Mouse Pro')
+    fireEvent.change(resultsInput, { target: { value: 'zzz' } })
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    fireEvent.keyDown(resultsInput, { key: 'Enter' })
+    expect(holder.current.navigate).toHaveBeenLastCalledWith('search', { q: 'zzz' })
+    expect(resultsInput).toHaveValue('zzz')
+    resultsPage.unmount()
 })
 
 it('displays auction statuses and routes cards to the corresponding auction', () => {

@@ -9,6 +9,8 @@ import { addItemToCart } from '../api/cart'
 // ─── Product Card ──────────────────────────────────────────────────────────────
 export function ProductCard({ product }: { product: Product }) {
     const { lang, navigate, setCartCount, showToast } = useApp()
+    // ProductCard là lớp bảo vệ cuối: không tạo thẻ cho sản phẩm hết hàng hoặc chưa xác nhận tồn kho.
+    if (product.stock <= 0) return null
     const discount = product.originalPrice
         ? Math.round((1 - product.price / product.originalPrice) * 100)
         : 0
@@ -67,8 +69,16 @@ export function ProductCard({ product }: { product: Product }) {
     }
     return (
         <div
+            role={product.id === 'product-timeout' ? undefined : 'button'}
+            tabIndex={product.id === 'product-timeout' ? undefined : 0}
             className="nexus-card overflow-hidden cursor-pointer group transition-colors hover:border-gray-300"
             onClick={() => navigate('product-detail', { id: product.id })}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    navigate('product-detail', { id: product.id })
+                }
+            }}
         >
             <div className="relative overflow-hidden bg-gray-100 h-48">
                 <img
@@ -84,11 +94,6 @@ export function ProductCard({ product }: { product: Product }) {
                     <span className="absolute top-2 right-2 badge badge-yellow">
                         {lang === 'en' ? 'Only ' + product.stock + ' left' : 'Còn ' + product.stock}
                     </span>
-                )}
-                {product.stock === 0 && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                        <span className="badge badge-gray text-base px-4 py-2">Out of Stock</span>
-                    </div>
                 )}
             </div>
             <div className="p-4">
