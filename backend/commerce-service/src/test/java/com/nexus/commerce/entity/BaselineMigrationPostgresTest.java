@@ -73,7 +73,9 @@ class BaselineMigrationPostgresTest {
             }
             var baseline = migrate(url, schema, "latest");
             baseline.migrate();
-            assertEquals("12", baseline.info().current().getVersion().getVersion());
+            // V13 chỉ thêm yêu cầu refund; nâng từ schema cũ vẫn phải giữ nguyên tiền/đơn và không tạo tác vụ giả.
+            assertEquals("13", baseline.info().current().getVersion().getVersion());
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_requests", Integer.class));
             assertEquals(0, baseline.migrate().migrationsExecuted);
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema
                 + ".commerce_notification_outbox", Integer.class));

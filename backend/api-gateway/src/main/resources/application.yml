@@ -36,7 +36,8 @@ spring:
         - id: commerce-service
           uri: ${COMMERCE_SERVICE_URL:http://localhost:8083}
           predicates:
-            - Path=/api/v1/cart/**,/api/v1/checkout/**,/api/v1/orders/**,/api/v1/payments/**
+            # Refund đi cùng Commerce; Gateway vẫn yêu cầu JWT, service đích kiểm tra Admin/ownership.
+            - Path=/api/v1/cart/**,/api/v1/checkout/**,/api/v1/orders/**,/api/v1/payments/**,/api/v1/refunds/**
         - id: auction-service
           uri: ${AUCTION_SERVICE_URL:http://localhost:8084}
           predicates:

@@ -34,6 +34,7 @@ import {
     Spinner,
     Trash2,
     Clock,
+    Copy,
 } from '../../components/UI'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
@@ -61,6 +62,13 @@ import {
     readLocalMockOrders,
     writeLocalMockOrders,
 } from '../../api/orders'
+import {
+    shippingApi,
+    type ShippingQuoteResponse,
+    type ShippingQuoteOption,
+    type ShipmentResponse,
+    type ShipmentTrackingResponse,
+} from '../../api/shipping'
 import { auctionsApi } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
 import {
@@ -1146,7 +1154,11 @@ interface PaymentFormData {
 export function CheckoutPage() {
     const { lang, navigate, showToast, setCartCount } = useApp()
     const [step, setStep] = useState(1)
-    const [shipping, setShipping] = useState<'GHN' | 'GHTK'>('GHN')
+    const [shipping, setShipping] = useState<string>('GHN')
+    const [shippingQuoteLoading, setShippingQuoteLoading] = useState<boolean>(false)
+    const [shippingQuoteError, setShippingQuoteError] = useState<string | null>(null)
+    const [shippingQuoteResponse, setShippingQuoteResponse] = useState<ShippingQuoteResponse | null>(null)
+    const [shippingOptions, setShippingOptions] = useState<ShippingQuoteOption[]>([])
     const [loading, setLoading] = useState(false)
 
     // Dữ liệu biểu mẫu giao hàng (Step 1) - khôi phục từ bản nháp sessionStorage nếu có
@@ -1424,6 +1436,63 @@ export function CheckoutPage() {
             previewRequestRef.current++
         }
     }, [step, activeCheckoutItems, fetchCheckoutPreview, createdOrder])
+
+    /**
+     * Tích hợp API lấy báo giá và phương thức vận chuyển (POST /api/v1/shipping/quotes - Sprint 3 HA-S3-1).
+     * 1. Chức năng: Gửi địa chỉ người nhận và tổng tiền đơn hàng để Fulfillment Service tính toán
+     *    danh sách gói vận chuyển khả dụng (GHN Express, GHTK Standard...), phí ship thực tế và quy tắc Free Shipping.
+     * 2. Đầu vào & kết quả: shippingData, activeCheckoutItems; cập nhật shippingOptions, selected carrier và shippingQuoteResponse.
+     * 3. Luồng xử lý: Gọi shippingApi.getShippingQuotes, kiểm tra danh sách options; fallback an toàn khi offline.
+     * 4. Quy tắc & lý do: Đảm bảo khách hàng thấy được phí ship minh bạch trước khi chốt đơn.
+     * 5. Lỗi & giới hạn: Quản lý loading, empty và error state rõ ràng với nút Thử lại.
+     */
+    const fetchShippingQuotes = useCallback(async () => {
+        setShippingQuoteLoading(true)
+        setShippingQuoteError(null)
+        try {
+            const fullAddress = `${shippingData.street.trim()}, ${shippingData.ward.trim()}, ${shippingData.district.trim()}, ${shippingData.city.trim()}`
+            const subtotal = activeCheckoutItems.reduce((acc, i) => acc + i.unitPrice * i.quantity, 0)
+            const quote = await shippingApi.getShippingQuotes({
+                shippingAddress: fullAddress || 'Ho Chi Minh City',
+                orderTotal: subtotal,
+            })
+            setShippingQuoteResponse(quote)
+            const opts = quote.options || []
+            setShippingOptions(opts)
+            if (opts.length > 0) {
+                const found = opts.find((o) => o.carrier === shipping)
+                if (!found) {
+                    setShipping(quote.defaultCarrier || opts[0].carrier)
+                }
+            }
+        } catch (err: any) {
+            setShippingQuoteError(
+                err?.message || (lang === 'vi' ? 'Không thể tải phương thức vận chuyển' : 'Failed to load shipping methods'),
+            )
+        } finally {
+            setShippingQuoteLoading(false)
+        }
+    }, [shippingData, activeCheckoutItems, shipping, lang])
+
+    useEffect(() => {
+        if (step === 2) {
+            void fetchShippingQuotes()
+        }
+    }, [step, fetchShippingQuotes])
+
+    const selectedShippingOption = useMemo(() => {
+        if (shippingOptions.length > 0) {
+            return shippingOptions.find((o) => o.carrier === shipping) || shippingOptions[0]
+        }
+        return null
+    }, [shippingOptions, shipping])
+
+    const currentShippingFee = useMemo(() => {
+        if (selectedShippingOption) {
+            return selectedShippingOption.shippingFee
+        }
+        return shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+    }, [selectedShippingOption, shipping, lang])
 
     /**
      * Chức năng: Nạp và tự động đồng bộ giỏ hàng trước khi thực hiện Checkout.
@@ -1707,6 +1776,8 @@ export function CheckoutPage() {
                 recipientPhone: shippingData.phone.replace(/[\s-]/g, ''),
                 paymentMethod: paymentData.method,
                 sourceType: 'REGULAR',
+                carrier: shipping,
+                shippingFee: currentShippingFee,
                 selectedItemIds: isBuyNow
                     ? undefined
                     : hasLocalId
@@ -2042,60 +2113,142 @@ export function CheckoutPage() {
                         </div>
                     )}
 
-                    {/* Bước 2: Phương thức vận chuyển */}
+                    {/* Bước 2: Phương thức vận chuyển & Báo giá cước (Sprint 3 - HA-S3-1) */}
                     {step === 2 && (
                         <div className="space-y-4">
-                            <h2 className="font-bold text-gray-900 text-lg mb-3">
-                                {tr(lang, 'shippingMethod')}
-                            </h2>
-                            {[
-                                {
-                                    id: 'GHN',
-                                    name: 'GHN Express',
-                                    time: lang === 'en' ? '3-5 business days' : '3-5 ngày làm việc',
-                                    price: 3.99,
-                                    priceVi: '55.000₫',
-                                },
-                                {
-                                    id: 'GHTK',
-                                    name: 'GHTK Standard',
-                                    time: lang === 'en' ? '5-7 business days' : '5-7 ngày làm việc',
-                                    price: 2.49,
-                                    priceVi: '35.000₫',
-                                },
-                            ].map((m) => (
-                                <label
-                                    key={m.id}
-                                    className={`flex items-center gap-4 p-4 border-2 rounded-xl cursor-pointer transition-colors ${shipping === m.id ? 'border-primary bg-primary-light' : 'border-border hover:border-gray-300'}`}
-                                >
-                                    <input
-                                        type="radio"
-                                        className="w-4 h-4 accent-primary"
-                                        checked={shipping === (m.id as any)}
-                                        onChange={() => setShipping(m.id as 'GHN' | 'GHTK')}
-                                    />
-                                    <Truck
-                                        size={20}
-                                        className={
-                                            shipping === m.id ? 'text-primary' : 'text-gray-400'
-                                        }
-                                    />
-                                    <div className="flex-1">
-                                        <p className="font-semibold">{m.name}</p>
-                                        <p className="text-sm text-gray-500">
-                                            {tr(lang, 'deliveryEstimate')}: {m.time}
-                                        </p>
-                                    </div>
-                                    <span className="font-bold text-primary">
-                                        {lang === 'vi' ? m.priceVi : `$${m.price}`}
+                            <div className="flex items-center justify-between mb-1">
+                                <h2 className="font-bold text-gray-900 text-lg">
+                                    {tr(lang, 'shippingMethod')}
+                                </h2>
+                                {shippingQuoteResponse?.freeShippingApplied && (
+                                    <span className="text-xs font-semibold px-2.5 py-1 bg-green-100 text-green-700 rounded-full flex items-center gap-1">
+                                        <CheckCircle size={12} />
+                                        {lang === 'vi' ? 'Miễn phí vận chuyển' : 'Free Shipping Applied'}
                                     </span>
-                                </label>
-                            ))}
+                                )}
+                            </div>
+
+                            {/* Xử lý trạng thái Loading khi gọi API báo giá */}
+                            {shippingQuoteLoading && (
+                                <div className="p-8 text-center text-gray-500 border border-dashed rounded-xl bg-gray-50/50" role="status">
+                                    <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                    <p className="text-sm font-medium">
+                                        {lang === 'vi'
+                                            ? 'Đang tính toán cước vận chuyển từ các hãng...'
+                                            : 'Calculating shipping quotes from carriers...'}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Xử lý trạng thái Error khi gọi API báo giá */}
+                            {!shippingQuoteLoading && shippingQuoteError && (
+                                <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between text-sm text-red-700">
+                                    <span>{shippingQuoteError}</span>
+                                    <Button size="sm" variant="outline" onClick={fetchShippingQuotes}>
+                                        {lang === 'vi' ? 'Thử lại' : 'Retry'}
+                                    </Button>
+                                </div>
+                            )}
+
+                            {/* Hiển thị danh sách phương thức vận chuyển khả dụng */}
+                            {!shippingQuoteLoading && !shippingQuoteError && shippingOptions.length > 0 && (
+                                <div className="space-y-3">
+                                    {shippingOptions.map((opt) => {
+                                        const isSelected = shipping === opt.carrier
+                                        const carrierDisplayName =
+                                            opt.carrier === 'GHN'
+                                                ? 'GHN Express'
+                                                : opt.carrier === 'GHTK'
+                                                  ? 'GHTK Standard'
+                                                  : opt.carrier
+                                        return (
+                                            <label
+                                                key={`${opt.carrier}-${opt.serviceType}`}
+                                                className={`flex items-center gap-4 p-4 border-2 rounded-xl cursor-pointer transition-colors ${
+                                                    isSelected
+                                                        ? 'border-primary bg-primary-light'
+                                                        : 'border-border hover:border-gray-300'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="radio"
+                                                    name="shippingMethodOption"
+                                                    className="w-4 h-4 accent-primary"
+                                                    checked={isSelected}
+                                                    onChange={() => setShipping(opt.carrier)}
+                                                />
+                                                <Truck
+                                                    size={22}
+                                                    className={isSelected ? 'text-primary' : 'text-gray-400'}
+                                                />
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="font-semibold text-gray-900">
+                                                            {carrierDisplayName}
+                                                        </p>
+                                                        {opt.freeShippingApplied && (
+                                                            <span className="text-[11px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded">
+                                                                {lang === 'vi' ? 'FREESHIP' : 'FREE'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 mt-0.5">
+                                                        {tr(lang, 'deliveryEstimate')}: {opt.estimatedDeliveryDays}{' '}
+                                                        {lang === 'vi' ? 'ngày làm việc' : 'business days'}
+                                                        {opt.estimatedDeliveryAt && (
+                                                            <span className="text-gray-400 ml-1">
+                                                                ({formatDate(opt.estimatedDeliveryAt, lang)})
+                                                            </span>
+                                                        )}
+                                                    </p>
+                                                </div>
+                                                <div className="text-right">
+                                                    {opt.freeShippingApplied ? (
+                                                        <div className="flex flex-col items-end">
+                                                            <span className="text-xs line-through text-gray-400">
+                                                                {formatCurrency(opt.originalFee, lang)}
+                                                            </span>
+                                                            <span className="font-bold text-green-600 text-sm">
+                                                                {lang === 'vi' ? 'Miễn phí' : 'Free'}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="font-bold text-primary text-base">
+                                                            {formatCurrency(opt.shippingFee, lang)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Xử lý trạng thái rỗng (Empty state) */}
+                            {!shippingQuoteLoading && !shippingQuoteError && shippingOptions.length === 0 && (
+                                <div className="p-6 text-center text-gray-500 bg-gray-50 rounded-xl">
+                                    <Package size={28} className="mx-auto text-gray-400 mb-2" />
+                                    <p className="text-sm font-medium">
+                                        {lang === 'vi'
+                                            ? 'Không có phương thức vận chuyển khả dụng cho địa chỉ này.'
+                                            : 'No shipping methods available for this address.'}
+                                    </p>
+                                    <Button size="sm" variant="outline" className="mt-3" onClick={fetchShippingQuotes}>
+                                        {lang === 'vi' ? 'Tải lại' : 'Reload'}
+                                    </Button>
+                                </div>
+                            )}
+
                             <div className="flex gap-3">
                                 <Button variant="outline" size="lg" onClick={() => setStep(1)}>
                                     {tr(lang, 'back')}
                                 </Button>
-                                <Button variant="primary" size="lg" onClick={() => setStep(3)}>
+                                <Button
+                                    variant="primary"
+                                    size="lg"
+                                    disabled={shippingQuoteLoading || (!shippingQuoteLoading && shippingOptions.length === 0)}
+                                    onClick={() => setStep(3)}
+                                >
                                     {tr(lang, 'next')} →
                                 </Button>
                             </div>
@@ -2395,7 +2548,23 @@ export function CheckoutPage() {
                                     ],
                                     [
                                         tr(lang, 'shippingMethod'),
-                                        shipping === 'GHN' ? 'GHN Express' : 'GHTK Standard',
+                                        `${
+                                            shipping === 'GHN'
+                                                ? 'GHN Express'
+                                                : shipping === 'GHTK'
+                                                  ? 'GHTK Standard'
+                                                  : shipping
+                                        }${
+                                            selectedShippingOption?.serviceType
+                                                ? ` (${selectedShippingOption.serviceType})`
+                                                : ''
+                                        } - ${
+                                            selectedShippingOption?.freeShippingApplied
+                                                ? lang === 'vi'
+                                                    ? 'Miễn phí'
+                                                    : 'Free'
+                                                : formatCurrency(currentShippingFee, lang)
+                                        }`,
                                     ],
                                     [
                                         tr(lang, 'payment'),
@@ -2409,18 +2578,11 @@ export function CheckoutPage() {
                                             createdOrder
                                                 ? (savedTotal ?? 0)
                                                 : previewData
-                                                  ? previewData.totalAmount
+                                                  ? previewData.totalAmount - (previewData.shippingFee ?? 0) + currentShippingFee
                                                   : activeCheckoutItems.reduce(
                                                         (acc, i) => acc + i.unitPrice * i.quantity,
                                                         0,
-                                                    ) +
-                                                    (shipping === 'GHN'
-                                                        ? lang === 'vi'
-                                                            ? 55000
-                                                            : 3.99
-                                                        : lang === 'vi'
-                                                          ? 35000
-                                                          : 2.49),
+                                                    ) + currentShippingFee,
                                             lang,
                                         ),
                                     ],
@@ -2624,22 +2786,15 @@ export function CheckoutPage() {
                             const subtotal = previewData
                                 ? previewData.subtotal
                                 : pricing.baseSubtotal
-                            const shippingFee = previewData
-                                ? previewData.shippingFee
-                                : shipping === 'GHN'
-                                  ? lang === 'vi'
-                                      ? 55000
-                                      : 3.99
-                                  : lang === 'vi'
-                                    ? 35000
-                                    : 2.49
+                            // Phí vận chuyển cập nhật động theo lựa chọn phương thức (HA-S3-1)
+                            const shippingFee = currentShippingFee
                             const discount = previewData
                                 ? previewData.discountAmount
                                 : pricing.merchantVolumeDiscount +
                                   pricing.categoryDiscount +
                                   pricing.voucherDiscount
                             const total = previewData
-                                ? previewData.totalAmount
+                                ? previewData.totalAmount - (previewData.shippingFee ?? 0) + currentShippingFee
                                 : Math.max(
                                       0,
                                       subtotal -
@@ -3733,6 +3888,36 @@ export function OrderDetailPage() {
     const [reviewed, setReviewed] = useState(false)
     const [disputeOpen, setDisputeOpen] = useState(false)
     const [disputeReason, setDisputeReason] = useState('')
+    const [shipment, setShipment] = useState<ShipmentResponse | null>(null)
+    const [tracking, setTracking] = useState<ShipmentTrackingResponse | null>(null)
+    const [shipmentLoading, setShipmentLoading] = useState<boolean>(false)
+    const [shipmentError, setShipmentError] = useState<string | null>(null)
+
+    /**
+     * Nạp chi tiết vận đơn và hành trình thời gian thực (Sprint 3 - HA-S3-1).
+     * Luồng: GET /api/v1/shipments/order/{orderId} → GET /api/v1/shipments/{shipmentId}/tracking
+     * Xử lý loading, error state và hiển thị thông tin hãng vận chuyển (GHN/GHTK), mã vận đơn.
+     */
+    const loadShipmentInfo = useCallback(async (orderId: string) => {
+        setShipmentLoading(true)
+        setShipmentError(null)
+        try {
+            const ship = await shippingApi.getShipmentByOrderId(orderId)
+            setShipment(ship)
+            if (ship?.id) {
+                const trk = await shippingApi.getShipmentTracking(ship.id)
+                setTracking(trk)
+            } else {
+                setTracking(null)
+            }
+        } catch (err: any) {
+            setShipmentError(
+                err?.message || (lang === 'vi' ? 'Lỗi tải hành trình vận đơn' : 'Failed to load shipment tracking'),
+            )
+        } finally {
+            setShipmentLoading(false)
+        }
+    }, [lang])
 
     // Nạp chi tiết đơn hàng
     const loadDetail = async () => {
@@ -3748,6 +3933,7 @@ export function OrderDetailPage() {
                 setOrder(data)
                 setReviewed(Boolean(data.reviewed))
             }
+            void loadShipmentInfo(targetId)
         } finally {
             setLoading(false)
         }
@@ -4056,50 +4242,154 @@ export function OrderDetailPage() {
                         />
                     )}
 
-                    {/* Theo dõi vận chuyển */}
-                    {order.shipment && (
-                        <div className="nexus-card p-5">
-                            <div className="flex items-center justify-between mb-4">
-                                <h3 className="font-bold flex items-center gap-2">
-                                    <Truck size={18} className="text-primary" />
-                                    {lang === 'en' ? 'Shipment Tracking' : 'Hành trình vận chuyển'}
-                                </h3>
-                                <div className="text-sm text-gray-500">
-                                    {order.shipment.carrier} ·{' '}
-                                    <span className="font-mono font-semibold">
-                                        {order.shipment.trackingNumber}
-                                    </span>
+                    {/* Theo dõi vận chuyển thời gian thực (Sprint 3 - HA-S3-1) */}
+                    {(() => {
+                        const effectiveShipment = shipment || (order.shipment ? {
+                            id: order.shipment.id || 'mock-shipment',
+                            orderId: order.id,
+                            carrier: order.shipment.carrier,
+                            serviceType: 'EXPRESS',
+                            shippingFee: order.shipping,
+                            freeShippingApplied: order.shipping === 0,
+                            trackingNumber: order.shipment.trackingNumber,
+                            status: (order.shipment.status?.toUpperCase() || order.status) as any,
+                            estimatedDeliveryDays: 3,
+                            shippingAddress: order.shippingAddress,
+                        } : null)
+
+                        const trackingHistory = (tracking?.history && tracking.history.length > 0)
+                            ? tracking.history
+                            : (order.shipment?.events || []).map((ev) => ({
+                                  carrierStatus: ev.description,
+                                  internalStatus: (ev.status?.toUpperCase() || 'IN_TRANSIT') as any,
+                                  occurredAt: ev.timestamp,
+                                  location: ev.location,
+                                  description: ev.description,
+                              }))
+
+                        return (
+                            <div className="nexus-card p-5">
+                                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                                    <h3 className="font-bold flex items-center gap-2">
+                                        <Truck size={18} className="text-primary" />
+                                        {lang === 'en' ? 'Shipment Tracking' : 'Hành trình vận chuyển'}
+                                    </h3>
+                                    {effectiveShipment && (
+                                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                                            <span className="font-semibold text-gray-800">{effectiveShipment.carrier}</span>
+                                            <span>·</span>
+                                            <span className="font-mono font-semibold bg-gray-100 px-2 py-0.5 rounded text-gray-900">
+                                                {effectiveShipment.trackingNumber}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    try {
+                                                        navigator.clipboard?.writeText(effectiveShipment.trackingNumber)
+                                                        showToast({
+                                                            type: 'success',
+                                                            message: lang === 'vi' ? 'Đã sao chép mã vận đơn' : 'Tracking number copied',
+                                                        })
+                                                    } catch {}
+                                                }}
+                                                title={lang === 'vi' ? 'Sao chép mã vận đơn' : 'Copy tracking number'}
+                                                className="text-primary hover:text-primary-dark p-1 cursor-pointer"
+                                            >
+                                                <Copy size={15} />
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                            <div className="space-y-3">
-                                {(order.shipment?.events || []).map((ev, i) => (
-                                    <div key={i} className="flex gap-4">
-                                        <div className="flex flex-col items-center">
-                                            <div
-                                                className={`w-3 h-3 rounded-full ${i === 0 ? 'bg-primary' : 'bg-gray-300'}`}
-                                            />
-                                            {i < order.shipment!.events.length - 1 && (
-                                                <div className="w-0.5 h-8 bg-gray-200 mt-1" />
+
+                                {shipmentLoading ? (
+                                    <div className="py-6 text-center text-gray-500" role="status">
+                                        <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                        <p className="text-xs">
+                                            {lang === 'vi' ? 'Đang cập nhật hành trình vận đơn...' : 'Loading shipment tracking...'}
+                                        </p>
+                                    </div>
+                                ) : shipmentError ? (
+                                    <div className="p-4 bg-red-50 text-red-700 rounded-lg text-sm flex items-center justify-between">
+                                        <span>{shipmentError}</span>
+                                        <Button size="sm" variant="outline" onClick={() => loadShipmentInfo(order.id)}>
+                                            {lang === 'vi' ? 'Thử lại' : 'Retry'}
+                                        </Button>
+                                    </div>
+                                ) : effectiveShipment ? (
+                                    <div className="space-y-4">
+                                        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gray-50 rounded-lg text-sm">
+                                            <div>
+                                                <span className="text-gray-500 mr-2">
+                                                    {lang === 'vi' ? 'Trạng thái giao hàng:' : 'Delivery status:'}
+                                                </span>
+                                                <span className="font-semibold text-primary">
+                                                    {effectiveShipment.status}
+                                                </span>
+                                            </div>
+                                            {effectiveShipment.estimatedDeliveryDays && (
+                                                <div className="text-xs text-gray-500">
+                                                    {lang === 'vi' ? 'Thời gian giao dự kiến:' : 'Estimated delivery:'}{' '}
+                                                    <span className="font-medium text-gray-700">
+                                                        {effectiveShipment.estimatedDeliveryDays} {lang === 'vi' ? 'ngày' : 'days'}
+                                                    </span>
+                                                </div>
                                             )}
                                         </div>
-                                        <div className="pb-3">
-                                            <p className="text-sm font-semibold text-gray-800">
-                                                {ev.description}
-                                            </p>
-                                            {ev.location && (
-                                                <p className="text-xs text-gray-500">
-                                                    {ev.location}
-                                                </p>
+
+                                        {/* Timeline các mốc tracking */}
+                                        <div className="space-y-3 pt-2">
+                                            {trackingHistory.length > 0 ? (
+                                                trackingHistory.map((ev, i) => (
+                                                    <div key={i} className="flex gap-4">
+                                                        <div className="flex flex-col items-center">
+                                                            <div
+                                                                className={`w-3 h-3 rounded-full ${
+                                                                    i === 0 ? 'bg-primary ring-4 ring-primary/20' : 'bg-gray-300'
+                                                                }`}
+                                                            />
+                                                            {i < trackingHistory.length - 1 && (
+                                                                <div className="w-0.5 h-8 bg-gray-200 mt-1" />
+                                                            )}
+                                                        </div>
+                                                        <div className="pb-3 flex-1">
+                                                            <p className="text-sm font-semibold text-gray-800">
+                                                                {ev.description || ev.carrierStatus}
+                                                            </p>
+                                                            {ev.location && (
+                                                                <p className="text-xs text-gray-500">{ev.location}</p>
+                                                            )}
+                                                            <p className="text-xs text-gray-400">
+                                                                {formatDate(ev.occurredAt, lang)}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <div className="p-3 text-xs text-gray-500 italic bg-gray-50 rounded">
+                                                    {lang === 'vi'
+                                                        ? `Vận đơn ${effectiveShipment.trackingNumber} đã tạo với ${effectiveShipment.carrier}. Đang chờ hãng scan mốc đầu tiên.`
+                                                        : `Shipment ${effectiveShipment.trackingNumber} created with ${effectiveShipment.carrier}. Awaiting first scan.`}
+                                                </div>
                                             )}
-                                            <p className="text-xs text-gray-400">
-                                                {formatDate(ev.timestamp, lang)}
-                                            </p>
                                         </div>
                                     </div>
-                                ))}
+                                ) : (
+                                    /* Trạng thái trống (Empty State) khi đơn chưa tạo vận đơn */
+                                    <div className="py-6 px-4 bg-gray-50 rounded-xl text-center text-sm text-gray-500">
+                                        <Package size={26} className="mx-auto text-gray-400 mb-2" />
+                                        <p className="font-medium text-gray-700">
+                                            {lang === 'vi' ? 'Đang chuẩn bị hàng' : 'Preparing for shipment'}
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {lang === 'vi'
+                                                ? 'Đơn hàng đang chờ người bán đóng gói và bàn giao cho đơn vị vận chuyển. Mã vận đơn sẽ xuất hiện tại đây ngay khi bàn giao.'
+                                                : 'The seller is preparing your package. Carrier details and tracking number will appear here once dispatched.'}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
-                        </div>
-                    )}
+                        )
+                    })()}
 
                     {/* Đánh giá đơn hàng */}
                     {order.status === 'DELIVERED' && !reviewed && (
