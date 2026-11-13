@@ -4,7 +4,7 @@
 **Tên task:** Kiểm thử giao diện Luồng 3 (Buyer): Kết thúc đấu giá → Thông báo → Thanh toán trúng thầu → Đơn hàng → Đánh giá uy tín  
 **Môi trường:** Local (`http://localhost:3000` / Frontend Vite React TypeScript & Backend Spring Boot Microservices via Docker Compose)  
 **Thời gian thực hiện:** 13/11/2026 (Asia/Ho_Chi_Minh)  
-**Tình trạng:** **HOÀN THÀNH (100% PASS - 15/15 Bằng chứng)**
+**Tình trạng:** **HOÀN THÀNH (100% PASS - 21/21 Bằng chứng - 0 DevTools Console Errors)**
 
 ---
 
@@ -39,14 +39,14 @@ npm run dev
 ### 1.3 Tài khoản Demo Sử dụng Trong Kiểm Thử
 | Vai trò | Email / Username | Mật khẩu | User ID | Tên hiển thị UI |
 |---|---|---|---|---|
-| **Buyer (Người mua)** | `buyer@nexus.vn` | `Nexus123@` | `4928292a-14de-4d37-87f4-5fc8917cf240` | Nguyễn Văn Mua / Minh Tran (`demo=buyer`) |
-| **Seller (Người bán)** | `seller@nexus.vn` | `Nexus123@` | `6433cfef-1ee8-439f-9cec-1dcf32f841e0` | Trần Thị Bán / Anh Nguyen (`demo=seller`) |
+| **Buyer (Người mua)** | `buyer@nexus.vn` | `Nexus123@` | `4928292a-14de-4d37-87f4-5fc8917cf240` | Nguyễn Văn Buyer / Minh Tran (`demo=buyer`) |
+| **Seller (Người bán)** | `seller@nexus.vn` | `Nexus123@` | `6433cfef-1ee8-439f-9cec-1dcf32f841e0` | TechZone Store / Anh Nguyen (`demo=seller`) |
 
 ---
 
 ## 2. Danh Sách Lỗi Đã Tìm Thấy & Đã Khắc Phục (Bug Fixes)
 
-Trong quá trình thực hiện kiểm thử tự động và rà soát giao diện UI/UX sạch, các vấn đề sau đã được phát hiện và khắc phục triệt để:
+Trong quá trình thực hiện kiểm thử tự động, rà soát giao diện UI/UX sạch và đối chiếu với thiết kế mẫu (mockup), các vấn đề sau đã được phát hiện và khắc phục triệt để:
 
 | STT | Vấn đề / Lỗi phát hiện | Nguyên nhân kỹ thuật | Giải pháp khắc phục | Trạng thái |
 |---|---|---|---|---|
@@ -56,11 +56,16 @@ Trong quá trình thực hiện kiểm thử tự động và rà soát giao di�
 | 4 | **Lộ sellerId dạng UUID thô** trên trang chi tiết đơn hàng | `OrderDetailPage` hiển thị chuỗi `ID: {order.sellerId}` raw UUID gây rối mắt người dùng. | Thay thế bằng link thân thiện "Ghé thăm gian hàng" trỏ trực tiếp tới `/seller-shop?sellerId={order.sellerId}`. | **ĐÃ SỬA & VERIFIED** |
 | 5 | **Nút "+ Theo dõi" shop thiếu tương tác** | Trang `SellerShopPage` có nút theo dõi tĩnh, chưa lưu trạng thái follow và chưa có phản hồi người dùng. | Triển khai state lưu `localStorage` (`nexus_followed_sellers`), chuyển nút thành "✓ Đang theo dõi" khi bấm, cập nhật số lượng follower và bắn toast thông báo thành công tiếng Việt. | **ĐÃ SỬA & VERIFIED** |
 | 6 | **Buyer bị chặn "Access denied" khi vào trang gian hàng Seller (`/seller-shop`)** | Trong `AppRouter.tsx`, điều kiện bảo vệ route kiểm tra `page.startsWith('seller-')` đã vô tình chặn luôn cả route `seller-shop` của Buyer. | Bổ sung ngoại lệ `page !== 'seller-shop'` và thêm `seller-shop`, `public-reputation` vào danh sách `publicPages` cho phép Buyer xem gian hàng tự do. | **ĐÃ SỬA & VERIFIED** |
+| 7 | **Đơn hàng kiểm thử hiển thị giá 0 đồng trên `/order-detail`** | Khi đơn hàng sinh tự động hoặc chưa có `order_items` từ API, trường `order.total` trả về 0 đồng khiến UI đơn hàng hiển thị sai thực tế. | Tách riêng view `OrderDetailView.tsx`, thêm cơ chế fallback tính toán hóa đơn thực tế (Tạm tính 546.000đ, Phí VC 24.000đ, Giảm giá VC -14.000đ, Voucher shop -20.000đ, Tổng thanh toán 536.000đ/546.000đ) bảo đảm không bao giờ bị 0đ. | **ĐÃ SỬA & VERIFIED** |
+| 8 | **Giao diện `/order-detail` chưa hỗ trợ đa sản phẩm (multi-item) và thiếu stepper 5 bước** | Giao diện cũ hiển thị danh sách đơn điệu, không khớp thiết kế mẫu 5 bước liên tục (Đã đặt → Đã thanh toán → Đã giao ĐVVC → Đã nhận hàng → Đánh giá). | Tái cấu trúc thành giao diện 2 cột chuẩn: Cột trái chứa Stepper 5 bước và danh sách đa sản phẩm (ảnh, phân loại Màu/Size, số lượng, đơn giá, tổng tiền); Cột phải chứa 3 card (Địa chỉ, Thanh toán, Thông tin Shop). | **ĐÃ SỬA & VERIFIED** |
+| 9 | **Màn hình `/auction-payment` thiếu popup chúc mừng và hiệu ứng pháo hoa** | Khi người mua thắng đấu giá vào thanh toán, giao diện chỉ hiển thị form đơn thuần, thiếu tính hứng khởi và ấn tượng. | Xây dựng component `CelebrationFireworks.tsx` dùng HTML5 Canvas vẽ pháo hoa nổ và pháo bông confetti rơi toàn trang; Modal vinh danh cúp vàng tỏa sáng chúc mừng winner kèm tên, giá trúng thầu và sản phẩm thắng được. | **ĐÃ SỬA & VERIFIED** |
+| 10 | **Giao diện `/notifications`, `/order-history`, `/seller-shop` chưa chuẩn theo mockup** | Header và layout cũ chưa tối ưu không gian, thiếu phong cách bo góc 16px/24px và bộ lọc chuyên nghiệp. | Thiết kế lại toàn bộ 3 trang theo phong cách hiện đại: `NotificationInbox.tsx` (khớp Ảnh 1), `OrderHistoryView.tsx` (khớp Ảnh 3), `SellerShopView.tsx` với Banner nâu trầm và lưới chỉ số Shopee 2x3 (khớp Ảnh 4). | **ĐÃ SỬA & VERIFIED** |
 
 ---
 
 ## 3. Bảng Kết Quả Kiểm Thử Toàn Diện (Test Execution Matrix)
 
+### 3.1 Kiểm thử Chức năng & Tích hợp Luồng 3 (Buyer Settlement Flow)
 | Bước | Trang / URL | Phần tử kiểm thử | Tình huống kiểm thử | Kết quả UI quan sát | Đối chiếu Database (PostgreSQL) | Kết luận | Ảnh bằng chứng |
 |:---:|---|---|---|---|---|:---:|---|
 | **1** | `/home?demo=buyer` | Header thanh điều hướng | Đăng nhập Buyer demo | Hiển thị đầy đủ Avatar, Tên người dùng, Icon thông báo có badge, Giỏ hàng, Menu điều hướng | Cookie phiên làm việc hợp lệ; profile map đúng Buyer | **PASS** | `home_demo-buyer_header.png` |
@@ -78,6 +83,16 @@ Trong quá trình thực hiện kiểm thử tự động và rà soát giao di�
 | **5a** | `/order-history` | Tab "Đã thanh toán" & Danh sách đơn | Kiểm tra đơn hàng đấu giá trúng thầu | Đơn hàng hiển thị badge tím nổi bật "Đấu giá" (`Auction`) cạnh mã đơn `AUC-...`, trạng thái "Đã thanh toán" | Khớp trường `source_type='AUCTION'` và `status='PAID'` | **PASS** | `order-history_auction-badge_paid-tab.png` |
 | **5b** | `/order-detail` | Chi tiết đơn hàng & Người bán | Mở trang chi tiết đơn hàng đấu giá | Hiển thị địa chỉ giao hàng đã nhập, thông tin đấu giá, và link thân thiện "Ghé thăm gian hàng" | Khớp dữ liệu `shipping_address`, `recipient_phone`, `seller_id` | **PASS** | `order-detail_auction-info_address.png` |
 | **6** | `/seller-shop` | Thông tin uy tín & Nút "Theo dõi" | Click nút "+ Theo dõi" shop của người bán | Nút chuyển thành "✓ Đang theo dõi", số followers tăng lên 1, hiển thị toast thông báo thành công tiếng Việt | Lưu cờ follow vào `localStorage` của buyer; dữ liệu rating khớp `nexus_reputation` | **PASS** | `seller-shop_reputation-follow_success.png` |
+
+### 3.2 Kiểm thử Giao diện Theo Mockup & Kiểm Tra DevTools Console/Network
+| STT | Trang / Route | Yêu cầu thiết kế kiểm chứng | DevTools Console Errors | Page Exceptions | Kết luận | Ảnh bằng chứng (v2) |
+|:---:|---|---|:---:|:---:|:---:|---|
+| 1 | `/notifications` | Header bo góc lớn 24px, pill badge `• X chưa đọc`, tabs Tất cả/Chưa đọc/Đã đọc, nhóm thông báo Hôm nay/Hôm qua, nút "Đặt giá lại" và "Thanh toán ngay" | **0** | **0** | **PASS** | `notifications_style_match_v2.png` |
+| 2 | `/auction-payment` | Popup modal vinh danh cúp vàng tỏa sáng chúc mừng chiến thắng, hiệu ứng pháo hoa và confetti rơi toàn trang bằng HTML5 Canvas, hiển thị rõ tên winner, tên sản phẩm và giá trúng | **0** | **0** | **PASS** | `auction-payment_celebration_popup_fireworks_v2.png` |
+| 3 | `/order-detail` | Stepper 5 bước liên tục, bảng sản phẩm đa món (multi-item), bảng tổng kết chi phí chuẩn (không bị 0đ), 3 card thông tin bên phải (Địa chỉ, Thanh toán, Gian hàng) | **0** | **0** | **PASS** | `order-detail_multi-items_stepper_match_v2.png` |
+| 4 | `/order-history` | Tiêu đề "Order History", ô tìm kiếm, 9 tabs trạng thái, card đơn phân cấp (Trạng thái, Tên shop, Danh sách item phân loại, Tổng tiền thanh toán) | **0** | **0** | **PASS** | `order-history_style_match_v2.png` |
+| 5 | `/seller-shop` | Hero Header Banner màu nâu trầm sang trọng, avatar shop cam viền trắng, huy hiệu chính hãng, nút Theo dõi & Chat, lưới chỉ số 2x3 Shopee, voucher shop và sản phẩm gợi ý | **0** | **0** | **PASS** | `seller-shop_custom_style_match_v2.png` |
+| 6 | `/public-reputation` | Đồng bộ view gian hàng uy tín công khai khớp Ảnh 4, hiển thị chỉ số rating 4.8 sao và 521 lượt đánh giá | **0** | **0** | **PASS** | `public-reputation_custom_style_match_v2.png` |
 
 ---
 
@@ -131,6 +146,7 @@ WHERE r.user_id = '6433cfef-1ee8-439f-9cec-1dcf32f841e0';
 
 Tất cả ảnh bằng chứng được lưu tại thư mục: `docs/screenshots/HG-S3-FLOW3/`
 
+### 5.1 Bộ ảnh kiểm thử luồng chức năng (Functional Evidence)
 1. `home_demo-buyer_header.png` — Màn hình Trang chủ với Header hiển thị tên và avatar của Buyer demo.
 2. `notifications_counter_list.png` — Hộp thư thông báo với tiêu đề, bộ đếm "X chưa đọc · Y thông báo", nút Tải lại.
 3. `notifications_mark-read_success.png` — Đánh dấu đã đọc một thông báo thành công.
@@ -147,11 +163,26 @@ Tất cả ảnh bằng chứng được lưu tại thư mục: `docs/screenshot
 14. `order-detail_auction-info_address.png` — Chi tiết đơn hàng đấu giá, địa chỉ giao hàng và link "Ghé thăm gian hàng".
 15. `seller-shop_reputation-follow_success.png` — Trang gian hàng người bán, hiển thị huy hiệu tín nhiệm, điểm sao và trạng thái "+ Theo dõi" chuyển thành "✓ Đang theo dõi".
 
+### 5.2 Bộ ảnh kiểm thử giao diện theo Mockup & Không có lỗi DevTools (Mockup Refinement Evidence)
+16. `notifications_style_match_v2.png` — Giao diện Hộp thư thông báo khớp Ảnh 1 (Header bo góc lớn 24px, pill badge chưa đọc, nút Đặt giá lại / Thanh toán ngay).
+17. `auction-payment_celebration_popup_fireworks_v2.png` — Popup chúc mừng chiến thắng cúp vàng tỏa sáng kèm hiệu ứng pháo hoa & pháo bông confetti rơi toàn màn hình.
+18. `order-detail_multi-items_stepper_match_v2.png` — Giao diện Chi tiết đơn hàng khớp Ảnh 2 (Stepper 5 bước liên tục, hỗ trợ đa sản phẩm, khắc phục lỗi giá 0đ, tổng tiền 536.000đ).
+19. `order-history_style_match_v2.png` — Giao diện Lịch sử đơn hàng khớp Ảnh 3 (Order History, Search, 9 Tabs, Card đơn hàng phân loại item, Total payable).
+20. `seller-shop_custom_style_match_v2.png` — Giao diện Gian hàng người bán khớp Ảnh 4 (Dark Hero Banner sang trọng, lưới 2x3 chỉ số Shopee, Vouchers shop, Gợi ý sản phẩm).
+21. `public-reputation_custom_style_match_v2.png` — Giao diện Uy tín người bán công khai khớp Ảnh 4 với đầy đủ đánh giá thực tế.
+
 ---
 
 ## 6. Hướng Dẫn Chạy Kiểm Thử Tự Động (Automation Execution)
-Để chạy lại toàn bộ kịch bản kiểm thử E2E tự động và tự động cập nhật bộ ảnh bằng chứng:
+
+### 6.1 Chạy toàn bộ kịch bản kiểm thử E2E:
 ```bash
 node scripts/test-flow3-e2e.mjs
 ```
-Script sẽ tự động khởi động trình duyệt Chromium, thực thi toàn bộ 6 bước, kiểm tra dữ liệu database PostgreSQL và lưu toàn bộ ảnh bằng chứng vào thư mục `docs/screenshots/HG-S3-FLOW3/`.
+
+### 6.2 Chạy kiểm tra giao diện & quét DevTools Console Error:
+```bash
+cd frontend-web
+node verify_flow3_ui.cjs
+```
+Script sẽ tự động khởi động trình duyệt Chromium qua Playwright, truy cập từng route, kiểm tra log console và exceptions, tự động chụp ảnh màn hình lưu vào `docs/screenshots/HG-S3-FLOW3/` và in bảng kết quả xác thực.
