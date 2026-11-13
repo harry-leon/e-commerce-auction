@@ -138,4 +138,68 @@ public class HttpFulfillmentInventoryClient implements FulfillmentInventoryClien
         throw new BusinessException(ErrorCode.BAD_GATEWAY,
                 "Không thể kết nối hoặc chuyển tiếp phiếu giữ kho sang Fulfillment Service sau " + MAX_RETRY_ATTEMPTS + " lần thử");
     }
+
+    /**
+     * Chức năng: Gửi yêu cầu khóa giữ 1 đơn vị hàng tồn kho khả dụng cho phiên đấu giá sang Fulfillment Service.
+     * Đầu vào: auctionId (mã phiên), skuId (mã biến thể SKU), startTime (thời gian mở), endTime (thời gian kết thúc).
+     * Kết quả: Fulfillment Service tạo phiếu giữ kho PENDING, tăng reserved_qty và giảm available_qty đi 1.
+     * Luồng xử lý:
+     *   1. Kiểm tra tham số đầu vào.
+     *   2. Đóng gói payload JSON với skuId, startTime, endTime và quantity = 1.
+     *   3. Gửi HTTP POST tới /api/v1/inventory/auctions/{auctionId}/reserve bằng client credentials của nexus-auction-service.
+     * Quy tắc và lý do: Tuân thủ SRS §3.6.1; đảm bảo hàng được giữ an toàn trong suốt thời gian phiên đấu giá diễn ra.
+     * Lỗi và giới hạn: Nếu gọi thất bại thì log cảnh báo, không làm crash luồng chính nếu service kho tạm thời bận.
+     */
+    @Override
+    public void reserveAuctionStock(UUID auctionId, UUID skuId, Instant startTime, Instant endTime) {
+        if (auctionId == null || skuId == null) {
+            return;
+        }
+        var payload = java.util.Map.of(
+                "skuId", skuId.toString(),
+                "startTime", (startTime != null ? startTime : Instant.now()).toString(),
+                "endTime", (endTime != null ? endTime : Instant.now().plusSeconds(86400)).toString(),
+                "quantity", 1
+        );
+        try {
+            client.post()
+                    .uri("/api/v1/inventory/auctions/{auctionId}/reserve", auctionId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
+                    .retrieve()
+                    .toBodilessEntity();
+            log.info("Đã gửi yêu cầu giữ kho thành công cho phiên đấu giá [{}] SKU [{}]", auctionId, skuId);
+        } catch (Exception ex) {
+            log.warn("Không thể giữ kho tự động cho phiên đấu giá [{}] qua Fulfillment Service: {}", auctionId, ex.getMessage());
+        }
+    }
+
+    /**
+     * Chức năng: Gửi yêu cầu giải phóng hàng giữ kho về lại số lượng khả dụng khi phiên đấu giá bị hủy.
+     * Đầu vào: auctionId (mã phiên), reason (lý do hủy phiên).
+     * Kết quả: Fulfillment Service cập nhật phiếu giữ kho thành RELEASED/CANCELLED và hoàn lại available_qty.
+     * Luồng xử lý:
+     *   1. Kiểm tra auctionId.
+     *   2. Gửi HTTP POST tới /api/v1/inventory/auctions/{auctionId}/release kèm query param reason.
+     * Quy tắc và lý do: Hoàn trả tồn kho cho người bán ngay khi hủy phiên, tránh giữ tồn ảo trên sàn.
+     * Lỗi và giới hạn: Thao tác giải phóng mang tính idempotent; lỗi được bắt và log cảnh báo an toàn.
+     */
+    @Override
+    public void releaseAuctionStock(UUID auctionId, String reason) {
+        if (auctionId == null) {
+            return;
+        }
+        try {
+            client.post()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/api/v1/inventory/auctions/{auctionId}/release")
+                            .queryParam("reason", reason != null ? reason : "AUCTION_CANCELLED")
+                            .build(auctionId))
+                    .retrieve()
+                    .toBodilessEntity();
+            log.info("Đã gửi yêu cầu giải phóng kho thành công cho phiên đấu giá [{}]", auctionId);
+        } catch (Exception ex) {
+            log.warn("Không thể giải phóng kho cho phiên đấu giá [{}] qua Fulfillment Service: {}", auctionId, ex.getMessage());
+        }
+    }
 }
