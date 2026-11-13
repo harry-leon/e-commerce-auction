@@ -34,6 +34,33 @@ class RefundControllerTest {
     @Autowired private MockMvc mvc;
     @MockitoBean private RefundRequestService requests;
     @MockitoBean private com.nexus.commerce.service.RefundResolutionService resolutions;
+    @MockitoBean private com.nexus.commerce.service.RefundNotificationReplayService notificationReplays;
+
+    /** Buyer/khách không được reset dead letter; Admin dùng actor JWT, body trống hoặc thiếu key bị chặn. */
+    @Test
+    void notificationReplayRequiresAdminAndValidatedInput() throws Exception {
+        UUID event = UUID.randomUUID();
+        UUID actor = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        UUID audit = UUID.randomUUID();
+        String path = "/api/v1/refunds/deliveries/" + event + "/retry";
+        String body = "{\"reason\":\"Đã sửa OAuth\"}";
+        mvc.perform(post(path).header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_BUYER")))
+                .header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(notificationReplays);
+        when(notificationReplays.replay(event, actor, key, "Đã sửa OAuth")).thenReturn(audit);
+        mvc.perform(post(path).with(jwt().jwt(j -> j.subject(actor.toString())).authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                .header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.auditId").value(audit.toString()));
+        mvc.perform(post(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                .header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\" \"}"))
+                .andExpect(status().isUnprocessableEntity());
+        mvc.perform(post(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isBadRequest());
+    }
 
     /** Chỉ Admin đối soát; replay giữ nguyên audit và không để caller giả actor qua body. */
     @Test
