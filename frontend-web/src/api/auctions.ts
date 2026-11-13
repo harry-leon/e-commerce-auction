@@ -830,13 +830,9 @@ export const auctionsApi = {
             minPrice,
             maxPrice,
             sellerId,
-            sellerName,
-            excludeDemoData = false,
             includePending = false,
             page = 1,
             limit = 9,
-            extraAuctions = [],
-            reviews = {},
         } = params
 
         const queryParts: string[] = []
@@ -880,158 +876,9 @@ export const auctionsApi = {
                 limit: pagination?.size ?? limit,
                 totalPages: pagination?.totalPages ?? Math.max(1, Math.ceil(serverItems.length / limit)),
             }
-
-            // Nếu Backend trả về dữ liệu hợp lệ
-            if (validatedItems.length > 0 || Array.isArray(rawData)) {
-                // Giữ các phiên vừa tạo ở trình duyệt khi API list chưa phản ánh kịp; dữ liệu server thắng nếu trùng ID.
-                const serverIds = new Set(validatedItems.map((auction) => auction.id))
-                const seededIds = new Set(AUCTIONS.map((auction) => auction.id))
-                const submittedIds = new Set(extraAuctions.map((auction) => auction.id))
-                const matchesCurrentSeller = (auction: Auction) =>
-                    auction.sellerId === sellerId ||
-                    Boolean(
-                        sellerName &&
-                        [auction.sellerName, auction.sellerAccountName].some(
-                            (name) =>
-                                name?.trim().toLowerCase() === sellerName.trim().toLowerCase(),
-                        ),
-                    )
-                const localCreated = [...extraAuctions, ...localAuctionsStore]
-                    .filter((auction, index, source) => {
-                        // Chỉ ẩn bản ghi offline khi khách Buyer vãng lai xem danh sách công khai; Seller và Admin vẫn theo dõi được phiên vừa tạo.
-                        if (
-                            isLocalFallbackAuction(auction) &&
-                            !sellerId &&
-                            !includePending &&
-                            !submittedIds.has(auction.id)
-                        )
-                            return false
-                        if (
-                            excludeDemoData &&
-                            seededIds.has(auction.id) &&
-                            !submittedIds.has(auction.id)
-                        )
-                            return false
-                        if (
-                            (seededIds.has(auction.id) && !submittedIds.has(auction.id)) ||
-                            serverIds.has(auction.id)
-                        )
-                            return false
-                        if (source.findIndex((candidate) => candidate.id === auction.id) !== index)
-                            return false
-                        // Ưu tiên ID Seller; tên chỉ đối chiếu bản ghi local mới tạo bị thiếu/sai sellerId sau khi reload.
-                        if (
-                            sellerId &&
-                            !matchesCurrentSeller(auction) &&
-                            !submittedIds.has(auction.id)
-                        )
-                            return false
-                        const effectiveStatus = resolveAuctionStatus(
-                            auction.id,
-                            auction.status,
-                            reviews,
-                        )
-                        if (status !== 'all' && effectiveStatus !== status) return false
-                        if (
-                            !sellerId &&
-                            !includePending &&
-                            ['pending_approval', 'rejected', 'paused'].includes(effectiveStatus)
-                        ) {
-                            return false
-                        }
-                        if (search.trim()) {
-                            const query = search.trim().toLowerCase()
-                            if (
-                                !auction.product.name.toLowerCase().includes(query) &&
-                                !auction.product.nameVi.toLowerCase().includes(query) &&
-                                !auction.sellerName.toLowerCase().includes(query)
-                            )
-                                return false
-                        }
-                        if (minPrice !== undefined && auction.currentBid < minPrice) return false
-                        if (maxPrice !== undefined && auction.currentBid > maxPrice) return false
-                        return true
-                    })
-                    .map((auction) => ({
-                        ...auction,
-                        sellerId:
-                            sellerId &&
-                            (submittedIds.has(auction.id) || matchesCurrentSeller(auction))
-                                ? sellerId
-                                : auction.sellerId,
-                        status: resolveAuctionStatus(auction.id, auction.status, reviews),
-                    }))
-                const serverItems = validatedItems
-                    .filter(
-                        (auction) =>
-                            !excludeDemoData ||
-                            !seededIds.has(auction.id) ||
-                            submittedIds.has(auction.id),
-                    )
-                    .map((auction) => {
-                        const localCreatedAuction = [...extraAuctions, ...localAuctionsStore].find(
-                            (candidate) =>
-                                candidate.id === auction.id && !seededIds.has(candidate.id),
-                        )
-                        if (
-                            !localCreatedAuction ||
-                            (sellerId && !matchesCurrentSeller(localCreatedAuction))
-                        )
-                            return auction
-
-                        // API list có thể thiếu seller_id; dùng owner đã cache cho phiên này nếu khớp Seller hiện tại.
-                        const resolvedSellerId = sellerId || localCreatedAuction.sellerId
-                        const resolvedSellerName =
-                            localCreatedAuction.sellerName || auction.sellerName
-                        return {
-                            ...auction,
-                            sellerId: resolvedSellerId,
-                            sellerName: resolvedSellerName,
-                            sellerAccountName:
-                                auction.sellerAccountName || localCreatedAuction.sellerAccountName,
-                            sellerEmail: auction.sellerEmail || localCreatedAuction.sellerEmail,
-                            status: resolveAuctionStatus(auction.id, auction.status, reviews),
-                            product: {
-                                ...auction.product,
-                                sellerId: resolvedSellerId,
-                                sellerName: resolvedSellerName,
-                            },
-                        }
-                    })
-                const items = [...localCreated, ...serverItems]
-                    .filter((auction) => {
-                        const effectiveStatus = resolveAuctionStatus(
-                            auction.id,
-                            auction.status,
-                            reviews,
-                        )
-                        return (
-                            (!status || status === 'all' || effectiveStatus === status) &&
-                            (sellerId
-                                ? auction.sellerId === sellerId
-                                : includePending ||
-                                  !['pending_approval', 'rejected', 'paused'].includes(
-                                      effectiveStatus,
-                                  ))
-                        )
-                    })
-                    .map((auction) => ({
-                        ...auction,
-                        status: resolveAuctionStatus(auction.id, auction.status, reviews),
-                    }))
-                return {
-                    items,
-                    total: items.length,
-                    page,
-                    limit,
-                    totalPages: Math.max(1, Math.ceil(items.length / limit)),
-                }
-            }
         } catch (error) {
             throw error
         }
-
-        return { items: [], total: 0, page, limit, totalPages: 0 }
     },
 
     /** Tải lịch sử bid phân trang từ Auction Service và chuẩn hóa về AuctionBid cho các màn chi tiết. */
