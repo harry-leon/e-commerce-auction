@@ -59,9 +59,29 @@ export function accountDefinitions() {
 }
 
 /** Ảnh SVG minh họa tự chứa, không phụ thuộc CDN và luôn nằm trong giới hạn URL 500 ký tự của schema. */
+export const CLOUDINARY_IMAGES = [
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542324/Nexus/electronics/tai-nghe-khong-day-n1/tai-nghe-khong-day-n1-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542327/Nexus/electronics/ban-phim-co-k87/ban-phim-co-k87-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542330/Nexus/electronics/chuot-khong-day-m2/chuot-khong-day-m2-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542345/Nexus/fashion/ao-thun-cotton-thuong-ngay/ao-thun-cotton-thuong-ngay-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542347/Nexus/fashion/ao-khoac-gio-nhe/ao-khoac-gio-nhe-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542350/Nexus/fashion/ba-lo-di-hoc-20l/ba-lo-di-hoc-20l-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542353/Nexus/home-living/den-ban-hoc-led/den-ban-hoc-led-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542356/Nexus/home-living/binh-giu-nhiet-500ml/binh-giu-nhiet-500ml-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542358/Nexus/home-living/bo-hop-thuc-pham-3-mon/bo-hop-thuc-pham-3-mon-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542361/Nexus/sports/tham-tap-yoga-6mm/tham-tap-yoga-6mm-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542364/Nexus/sports/day-khang-luc-tap-luyen/day-khang-luc-tap-luyen-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542366/Nexus/sports/tui-the-thao-cuoi-tuan/tui-the-thao-cuoi-tuan-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542373/Nexus/stationery/so-tay-giay-cham-a5/so-tay-giay-cham-a5-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542375/Nexus/stationery/bo-but-viet-5-mau/bo-but-viet-5-mau-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542379/Nexus/stationery/gia-do-sach-de-ban/gia-do-sach-de-ban-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542384/Nexus/collectibles/mo-hinh-go-lap-ghep/mo-hinh-go-lap-ghep-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542386/Nexus/collectibles/tranh-in-nghe-thuat-a4/tranh-in-nghe-thuat-a4-main.jpg",
+    "https://res.cloudinary.com/f4wgawlg/image/upload/v1794542389/Nexus/collectibles/bo-thiep-thu-cong-6-mau/bo-thiep-thu-cong-6-mau-main.jpg"
+];
+
 function image(index) {
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#eef2ff"/><text x="400" y="300" text-anchor="middle" font-size="40">NX DEMO ${index + 1}</text></svg>`;
-    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    return CLOUDINARY_IMAGES[index] ?? CLOUDINARY_IMAGES[0];
 }
 
 /**
