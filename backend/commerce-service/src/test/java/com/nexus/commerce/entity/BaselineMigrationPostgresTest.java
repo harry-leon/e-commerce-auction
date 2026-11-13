@@ -74,7 +74,15 @@ class BaselineMigrationPostgresTest {
             var baseline = migrate(url, schema, "latest");
             baseline.migrate();
             // V13 chỉ thêm yêu cầu refund; nâng từ schema cũ vẫn phải giữ nguyên tiền/đơn và không tạo tác vụ giả.
-            assertEquals("13", baseline.info().current().getVersion().getVersion());
+            // V14 không duyệt hay gửi refund cũ; attempts ban đầu phải rỗng sau nâng cấp.
+            // V15 thêm audit thủ công/receipt registry, không sinh quyết định cho dữ liệu cũ.
+            // V16 chỉ phát sự kiện cho thay đổi mới, không gửi lại refund lịch sử khi nâng schema.
+            // V17 thêm audit replay rỗng, không reset backlog lịch sử khi nâng cấp.
+            assertEquals("17", baseline.info().current().getVersion().getVersion());
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_notification_replays", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_notification_outbox", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_manual_resolutions", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_attempts", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_requests", Integer.class));
             assertEquals(0, baseline.migrate().migrationsExecuted);
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema

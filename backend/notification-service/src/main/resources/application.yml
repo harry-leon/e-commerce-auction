@@ -57,6 +57,10 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
+      # Chỉ Admin được xem từng component; không công khai chi tiết DB/credential qua health endpoint public.
+      show-components: when_authorized
+      show-details: never
+      roles: ADMIN
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
   tracing:
