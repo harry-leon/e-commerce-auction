@@ -55,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -64,6 +64,51 @@ import org.springframework.transaction.annotation.Transactional;
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
+    @Autowired private RefundRequestService refunds;
+
+    /** Hai Admin dùng hai key cho cùng payment chỉ được giữ một hạn mức toàn phần, không phụ thuộc thread thắng. */
+    @Test
+    void concurrentFullRefundRequestsReserveFundsOnce() throws Exception {
+        payments.ipn(callback("00", "00", "5000000"));
+        var gate = new CountDownLatch(1);
+        java.util.concurrent.Callable<Boolean> request = () -> {
+            gate.await();
+            try {
+                refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Hoàn toàn phần");
+                return true;
+            } catch (com.nexus.common.exception.ApiException error) {
+                assertEquals("REFUND_AMOUNT_EXCEEDED", error.getCode());
+                return false;
+            }
+        };
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(request);
+            var second = pool.submit(request);
+            gate.countDown();
+            assertEquals(1, (first.get(20, TimeUnit.SECONDS) ? 1 : 0) + (second.get(20, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_requests WHERE payment_id=?", Integer.class, paymentId));
+    }
+
+    /** Refund chỉ tiếp nhận tiền thật đã xác minh, giữ hạn mức dưới khóa DB và replay không INSERT lần hai. */
+    @Test
+    void refundRequestReplaysAndRejectsConflictingKeyOrSecondFullRefund() {
+        payments.ipn(callback("00", "00", "5000000"));
+        UUID admin = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        var created = refunds.create(admin, paymentId, key, "Khách yêu cầu");
+        assertEquals(com.nexus.commerce.enums.RefundStatus.REQUESTED, created.response().status());
+        assertEquals(created.response(), refunds.create(admin, paymentId, key, "Khách yêu cầu").response());
+        org.junit.jupiter.api.Assertions.assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refunds.create(admin, paymentId, key, "Lý do khác"));
+        org.junit.jupiter.api.Assertions.assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refunds.create(admin, paymentId, UUID.randomUUID(), "Hoàn lần hai"));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_requests WHERE payment_id=?", Integer.class, paymentId));
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+        assertEquals(created.response(), refunds.get(created.response().refundId(), buyer, false));
+        org.junit.jupiter.api.Assertions.assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refunds.get(created.response().refundId(), UUID.randomUUID(), false));
+    }
     @Autowired private CheckoutService checkout;
     @Autowired private OrderService management;
     @Autowired private PaymentService payments;
@@ -275,6 +320,8 @@ class PaymentPostgresTest {
 
     @BeforeEach
     void setup() {
+        // Checkout hiện kiểm tra tồn trước reserve; mock phải có hàng để các ca payment/refund đi đến đúng nghiệp vụ.
+        when(inventory.available(any())).thenReturn(100);
         // Service account fixture chỉ mở cổng tạo URL; không gửi yêu cầu tới Keycloak thật.
         when(tokens.configured()).thenReturn(true);
         buyer = UUID.randomUUID();

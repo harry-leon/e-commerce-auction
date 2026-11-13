@@ -31,7 +31,6 @@ import {
     Truck,
     Copy,
 } from '../../components/UI'
-import { PRODUCTS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
@@ -56,7 +55,6 @@ import {
     ApiClientError,
     errorMessage,
     formatSkuDisplay,
-    getProductStock,
     type ApiCategory,
     type ApiPricePreview,
     type ApiProduct,
@@ -66,6 +64,7 @@ import {
     adjustStock,
     createInventoryIdempotencyKey,
     getInventoryLedger,
+    getBatchStock,
     getSellerSkuDetail,
     inboundStock,
     listInventory,
@@ -82,6 +81,7 @@ import {
     type WarehouseResponse,
 } from '../../api/inventory'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
+import { getNotifications, readNotification } from '../../api/notifications'
 
 const AVAILABLE_BALANCE_VND = 210_000_000
 const VIETNAMESE_BANKS = [
@@ -131,34 +131,66 @@ const formatVnd = (amount: number) => `${amount.toLocaleString('vi-VN')} ₫`
 
 // ─── Seller Dashboard ──────────────────────────────────────────────────────────
 export function SellerDashboardPage() {
-    const { lang, navigate } = useApp()
+    const { lang, navigate, user } = useApp()
+    const [dashboardOrders, setDashboardOrders] = useState<any[]>([])
+    const [dashboardOrderCount, setDashboardOrderCount] = useState<number | null>(null)
+    const [dashboardStocks, setDashboardStocks] = useState<SellerSkuResponse[]>([])
+    const [dashboardAuctionCount, setDashboardAuctionCount] = useState<number | null>(null)
+    const [reputationScore, setReputationScore] = useState<number | null>(null)
+    useEffect(() => {
+        let active = true
+        Promise.allSettled([
+            api<any>('/orders/seller?page=0&size=5'),
+            listSellerSkus({ page: 0, size: 100 }),
+            api<any>('/reputations/me'),
+            user?.id
+                ? auctionsApi.getAuctions({ sellerId: user.id, status: 'active', includePending: true, limit: 100 })
+                : Promise.resolve(null),
+        ]).then(([ordersResult, stockResult, reputationResult, auctionsResult]) => {
+            if (!active) return
+            if (ordersResult.status === 'fulfilled') {
+                const data = ordersResult.value?.data
+                const rows = Array.isArray(data) ? data : data?.content || []
+                setDashboardOrders(rows)
+                setDashboardOrderCount(data?.totalElements ?? rows.length)
+            }
+            if (stockResult.status === 'fulfilled') setDashboardStocks(stockResult.value.items)
+            if (reputationResult.status === 'fulfilled') {
+                const score = reputationResult.value?.data?.score ?? reputationResult.value?.data?.reputationScore
+                if (typeof score === 'number') setReputationScore(score)
+            }
+            if (auctionsResult.status === 'fulfilled' && auctionsResult.value)
+                setDashboardAuctionCount(auctionsResult.value.total)
+        })
+        return () => { active = false }
+    }, [user?.id])
     const KPIs = [
         {
             icon: <TrendingUp size={20} />,
             label: tr(lang, 'revenueThisMonth'),
-            value: '$12,480',
-            change: '+18%',
+            value: '—',
+            change: '',
             positive: true,
         },
         {
             icon: <Package size={20} />,
             label: tr(lang, 'orders'),
-            value: '148',
-            change: '+5%',
+            value: dashboardOrderCount === null ? '—' : String(dashboardOrderCount),
+            change: '',
             positive: true,
         },
         {
             icon: <Gavel size={20} />,
             label: tr(lang, 'runningAuctions'),
-            value: '2',
+            value: dashboardAuctionCount === null ? '—' : String(dashboardAuctionCount),
             change: '',
             positive: true,
         },
         {
             icon: <Star size={20} />,
             label: tr(lang, 'reputation'),
-            value: '91 pts',
-            change: 'Gold',
+            value: reputationScore === null ? '—' : `${reputationScore} pts`,
+            change: '',
             positive: true,
         },
     ]
@@ -208,24 +240,8 @@ export function SellerDashboardPage() {
                             <option>{lang === 'en' ? 'Last 90 days' : '90 ngày qua'}</option>
                         </select>
                     </div>
-                    {/* Fake bar chart */}
-                    <div className="flex items-end gap-2 h-36">
-                        {[40, 65, 45, 80, 55, 90, 70, 85, 60, 95, 75, 88].map((h, i) => (
-                            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                                <div
-                                    className="w-full rounded-t-sm bg-primary"
-                                    style={{
-                                        height: `${h}%`,
-                                        opacity: i === 11 ? 1 : 0.5 + i * 0.04,
-                                    }}
-                                />
-                            </div>
-                        ))}
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-400 mt-2">
-                        <span>Jan</span>
-                        <span>Jun</span>
-                        <span>Dec</span>
+                    <div className="flex h-36 items-center justify-center text-sm text-gray-400">
+                        {lang === 'en' ? 'Revenue analytics API is not available.' : 'Chưa có API thống kê doanh thu.'}
                     </div>
                 </div>
 
@@ -236,19 +252,13 @@ export function SellerDashboardPage() {
                         <h3 className="font-bold text-gray-900">{tr(lang, 'lowStock')}</h3>
                     </div>
                     <div className="space-y-3">
-                        {PRODUCTS.filter((p) => p.stock <= 5).map((p) => (
+                        {dashboardStocks.filter((stock) => stock.availableQty <= 5).map((p) => (
                             <div key={p.id} className="flex items-center gap-3">
-                                <img
-                                    src={p.images[0]}
-                                    alt=""
-                                    className="w-10 h-10 rounded-lg object-cover"
-                                />
+                                <Package size={20} className="text-gray-400" />
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-semibold truncate">
-                                        {lang === 'vi' ? p.nameVi : p.name}
-                                    </p>
+                                    <p className="text-xs font-semibold truncate">{p.skuCode}</p>
                                     <p className="text-xs text-danger font-bold">
-                                        {lang === 'en' ? `${p.stock} left` : `Còn ${p.stock}`}
+                                        {lang === 'en' ? `${p.availableQty} left` : `Còn ${p.availableQty}`}
                                     </p>
                                 </div>
                             </div>
@@ -302,7 +312,7 @@ export function SellerDashboardPage() {
                                 ),
                             },
                         ]}
-                        data={ORDERS.slice(0, 5)}
+                        data={dashboardOrders}
                         rowKey={(r) => r.id}
                         onRowClick={() => navigate('seller-orders')}
                     />
@@ -319,35 +329,7 @@ export function SellerBalancePage() {
     const [withdrawAmount, setWithdrawAmount] = useState('')
     const [withdrawBank, setWithdrawBank] = useState('')
     const [withdrawAccountNumber, setWithdrawAccountNumber] = useState('')
-    const transactions = [
-        {
-            id: 'BAL-001',
-            description:
-                lang === 'en'
-                    ? 'Payment released · ORD-20240215-001'
-                    : 'Giải ngân · ORD-20240215-001',
-            date: '2024-02-25',
-            amount: 7_785_000,
-            status: 'released',
-        },
-        {
-            id: 'BAL-002',
-            description: lang === 'en' ? 'Withdrawal · Vietcombank' : 'Rút tiền · Vietcombank',
-            date: '2024-02-22',
-            amount: -50_000_000,
-            status: 'completed',
-        },
-        {
-            id: 'BAL-003',
-            description:
-                lang === 'en'
-                    ? 'Payment released · ORD-20240211-008'
-                    : 'Giải ngân · ORD-20240211-008',
-            date: '2024-02-18',
-            amount: 24_500_000,
-            status: 'released',
-        },
-    ]
+    const transactions: any[] = []
 
     return (
         <SellerLayout title={lang === 'en' ? 'Balance' : 'Số dư'}>
@@ -357,12 +339,12 @@ export function SellerBalancePage() {
                         {lang === 'en' ? 'Available balance' : 'Số dư khả dụng'}
                     </p>
                     <p className="text-3xl font-black text-gray-900 mt-2">
-                        {formatVnd(AVAILABLE_BALANCE_VND)}
+                        —
                     </p>
                     <Button
                         variant="primary"
                         className="mt-4"
-                        onClick={() => setWithdrawOpen(true)}
+                        disabled
                     >
                         {lang === 'en' ? 'Request Withdrawal' : 'Yêu cầu rút tiền'}
                     </Button>
@@ -372,7 +354,7 @@ export function SellerBalancePage() {
                         {lang === 'en' ? 'Buyer protection' : 'Đang bảo vệ Buyer'}
                     </p>
                     <p className="text-3xl font-black text-gray-900 mt-2">
-                        {formatVnd(36_250_000)}
+                        —
                     </p>
                     <p className="text-xs text-gray-400 mt-2">
                         {lang === 'en'
@@ -384,7 +366,7 @@ export function SellerBalancePage() {
                     <p className="text-sm text-gray-500">
                         {lang === 'en' ? 'On hold' : 'Đang tạm giữ'}
                     </p>
-                    <p className="text-3xl font-black text-gray-900 mt-2">{formatVnd(9_800_000)}</p>
+                    <p className="text-3xl font-black text-gray-900 mt-2">—</p>
                     <p className="text-xs text-gray-400 mt-2">
                         {lang === 'en'
                             ? 'Pending dispute resolution.'
@@ -407,6 +389,7 @@ export function SellerBalancePage() {
                     {lang === 'en' ? 'Balance activity' : 'Lịch sử số dư'}
                 </div>
                 <div className="p-5">
+                    {transactions.length === 0 && <p className="text-sm text-gray-500">{lang === 'en' ? 'Balance API is not available.' : 'Backend chưa cung cấp API số dư.'}</p>}
                     {transactions.map((transaction) => (
                         <div
                             key={transaction.id}
@@ -543,6 +526,7 @@ export function SellerProductListPage() {
     const [statusFilter, setStatusFilter] = useState<ProductStatus | 'all'>('all')
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [refreshKey, setRefreshKey] = useState(0)
+    const [inventoryBySku, setInventoryBySku] = useState<Record<string, number>>({})
 
     // Kiểm tra xem seller có ID dạng UUID hợp lệ từ backend hay không
     const isUuid = Boolean(
@@ -572,6 +556,25 @@ export function SellerProductListPage() {
      * Quy tắc: Chuẩn hóa bóc tách cả ApiResponse { data: [...] } và mảng trần; không dùng mock hay localStorage.
      */
     const rawList = (prodEnvelope as any)?.data ?? prodEnvelope
+    // Đồng bộ số tồn bảng sản phẩm từ Fulfillment thay vì giá trị cache cũ trong trình duyệt.
+    useEffect(() => {
+        let active = true
+        const skuIds = Array.isArray(rawList)
+            ? rawList.flatMap((product: ApiProduct) => (product.skus || []).map((sku) => sku.id).filter(Boolean))
+            : []
+        if (!skuIds.length) {
+            setInventoryBySku({})
+            return () => { active = false }
+        }
+        getBatchStock({ skuIds })
+            .then((stocks) => {
+                if (active) setInventoryBySku(Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty])))
+            })
+            .catch(() => {
+                if (active) setInventoryBySku({})
+            })
+        return () => { active = false }
+    }, [prodEnvelope])
     const apiProducts = Array.isArray(rawList)
         ? rawList.map((p: ApiProduct) => ({
               id: p.id,
@@ -581,11 +584,8 @@ export function SellerProductListPage() {
               originalPrice: p.skus?.[0]?.originalPrice ?? null,
               sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
               hasFulfillmentCode: Boolean(p.skus?.[0]?.skuCode),
-              // Tồn kho thực tế: ưu tiên từ SKU API, nếu Catalog Service chưa có trường stock thì tra cứu cache hoặc trả về 0; không hardcode 10
-              stock:
-                  (p.skus?.[0] as any)?.stock ??
-                  getProductStock(p.skus?.[0]?.skuCode || undefined, p.id) ??
-                  0,
+              // Inventory API là nguồn tồn duy nhất; SKU chưa có số liệu trả về 0.
+              stock: inventoryBySku[p.skus?.[0]?.id || ''] ?? 0,
               images:
                   p.images && p.images.length > 0
                       ? p.images.map((img) => img.url)
@@ -2084,7 +2084,7 @@ export function CreateAuctionPage() {
 
     const apiProducts = Array.isArray(sellerProductsRaw)
         ? sellerProductsRaw
-              .filter((p: any) => p.auctionEnabled !== false)
+              .filter((p: any) => p.auctionEnabled !== false && Boolean(p.skus?.[0]?.id))
               .map((product) => ({
                   id: product.id,
                   name: product.name,
@@ -2094,28 +2094,20 @@ export function CreateAuctionPage() {
               }))
         : []
 
-    const fallbackCatalog = PRODUCTS.filter((p) => p.enableAuction).map((p) => ({
-        id: p.id,
-        name: p.name,
-        nameVi: p.nameVi,
-        sku: p.sku,
-        skuId: undefined as string | undefined,
-    }))
-
-    // Sử dụng 100% danh sách sản phẩm thật từ Catalog Service Supabase DB
-    const availableProducts = apiProducts.length > 0 ? apiProducts : fallbackCatalog
+    // Chỉ cho tạo phiên từ sản phẩm Catalog thật có SKU hợp lệ; không dựng lựa chọn từ fixture.
+    const availableProducts = apiProducts
 
     // Xóa productId nếu đang chứa ID rác cũ dạng prod-... hoặc không tồn tại trong danh sách
     useEffect(() => {
         if (
             productId &&
             (productId.startsWith('prod-') ||
-                (availableProducts.length > 0 &&
+                (!loadingProducts &&
                     !availableProducts.some((p) => p.id === productId)))
         ) {
             setProductId('')
         }
-    }, [availableProducts, productId])
+    }, [availableProducts, productId, loadingProducts])
 
     // Nạp dữ liệu khi ở chế độ chỉnh sửa phiên có sẵn
     useEffect(() => {
@@ -5015,7 +5007,16 @@ export function SellerReputationPage() {
 export function SellerNotificationPage() {
     const { lang } = useApp()
     const [activeTab, setActiveTab] = useState('history')
-    const [notifications, setNotifications] = useState(NOTIFICATIONS)
+    const [notifications, setNotifications] = useState<any[]>([])
+    useEffect(() => {
+        const controller = new AbortController()
+        getNotifications(0, controller.signal)
+            .then((inbox) => setNotifications(inbox.content.map((item) => ({
+                ...item, titleVi: item.title, body: item.content, bodyVi: item.content, timestamp: item.createdAt,
+            }))))
+            .catch(() => { if (!controller.signal.aborted) setNotifications([]) })
+        return () => controller.abort()
+    }, [])
 
     return (
         <SellerLayout title={lang === 'en' ? 'Notifications' : 'Thông báo'}>
@@ -5029,11 +5030,10 @@ export function SellerNotificationPage() {
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={() =>
-                            setNotifications((current) =>
-                                current.map((notification) => ({ ...notification, read: true })),
-                            )
-                        }
+                        onClick={async () => {
+                            await readNotification()
+                            setNotifications((current) => current.map((notification) => ({ ...notification, read: true })))
+                        }}
                     >
                         {tr(lang, 'markAllRead')}
                     </Button>
@@ -5059,15 +5059,11 @@ export function SellerNotificationPage() {
                             {notifications.map((notification) => (
                                 <button
                                     key={notification.id}
-                                    onClick={() =>
-                                        setNotifications((current) =>
-                                            current.map((item) =>
-                                                item.id === notification.id
-                                                    ? { ...item, read: true }
-                                                    : item,
-                                            ),
-                                        )
-                                    }
+                                    onClick={async () => {
+                                        if (notification.read) return
+                                        await readNotification(notification.id)
+                                        setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item))
+                                    }}
                                     className={`w-full flex items-start gap-4 p-4 text-left border-b border-border last:border-0 transition-colors ${notification.read ? 'hover:bg-gray-50' : 'bg-gray-50'}`}
                                 >
                                     <span className="w-9 h-9 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
@@ -5097,26 +5093,7 @@ export function SellerNotificationPage() {
                             ))}
                         </div>
                     ) : (
-                        <div className="p-5 space-y-4">
-                            {[
-                                lang === 'en' ? 'Order updates' : 'Cập nhật đơn hàng',
-                                lang === 'en'
-                                    ? 'Payment and balance updates'
-                                    : 'Cập nhật thanh toán và số dư',
-                                lang === 'en' ? 'Auction activity' : 'Hoạt động đấu giá',
-                                lang === 'en' ? 'System announcements' : 'Thông báo hệ thống',
-                            ].map((label, index) => (
-                                <div
-                                    key={label}
-                                    className="flex items-center justify-between py-2 border-b border-border last:border-0"
-                                >
-                                    <span className="text-sm font-medium text-gray-700">
-                                        {label}
-                                    </span>
-                                    <Toggle checked={index < 3} onChange={() => {}} />
-                                </div>
-                            ))}
-                        </div>
+                        <div className="p-5 text-sm text-gray-500">{lang === 'en' ? 'Notification preferences API is not available.' : 'Backend chưa cung cấp API tùy chọn thông báo.'}</div>
                     )}
                 </div>
             </div>

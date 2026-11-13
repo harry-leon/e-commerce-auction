@@ -404,27 +404,11 @@ function resolveAuctionStatus(
  * Khi API /auctions trả về lỗi 5xx hoặc BACKEND_OFFLINE hoặc lỗi mạng,
  * ghi nhớ mốc thời gian tạm ngưng gửi request lên network trong 30 giây để tránh làm nghẽn mạng và rác console trình duyệt.
  */
-let auctionServiceOfflineUntil = 0
 
 function canFallbackToMock(error: unknown): boolean {
-    if (error instanceof ApiClientError) {
-        if (error.status === 401 && !readSession()) {
-            return true
-        }
-        return [404, 500, 502, 503, 504].includes(error.status) || error.code === 'BACKEND_OFFLINE'
-    }
-    const err = error as Error | undefined
-    return (
-        error instanceof TypeError ||
-        error instanceof ReferenceError ||
-        err?.name === 'TypeError' ||
-        err?.name === 'ReferenceError' ||
-        (typeof err?.message === 'string' &&
-            (err.message.includes('fetch') ||
-                err.message.includes('URL') ||
-                err.message.includes('network') ||
-                err.message.includes('Failed to parse')))
-    )
+    // Buyer/Seller/Admin không nhận fixture khi Auction Service lỗi hoặc chưa triển khai endpoint.
+    void error
+    return false
 }
 
 /**
@@ -826,6 +810,7 @@ function resolveFallbackAuctions(params: AuctionQueryParams): AuctionListRespons
         totalPages,
     }
 }
+void resolveFallbackAuctions
 
 export const auctionsApi = {
     /**
@@ -867,21 +852,34 @@ export const auctionsApi = {
         queryParts.push(`limit=${limit}`)
         const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
 
-        // Nếu circuit breaker đang mở do lần trước service lỗi hoặc backend offline:
-        // Lập tức trả về dữ liệu fallback local mà không gửi fetch lên network, tránh phát sinh lỗi 500 rác console.
-        if (Date.now() < auctionServiceOfflineUntil) {
-            return resolveFallbackAuctions(params)
-        }
-
         try {
             const envelope = await api<ApiResponse<unknown> | unknown[]>(`/auctions${qs}`)
-            auctionServiceOfflineUntil = 0
             const rawData =
                 envelope && typeof envelope === 'object' && 'data' in envelope
                     ? (envelope as ApiResponse<unknown>).data
                     : envelope
 
             const validatedItems = validateAndNormalizeAuctionList(rawData)
+
+            // Dữ liệu đấu giá hiển thị và quyết định quyền mua phải đến từ Auction Service; không ghép fixture/localStorage.
+            const serverItems = validatedItems.filter((auction) => {
+                const matchesStatus = !status || status === 'all' || auction.status === status
+                const matchesSeller = !sellerId || auction.sellerId === sellerId
+                const query = search.trim().toLowerCase()
+                const matchesSearch = !query || auction.product.name.toLowerCase().includes(query) || auction.sellerName.toLowerCase().includes(query)
+                const matchesPrice = (minPrice === undefined || auction.currentBid >= minPrice) && (maxPrice === undefined || auction.currentBid <= maxPrice)
+                return matchesStatus && matchesSeller && matchesSearch && matchesPrice
+            })
+            const pagination = envelope && typeof envelope === 'object' && 'meta' in envelope
+                ? (envelope as ApiResponse<unknown>).meta?.pagination
+                : undefined
+            return {
+                items: serverItems,
+                total: pagination?.totalElements ?? serverItems.length,
+                page: pagination?.page ?? page,
+                limit: pagination?.size ?? limit,
+                totalPages: pagination?.totalPages ?? Math.max(1, Math.ceil(serverItems.length / limit)),
+            }
 
             // Nếu Backend trả về dữ liệu hợp lệ
             if (validatedItems.length > 0 || Array.isArray(rawData)) {
@@ -1030,20 +1028,10 @@ export const auctionsApi = {
                 }
             }
         } catch (error) {
-            if (!canFallbackToMock(error)) {
-                throw error
-            }
-            // Chỉ mở Circuit Breaker khi lỗi server (5xx), backend offline hoặc lỗi mạng; không mở khi 404 hoặc 401
-            if (
-                (error instanceof ApiClientError &&
-                    (error.status >= 500 || error.code === 'BACKEND_OFFLINE')) ||
-                !(error instanceof ApiClientError)
-            ) {
-                auctionServiceOfflineUntil = Date.now() + 30_000
-            }
+            throw error
         }
 
-        return resolveFallbackAuctions(params)
+        return { items: [], total: 0, page, limit, totalPages: 0 }
     },
 
     /** Tải lịch sử bid phân trang từ Auction Service và chuẩn hóa về AuctionBid cho các màn chi tiết. */
@@ -1093,25 +1081,10 @@ export const auctionsApi = {
         extraAuctions: Auction[] = [],
         reviews: Partial<Record<string, { status: string }>> = {},
     ): Promise<Auction> {
+        void extraAuctions
         if (!id || typeof id !== 'string') {
             throw new ApiClientError('Mã phiên đấu giá không hợp lệ', 'INVALID_AUCTION_ID', 400)
         }
-        // Nếu circuit breaker đang mở do service offline, tra cứu nhanh trong kho local mà không gửi request
-        if (Date.now() < auctionServiceOfflineUntil) {
-            const localOnly =
-                extraAuctions.find((auction) => auction.id === id) ||
-                localAuctionsStore.find(
-                    (auction) => auction.id === id && !isLocalFallbackAuction(auction),
-                ) ||
-                AUCTIONS.find((auction) => auction.id === id)
-            if (localOnly) {
-                return {
-                    ...localOnly,
-                    status: resolveAuctionStatus(localOnly.id, localOnly.status, reviews),
-                }
-            }
-        }
-
         try {
             const envelope = await api<ApiResponse<unknown> | unknown>(`/auctions/${id}`)
             const rawData =
@@ -1130,22 +1103,7 @@ export const auctionsApi = {
                 }
             }
         } catch (error) {
-            if (!canFallbackToMock(error)) {
-                throw error
-            }
-        }
-
-        // Fallback tra cứu trong kho local
-        const found =
-            extraAuctions.find((auction) => auction.id === id) ||
-            localAuctionsStore.find(
-                (auction) => auction.id === id && !isLocalFallbackAuction(auction),
-            )
-        if (found) {
-            return {
-                ...found,
-                status: resolveAuctionStatus(found.id, found.status, reviews),
-            }
+            throw error
         }
 
         throw new ApiClientError(
@@ -1859,7 +1817,6 @@ export const auctionsApi = {
         localAuctionsStore = []
         persistStoredAuctions(localAuctionsStore)
         localAuctionReviews = {}
-        auctionServiceOfflineUntil = 0
         try {
             localStorage.removeItem(AUCTION_REVIEWS_STORAGE_KEY)
         } catch {
