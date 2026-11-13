@@ -9,7 +9,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 /**
- * Cấp HTTP client nội bộ Auction → Commerce/Inventory bằng service account riêng.
+ * Cấp HTTP client nội bộ Auction → Commerce/Inventory/Reputation bằng service account riêng.
  * Không tự thực thi settlement/order/reserve; nghiệp vụ gọi bean khi contract tương ứng được triển khai.
  * Thiếu secret thì lỗi khi gọi; timeout 5 giây, không retry mutation để tránh tạo dữ liệu trùng.
  */
@@ -38,6 +38,13 @@ public class AuctionServiceClients {
         return internalClient(url, token);
     }
 
+    /** Client HTTP tới Reputation Service để kiểm tra ngưỡng điểm uy tín khi tạo phiên và đặt giá. */
+    @Bean
+    RestClient auctionReputationClient(ClientCredentialsToken token,
+            @Value("${REPUTATION_SERVICE_URL:http://localhost:8087}") String url) {
+        return internalClient(url, token);
+    }
+
     /**
      * Tạo client có connect/read timeout 5 giây, lấy bearer từ cache ngay trước HTTP execution.
      * Downstream 401 chỉ bỏ cache cho lần gọi sau; giữ response cho caller và không gửi lại mutation mù.
@@ -50,7 +57,9 @@ public class AuctionServiceClients {
         return RestClient.builder().baseUrl(url).requestFactory(factory).requestInterceptor((request, body, execution) -> {
             request.getHeaders().setBearerAuth(token.get());
             var response = execution.execute(request, body);
-            if (response.getStatusCode().value() == 401) { token.invalidate(); }
+            if (response.getStatusCode().value() == 401) {
+                token.invalidate();
+            }
             return response;
         }).build();
     }
