@@ -71,6 +71,10 @@ export interface CreateOrderRequest {
     sourceType?: 'REGULAR' | 'AUCTION'
     auctionId?: string | null
     selectedItemIds?: string[]
+    /** Hãng vận chuyển được chọn (GHN, GHTK - HA-S3-1) */
+    carrier?: string
+    /** Phí vận chuyển áp dụng cho đơn */
+    shippingFee?: number
 }
 
 /**
