@@ -86,7 +86,13 @@ public class GatewaySecurityConfig {
                 // Các thao tác quản trị kho (nhập kho, điều chỉnh, tạo kho) vẫn được bảo vệ bằng JWT và phân quyền ADMIN/SELLER.
                 .pathMatchers(HttpMethod.GET, "/api/v1/inventory/sku/**")
                     .permitAll()
-                .pathMatchers(HttpMethod.GET, "/api/v1/reputations/**")
+                // Các endpoint cá nhân, xử phạt và quản trị uy tín bắt buộc xác thực JWT trước khi mở phần public.
+                .pathMatchers(HttpMethod.GET, "/api/v1/reputations/me",
+                    "/api/v1/reputations/*/penalties",
+                    "/api/v1/reputations/admin/**")
+                    .authenticated()
+                .pathMatchers(HttpMethod.GET, "/api/v1/reputations/**",
+                    "/api/v1/ratings/user/**")
                     .permitAll()
                 .anyExchange().authenticated())
             .oauth2ResourceServer(oauth2 -> oauth2
