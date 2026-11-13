@@ -13,7 +13,6 @@ import {
     AlertBanner,
     EmptyState,
     StatusBadge,
-    StarRating,
     ReputationBar,
     DataTable,
     Toggle,
@@ -36,6 +35,16 @@ import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
+import {
+    reputationApi,
+    type ReputationSummary,
+    type RatingResponse,
+} from '../../api/reputation'
+import {
+    TrustLevelBadge,
+    RatingModal,
+    RatingsList,
+} from '../../components/ReputationRating'
 import {
     shippingApi,
     type ShipmentResponse,
@@ -2599,10 +2608,50 @@ export function SellerOrdersPage() {
     const [statusFilter, setStatusFilter] = useState<string>('all')
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
+    // Quản lý thông tin điểm uy tín người mua và đánh giá (Sprint 3 - HA-S3-2)
+    const [buyerReputation, setBuyerReputation] = useState<ReputationSummary | null>(null)
+    const [orderRating, setOrderRating] = useState<RatingResponse | null>(null)
+    const [ratingModalOpen, setRatingModalOpen] = useState(false)
+
+    // Quản lý thông tin vận đơn và hành trình giao hàng (Sprint 3 - HA-S3-1)
     const [modalShipment, setModalShipment] = useState<ShipmentResponse | null>(null)
     const [modalTracking, setModalTracking] = useState<ShipmentTrackingResponse | null>(null)
     const [modalShipmentLoading, setModalShipmentLoading] = useState<boolean>(false)
     const [modalShipmentError, setModalShipmentError] = useState<string | null>(null)
+
+    /**
+     * Nạp thông tin uy tín người mua và đánh giá khi Seller xem chi tiết đơn hàng (Sprint 3 - HA-S3-2).
+     */
+    useEffect(() => {
+        if (!selectedOrder) {
+            setBuyerReputation(null)
+            setOrderRating(null)
+            return
+        }
+        let active = true
+        reputationApi
+            .getUserReputation(selectedOrder.buyerId)
+            .then((rep) => {
+                if (active) setBuyerReputation(rep)
+            })
+            .catch(() => {})
+
+        reputationApi
+            .getRatingsForOrder(selectedOrder.id)
+            .then((ratings) => {
+                if (active) {
+                    const existing = ratings.find(
+                        (r) => r.rateeId === selectedOrder.buyerId || (user && r.raterId === user.id),
+                    )
+                    setOrderRating(existing || null)
+                }
+            })
+            .catch(() => {})
+
+        return () => {
+            active = false
+        }
+    }, [selectedOrder, user])
 
     /**
      * Nạp thông tin vận đơn và hành trình thời gian thực khi Seller mở modal đơn hàng (Sprint 3 - HA-S3-1).
@@ -2845,7 +2894,7 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Items' : 'Sản phẩm',
                                 render: (r: Order) => (
                                     <div className="flex items-center gap-2">
-                                        {r.items[0]?.image && (
+                                        {Boolean(r.items[0]?.image) && (
                                             <img
                                                 src={r.items[0].image}
                                                 alt=""
@@ -3061,6 +3110,84 @@ export function SellerOrdersPage() {
                             </div>
                         </div>
 
+                        {/* Hồ sơ uy tín Người mua & Đánh giá (Sprint 3 - HA-S3-2) */}
+                        <div className="p-4 bg-gray-50/80 border border-border/80 rounded-xl space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs text-gray-500">
+                                        {lang === 'en' ? 'Buyer Profile & Reputation' : 'Hồ sơ uy tín người mua'}
+                                    </p>
+                                    <p className="font-semibold text-gray-900 mt-0.5">
+                                        {selectedOrder.buyerName}
+                                    </p>
+                                    <p className="text-xs text-gray-400">ID: {selectedOrder.buyerId}</p>
+                                </div>
+                                {buyerReputation && (
+                                    <div className="text-right">
+                                        <TrustLevelBadge
+                                            level={buyerReputation.trustLevel}
+                                            score={buyerReputation.score}
+                                            size="sm"
+                                        />
+                                        <p className="text-xs text-amber-600 font-semibold mt-1">
+                                            ★ {buyerReputation.avgRating.toFixed(1)} (
+                                            {buyerReputation.totalRatings}{' '}
+                                            {lang === 'vi' ? 'đánh giá' : 'reviews'})
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {['DELIVERED', 'COMPLETED'].includes(selectedOrder.status) && (
+                                <div className="pt-2 border-t border-gray-200">
+                                    {orderRating ? (
+                                        <div className="flex items-center justify-between bg-green-50 p-2.5 rounded-lg border border-green-200 text-xs text-green-800">
+                                            <div className="flex items-center gap-1.5">
+                                                <CheckCircle size={14} className="text-green-600" />
+                                                <span className="font-semibold">
+                                                    {lang === 'vi'
+                                                        ? `Bạn đã đánh giá người mua (${orderRating.score}/5 sao)`
+                                                        : `You rated buyer (${orderRating.score}/5 stars)`}
+                                                </span>
+                                            </div>
+                                            {orderRating.comment && (
+                                                <span className="italic text-gray-600 truncate max-w-xs">
+                                                    "{orderRating.comment}"
+                                                </span>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center justify-between bg-amber-50 p-2.5 rounded-lg border border-amber-200 text-xs text-amber-800">
+                                            <span>
+                                                {lang === 'vi'
+                                                    ? 'Giao dịch đã hoàn tất. Hãy đánh giá người mua.'
+                                                    : 'Transaction completed. Rate the buyer.'}
+                                            </span>
+                                            <Button
+                                                size="sm"
+                                                variant="primary"
+                                                onClick={() => {
+                                                    if (user && user.id === selectedOrder.buyerId) {
+                                                        showToast({
+                                                            type: 'error',
+                                                            message:
+                                                                lang === 'vi'
+                                                                    ? 'Bạn không thể tự đánh giá chính mình'
+                                                                    : 'You cannot rate yourself',
+                                                        })
+                                                        return
+                                                    }
+                                                    setRatingModalOpen(true)
+                                                }}
+                                            >
+                                                {lang === 'vi' ? 'Đánh giá người mua' : 'Rate Buyer'}
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
                         <div>
                             <p className="text-xs text-gray-500 mb-1">
                                 {tr(lang, 'shippingAddress')}
@@ -3083,11 +3210,17 @@ export function SellerOrdersPage() {
                                         className="flex items-center justify-between p-3 gap-3"
                                     >
                                         <div className="flex items-center gap-3">
-                                            <img
-                                                src={item.image}
-                                                alt=""
-                                                className="w-12 h-12 object-cover rounded-lg border border-border"
-                                            />
+                                            {item.image ? (
+                                                <img
+                                                    src={item.image}
+                                                    alt=""
+                                                    className="w-12 h-12 object-cover rounded-lg border border-border"
+                                                />
+                                            ) : (
+                                                <div className="w-12 h-12 rounded-lg border border-border bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+                                                    <Package size={20} />
+                                                </div>
+                                            )}
                                             <div>
                                                 <p className="text-sm font-medium text-gray-900">
                                                     {item.productName}
@@ -3246,6 +3379,18 @@ export function SellerOrdersPage() {
                     </div>
                 )}
             </Modal>
+
+            {selectedOrder && (
+                <RatingModal
+                    isOpen={ratingModalOpen}
+                    onClose={() => setRatingModalOpen(false)}
+                    orderId={selectedOrder.id}
+                    rateeId={selectedOrder.buyerId}
+                    rateeName={selectedOrder.buyerName}
+                    role="seller"
+                    onSubmitSuccess={(newRating) => setOrderRating(newRating)}
+                />
+            )}
         </SellerLayout>
     )
 }
@@ -4714,75 +4859,145 @@ export function SellerInventoryPage() {
     )
 }
 
-// ─── Seller Reputation ─────────────────────────────────────────────────────────
+// ─── Seller Reputation & Ratings (Sprint 3 - HA-S3-2) ─────────────────────────
 export function SellerReputationPage() {
     const { lang, user } = useApp()
+    const [reputation, setReputation] = useState<ReputationSummary | null>(null)
+    const [ratings, setRatings] = useState<RatingResponse[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+
+    const loadData = async () => {
+        if (!user) return
+        setLoading(true)
+        setError(null)
+        try {
+            const [rep, rates] = await Promise.all([
+                reputationApi.getMyReputation(),
+                reputationApi.getRatingsForUser(user.id, 0, 50),
+            ])
+            setReputation(rep)
+            setRatings(rates.content)
+        } catch (err: any) {
+            setError(
+                err?.message ||
+                    (lang === 'vi'
+                        ? 'Không thể tải điểm uy tín'
+                        : 'Failed to load reputation'),
+            )
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        loadData()
+    }, [user])
+
     if (!user) return null
 
+    const successRate =
+        reputation && reputation.totalTx > 0
+            ? Math.round((reputation.successTx / reputation.totalTx) * 100)
+            : 100
+
     return (
-        <SellerLayout title={lang === 'en' ? 'Reputation' : 'Uy tín'}>
-            <div className="max-w-4xl">
-                <div className="grid grid-cols-2 gap-5 mb-6">
-                    <div className="nexus-card p-6">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Seller reputation score' : 'Điểm uy tín người bán'}
-                        </h3>
-                        <ReputationBar score={user.reputationScore} />
+        <SellerLayout title={lang === 'en' ? 'Reputation & Ratings' : 'Uy tín & Đánh giá'}>
+            <div className="max-w-4xl space-y-6">
+                {loading ? (
+                    <div className="py-16 text-center text-gray-500" role="status">
+                        <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        <p className="text-sm">
+                            {lang === 'vi' ? 'Đang tải điểm uy tín...' : 'Loading reputation...'}
+                        </p>
                     </div>
-                    <div className="nexus-card p-6">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Performance' : 'Hiệu suất'}
-                        </h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="p-4 bg-gray-50 rounded-xl">
-                                <p className="text-2xl font-black">98%</p>
-                                <p className="text-xs text-gray-500 mt-1">
-                                    {lang === 'en' ? 'Successful orders' : 'Đơn thành công'}
-                                </p>
+                ) : error ? (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex justify-between items-center">
+                        <span>{error}</span>
+                        <Button size="sm" variant="outline" onClick={loadData}>
+                            {lang === 'vi' ? 'Thử lại' : 'Retry'}
+                        </Button>
+                    </div>
+                ) : reputation ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div className="nexus-card p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-bold text-gray-900">
+                                        {lang === 'en'
+                                            ? 'Seller reputation score'
+                                            : 'Điểm uy tín người bán'}
+                                    </h3>
+                                    <TrustLevelBadge level={reputation.trustLevel} size="md" />
+                                </div>
+                                <ReputationBar score={reputation.score} />
+                                <div className="mt-3 flex justify-between text-xs text-gray-500">
+                                    <span>
+                                        {lang === 'vi' ? 'Điểm hiện tại' : 'Current score'}:{' '}
+                                        <strong className="text-gray-900">
+                                            {reputation.score}
+                                        </strong>
+                                    </span>
+                                    <span>
+                                        {lang === 'vi' ? 'Cấp độ' : 'Tier'}:{' '}
+                                        <strong className="text-gray-900">
+                                            {reputation.trustLevel}
+                                        </strong>
+                                    </span>
+                                </div>
                             </div>
-                            <div className="p-4 bg-gray-50 rounded-xl">
-                                <p className="text-2xl font-black">4.8</p>
-                                <p className="text-xs text-gray-500 mt-1">
-                                    {lang === 'en' ? 'Buyer rating' : 'Đánh giá Buyer'}
-                                </p>
+
+                            <div className="nexus-card p-6">
+                                <h3 className="font-bold mb-4 text-gray-900">
+                                    {lang === 'en' ? 'Performance Metrics' : 'Chỉ số hiệu suất'}
+                                </h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-4 bg-gray-50 rounded-xl text-center">
+                                        <p className="text-2xl font-black text-gray-900">
+                                            {successRate}%
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {lang === 'en'
+                                                ? 'Order Success Rate'
+                                                : 'Tỉ lệ đơn thành công'}
+                                        </p>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-xl text-center">
+                                        <p className="text-2xl font-black text-amber-500">
+                                            ★{' '}
+                                            {reputation.avgRating
+                                                ? reputation.avgRating.toFixed(1)
+                                                : '5.0'}
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {reputation.totalRatings || ratings.length}{' '}
+                                            {lang === 'en'
+                                                ? 'Buyer reviews'
+                                                : 'Đánh giá từ Buyer'}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-                <div className="nexus-card p-5">
-                    <h3 className="font-bold mb-4">
-                        {lang === 'en' ? 'Recent buyer feedback' : 'Phản hồi gần đây từ Buyer'}
-                    </h3>
-                    {[
-                        {
-                            buyer: 'Minh Tran',
-                            rating: 5,
-                            comment:
-                                lang === 'en'
-                                    ? 'Product matched the description and shipped quickly.'
-                                    : 'Sản phẩm đúng mô tả và giao hàng nhanh.',
-                        },
-                        {
-                            buyer: 'Lan Nguyen',
-                            rating: 4,
-                            comment:
-                                lang === 'en'
-                                    ? 'Good communication throughout the order.'
-                                    : 'Trao đổi tốt trong suốt quá trình đặt hàng.',
-                        },
-                    ].map((feedback) => (
-                        <div
-                            key={feedback.buyer}
-                            className="py-4 border-b border-border last:border-0"
-                        >
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="font-semibold text-sm">{feedback.buyer}</span>
-                                <StarRating rating={feedback.rating} size={14} />
-                            </div>
-                            <p className="text-sm text-gray-600">{feedback.comment}</p>
+
+                        {/* Danh sách phản hồi và đánh giá từ Buyer */}
+                        <div className="nexus-card p-6">
+                            <h3 className="font-bold text-base mb-4 text-gray-900">
+                                {lang === 'en'
+                                    ? 'Buyer Feedback History'
+                                    : 'Lịch sử đánh giá từ người mua'}
+                            </h3>
+                            <RatingsList
+                                ratings={ratings}
+                                emptyMessage={
+                                    lang === 'vi'
+                                        ? 'Shop chưa nhận được đánh giá nào.'
+                                        : 'No buyer feedback yet.'
+                                }
+                            />
                         </div>
-                    ))}
-                </div>
+                    </>
+                ) : null}
             </div>
         </SellerLayout>
     )
