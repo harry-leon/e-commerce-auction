@@ -227,7 +227,7 @@ public class ShippingServiceImpl implements ShippingService {
                 request.carrier(), request.weightGrams(), request.serviceType());
         Carrier carrier = resolveOrProvisionCarrier(adapter.getCarrierCode());
 
-        // Bọc lệnh tạo đơn qua Circuit Breaker & Retry
+        // Tạo vận đơn chỉ một lần qua Circuit Breaker; timeout phải đối soát carrier, không retry mutation tự động.
         CarrierCreateShipmentResult carrierResult = resilienceManager.executeWithResilience(
                 adapter.getCarrierCode(),
                 "createShipment",

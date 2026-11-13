@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
  *   + SHIPPING_RETRY_LIMIT = 3
  * - Cung cấp hàm bọc thực thi an toàn executeWithResilience() kết hợp cả Circuit Breaker và Retry Policy:
  *   1. Kiểm tra circuit breaker: nếu OPEN -> fail-fast ngay lập tức hoặc kích hoạt fallback.
- *   2. Gọi hàm nghiệp vụ qua Retry Policy tối đa 3 lần nếu gặp lỗi mạng tạm thời.
+ *   2. Chỉ quote/trackShipment được retry; mutation hoặc thao tác chưa biết gọi đúng một lần mỗi invocation.
  *   3. Ghi nhận thành công/thất bại vào Circuit Breaker để cập nhật trạng thái mạch.
  *
  * Quy tắc và lý do:
@@ -69,7 +69,8 @@ public class CarrierResilienceManager {
     }
 
     /**
-     * Thực thi một tác vụ gọi API hãng vận chuyển được bảo vệ toàn diện bởi Circuit Breaker và Retry.
+     * Bọc Circuit Breaker cho mọi thao tác; chỉ retry/fallback các thao tác đọc đã biết.
+     * Mutation timeout có thể đã tạo vận đơn phía carrier, nên trả lỗi để đối soát thay vì thử lại hoặc giả thành công.
      *
      * @param carrierCode mã hãng vận chuyển ("GHN", "GHTK")
      * @param operation tên thao tác ("quote", "createShipment", "trackShipment")
@@ -84,26 +85,28 @@ public class CarrierResilienceManager {
             Supplier<T> fallback
     ) {
         CarrierCircuitBreaker cb = getCircuitBreaker(carrierCode);
+        boolean readOperation = "quote".equals(operation) || "trackShipment".equals(operation);
         CarrierRetryPolicy retryPolicy = getRetryPolicy(carrierCode);
 
         try {
             cb.acquirePermission();
         } catch (Throwable ex) {
             log.warn("Circuit Breaker từ chối thao tác {} trên hãng {}: {}", operation, carrierCode, ex.getMessage());
-            if (fallback != null) {
+            if (readOperation && fallback != null) {
                 return fallback.get();
             }
             throw ex;
         }
 
         try {
-            T result = retryPolicy.execute(action);
+            // Key idempotency trong DB nội bộ không chứng minh carrier đã khử trùng khi response bị mất.
+            T result = readOperation ? retryPolicy.execute(action) : action.get();
             cb.recordSuccess();
             return result;
         } catch (Throwable ex) {
             cb.recordFailure(ex);
             log.error("Thao tác {} trên hãng {} thất bại: {}", operation, carrierCode, ex.getMessage());
-            if (fallback != null) {
+            if (readOperation && fallback != null) {
                 log.info("Kích hoạt fallback cho thao tác {} trên hãng {}", operation, carrierCode);
                 return fallback.get();
             }

@@ -38,6 +38,32 @@ class CarrierResilienceTest {
         resilienceManager = new CarrierResilienceManager(properties);
     }
 
+    /** Mất ACK tạo vận đơn có thể đã ghi tại carrier: không retry hoặc trả fallback giả; thao tác mới cũng mặc định như mutation. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"createShipment", "cancelShipment", "newOperation"})
+    void mutationTimeoutIsNotRetriedOrReplacedByFallback(String operation) {
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicInteger fallbacks = new AtomicInteger();
+        var timeout = new ResourceAccessException("Lost ACK", new SocketTimeoutException("timeout"));
+        assertThatThrownBy(() -> resilienceManager.executeWithResilience("GHN", operation, () -> {
+            attempts.incrementAndGet();
+            throw timeout;
+        }, () -> { fallbacks.incrementAndGet(); return "fake-success"; })).isSameAs(timeout);
+        assertThat(attempts.get()).isEqualTo(1);
+        assertThat(fallbacks.get()).isZero();
+        assertThat(resilienceManager.getCircuitBreaker("GHN").getConsecutiveFailures()).isEqualTo(1);
+    }
+
+    /** Mạch OPEN phải chặn mutation trước khi gọi carrier, kể cả caller truyền fallback. */
+    @Test
+    void openCircuitRejectsMutationWithoutFallback() {
+        resilienceManager.getCircuitBreaker("GHN").transitionToState(CarrierCircuitBreakerState.OPEN);
+        AtomicInteger calls = new AtomicInteger();
+        assertThatThrownBy(() -> resilienceManager.executeWithResilience("GHN", "createShipment",
+                () -> calls.incrementAndGet(), () -> calls.incrementAndGet())).isInstanceOf(ApiException.class);
+        assertThat(calls.get()).isZero();
+    }
+
     @Test
     @DisplayName("CircuitBreaker: ngắt mạch (OPEN) sau 3 lần lỗi liên tiếp và kích hoạt Fail-Fast")
     void circuitBreaker_opensAfterConsecutiveFailures_andFailsFast() {
