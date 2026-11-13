@@ -18,9 +18,9 @@ State Order/history, binding, inbox và notification snapshot cùng transaction;
 
 ## Transport còn lại
 
-MR này hoàn thiện consumer và lưu notification outbox, **chưa giao thông báo tới Notification**: chưa có worker cho shipping_notification_outbox và Notification chưa hỗ trợ hai type ORDER_SHIPPED/ORDER_DELIVERED. Không đưa loại mới vào worker email cũ. Cần triển khai consumer Notification trước worker giao inbox/push.
+Consumer V18 lưu notification outbox. MR !158 bổ sung hai type ORDER_SHIPPED/ORDER_DELIVERED ở Notification; worker Commerce V19 giao inbox/push riêng, xem [runbook delivery](TT_S3_SHIPPING_NOTIFICATION_DELIVERY.md). Phải deploy consumer trước khi bật worker, không đưa loại mới vào luồng email chưa có template.
 
-Fulfillment hiện chỉ lưu fulfillment_event_outbox, chưa có worker HTTP gửi Commerce; cần bổ sung retry/backoff, phân loại 409 phụ thuộc state so với poison conflict, dead letter/replay và health đúng transport. Outbox/inbox tồn tại không chứng minh đã nối end-to-end. Provider sandbox, IAM thật, callback trực tiếp carrier, producer tự tạo shipment sau payment và UAT vẫn còn việc riêng.
+MR !157 bổ sung worker HTTP Fulfillment → Commerce mặc định tắt, retry/backoff và dead letter; replay có audit/health vẫn còn việc riêng. 409 có thể là dependency hoặc poison cần operator phân loại. Outbox/inbox tồn tại không chứng minh đã nối end-to-end. Provider sandbox, IAM thật, callback trực tiếp carrier, producer tự tạo shipment sau payment và UAT vẫn còn việc riêng.
 
 ## Lỗi và test
 

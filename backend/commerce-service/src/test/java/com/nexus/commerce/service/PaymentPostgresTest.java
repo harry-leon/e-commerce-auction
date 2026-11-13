@@ -69,6 +69,79 @@ class PaymentPostgresTest {
     @Autowired private RefundNotificationReplayService notificationReplays;
     @Autowired private ShippingEventInboxService shippingInbox;
 
+    /** Mất ACK gửi lại cùng notification snapshot/id; backoff chặn retry tức thì và không gọi luồng email. */
+    @Test
+    void shippingNotificationRetriesSamePayloadAndFinishesOnlyAfterAck() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        when(remote.configured()).thenReturn(true);
+        org.mockito.Mockito.doThrow(new IllegalStateException("lost ACK")).doNothing().when(remote).sendInbox(any());
+        var worker = new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, true);
+        worker.deliver(id); worker.deliver(id);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+        jdbc.update("UPDATE shipping_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", id);
+        worker.deliver(id); worker.deliver(id);
+        var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(2)).sendInbox(captor.capture());
+        assertEquals(captor.getAllValues().getFirst(), captor.getAllValues().getLast());
+        assertEquals("DELIVERED", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.never()).send(any());
+    }
+
+    /** Hai worker chỉ giao một row; tắt feature/OAuth thiếu giữ backlog không query gửi HTTP. */
+    @Test
+    void shippingNotificationIsDisabledByDefaultAndConcurrentSafe() throws Exception {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP"); shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, false).run();
+        var worker = new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, true);
+        worker.run(); worker.deliver(id);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.never()).sendInbox(any());
+        when(remote.configured()).thenReturn(true);
+        CountDownLatch entered = new CountDownLatch(1); CountDownLatch release = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            entered.countDown();
+            if (!release.await(10, TimeUnit.SECONDS)) { throw new IllegalStateException("Test timeout"); }
+            return null;
+        }).when(remote).sendInbox(any());
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = pool.submit(() -> worker.deliver(id));
+            try {
+                assertEquals(true, entered.await(10, TimeUnit.SECONDS));
+                pool.submit(() -> worker.deliver(id)).get(3, TimeUnit.SECONDS);
+            } finally { release.countDown(); }
+            first.get(10, TimeUnit.SECONDS);
+        }
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+    }
+
+    /** Tám lỗi giữ dead letter không chứa message; snapshot lệch phải dừng trước HTTP, không ảnh hưởng Order. */
+    @Test
+    void shippingNotificationRetainsDeadLetterAndRejectsPoison() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP"); shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class); when(remote.configured()).thenReturn(true);
+        doThrow(new IllegalStateException("Sensitive upstream body")).when(remote).sendInbox(any());
+        var worker = new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, true);
+        for (int i = 0; i < 8; i++) {
+            jdbc.update("UPDATE shipping_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", id);
+            worker.deliver(id);
+        }
+        worker.deliver(id);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(8)).sendInbox(any());
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        assertEquals("IllegalStateException", jdbc.queryForObject("SELECT last_error_type FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        shippingInbox.receive(shippingEvent(event, "ShipmentDelivered", "DELIVERED"));
+        UUID poison = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=? AND event_type='ORDER_DELIVERED'", UUID.class, event.orderId());
+        jdbc.update("UPDATE shipping_notification_outbox SET payload='{}'::jsonb WHERE id=?", poison);
+        worker.deliver(poison);
+        assertEquals("INVALID_SNAPSHOT", jdbc.queryForObject("SELECT last_error_type FROM shipping_notification_outbox WHERE id=?", String.class, poison));
+        assertEquals("DELIVERED", orderState(event.orderId()));
+    }
+
     /** Pickup→Delivered cập nhật Order/history/outbox một lần; callback cũ không hạ trạng thái hoặc phát tin trùng. */
     @Test
     void shippingInboxDeduplicatesAndNeverRegressesDeliveredOrder() {
