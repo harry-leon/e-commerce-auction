@@ -90,3 +90,11 @@ DTO gốc là `OrderEmailRequest`; Commerce gửi snapshot người nhận/items
 Notification migration hiện tại là V1–V4: V3 thêm liên kết inbox Commerce, V4 bảo vệ event EMAIL bằng unique partial index. V4 giữ bản SENT trong nhóm event trùng và chỉ bỏ event_id của bản còn lại, không xóa notification/attempt. Số V6/V7 trong task thuộc **Commerce**, không phải Notification; không đổi tên migration đã chạy.
 
 Chi tiết version và bằng chứng: [TT-S2-1 register](../TT-S2-1_ORDER_PAYMENT_BASELINE.md). Các API ngoài phần CURRENT ở trên không được FE coi là đã triển khai.
+# Mở rộng Sprint 3: refund inbox/push
+
+`POST /internal/commerce-notifications` nhận thêm `REFUND_REQUESTED`, `REFUND_SUCCEEDED`, `REFUND_FAILED`, `REFUND_REQUIRES_REVIEW`, bắt buộc `refundId` và amount VND nguyên dương. Ingestion vẫn yêu cầu ROLE_NOTIFICATION_WRITER, replay cùng eventId khác refund/context trả 409. JSON cũ không có refundId tiếp tục hoạt động cho event cũ.
+
+`GET /api/v1/notifications` trả thêm refundId nullable; ownership giữ nguyên theo JWT. Push sau commit có cùng refundId. Đây là contract IN_APP/PUSH, chưa phải refund email hoặc producer Commerce chạy thật.
+
+Admin có thể đọc trạng thái `/actuator/health/notificationTransport`; broker simple chỉ phù hợp một instance. Chi tiết [consumer và health](../TT_S3_NOTIFICATION_REFUND_CONSUMER.md).
+

@@ -21,7 +21,8 @@ export const VERSIONS = {
     commerce: 13,
     auction: 3,
     reputation: 3,
-    notification: 5,
+    // V6 thêm refund context nullable; fixture demo không giả lập một giao dịch refund thật.
+    notification: 6,
 };
 export const DEFAULT_WAREHOUSE = "a0000000-0000-0000-0000-000000000001";
 
