@@ -109,6 +109,39 @@ class ShipmentDispatchPostgresTest {
     }
 
     private String state() { return jdbc.queryForObject("SELECT status FROM shipment_dispatch_attempts", String.class); }
+
+    /** Lifecycle lock buộc operator chờ transaction dispatch kết thúc, không khôi phục song song khi HTTP chưa trả ACK. */
+    @Test
+    void lifecycleLockBlocksResolutionUntilDispatchFinishes() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1); CountDownLatch release = new CountDownLatch(1);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var dispatch = pool.submit(() -> outer.executeWithoutResult(tx -> {
+                guard.send("GHN", request, () -> {
+                    entered.countDown();
+                    try { if (!release.await(10, TimeUnit.SECONDS)) { throw new IllegalStateException("Test timeout"); } }
+                    catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new IllegalStateException("Interrupted"); }
+                    return ack();
+                });
+                tx.setRollbackOnly();
+            }));
+            try {
+                assertEquals(true, entered.await(10, TimeUnit.SECONDS));
+                var resolving = pool.submit(() -> outer.execute(tx -> jdbc.queryForList(
+                        "SELECT order_id FROM shipment_dispatch_locks WHERE order_id=? FOR UPDATE", request.orderId())));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                int waiting = 0;
+                while (waiting == 0 && System.nanoTime() < deadline) {
+                    waiting = jdbc.queryForObject("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                            + "AND wait_event_type='Lock' AND query LIKE '%shipment_dispatch_locks%'", Integer.class);
+                    if (waiting == 0) { Thread.sleep(20); }
+                }
+                assertEquals(true, waiting > 0);
+                release.countDown();
+                resolving.get(10, TimeUnit.SECONDS); dispatch.get(10, TimeUnit.SECONDS);
+                assertEquals("UNKNOWN", state());
+            } finally { release.countDown(); }
+        }
+    }
     /** ACK mock không gọi provider; tracking đủ để kiểm tra bằng chứng sau rollback. */
     private CarrierCreateShipmentResult ack() {
         return new CarrierCreateShipmentResult("GHN", "STANDARD", "TRACK-TEST", BigDecimal.ZERO, 1, null, "created", null);
