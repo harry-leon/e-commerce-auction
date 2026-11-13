@@ -14,12 +14,12 @@ export const SERVICES = [
 ];
 export const VERSIONS = {
     user: 6,
-    catalog: 4,
-    fulfillment: 4,
-    commerce: 7,
+    catalog: 7,
+    fulfillment: 6,
+    commerce: 12,
     auction: 3,
     reputation: 3,
-    notification: 4,
+    notification: 5,
 };
 export const DEFAULT_WAREHOUSE = "a0000000-0000-0000-0000-000000000001";
 
@@ -69,11 +69,16 @@ function image(index) {
  */
 export function buildDataset({
     asOf,
+    userAsOf = asOf,
     identities = {},
     warehouseId = DEFAULT_WAREHOUSE,
 }) {
     const epoch = Date.parse(asOf);
     assert(Number.isFinite(epoch), "Mốc thời gian demo không hợp lệ");
+    // Reset làm mới thời gian nghiệp vụ nhưng giữ timestamp hồ sơ User đã tồn tại để seed không ghi đè tài khoản.
+    const userTimestamp = new Date(
+        Date.parse(userAsOf) - 24 * 40 * 3600000,
+    ).toISOString();
     const at = (hours) => new Date(epoch + hours * 3600000).toISOString();
     const services = Object.fromEntries(
         SERVICES.map((service) => [service, {}]),
@@ -97,8 +102,8 @@ export function buildDataset({
             address: "Địa chỉ minh họa Nexus Demo, TP. Hồ Chí Minh",
             status: "ACTIVE",
             is_deleted: false,
-            created_at: at(-24 * 40),
-            updated_at: at(-24 * 40),
+            created_at: userTimestamp,
+            updated_at: userTimestamp,
         });
     const sellers = accounts.filter((a) => a.role === "SELLER");
     const buyers = accounts.filter((a) => a.role === "BUYER");
@@ -610,6 +615,48 @@ export function buildDataset({
             auction_failed: 0,
         });
     }
+    // Đồng bộ Catalog V7/Fulfillment V6: mã SKU thuộc seller_skus; tồn kho tham chiếu master này.
+    for (const category of services.catalog.categories)
+        category.name_vi = category.name;
+    services.fulfillment.seller_skus = services.catalog.skus.map((sku) => ({
+        id: uid(`seller-sku:${sku.id}`),
+        sku_id: sku.id,
+        seller_id: services.catalog.products.find(
+            (p) => p.id === sku.product_id,
+        ).seller_id,
+        sku_code: sku.sku_code,
+        status: "ACTIVE",
+    }));
+    for (const inventory of services.fulfillment.inventories) {
+        inventory.seller_sku_id = uid(`seller-sku:${inventory.sku_id}`);
+    }
+    // V6 bỏ giá bán cố định: các snapshot đơn lịch sử giữ giá giả lập, SKU chỉ lưu original_price.
+    for (const sku of services.catalog.skus) {
+        delete sku.sku_code;
+        delete sku.price;
+    }
+    // V10 bắt buộc snapshot giá; payment DEMO_ONLY vẫn chỉ là dữ liệu giả lập.
+    for (const payment of services.commerce.payments) {
+        const order = services.commerce.orders.find(
+            (o) => o.id === payment.order_id,
+        );
+        payment.inventory_ref_id = order.id;
+        payment.price_snapshot = {
+            subtotal: order.subtotal,
+            shippingFee: order.shipping_fee,
+            discount: order.discount,
+            total: payment.amount,
+            items: services.commerce.order_items
+                .filter((i) => i.order_id === order.id)
+                .map((i) => ({
+                    orderItemId: i.id,
+                    skuId: i.sku_id,
+                    quantity: i.quantity,
+                    unitPrice: i.unit_price,
+                    itemTotal: i.unit_price * i.quantity,
+                })),
+        };
+    }
     const result = {
         dataset: DATASET,
         asOf: new Date(epoch).toISOString(),
@@ -660,11 +707,10 @@ export function validateDataset(data) {
     for (const sku of skus.values()) {
         assert(
             products.has(sku.product_id) &&
-                Number.isSafeInteger(sku.price) &&
-                sku.price > 0,
+                Number.isSafeInteger(sku.original_price) &&
+                sku.original_price > 0,
             "SKU/giá VND sai",
         );
-        assert(sku.original_price >= sku.price);
     }
     for (const image of rows("catalog", "product_images"))
         assert(image.url.length <= 500, "Ảnh vượt giới hạn schema");

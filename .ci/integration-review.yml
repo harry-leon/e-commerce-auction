@@ -1,0 +1,31 @@
+# Fixture là công cụ vận hành: thay migration cũng phải kiểm tra dữ liệu thuần và quyền sở hữu IAM.
+demo-fixture:test:
+  extends: .fe-base
+  stage: test
+  script:
+    - node --test scripts/demo/dataset.test.mjs scripts/demo/runtime.test.mjs
+  rules:
+    - changes: [scripts/demo/**/*, scripts/seed-demo.mjs, backend/**/db/migration/**/*, .ci/**/*, .gitlab-ci.yml]
+
+# Cluster riêng do initdb tạo, chạy bằng postgres thay vì root; không đọc credential triển khai.
+demo-fixture:postgres:
+  image: postgres:16-bookworm
+  stage: test
+  cache: []
+  script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs
+    - runuser -u postgres -- node scripts/check-demo-local.mjs /usr/lib/postgresql/16/bin
+  rules:
+    - changes: [scripts/demo/**/*, scripts/check-demo-local.mjs, scripts/seed-demo.mjs, backend/**/db/migration/**/*, .ci/**/*, .gitlab-ci.yml]
+
+# Chỉ validate Compose với credential giả của CI; không kết nối hoặc khởi động môi trường triển khai.
+compose:validate:
+  image: docker:27
+  stage: validate
+  cache: []
+  script:
+    - cp .env.example .env
+    - export KEYCLOAK_ADMIN_CLIENT_SECRET=ci-fixture AUCTION_CLIENT_SECRET=ci-fixture COMMERCE_CLIENT_SECRET=ci-fixture KEYCLOAK_ADMIN_PASSWORD=ci-fixture
+    - docker compose config --quiet
+  rules:
+    - changes: [docker-compose.yml, .env.example, .ci/**/*, .gitlab-ci.yml]

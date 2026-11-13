@@ -144,6 +144,10 @@ public class PaymentInventoryWorker {
         }
         payment.setInventoryStatus("CONFIRMED");
         order.setStatus(OrderStatus.PAID);
+        // Chỉ log định danh server sau xác nhận kho, không ghi token, URL ký hoặc payload IPN.
+        org.slf4j.LoggerFactory.getLogger(PaymentInventoryWorker.class).atInfo()
+                .addKeyValue("orderId", orderId).addKeyValue("paymentId", payment.getId())
+                .addKeyValue("auctionId", order.getAuctionId()).log("Kho đã xác nhận đơn VNPAY");
         history(orderId, "PAID", "VNPAY_INVENTORY_CONFIRMED");
         notifications.enqueue(order, "PAYMENT_SUCCESS");
     }

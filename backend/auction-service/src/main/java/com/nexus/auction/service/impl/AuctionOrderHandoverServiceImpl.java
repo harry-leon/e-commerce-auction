@@ -227,8 +227,11 @@ public class AuctionOrderHandoverServiceImpl implements AuctionOrderHandoverServ
         }
         AuctionSettlement savedSettlement = auctionSettlementRepository.saveAndFlush(settlement);
 
-        log.info("Hoàn tất liên kết đơn hàng [{}] cho phiên đấu giá [{}] trong transaction độc lập",
-                orderResult.orderId(), auctionId);
+        // Định danh server giúp nối log; transaction vẫn có thể rollback sau bước này.
+        log.atInfo().addKeyValue("auctionId", auctionId)
+                .addKeyValue("settlementId", savedSettlement.getId())
+                .addKeyValue("orderId", orderResult.orderId())
+                .log("Đã lưu liên kết bàn giao trong transaction độc lập");
 
         // Bước 8: Phát sinh sự kiện xác nhận AuctionSettledEvent sau khi commit DB thành công (Acceptance Criterion 4)
         if (eventPublisher != null) {

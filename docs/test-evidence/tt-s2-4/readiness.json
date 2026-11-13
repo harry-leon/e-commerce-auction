@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-11-13T03:17:17.869Z",
+  "scope": "read-only Compose smoke; no winner payment UAT",
+  "checks": [
+    {
+      "name": "web",
+      "status": 200,
+      "expected": 200,
+      "pass": true
+    },
+    {
+      "name": "gateway-health",
+      "status": 200,
+      "expected": 200,
+      "pass": true
+    },
+    {
+      "name": "public-products",
+      "status": 200,
+      "expected": 200,
+      "pass": true
+    },
+    {
+      "name": "public-auctions",
+      "status": 200,
+      "expected": 200,
+      "pass": true
+    },
+    {
+      "name": "protected-orders",
+      "status": 401,
+      "expected": 401,
+      "pass": true
+    },
+    {
+      "name": "websocket-anonymous-denied",
+      "upgraded": true,
+      "denied": true,
+      "closed": true,
+      "pass": true
+    }
+  ]
+}

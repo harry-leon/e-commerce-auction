@@ -13,6 +13,8 @@ include:
   - local: .ci/jobs.yml
   # Override riêng cho build domain có nexus-common; giữ nguyên file jobs được sinh theo mẫu.
   - local: .ci/erd-alignment.yml
+  # Kiểm tra fixture và cú pháp Compose trước khi build/publish image.
+  - local: .ci/integration-review.yml
 
 # Tiêu đề MR phải theo Conventional Commits (được squash thành commit trên develop)
 mr-title-check:

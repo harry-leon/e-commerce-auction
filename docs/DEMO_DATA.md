@@ -48,7 +48,30 @@ node scripts/seed-demo.mjs --verify
 node --test scripts/demo/dataset.test.mjs scripts/demo/runtime.test.mjs
 ```
 
-`--apply` tự chạy lại kiểm thử DB tạm trước lần ghi đầu tiên. Công cụ kiểm tra đúng version Flyway đã hỗ trợ: User V6, Catalog V4, Fulfillment V4, Commerce V7, Auction V3, Reputation V3 và Notification V4. Version/cột/kho mặc định không khớp thì dừng.
+`--apply` tự chạy lại kiểm thử DB tạm trước lần ghi đầu tiên. Phiên bản hiện hỗ trợ: User V6, Catalog V7, Fulfillment V6, Commerce V12, Auction V3, Reputation V3 và Notification V5. Version/cột/kho mặc định không khớp thì dừng. SKU chỉ lưu `original_price` trong Catalog; mã kho thuộc `seller_skus` của Fulfillment. Payment lịch sử có snapshot giá và `inventory_ref_id` theo Commerce V10, vẫn mang marker DEMO_ONLY.
+
+## Reset fixture để chạy lại demo
+
+Chỉ dùng trên môi trường demo riêng. Đọc fingerprint từ `--plan`, dừng toàn bộ backend/Gateway/web của môi trường đó, giữ PostgreSQL và Keycloak rồi chạy:
+
+```powershell
+docker compose stop user-service catalog-service commerce-service auction-service fulfillment-service notification-service reputation-service api-gateway web
+node scripts/seed-demo.mjs --reset --target <fingerprint>
+docker compose up -d
+node scripts/seed-demo.mjs --apply --target <fingerprint>
+```
+
+Reset chỉ xóa đúng PK của bộ fixture trong manifest local, giữ User/IAM, schema, migration và volume. Trước khi xóa, mỗi DB khóa bảng và kiểm tra FK: có row ngoài fixture tham chiếu vào fixture thì dừng, kể cả FK CASCADE. Không tự xóa đơn/payment/tác vụ phát sinh từ buổi demo để vượt hàng rào này; cần đối soát hoặc dùng môi trường demo riêng mới. Các tham chiếu nghiệp vụ không có FK giữa DB không thể được phát hiện đầy đủ: không dùng reset trên DB dùng chung hoặc production.
+
+Mỗi service là một transaction, không có rollback xuyên DB. Nếu lỗi sau vài service, checkpoint `resetPhases` cho phép chạy lại cùng lệnh để hoàn tất; không chạy seed khi reset đang dở. Reset thành công làm mới mốc thời gian nghiệp vụ cho phiên/giữ kho, giữ mốc User và password cũ. Công cụ không cập nhật realm hoặc reset mật khẩu.
+
+Kiểm chứng migration, seed hai lần, reset hai lần, reseed và chặn FK CASCADE ngoài fixture trên cluster PostgreSQL tạm độc lập:
+
+```powershell
+node scripts/check-demo-local.mjs 'C:/Program Files/PostgreSQL/18/bin'
+```
+
+Script không đọc `.env`; cluster chỉ nghe loopback và luôn được dừng trong `finally`. Thư mục tạm được giữ để kiểm tra. CI chạy cùng script bằng PostgreSQL 16 và user postgres trong container riêng.
 
 ## Tài khoản và credential local
 
@@ -61,7 +84,7 @@ Keycloak cấp UUID thật; UUID đó được dùng làm `users.id`, `keycloak_
 ## Chống trùng và phục hồi
 
 - UUID cho dữ liệu nghiệp vụ và mã `NXDEMO-*` ổn định. Timestamp được cố định trong `state.json` từ lần đầu.
-- Chỉ INSERT, không UPDATE/DELETE/TRUNCATE bảng nghiệp vụ. PK trùng có nội dung khác hoặc natural-key conflict làm rollback transaction của service đó.
+- `--apply` chỉ INSERT, không UPDATE/DELETE/TRUNCATE bảng nghiệp vụ. PK trùng có nội dung khác hoặc natural-key conflict làm rollback transaction của service đó. `--reset` là chế độ riêng có kiểm tra fingerprint, manifest và tham chiếu FK như mô tả ở trên.
 - Mỗi DB có transaction và advisory lock riêng. Không có distributed transaction; lỗi ở service sau không rollback dữ liệu đã commit của service trước. `state.json` lưu checkpoint để tiếp tục khi chạy lại.
 - Chỉ lỗi DNS PostgreSQL trước kết nối được retry ngắn; không retry lỗi chưa rõ kết quả COMMIT. HTTP GET gặp 502/503/504 có tối đa hai lần thử lại và được ghi vào báo cáo; POST không tự retry.
 - Lock file ngăn hai lượt apply trên cùng máy. Nếu tiến trình bị kill cứng, kiểm tra không còn tiến trình seed trước khi xử lý `apply.lock` còn lại; không xóa dữ liệu DB để thử lại.

@@ -18,6 +18,8 @@ x-service: &service
   environment: &cloud-env
     DB_USERNAME: ${LOCAL_DB_USERNAME:-nexus}
     DB_PASSWORD: ${LOCAL_DB_PASSWORD:-nexus}
+    # JSON ECS giữ các trường liên kết nghiệp vụ và requestId trong log Compose.
+    LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     EUREKA_ENABLED: "true"
     EUREKA_URL: http://discovery-server:8761/eureka/
     CONFIG_SERVER_URL: http://config-server:8888
@@ -100,7 +102,8 @@ services:
       KC_DB_POOL_MIN_SIZE: 5
       KC_DB_POOL_MAX_SIZE: ${KEYCLOAK_DB_POOL_MAX_SIZE:-20}
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      # Mật khẩu bootstrap lấy từ môi trường; không thay mật khẩu realm đã tồn tại.
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
     ports:
       - "8180:8080"
     volumes:

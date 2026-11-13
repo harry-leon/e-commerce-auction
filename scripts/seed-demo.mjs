@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -14,6 +15,7 @@ import {
     ident,
     HTTP_READ_RETRIES,
     seedSql,
+    resetSql,
     readRows,
     save,
     preflight,
@@ -25,15 +27,15 @@ import {
 
 /**
  * Seed demo theo cấu hình Compose hiện tại: plan → kiểm thử DB tạm → tạo IAM riêng → INSERT từng service → kiểm chứng.
- * Không reset DB, sửa migration, ghi vào tài khoản ngoài dataset, gửi email hoặc gọi cổng thanh toán.
+ * Reset chỉ xóa PK fixture sau kiểm tra tham chiếu; giữ schema/IAM và không gọi cổng thanh toán.
  * Mỗi service có transaction riêng; manifest/checkpoint và password demo chỉ lưu dưới Git directory để resume an toàn.
  */
 const mode = process.argv.find((a) =>
-    ["--plan", "--check", "--apply", "--verify"].includes(a),
+    ["--plan", "--check", "--apply", "--verify", "--reset"].includes(a),
 );
 if (!mode) {
     console.log(
-        "node scripts/seed-demo.mjs --plan | --check | --apply --target <fingerprint> | --verify",
+        "node scripts/seed-demo.mjs --plan | --check | --apply --target <fingerprint> | --verify | --reset --target <fingerprint>",
     );
     process.exit(0);
 }
@@ -50,6 +52,8 @@ const state = fs.existsSync(stateFile)
       };
 assert.equal(state.dataset, DATASET);
 assert.equal(state.fingerprint, rt.fingerprint);
+// Manifest cũ chưa có userAsOf: giữ mốc gốc trước khi reset làm mới lịch phiên và giữ kho.
+state.userAsOf ??= state.asOf;
 const checkpoint = () => save(stateFile, state);
 
 /** Test FK/CHECK và chạy SQL hai lần trong DB local ngẫu nhiên; chỉ dọn các DB có tên do chính lượt chạy tạo. */
@@ -247,7 +251,7 @@ async function verifyApis(data, password) {
 let locked = false;
 const lockFile = path.join(rt.directory, "apply.lock");
 try {
-    if (mode === "--apply") {
+    if (mode === "--apply" || mode === "--reset") {
         assert.equal(
             process.argv[process.argv.indexOf("--target") + 1],
             rt.fingerprint,
@@ -257,6 +261,11 @@ try {
         locked = true;
     }
     const token = await iamToken(rt);
+    // Reset nhiều DB có thể dừng giữa chừng; phải hoàn tất reset trước khi seed/verify lại baseline.
+    assert(
+        !state.resetting || mode === "--reset" || mode === "--plan",
+        "Reset đang dở; chạy lại --reset cùng target",
+    );
     const definitions = buildDataset({ asOf: state.asOf }).accounts;
     const discovered = await discoverAccounts(
         rt,
@@ -273,6 +282,7 @@ try {
     );
     let data = buildDataset({
         asOf: state.asOf,
+        userAsOf: state.userAsOf,
         identities: state.identities,
         warehouseId,
     });
@@ -283,6 +293,55 @@ try {
     console.log(JSON.stringify(rt.publicTargets, null, 2));
     if (mode === "--plan") {
         console.log("Plan:", rt.directory, JSON.stringify(schemaReport));
+    } else if (mode === "--reset") {
+        // Dừng ứng dụng để scheduler không tạo dữ liệu giữa các transaction DB khi reset.
+        assert(
+            state.completedAt || state.resetting,
+            "Chỉ reset dataset đã apply có manifest local",
+        );
+        const running = execFileSync(
+            "docker",
+            ["compose", "ps", "--services", "--status", "running"],
+            { encoding: "utf8" },
+        )
+            .trim()
+            .split(/\s+/);
+        assert(
+            !running.some(
+                (name) =>
+                    name.endsWith("-service") ||
+                    name === "api-gateway" ||
+                    name === "web",
+            ),
+            "Dừng backend, Gateway và web trước reset; giữ postgres và keycloak",
+        );
+        state.resetting = true;
+        checkpoint();
+        for (const service of [...SERVICES].reverse()) {
+            if ((state.resetPhases || []).includes(service)) continue;
+            // Giữ User/IAM để không mất tài khoản đăng nhập hoặc tham chiếu danh tính.
+            if (service !== "user")
+                sql(
+                    rt,
+                    service,
+                    resetSql(
+                        service,
+                        data.services[service],
+                        rt.targets[service].schema,
+                    ),
+                );
+            state.resetPhases = [...(state.resetPhases || []), service];
+            checkpoint();
+        }
+        delete state.completedAt;
+        delete state.resetting;
+        delete state.resetPhases;
+        state.phases = [];
+        state.asOf = new Date().toISOString();
+        checkpoint();
+        console.log(
+            "Reset fixture hoàn tất; giữ IAM/schema. Chạy --apply cùng target để seed lại.",
+        );
     } else if (mode === "--check") {
         sandbox(data);
     } else {
@@ -310,6 +369,7 @@ try {
             );
             data = buildDataset({
                 asOf: state.asOf,
+                userAsOf: state.userAsOf,
                 identities: state.identities,
                 warehouseId,
             });
