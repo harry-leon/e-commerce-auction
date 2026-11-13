@@ -3,7 +3,45 @@ import assert from "node:assert/strict";
 import { buildDataset, validateDataset, uid } from "./dataset.mjs";
 import { seedSql, ident } from "./runtime.mjs";
 
+/** Bảo vệ contract mới: mã SKU ở kho, Catalog bỏ price, payment có snapshot và ref kho riêng. */
+test("fixture tương thích Catalog V7, Fulfillment V6 và Commerce V12", () => {
+    const { services } = buildDataset({ asOf: "2026-11-13T00:00:00Z" });
+    assert(services.catalog.categories.every((c) => c.name_vi));
+    assert(
+        services.catalog.skus.every(
+            (sku) => !("price" in sku) && !("sku_code" in sku),
+        ),
+    );
+    const masters = new Set(
+        services.fulfillment.seller_skus.map((sku) => sku.id),
+    );
+    assert(
+        services.fulfillment.inventories.every((row) =>
+            masters.has(row.seller_sku_id),
+        ),
+    );
+    for (const payment of services.commerce.payments) {
+        assert.equal(payment.price_snapshot.total, payment.amount);
+        assert.equal(payment.inventory_ref_id, payment.order_id);
+        assert.equal(payment.merchant_code, "DEMO_ONLY");
+    }
+});
+
 const create = () => buildDataset({ asOf: "2026-11-04T12:00:00.000Z" });
+
+/** Reset làm mới lịch phiên, nhưng giữ hồ sơ cũ để lần apply không xung đột User hoặc đổi IAM. */
+test("reset mốc nghiệp vụ giữ timestamp User", () => {
+    const previous = create();
+    const next = buildDataset({
+        asOf: "2026-11-13T00:00:00Z",
+        userAsOf: previous.asOf,
+    });
+    assert.deepEqual(previous.services.user, next.services.user);
+    assert.notDeepEqual(
+        previous.services.auction.auctions,
+        next.services.auction.auctions,
+    );
+});
 
 /** Hồi quy seed: cùng input phải có cùng UUID/thời gian, VND nguyên và liên kết đủ cho 7 service. */
 test("fixture ổn định, đủ vai trò và giữ các bất biến nghiệp vụ", () => {

@@ -222,6 +222,7 @@ export function preflight(rt, data) {
     return result;
 }
 
+// Thứ tự cha trước con dùng cho seed; reset đảo thứ tự để xóa đúng PK mà không cần CASCADE.
 const TABLE_ORDER = {
     user: ["users"],
     catalog: [
@@ -234,6 +235,7 @@ const TABLE_ORDER = {
     fulfillment: [
         "warehouses",
         "carriers",
+        "seller_skus",
         "inventories",
         "inventory_reservations",
         "inventory_ledger",
@@ -503,4 +505,55 @@ export async function ensureAccounts(
         // Mỗi batch nhiều request vẫn dùng token mới để không lưu refresh/access token vào manifest.
         token = await iamToken(rt);
     }
+}
+
+/**
+ * Reset đúng PK fixture trong một DB, giữ IAM/schema/Flyway; khóa bảng trước kiểm tra FK.
+ * Chặn tham chiếu từ row ngoài fixture trước DELETE, kể cả CASCADE; lỗi rollback cả service.
+ * Không có transaction xuyên DB: CLI lưu checkpoint để tiếp tục sau lỗi, không xóa volume.
+ */
+export function resetSql(service, records, schema) {
+    const ownership = Object.fromEntries(
+        Object.entries(records).map(([table, rows]) => [
+            table,
+            rows.map((row) =>
+                Object.fromEntries(
+                    primaryKey(table).map((key) => [key, row[key]]),
+                ),
+            ),
+        ]),
+    );
+    const statements = [
+        "BEGIN;",
+        "SET LOCAL lock_timeout='5s';",
+        "SET LOCAL statement_timeout='60s';",
+        `SELECT pg_advisory_xact_lock(hashtextextended(${literal(DATASET + ":" + service)},0));`,
+        `CREATE TEMP TABLE demo_owned(data jsonb) ON COMMIT DROP; INSERT INTO demo_owned VALUES (${literal(JSON.stringify(ownership))});`,
+        `DO $reset$ DECLARE t record; f record; links text; outside boolean; BEGIN
+        FOR t IN SELECT tablename FROM pg_tables WHERE schemaname=${literal(schema)} ORDER BY tablename LOOP
+            EXECUTE format('LOCK TABLE %I.%I IN SHARE ROW EXCLUSIVE MODE', ${literal(schema)}, t.tablename);
+        END LOOP;
+        FOR f IN SELECT c.*, child.relname child_table, parent.relname parent_table,
+                nc.nspname child_schema, np.nspname parent_schema
+            FROM pg_constraint c JOIN pg_class child ON child.oid=c.conrelid
+            JOIN pg_class parent ON parent.oid=c.confrelid
+            JOIN pg_namespace nc ON nc.oid=child.relnamespace JOIN pg_namespace np ON np.oid=parent.relnamespace
+            WHERE c.contype='f' AND np.nspname=${literal(schema)} LOOP
+            SELECT string_agg(format('c.%I=p.%I', ca.attname, pa.attname),' AND ') INTO links
+            FROM unnest(f.conkey, f.confkey) AS k(ck,pk)
+            JOIN pg_attribute ca ON ca.attrelid=f.conrelid AND ca.attnum=k.ck
+            JOIN pg_attribute pa ON pa.attrelid=f.confrelid AND pa.attnum=k.pk;
+            EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I c JOIN %I.%I p ON %s
+                WHERE EXISTS (SELECT 1 FROM demo_owned, jsonb_array_elements(COALESCE(data->%L, ''[]''::jsonb)) k WHERE to_jsonb(p) @> k)
+                AND NOT EXISTS (SELECT 1 FROM demo_owned, jsonb_array_elements(COALESCE(data->%L, ''[]''::jsonb)) k WHERE to_jsonb(c) @> k))',
+                f.child_schema,f.child_table,f.parent_schema,f.parent_table,links,f.parent_table,
+                CASE WHEN f.child_schema=${literal(schema)} THEN f.child_table ELSE '' END) INTO outside;
+            IF outside THEN RAISE EXCEPTION 'Reset blocked by external references: %', f.conname; END IF;
+        END LOOP; END $reset$;`,
+    ];
+    for (const table of [...TABLE_ORDER[service]].reverse()) {
+        statements.push(`DELETE FROM ${ident(schema)}.${ident(table)} t WHERE EXISTS
+            (SELECT 1 FROM demo_owned, jsonb_array_elements(COALESCE(data->${literal(table)}, '[]'::jsonb)) k WHERE to_jsonb(t) @> k);`);
+    }
+    return statements.concat("COMMIT;").join("\n");
 }
