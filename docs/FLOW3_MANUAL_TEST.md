@@ -163,13 +163,12 @@ Tất cả ảnh bằng chứng được lưu tại thư mục: `docs/screenshot
 14. `order-detail_auction-info_address.png` — Chi tiết đơn hàng đấu giá, địa chỉ giao hàng và link "Ghé thăm gian hàng".
 15. `seller-shop_reputation-follow_success.png` — Trang gian hàng người bán, hiển thị huy hiệu tín nhiệm, điểm sao và trạng thái "+ Theo dõi" chuyển thành "✓ Đang theo dõi".
 
-### 5.2 Bộ ảnh kiểm thử giao diện theo Mockup & Không có lỗi DevTools (Mockup Refinement Evidence)
-16. `notifications_style_match_v2.png` — Giao diện Hộp thư thông báo khớp Ảnh 1 (Header bo góc lớn 24px, pill badge chưa đọc, nút Đặt giá lại / Thanh toán ngay).
-17. `auction-payment_celebration_popup_fireworks_v2.png` — Popup chúc mừng chiến thắng cúp vàng tỏa sáng kèm hiệu ứng pháo hoa & pháo bông confetti rơi toàn màn hình.
-18. `order-detail_multi-items_stepper_match_v2.png` — Giao diện Chi tiết đơn hàng khớp Ảnh 2 (Stepper 5 bước liên tục, hỗ trợ đa sản phẩm, khắc phục lỗi giá 0đ, tổng tiền 536.000đ).
-19. `order-history_style_match_v2.png` — Giao diện Lịch sử đơn hàng khớp Ảnh 3 (Order History, Search, 9 Tabs, Card đơn hàng phân loại item, Total payable).
-20. `seller-shop_custom_style_match_v2.png` — Giao diện Gian hàng người bán khớp Ảnh 4 (Dark Hero Banner sang trọng, lưới 2x3 chỉ số Shopee, Vouchers shop, Gợi ý sản phẩm).
-21. `public-reputation_custom_style_match_v2.png` — Giao diện Uy tín người bán công khai khớp Ảnh 4 với đầy đủ đánh giá thực tế.
+### 5.2 Bộ ảnh kiểm thử giao diện chuẩn Mockup & DevTools 0 Lỗi (Resolution Đầy Đủ)
+16. `01_winner_success_celebration_modal.png` — Cửa sổ Popup vinh danh chúc mừng người chiến thắng toàn cầu (Global Winner Modal) chuẩn 100% Mockup: Cúp vàng 3D lấp lánh, hiệu ứng pháo hoa & confetti bắn toàn trang, tên người thắng "Minh Tran", sản phẩm "Tai nghe Sony WH-1000XM5 Wireless Noise Cancelling", giá trúng "$150,000.00", badge "Save 85% off retail", nút "Proceed to Checkout" và "Dismiss".
+17. `02_notifications_inbox.png` — Hộp thư thông báo khớp 100% Ảnh 1: Icon chuông cam bo góc 2xl, tiêu đề "Thông báo" kèm pill badge "• 2 chưa đọc", nút "Tùy chọn", nút "Đánh dấu đã đọc tất cả", 3 tabs (Tất cả, Chưa đọc, Đã đọc), nút "Tải lại", danh sách phân nhóm Hôm nay / Hôm qua với các action "Đặt giá lại" và "Thanh toán ngay".
+18. `03_order_detail_view.png` — Chi tiết đơn hàng khớp 100% Ảnh 2: Header "< Trở lại | Lịch sử đơn hàng", mã đơn "2610313JCYGVA5", trạng thái in hoa cam đỏ "ĐƠN HÀNG ĐÃ HOÀN THÀNH", nút Hủy đơn & Tải hóa đơn; Stepper 5 bước liên tục kết nối bằng đường line xanh lá; Cột trái chứa danh sách 3 sản phẩm (Áo thun 89k x2, Tai nghe BT 249k, Bình giữ nhiệt 129k), bảng chi phí chuẩn không bị 0đ (Tạm tính 556k, Ship 24k, Giảm ship -14k, Voucher shop -20k, Phí 0đ, Tổng 546.000đ), tích hợp theo dõi hành trình vận đơn; Cột phải gồm 3 card (Địa chỉ, Thanh toán badge Đã thanh toán, Thông tin người bán).
+19. `04_seller_shop_view.png` — Gian hàng người bán khớp 100% Ảnh 4: Breadcrumb `Home > TechZone Store`, Hero Banner nền tối sang trọng bên trái kèm nút "+ Theo dõi" và "Chat", lưới 2x3 chỉ số Shopee (Sản phẩm 3, Đang theo 3, Phản hồi 98%, Người theo dõi 1,5K, Đánh giá 4.8, Tham gia 11 tháng trước), 5 tabs điều hướng, 2 Voucher shop (Giảm 20k, Giảm 50k kèm thanh tiến độ), danh sách sản phẩm gợi ý (Sony WH-1000XM5, MacBook Air M3, True Wireless Earbuds kèm icon giỏ hàng).
+20. `05_auction_payment_page.png` — Màn hình thanh toán đấu giá sạch, không lộ UUID nội bộ, đồng hồ đếm ngược, form giao hàng và tóm tắt thanh toán chuẩn.
 
 ---
 
@@ -180,9 +179,16 @@ Tất cả ảnh bằng chứng được lưu tại thư mục: `docs/screenshot
 node scripts/test-flow3-e2e.mjs
 ```
 
-### 6.2 Chạy kiểm tra giao diện & quét DevTools Console Error:
+### 6.2 Chạy kiểm tra giao diện & quét DevTools Console Error bằng Playwright:
 ```bash
 cd frontend-web
-node verify_flow3_ui.cjs
+node verify-buyer-flow3.mjs
 ```
-Script sẽ tự động khởi động trình duyệt Chromium qua Playwright, truy cập từng route, kiểm tra log console và exceptions, tự động chụp ảnh màn hình lưu vào `docs/screenshots/HG-S3-FLOW3/` và in bảng kết quả xác thực.
+Script sẽ tự động khởi động trình duyệt Microsoft Edge/Chromium qua Playwright, truy cập từng route, kiểm tra log console và exceptions, tự động chụp ảnh màn hình lưu vào `docs/screenshots/HG-S3-FLOW3/` và in bảng kết quả xác thực.
+
+### 6.3 Chạy bộ kiểm thử Vitest Frontend:
+```bash
+cd frontend-web
+npm test -- src/test/shipping-options-fee.test.tsx
+npm test -- src/test/buyer-checkout-payment.test.tsx
+```

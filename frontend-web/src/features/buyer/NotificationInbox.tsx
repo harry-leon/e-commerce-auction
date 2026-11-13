@@ -210,12 +210,23 @@ function InboxContent({
         return () => window.removeEventListener(NOTIFICATIONS_CHANGED, refresh)
     }, [userId])
 
-    // Nạp danh sách thông báo
+    /**
+     * Chức năng: Nạp danh sách thông báo của người dùng từ API Backend.
+     * Đầu vào: userId, page hiện tại, revision làm mới.
+     * Kết quả: Cập nhật state inbox hoặc fallback an toàn.
+     * Luồng xử lý: Bật cờ loading, gọi getNotifications(page). Đặt fallbackTimer 1s để giải phóng loading nếu backend phản hồi chậm hoặc offline.
+     * Quy tắc & lý do: Giữ UI luôn phản hồi nhanh, không để spinner xoay vô tận làm gián đoạn trải nghiệm người dùng.
+     * Lỗi & giới hạn: Dùng AbortController để hủy request nếu component unmount hoặc tham số thay đổi.
+     */
     const fetchInbox = useCallback(() => {
         if (!userId) return
         const controller = new AbortController()
         setLoading(true)
         setError('')
+        const fallbackTimer = setTimeout(() => {
+            if (!controller.signal.aborted) setLoading(false)
+        }, 1000)
+
         getNotifications(page, controller.signal)
             .then((data) => {
                 if (!controller.signal.aborted) setInbox(data)
@@ -224,9 +235,13 @@ function InboxContent({
                 if (!controller.signal.aborted) setError(errorMessage(reason))
             })
             .finally(() => {
+                clearTimeout(fallbackTimer)
                 if (!controller.signal.aborted) setLoading(false)
             })
-        return () => controller.abort()
+        return () => {
+            clearTimeout(fallbackTimer)
+            controller.abort()
+        }
     }, [userId, page, revision])
 
     useEffect(() => {
@@ -516,7 +531,7 @@ function InboxContent({
             )}
 
             {/* Loading */}
-            {loading && (
+            {loading && rawItems.length === 0 && (
                 <div className="py-16 text-center text-gray-500 flex flex-col items-center justify-center gap-2">
                     <div className="w-7 h-7 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
                     <span className="text-xs font-semibold">{lang === 'vi' ? 'Đang tải thông báo…' : 'Loading notifications…'}</span>
@@ -533,7 +548,7 @@ function InboxContent({
                 </div>
             )}
 
-            {!loading && groupedItems.map((group) => (
+            {groupedItems.map((group) => (
                 <div key={group.groupName} className="space-y-3">
                     {/* Nhãn nhóm ngày: "Hôm nay", "Hôm qua" */}
                     <div className="inline-block px-3.5 py-1 bg-orange-100/80 text-orange-800 text-xs font-bold rounded-full">
