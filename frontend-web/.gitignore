@@ -4,6 +4,7 @@ build/
 .cache/
 .env*
 .vite/
+.vitest/
 vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*

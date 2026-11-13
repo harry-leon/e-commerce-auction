@@ -327,6 +327,10 @@ Luồng payment winner TT-S2-3: [contract và trạng thái PROCESSING/REQUIRES_
 ```
 ## Refund request API — Sprint 3
 
+V15 thêm `POST /api/v1/refunds/{id}/manual-resolution`: ROLE_ADMIN, key UUID bắt buộc. Body gồm decision SUCCEEDED/FAILED, amount, currency VND, providerPaymentReference, providerRefundReference (chỉ SUCCEEDED), evidenceReference và note. Chỉ xử lý UNKNOWN/REQUIRES_REVIEW; 201 lần đầu/200 replay, key khác nội dung hoặc terminal conflict trả 409. Response là quyết định đã lưu, không tự đổi Order/kho hoặc gọi provider. Chi tiết [đối soát thủ công](../TT_S3_REFUND_MANUAL_RESOLUTION.md).
+
+V14 thêm `POST /api/v1/refunds/{id}/dispatch-approval`: ROLE_ADMIN, body `{note}` bắt buộc 1–500 ký tự sau kiểm tra hủy/return. Approval không trực tiếp gửi HTTP, không sửa bằng chứng approval cũ khi replay. Worker vẫn cần hai feature flag và IP merchant. GET tiếp tục trả trạng thái refund, không lộ payload attempt. Xem [runbook worker](../TT_S3_REFUND_WORKER.md).
+
 `POST /api/v1/refunds`: ROLE_ADMIN, `Idempotency-Key` UUID bắt buộc, body `{paymentId, reason}`.
 Amount toàn phần được lấy từ payment VNPAY SUCCESS có reference hợp lệ, không nhận amount/status từ client.
 Lần đầu trả 201, replay cùng key/nội dung trả 200; cùng key khác nội dung hoặc không còn hạn mức trả 409.

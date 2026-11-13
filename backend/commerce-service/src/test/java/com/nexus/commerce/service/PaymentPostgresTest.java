@@ -55,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -65,6 +65,508 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
     @Autowired private RefundRequestService refunds;
+    @Autowired private RefundResolutionService resolutions;
+    @Autowired private RefundNotificationReplayService notificationReplays;
+
+    /** Replay chỉ reset dead letter; retry cùng key giữ audit cũ kể cả worker đã giao, khác nội dung bị 409. */
+    @Test
+    void notificationReplayIsAuditedAndIdempotent() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        String payload = jdbc.queryForObject("SELECT payload::text FROM refund_notification_outbox WHERE id=?", String.class, event);
+        UUID actor = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> notificationReplays.replay(event, actor, key, "Đã sửa OAuth"));
+        jdbc.update("UPDATE refund_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", event);
+        UUID audit = notificationReplays.replay(event, actor, key, "Đã sửa OAuth");
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals(0, jdbc.queryForObject("SELECT attempts FROM refund_notification_outbox WHERE id=?", Integer.class, event));
+        assertEquals(payload, jdbc.queryForObject("SELECT payload::text FROM refund_notification_outbox WHERE id=?", String.class, event));
+        jdbc.update("UPDATE refund_notification_outbox SET status='DELIVERED' WHERE id=?", event);
+        assertEquals(audit, notificationReplays.replay(event, actor, key, "Đã sửa OAuth"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> notificationReplays.replay(event, actor, key, "Khác nội dung"));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_replays WHERE event_id=?", Integer.class, event));
+        assertEquals("REQUESTED", refundState(refund));
+    }
+
+    /** Rollback transaction quản trị phải giữ dead letter và không để lại audit nửa chừng. */
+    @Test
+    void notificationReplayRollbackPreservesDeadLetter() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        jdbc.update("UPDATE refund_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", event);
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            notificationReplays.replay(event, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra");
+            tx.setRollbackOnly();
+        });
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_notification_replays WHERE event_id=?", Integer.class, event));
+    }
+
+    /** Hai Admin replay cùng event chỉ được reset một lần; loser nhận conflict, không tạo audit giả. */
+    @Test
+    void concurrentNotificationReplaysResetOnlyOnce() throws Exception {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        jdbc.update("UPDATE refund_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", event);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.concurrent.Callable<Boolean> attempt = () -> {
+                start.await();
+                try {
+                    notificationReplays.replay(event, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra OAuth");
+                    return true;
+                } catch (com.nexus.common.exception.ApiException conflict) { return false; }
+            };
+            var first = pool.submit(attempt);
+            var second = pool.submit(attempt);
+            start.countDown();
+            assertEquals(1, (first.get(5, TimeUnit.SECONDS) ? 1 : 0) + (second.get(5, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_replays WHERE event_id=?", Integer.class, event));
+    }
+
+    /** Snapshot gắn refundId riêng; UPDATE cùng state không tạo tin trùng, rollback không rò sự kiện. */
+    @Test
+    void refundNotificationSnapshotIsAtomicAndDeduplicated() throws Exception {
+        UUID refund = newRefundRequest();
+        var snapshot = jdbc.queryForObject("SELECT payload::text FROM refund_notification_outbox WHERE refund_id=?", String.class, refund);
+        var event = new ObjectMapper().readTree(snapshot);
+        assertEquals(refund.toString(), event.get("refundId").asText());
+        assertEquals("REFUND_REQUESTED", event.get("type").asText());
+        assertEquals(50000, event.get("amount").asInt());
+        assertEquals(8, event.size());
+        jdbc.update("UPDATE refund_requests SET status=status WHERE id=?", refund);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_outbox WHERE refund_id=?", Integer.class, refund));
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            jdbc.update("UPDATE refund_requests SET status='UNKNOWN' WHERE id=?", refund);
+            tx.setRollbackOnly();
+        });
+        assertEquals("REQUESTED", refundState(refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_outbox WHERE refund_id=?", Integer.class, refund));
+    }
+
+    /** Mất ACK gửi lại đúng eventId/payload; tám lỗi đưa dead letter, không ảnh hưởng trạng thái refund. */
+    @Test
+    void refundNotificationRetriesSameSnapshotAndStopsAfterEightErrors() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        when(remote.configured()).thenReturn(true);
+        doThrow(new IllegalStateException("must-not-store-sensitive-message")).when(remote).sendInbox(any());
+        var worker = new RefundNotificationWorker(jdbc, remote, refundTransactionManager);
+        for (int i = 0; i < 8; i++) {
+            jdbc.update("UPDATE refund_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", event);
+            worker.deliver(event);
+        }
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(8)).sendInbox(any());
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals("IllegalStateException", jdbc.queryForObject("SELECT last_error_type FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals("REQUESTED", refundState(refund));
+    }
+
+    /** Sau mất ACK, lần giao sau phải giữ nguyên payload/id; backoff ngăn gửi lại ngay trong cùng tick. */
+    @Test
+    void refundNotificationLostAckRetriesIdenticalPayload() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        when(remote.configured()).thenReturn(true);
+        org.mockito.Mockito.doThrow(new IllegalStateException("lost ACK")).doNothing().when(remote).sendInbox(any());
+        var worker = new RefundNotificationWorker(jdbc, remote, refundTransactionManager);
+        worker.deliver(event);
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+        jdbc.update("UPDATE refund_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", event);
+        worker.deliver(event);
+        var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(2)).sendInbox(captor.capture());
+        assertEquals(captor.getAllValues().getFirst(), captor.getAllValues().getLast());
+        assertEquals("DELIVERED", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+    }
+
+    /** Worker bỏ qua row đang được instance khác giao và không gửi lại sau ACK; OAuth thiếu giữ backlog. */
+    @Test
+    void concurrentRefundNotificationWorkersDeliverOnce() throws Exception {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        var worker = new RefundNotificationWorker(jdbc, remote, refundTransactionManager);
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.never()).sendInbox(any());
+        when(remote.configured()).thenReturn(true);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            entered.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) { throw new IllegalStateException("Test timeout"); }
+            return null;
+        }).when(remote).sendInbox(any());
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = pool.submit(() -> worker.deliver(event));
+            try {
+                assertEquals(true, entered.await(5, TimeUnit.SECONDS));
+                pool.submit(() -> worker.deliver(event)).get(3, TimeUnit.SECONDS);
+            } finally { release.countDown(); }
+            first.get(5, TimeUnit.SECONDS);
+        }
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+        assertEquals("DELIVERED", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+    }
+
+    /** SUCCEEDED thủ công cần khớp snapshot và receipt; replay trả cùng audit, không ghi đè terminal hoặc nhân bản receipt. */
+    @Test
+    void manualRefundSuccessIsAuditedAndIdempotent() {
+        UUID refund = unknownRefundForResolution();
+        UUID actor = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        var command = manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "CASE-M1");
+        var decision = resolutions.resolve(refund, actor, key, command);
+        assertEquals(true, decision.created());
+        assertEquals(decision.response(), resolutions.resolve(refund, actor, key, command).response());
+        assertEquals(false, resolutions.resolve(refund, actor, key, command).created());
+        assertEquals("SUCCEEDED", refundState(refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_manual_resolutions WHERE refund_id=?", Integer.class, refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_provider_receipts WHERE refund_id=?", Integer.class, refund));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> resolutions.resolve(refund, actor, UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.FAILED, null, "CASE-M1-OTHER")));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> resolutions.resolve(refund, actor, key,
+                manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, command.providerRefundReference(), "DIFFERENT-EVIDENCE")));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM orders WHERE id=? AND status='REFUNDED'", Integer.class, orderId));
+    }
+
+    /** FAILED có bằng chứng giải phóng hạn mức cho yêu cầu mới, nhưng không gửi lại attempt cũ. */
+    @Test
+    void manualFailureReleasesOnlyRequestAllocation() {
+        UUID refund = unknownRefundForResolution();
+        resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.FAILED, null, "CASE-M2"));
+        assertEquals("FAILED", refundState(refund));
+        var next = refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Yêu cầu mới sau đối soát");
+        assertEquals(com.nexus.commerce.enums.RefundStatus.REQUESTED, next.response().status());
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        assertEquals(false, new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager).dispatch(refund));
+        org.mockito.Mockito.verifyNoInteractions(remote);
+    }
+
+    /** Hai kết luận trái ngược chạy cùng lúc: chỉ một audit được commit, bên sau nhận conflict thay vì sửa terminal. */
+    @Test
+    void concurrentManualDecisionsHaveOneWinner() throws Exception {
+        UUID refund = unknownRefundForResolution();
+        var succeeded = manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "CASE-M3-OK");
+        var failed = manualCommand(com.nexus.commerce.enums.RefundStatus.FAILED, null, "CASE-M3-NO");
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Boolean> success = () -> {
+                gate.await();
+                try { resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(), succeeded); return true; }
+                catch (com.nexus.common.exception.ApiException error) { assertEquals("REFUND_RESOLUTION_CONFLICT", error.getCode()); return false; }
+            };
+            java.util.concurrent.Callable<Boolean> failure = () -> {
+                gate.await();
+                try { resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(), failed); return true; }
+                catch (com.nexus.common.exception.ApiException error) { assertEquals("REFUND_RESOLUTION_CONFLICT", error.getCode()); return false; }
+            };
+            var a = pool.submit(success);
+            var b = pool.submit(failure);
+            gate.countDown();
+            assertEquals(1, (a.get(20, TimeUnit.SECONDS) ? 1 : 0) + (b.get(20, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_manual_resolutions WHERE refund_id=?", Integer.class, refund));
+        assertEquals(refundState(refund), jdbc.queryForObject("SELECT decision FROM refund_manual_resolutions WHERE refund_id=?", String.class, refund));
+    }
+
+    /** Lỗi lưu audit phải rollback cả receipt và trạng thái; không có thành công tài chính thiếu bằng chứng. */
+    @Test
+    void manualResolutionAuditFailureRollsBackReceiptAndStatus() {
+        UUID refund = unknownRefundForResolution();
+        var command = manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "CASE-M4");
+        jdbc.execute("CREATE FUNCTION resolution_fail_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$");
+        jdbc.execute("CREATE TRIGGER resolution_fail_fixture BEFORE INSERT ON refund_manual_resolutions FOR EACH ROW WHEN "
+                + "(NEW.refund_id='" + refund + "'::uuid) EXECUTE FUNCTION resolution_fail_fixture()");
+        try {
+            assertThrows(org.springframework.dao.DataAccessException.class,
+                    () -> resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(), command));
+        } finally {
+            jdbc.execute("DROP TRIGGER resolution_fail_fixture ON refund_manual_resolutions");
+            jdbc.execute("DROP FUNCTION resolution_fail_fixture()");
+        }
+        assertEquals("UNKNOWN", refundState(refund));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_provider_receipts WHERE refund_id=?", Integer.class, refund));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_manual_resolutions WHERE refund_id=?", Integer.class, refund));
+    }
+
+    /** Không dùng cùng provider refund receipt để xác nhận hai payment khác nhau, dù hai Admin dùng key khác. */
+    @Test
+    void manualRefundReceiptCannotBeReusedAcrossPayments() {
+        UUID first = unknownRefundForResolution();
+        String providerRef = refundProviderRef();
+        resolutions.resolve(first, UUID.randomUUID(), UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, providerRef, "CASE-M5-A"));
+        setup();
+        UUID second = unknownRefundForResolution();
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> resolutions.resolve(second, UUID.randomUUID(), UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, providerRef, "CASE-M5-B")));
+        assertEquals("UNKNOWN", refundState(second));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_manual_resolutions WHERE refund_id=?", Integer.class, second));
+    }
+
+    /** Thiếu bằng chứng hoặc sai amount/ref không được sửa refund, kể cả Admin gửi quyết định thành công. */
+    @Test
+    void manualRefundRequiresMatchingSnapshotAndEvidence() {
+        UUID refund = unknownRefundForResolution();
+        var valid = manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "CASE-M6");
+        var invalidAmount = new RefundResolutionService.Command(valid.decision(), valid.amount().add(BigDecimal.ONE), valid.currency(),
+                valid.providerPaymentReference(), valid.providerRefundReference(), valid.evidenceReference(), valid.note());
+        var missingEvidence = new RefundResolutionService.Command(valid.decision(), valid.amount(), valid.currency(),
+                valid.providerPaymentReference(), valid.providerRefundReference(), " ", valid.note());
+        assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(), invalidAmount));
+        assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(), missingEvidence));
+        assertEquals("UNKNOWN", refundState(refund));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_manual_resolutions WHERE refund_id=?", Integer.class, refund));
+    }
+
+    /** Response cũ về sau manual FAILED phải mở REVIEW và hold, không cho lệnh REQUESTED mới tiếp tục gửi. */
+    @Test
+    void lateProviderResultAfterManualFailureHoldsPaymentAndQueuedRefund() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã kiểm tra CASE-M7");
+        UUID[] queued = new UUID[1];
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        when(remote.exchange(any(), any())).thenAnswer(invocation -> {
+            jdbc.update("UPDATE refund_attempts SET lease_expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE refund_id=?", refund);
+            dispatcher.recoverExpired();
+            resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(),
+                    manualCommand(com.nexus.commerce.enums.RefundStatus.FAILED, null, "CASE-M7-FAILED"));
+            queued[0] = refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Sau xác nhận thất bại").response().refundId();
+            refunds.approve(queued[0], UUID.randomUUID(), "Đã duyệt CASE-M7-B");
+            return new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", refundProviderRef());
+        });
+        dispatcher.dispatch(refund);
+        assertEquals("REQUIRES_REVIEW", refundState(refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_payment_holds WHERE payment_id=?", Integer.class, paymentId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_result_conflicts WHERE refund_id=?", Integer.class, refund));
+        assertEquals(false, dispatcher.dispatch(queued[0]));
+        assertEquals("REQUIRES_REVIEW", refundState(queued[0]));
+        assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Không được gửi thêm"));
+        assertEquals("FAILED", jdbc.queryForObject("SELECT decision FROM refund_manual_resolutions WHERE refund_id=?", String.class, refund));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).exchange(any(), any());
+    }
+
+    /** Chốt SUCCEEDED thủ công trong lúc chờ response muộn khác receipt: giữ thành công, ghi conflict/hold thay vì hạ trạng thái. */
+    @Test
+    void lateContradictionCannotOverwriteManualSuccess() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã kiểm tra CASE-M8");
+        String manualReceipt = refundProviderRef();
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        when(remote.exchange(any(), any())).thenAnswer(invocation -> {
+            jdbc.update("UPDATE refund_attempts SET lease_expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE refund_id=?", refund);
+            dispatcher.recoverExpired();
+            resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(),
+                    manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, manualReceipt, "CASE-M8-OK"));
+            return new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", manualReceipt + "1");
+        });
+        dispatcher.dispatch(refund);
+        assertEquals("SUCCEEDED", refundState(refund));
+        assertEquals(manualReceipt, jdbc.queryForObject("SELECT provider_ref FROM refund_provider_receipts WHERE refund_id=?", String.class, refund));
+        // Cảnh báo xung đột vẫn phát dù quyết định tài chính SUCCEEDED được giữ nguyên.
+        assertEquals("REFUND_REQUIRES_REVIEW", jdbc.queryForObject("SELECT payload->>'type' FROM refund_notification_outbox "
+                + "WHERE refund_id=? ORDER BY source_version DESC LIMIT 1", String.class, refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_result_conflicts WHERE refund_id=?", Integer.class, refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_payment_holds WHERE payment_id=?", Integer.class, paymentId));
+    }
+
+    /** Đưa request qua timeout thật ở ranh giới HTTP mock để test đối soát không dựa vào UPDATE trạng thái giả. */
+    private UUID unknownRefundForResolution() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Fixture đã kiểm tra điều kiện refund");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenThrow(new com.nexus.commerce.client.VnpayMerchantClient.UncertainOutcomeException());
+        new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager).dispatch(refund);
+        assertEquals("UNKNOWN", refundState(refund));
+        return refund;
+    }
+
+    private RefundResolutionService.Command manualCommand(com.nexus.commerce.enums.RefundStatus decision, String providerRef, String evidence) {
+        return new RefundResolutionService.Command(decision,
+                jdbc.queryForObject("SELECT amount FROM payments WHERE id=?", BigDecimal.class, paymentId), "VND",
+                jdbc.queryForObject("SELECT provider_ref FROM payments WHERE id=?", String.class, paymentId),
+                providerRef, evidence, "Operator đã kiểm tra kết quả provider fixture");
+    }
+    @Autowired private org.springframework.transaction.PlatformTransactionManager refundTransactionManager;
+
+    /** Không duyệt hoặc chỉ bật một flag không được gửi tiền; bật flag không tiêu thụ toàn bộ REQUESTED cũ. */
+    @Test
+    void refundDispatchNeedsApprovalAndBothFlags() {
+        UUID refund = newRefundRequest();
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        var config = refundWorkerConfig();
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, config, refundTransactionManager);
+        assertEquals(false, dispatcher.dispatch(refund));
+        refunds.approve(refund, UUID.randomUUID(), "Đã kiểm tra hủy hàng, case TEST-1");
+        config.setRefundWorkerEnabled(false);
+        assertEquals(false, dispatcher.dispatch(refund));
+        org.mockito.Mockito.verifyNoInteractions(remote);
+    }
+
+    /** Hai instance cùng claim chỉ một HTTP mutation, HTTP nhìn thấy attempt đã commit và không còn transaction giữ khóa. */
+    @Test
+    void concurrentRefundWorkersSendOnceAfterCommitAndDoNotRefundOrderAutomatically() throws Exception {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã xác nhận điều kiện TEST-2");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenAnswer(invocation -> {
+            assertEquals(false, org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals("PROCESSING", refundState(refund));
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_attempts WHERE refund_id=?", Integer.class, refund));
+            return new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", refundProviderRef());
+        });
+        var firstWorker = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        var secondWorker = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> { gate.await(); return firstWorker.dispatch(refund); });
+            var second = pool.submit(() -> { gate.await(); return secondWorker.dispatch(refund); });
+            gate.countDown();
+            assertEquals(1, (first.get(20, TimeUnit.SECONDS) ? 1 : 0) + (second.get(20, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals("SUCCEEDED", refundState(refund));
+        assertEquals(false, firstWorker.dispatch(refund));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM orders WHERE id=? AND status='REFUNDED'", Integer.class, orderId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_attempts WHERE refund_id=? AND jsonb_exists(request_payload,'vnp_SecureHash')",
+                Integer.class, refund));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).exchange(any(), any());
+    }
+
+    /** Timeout không gửi lại refund; QueryDr PAY thành công ba lần chỉ đưa vào REVIEW, không tạo refund SUCCEEDED giả. */
+    @Test
+    void refundTimeoutReconcilesPaymentOnlyThenRequiresReview() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã đối chiếu điều kiện TEST-3");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenThrow(new com.nexus.commerce.client.VnpayMerchantClient.UncertainOutcomeException())
+                .thenReturn(new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "01", "12345"));
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        assertEquals(true, dispatcher.dispatch(refund));
+        assertEquals("UNKNOWN", refundState(refund));
+        for (int i = 0; i < 3; i++) {
+            assertEquals(false, dispatcher.dispatch(refund));
+            jdbc.update("UPDATE refund_requests SET reconcile_after=CURRENT_TIMESTAMP-interval '1 second' WHERE id=?", refund);
+            assertEquals(true, dispatcher.reconcile(refund));
+        }
+        assertEquals("REQUIRES_REVIEW", refundState(refund));
+        assertEquals(false, dispatcher.reconcile(refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_attempts WHERE refund_id=?", Integer.class, refund));
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM refund_reconciliation_checks WHERE refund_id=?", Integer.class, refund));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(4)).exchange(any(), any());
+    }
+
+    /** Mô phỏng JVM chết sau claim bằng Error; worker mới thu hồi lease và tuyệt đối không gửi attempt thứ hai. */
+    @Test
+    void crashedRefundWorkerRecoversExpiredLeaseWithoutResending() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã kiểm tra TEST-4");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenThrow(new AssertionError("Simulated process crash"));
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        assertThrows(AssertionError.class, () -> dispatcher.dispatch(refund));
+        assertEquals("PROCESSING", refundState(refund));
+        jdbc.update("UPDATE refund_attempts SET lease_expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE refund_id=?", refund);
+        var restarted = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        restarted.recoverExpired();
+        restarted.recoverExpired();
+        assertEquals("UNKNOWN", refundState(refund));
+        assertEquals(false, restarted.dispatch(refund));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).exchange(any(), any());
+    }
+
+    /** Provider đã trả success nhưng finalize DB rollback: attempt không mất, lease recovery giữ tiền UNKNOWN thay vì gửi lại. */
+    @Test
+    void refundFinalizeRollbackKeepsCommittedAttemptForRecovery() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã kiểm tra TEST-5");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenReturn(new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", refundProviderRef()));
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        jdbc.execute("CREATE FUNCTION refund_fail_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$");
+        jdbc.execute("CREATE TRIGGER refund_fail_fixture BEFORE UPDATE ON refund_attempts FOR EACH ROW WHEN "
+                + "(NEW.refund_id='" + refund + "'::uuid AND NEW.status='SUCCEEDED') EXECUTE FUNCTION refund_fail_fixture()");
+        try { assertThrows(org.springframework.dao.DataAccessException.class, () -> dispatcher.dispatch(refund)); }
+        finally {
+            jdbc.execute("DROP TRIGGER refund_fail_fixture ON refund_attempts");
+            jdbc.execute("DROP FUNCTION refund_fail_fixture()");
+        }
+        assertEquals("PROCESSING", refundState(refund));
+        jdbc.update("UPDATE refund_attempts SET lease_expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE refund_id=?", refund);
+        dispatcher.recoverExpired();
+        assertEquals("UNKNOWN", refundState(refund));
+        assertEquals(false, dispatcher.dispatch(refund));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).exchange(any(), any());
+    }
+
+    /** Payment/IPN fixture dùng DB thật, không gọi VNPAY hoặc dùng credential của nhóm. */
+    private UUID newRefundRequest() {
+        payments.ipn(callback("00", "00", "5000000"));
+        return refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Refund worker fixture").response().refundId();
+    }
+
+    private String refundState(UUID id) {
+        return jdbc.queryForObject("SELECT status FROM refund_requests WHERE id=?", String.class, id);
+    }
+
+    /** Chỉ test mới bật worker với HTTP mock; không dùng cấu hình ứng dụng/môi trường thật. */
+    private VnpayProperties refundWorkerConfig() {
+        var config = new VnpayProperties();
+        config.setTmnCode("TESTONLY");
+        config.setHashSecret("fixture-only");
+        config.setMerchantApiEnabled(true);
+        config.setRefundWorkerEnabled(true);
+        config.setMerchantSourceIp("127.0.0.1");
+        return config;
+    }
+
+    private String refundProviderRef() {
+        return Long.toString(Math.abs(UUID.randomUUID().getLeastSignificantBits() % 99999999999999L) + 1);
+    }
+
+    /** Kết quả trả sau lease expiry không được lặng lẽ ghi đè recovery; lưu bằng chứng và chuyển REVIEW. */
+    @Test
+    void lateRefundResultAfterRecoveryRequiresReview() {
+        UUID refund = newRefundRequest();
+        refunds.approve(refund, UUID.randomUUID(), "Đã kiểm tra TEST-6");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        when(remote.exchange(any(), any())).thenAnswer(invocation -> {
+            jdbc.update("UPDATE refund_attempts SET lease_expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE refund_id=?", refund);
+            dispatcher.recoverExpired();
+            return new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", refundProviderRef());
+        });
+        dispatcher.dispatch(refund);
+        assertEquals("REQUIRES_REVIEW", refundState(refund));
+        assertEquals("00", jdbc.queryForObject("SELECT response_code FROM refund_attempts WHERE refund_id=?", String.class, refund));
+        assertEquals(false, dispatcher.dispatch(refund));
+    }
+
+    /** Query thứ ba chết trước finalize không được để UNKNOWN vĩnh viễn khi đã hết số lượt cho phép. */
+    @Test
+    void expiredThirdReconciliationMovesToManualReview() {
+        UUID refund = newRefundRequest();
+        jdbc.update("UPDATE refund_requests SET status='UNKNOWN',reconcile_count=3,"
+                + "reconcile_after=CURRENT_TIMESTAMP-interval '121 seconds' WHERE id=?", refund);
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        var dispatcher = new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager);
+        dispatcher.recoverExpired();
+        assertEquals("REQUIRES_REVIEW", refundState(refund));
+        org.mockito.Mockito.verifyNoInteractions(remote);
+    }
 
     /** Hai Admin dùng hai key cho cùng payment chỉ được giữ một hạn mức toàn phần, không phụ thuộc thread thắng. */
     @Test

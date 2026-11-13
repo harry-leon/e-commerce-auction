@@ -50,6 +50,11 @@ app:
       timeout-poll-ms: ${AUCTION_TIMEOUT_POLL_MS:5000}
       timeout-penalty-score: ${PAYMENT_TIMEOUT_PENALTY_SCORE:10}
     vnpay:
+      # Chỉ mở transport Merchant API khi đã xác minh quyền; không tự khởi động refund worker.
+      merchant-api-enabled: ${VNPAY_MERCHANT_API_ENABLED:false}
+      # Hai cổng độc lập, kèm approval theo từng refund; mặc định không có mutation provider.
+      refund-worker-enabled: ${VNPAY_REFUND_WORKER_ENABLED:false}
+      merchant-source-ip: ${VNPAY_MERCHANT_SOURCE_IP:}
       tmn-code: ${VNPAY_TMN_CODE:}
       hash-secret: ${VNPAY_HASH_SECRET:}
       return-url: ${VNPAY_RETURN_URL:}
