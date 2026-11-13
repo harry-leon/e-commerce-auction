@@ -34,7 +34,6 @@ import {
     Shield,
     ClipboardList,
 } from '../../components/UI'
-import { USERS, ROLES, EVENT_LOGS, SYSTEM_SERVICES } from '../../mockData'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Auction, Order, OrderStatus } from '../../types'
 import {
@@ -73,36 +72,61 @@ import {
 } from '../../api/inventory'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
+// Dùng activity-history từ User Service cho nhật ký của tài khoản Admin hiện tại.
+function useAdminActivity(userId?: string) {
+    const [items, setItems] = useState<any[]>([])
+    useEffect(() => {
+        let active = true
+        api<any>(userId ? `/users/${encodeURIComponent(userId)}/activity-history?page=0&size=100` : '/users/me/activity-history?page=0&size=100')
+            .then((response) => {
+                const data = response?.data
+                const rows = Array.isArray(data) ? data : data?.content ?? []
+                if (active) setItems(rows.map((row: any) => ({
+                    id: row.id,
+                    type: 'USER',
+                    action: row.action,
+                    message: row.description,
+                    operator: row.status,
+                    timestamp: row.createdAt,
+                })))
+            })
+            .catch(() => { if (active) setItems([]) })
+        return () => { active = false }
+    }, [userId])
+    return items
+}
+
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
     const { lang, navigate } = useApp()
+    const recentEvents = useAdminActivity()
     const KPIs = [
         {
             icon: <TrendingUp size={20} />,
             label: 'Gross Merchandise Value',
-            value: '$2.4M',
-            change: '+23%',
+            value: '—',
+            change: '',
         },
         {
             icon: <Package size={20} />,
             label: lang === 'en' ? 'Total Orders' : 'Tổng đơn hàng',
-            value: '8,241',
-            change: '+12%',
+            value: '—',
+            change: '',
         },
         {
             icon: <Users size={20} />,
             label: lang === 'en' ? 'Active Users' : 'Người dùng hoạt động',
-            value: '4,821',
-            change: '+8%',
+            value: '—',
+            change: '',
         },
         {
             icon: <Gavel size={20} />,
             label: lang === 'en' ? 'Running Auctions' : 'Đang đấu giá',
-            value: '2',
+            value: '—',
             change: '',
         },
     ]
-    const DOWN_SERVICES = SYSTEM_SERVICES.filter((s) => s.status === 'down')
+    const DOWN_SERVICES: any[] = []
     return (
         <AdminLayout title={tr(lang, 'dashboard')}>
             {DOWN_SERVICES.length > 0 && (
@@ -167,7 +191,7 @@ export function AdminDashboardPage() {
                         </button>
                     </div>
                     <div className="space-y-2">
-                        {SYSTEM_SERVICES.slice(0, 5).map((s) => (
+                        {([] as any[]).map((s) => (
                             <div key={s.name} className="flex items-center justify-between">
                                 <span className="text-xs text-gray-700 truncate flex-1">
                                     {s.name}
@@ -197,7 +221,7 @@ export function AdminDashboardPage() {
                     </button>
                 </div>
                 <div className="p-5">
-                    {EVENT_LOGS.slice(0, 4).map((e) => (
+                    {recentEvents.slice(0, 4).map((e) => (
                         <div
                             key={e.id}
                             className="flex gap-4 py-3 border-b border-border last:border-0"
@@ -508,8 +532,19 @@ export function AdminUsersPage() {
 // ─── Admin User Detail ─────────────────────────────────────────────────────────
 export function AdminUserDetailPage() {
     const { lang, pageParams } = useApp()
-    const user = USERS.find((u) => u.id === pageParams?.id) || USERS[0]
+    const userId = String(pageParams?.id || '')
+    const [user, setUser] = useState<ReturnType<typeof mapUser> | null>(null)
+    const userActivity = useAdminActivity(userId)
+    useEffect(() => {
+        let active = true
+        if (!userId) return
+        api<any>(`/users/${encodeURIComponent(userId)}`)
+            .then((response) => { if (active && response?.data) setUser(mapUser(response.data)) })
+            .catch(() => { if (active) setUser(null) })
+        return () => { active = false }
+    }, [userId])
     const [tab, setTab] = useState('info')
+    if (!user) return <AdminLayout title={tr(lang, 'editUser')}><div className="nexus-card p-8 text-center text-gray-500">{tr(lang, 'noData')}</div></AdminLayout>
     return (
         <AdminLayout title={tr(lang, 'editUser')}>
             <Breadcrumb
@@ -599,7 +634,7 @@ export function AdminUserDetailPage() {
                     )}
                     {tab === 'activity' && (
                         <div className="space-y-3">
-                            {EVENT_LOGS.slice(0, 5).map((e) => (
+                            {userActivity.map((e) => (
                                 <div key={e.id} className="flex gap-3 p-3 bg-gray-50 rounded-xl">
                                     <div className="text-gray-500">
                                         {e.type === 'ORDER' ? (
@@ -646,8 +681,8 @@ const MODULES = [
 export function AdminRolesPage() {
     const { lang, showToast } = useApp()
     const [createOpen, setCreateOpen] = useState(false)
-    const [rolesList, setRolesList] = useState<any[]>(ROLES)
-    const [selectedRole, setSelectedRole] = useState<any>(ROLES[0])
+    const [rolesList, setRolesList] = useState<any[]>([])
+    const [selectedRole, setSelectedRole] = useState<any>(null)
 
     // Tải danh sách vai trò và phân quyền N-N thật từ User Service (/api/v1/roles)
     // Chức năng: Tải danh mục vai trò hệ thống kèm quyền hạn.
@@ -663,7 +698,6 @@ export function AdminRolesPage() {
                         code: r.code,
                         name: r.name || r.code,
                         description: r.description || '',
-                        userCount: r.code === 'ADMIN' ? 1 : r.code === 'BUYER' ? 1 : 0,
                         privileges: r.privileges || [],
                         permissions: MODULES.map((mod) => ({
                             module: mod,
@@ -710,9 +744,6 @@ export function AdminRolesPage() {
                             >
                                 <div className="flex items-center justify-between">
                                     <p className="font-semibold text-sm">{role.name}</p>
-                                    <span className="badge badge-gray text-xs">
-                                        {role.userCount}
-                                    </span>
                                 </div>
                                 <p className="text-xs text-gray-500 mt-0.5">{role.description}</p>
                             </button>
@@ -1561,7 +1592,7 @@ export function AdminAuctionsPage() {
             liveAuctions
                 .filter((auction) => auction.status === 'pending_approval')
                 .map((auction) => auction.sellerId)
-                .filter((id) => id && !USERS.some((user) => user.id === id)),
+                .filter((id) => id && !sellerAccounts[id]),
         ),
     ].sort()
     const pendingSellerIdsKey = pendingSellerIds.join('|')
@@ -1932,8 +1963,7 @@ export function AdminAuctionsPage() {
                             label: tr(lang, 'auctionRequestedBy'),
                             // Ưu tiên họ tên/email tài khoản; tên cửa hàng và sellerId dùng làm thông tin đối chiếu dự phòng.
                             render: (r: any) => {
-                                const sellerUser = USERS.find((user) => user.id === r.sellerId)
-                                const account = sellerAccounts[r.sellerId] || sellerUser
+                                const account = sellerAccounts[r.sellerId]
                                 const accountName = r.sellerAccountName || account?.fullName
                                 const email = r.sellerEmail || account?.email
                                 return (
@@ -2421,9 +2451,21 @@ export function AdminAuctionsPage() {
 
 // ─── Admin Reputation ──────────────────────────────────────────────────────────
 export function AdminReputationPage() {
-    const { lang, showToast } = useApp()
+    const { lang } = useApp()
     const [penaltyOpen, setPenaltyOpen] = useState(false)
     const [adjustOpen, setAdjustOpen] = useState(false)
+    const [users, setUsers] = useState<any[]>([])
+    useEffect(() => {
+        let active = true
+        api<any>('/users?page=0&size=100')
+            .then((response) => {
+                const payload = response?.data ?? response
+                const rows = Array.isArray(payload) ? payload : payload?.content ?? []
+                if (active) setUsers(rows.map(mapUser))
+            })
+            .catch(() => { if (active) setUsers([]) })
+        return () => { active = false }
+    }, [])
     return (
         <AdminLayout title={tr(lang, 'reputationManagement')}>
             <div className="grid grid-cols-2 gap-6">
@@ -2490,7 +2532,7 @@ export function AdminReputationPage() {
                                 ),
                             },
                         ]}
-                        data={USERS}
+                        data={users}
                         rowKey={(r) => r.id}
                     />
                 </div>
@@ -2499,20 +2541,7 @@ export function AdminReputationPage() {
                         {lang === 'en' ? 'Recent Penalties' : 'Hình phạt gần đây'}
                     </div>
                     <div className="p-4">
-                        {[
-                            {
-                                user: 'User#12345',
-                                reason: 'Non-payment after winning auction',
-                                points: -10,
-                                date: '2024-02-20',
-                            },
-                            {
-                                user: 'User#67890',
-                                reason: 'Order cancellation × 3',
-                                points: -5,
-                                date: '2024-02-18',
-                            },
-                        ].map((p, i) => (
+                        {([] as any[]).map((p, i) => (
                             <div key={i} className="py-3 border-b border-border last:border-0">
                                 <div className="flex items-center justify-between mb-1">
                                     <span className="font-semibold text-sm">{p.user}</span>
@@ -2537,16 +2566,7 @@ export function AdminReputationPage() {
                         </Button>
                         <Button
                             variant="danger"
-                            onClick={() => {
-                                setPenaltyOpen(false)
-                                showToast({
-                                    type: 'success',
-                                    message:
-                                        lang === 'en'
-                                            ? 'Penalty applied.'
-                                            : 'Đã áp dụng hình phạt.',
-                                })
-                            }}
+                            disabled
                         >
                             {tr(lang, 'applyPenalty')}
                         </Button>
@@ -2574,16 +2594,7 @@ export function AdminReputationPage() {
                         </Button>
                         <Button
                             variant="primary"
-                            onClick={() => {
-                                setAdjustOpen(false)
-                                showToast({
-                                    type: 'success',
-                                    message:
-                                        lang === 'en'
-                                            ? 'Reputation adjusted.'
-                                            : 'Đã điều chỉnh điểm uy tín.',
-                                })
-                            }}
+                            disabled
                         >
                             {tr(lang, 'save')}
                         </Button>
@@ -2606,9 +2617,10 @@ export function AdminReputationPage() {
 // ─── Admin Event Logs ──────────────────────────────────────────────────────────
 export function AdminEventLogsPage() {
     const { lang } = useApp()
+    const activity = useAdminActivity()
     const [search, setSearch] = useState('')
     const [typeFilter, setTypeFilter] = useState('all')
-    const filtered = EVENT_LOGS.filter(
+    const filtered = activity.filter(
         (e) =>
             (typeFilter === 'all' || e.type === typeFilter) &&
             (!search ||
@@ -2693,6 +2705,7 @@ export function AdminEventLogsPage() {
 // ─── Admin Audit Logs ──────────────────────────────────────────────────────────
 export function AdminAuditLogsPage() {
     const { lang } = useApp()
+    const activity = useAdminActivity()
     return (
         <AdminLayout title={tr(lang, 'auditLogs')}>
             <div className="nexus-card">
@@ -2735,7 +2748,7 @@ export function AdminAuditLogsPage() {
                             ),
                         },
                     ]}
-                    data={EVENT_LOGS}
+                    data={activity}
                     rowKey={(r) => r.id}
                 />
             </div>
@@ -2887,7 +2900,7 @@ export function AdminSystemHealthPage() {
     return (
         <AdminLayout title={tr(lang, 'systemHealth')}>
             <div className="grid grid-cols-2 gap-5 mb-6">
-                {SYSTEM_SERVICES.map((s) => (
+                {([] as any[]).map((s) => (
                     <div
                         key={s.name}
                         className={`nexus-card p-4 border-l-4 ${s.status === 'up' ? 'border-success' : 'border-danger'}`}
