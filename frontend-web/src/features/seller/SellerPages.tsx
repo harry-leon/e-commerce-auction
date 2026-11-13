@@ -29,12 +29,19 @@ import {
     CheckCircle,
     Star,
     Bell,
+    Truck,
+    Copy,
 } from '../../components/UI'
 import { PRODUCTS, ORDERS, NOTIFICATIONS } from '../../mockData'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
+import {
+    shippingApi,
+    type ShipmentResponse,
+    type ShipmentTrackingResponse,
+} from '../../api/shipping'
 import {
     api,
     ApiClientError,
@@ -2600,6 +2607,45 @@ export function SellerOrdersPage() {
     const [statusFilter, setStatusFilter] = useState<string>('all')
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
+    const [modalShipment, setModalShipment] = useState<ShipmentResponse | null>(null)
+    const [modalTracking, setModalTracking] = useState<ShipmentTrackingResponse | null>(null)
+    const [modalShipmentLoading, setModalShipmentLoading] = useState<boolean>(false)
+    const [modalShipmentError, setModalShipmentError] = useState<string | null>(null)
+
+    /**
+     * Nạp thông tin vận đơn và hành trình thời gian thực khi Seller mở modal đơn hàng (Sprint 3 - HA-S3-1).
+     * Luồng: GET /api/v1/shipments/order/{orderId} → GET /api/v1/shipments/{shipmentId}/tracking
+     */
+    useEffect(() => {
+        if (!selectedOrder) {
+            setModalShipment(null)
+            setModalTracking(null)
+            setModalShipmentError(null)
+            return
+        }
+        let active = true
+        setModalShipmentLoading(true)
+        setModalShipmentError(null)
+        shippingApi
+            .getShipmentByOrderId(selectedOrder.id)
+            .then(async (ship) => {
+                if (!active) return
+                setModalShipment(ship)
+                if (ship?.id) {
+                    const trk = await shippingApi.getShipmentTracking(ship.id)
+                    if (active) setModalTracking(trk)
+                }
+            })
+            .catch((err) => {
+                if (active) setModalShipmentError(err?.message || (lang === 'vi' ? 'Lỗi tải vận đơn' : 'Failed to load shipment'))
+            })
+            .finally(() => {
+                if (active) setModalShipmentLoading(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [selectedOrder, lang])
 
     const statusLabel = (s: string) =>
         ({
@@ -2855,6 +2901,35 @@ export function SellerOrdersPage() {
                                 },
                             },
                             {
+                                key: 'shipping',
+                                label: lang === 'en' ? 'Shipping' : 'Vận chuyển',
+                                render: (r: Order) => (
+                                    <div className="flex flex-col text-xs">
+                                        {r.shipment ? (
+                                            <>
+                                                <span className="font-semibold text-gray-800 flex items-center gap-1">
+                                                    <Truck size={12} className="text-primary" />
+                                                    {r.shipment.carrier}
+                                                </span>
+                                                <span className="font-mono text-[11px] text-gray-500">
+                                                    {r.shipment.trackingNumber}
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <span className="text-gray-400 italic">
+                                                {['PENDING_PAYMENT'].includes(r.status)
+                                                    ? lang === 'vi'
+                                                        ? 'Chưa thanh toán'
+                                                        : 'Unpaid'
+                                                    : lang === 'vi'
+                                                      ? 'Chờ xuất vận đơn'
+                                                      : 'Pending dispatch'}
+                                            </span>
+                                        )}
+                                    </div>
+                                ),
+                            },
+                            {
                                 key: 'actions',
                                 label: lang === 'en' ? 'Actions' : 'Thao tác',
                                 render: (r: Order) => (
@@ -3038,6 +3113,135 @@ export function SellerOrdersPage() {
                                 ))}
                             </div>
                         </div>
+
+                        {/* Thông tin vận chuyển & Vận đơn (Sprint 3 - HA-S3-1) */}
+                        {(() => {
+                            const effectiveShip = modalShipment || (selectedOrder.shipment ? {
+                                id: selectedOrder.shipment.id || 'mock-shipment',
+                                orderId: selectedOrder.id,
+                                carrier: selectedOrder.shipment.carrier,
+                                serviceType: 'EXPRESS',
+                                shippingFee: selectedOrder.shipping,
+                                freeShippingApplied: selectedOrder.shipping === 0,
+                                trackingNumber: selectedOrder.shipment.trackingNumber,
+                                status: (selectedOrder.shipment.status?.toUpperCase() || selectedOrder.status) as any,
+                                estimatedDeliveryDays: 3,
+                                shippingAddress: selectedOrder.shippingAddress,
+                            } : null)
+
+                            const trackingHistory = (modalTracking?.history && modalTracking.history.length > 0)
+                                ? modalTracking.history
+                                : (selectedOrder.shipment?.events || []).map((ev) => ({
+                                      carrierStatus: ev.description,
+                                      internalStatus: (ev.status?.toUpperCase() || 'IN_TRANSIT') as any,
+                                      occurredAt: ev.timestamp,
+                                      location: ev.location,
+                                      description: ev.description,
+                                  }))
+
+                            return (
+                                <div className="border border-border rounded-xl p-4 bg-gray-50/60">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <Truck size={18} className="text-primary" />
+                                            <span className="font-semibold text-sm text-gray-900">
+                                                {lang === 'en' ? 'Shipment Information' : 'Thông tin vận chuyển & Đơn vị giao'}
+                                            </span>
+                                        </div>
+                                        {effectiveShip && (
+                                            <div className="flex items-center gap-2 text-xs">
+                                                <span className="font-bold text-gray-800 bg-white border px-2 py-0.5 rounded">
+                                                    {effectiveShip.carrier}
+                                                </span>
+                                                <span className="font-mono font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
+                                                    {effectiveShip.trackingNumber}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        try {
+                                                            navigator.clipboard?.writeText(effectiveShip.trackingNumber)
+                                                            showToast({
+                                                                type: 'success',
+                                                                message: lang === 'vi' ? 'Đã sao chép mã vận đơn' : 'Tracking number copied',
+                                                            })
+                                                        } catch {}
+                                                    }}
+                                                    title={lang === 'vi' ? 'Sao chép mã vận đơn' : 'Copy tracking number'}
+                                                    className="text-primary hover:text-primary-dark p-1 cursor-pointer"
+                                                >
+                                                    <Copy size={13} />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {modalShipmentLoading ? (
+                                        <div className="py-4 text-center text-xs text-gray-500" role="status">
+                                            <div className="spinner-border spinner-border-sm text-primary inline-block w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
+                                            {lang === 'vi' ? 'Đang tải dữ liệu vận đơn...' : 'Loading shipment details...'}
+                                        </div>
+                                    ) : modalShipmentError ? (
+                                        <div className="p-3 bg-red-50 text-red-700 rounded-lg text-xs flex items-center justify-between">
+                                            <span>{modalShipmentError}</span>
+                                        </div>
+                                    ) : effectiveShip ? (
+                                        <div className="space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs p-2.5 bg-white rounded-lg border border-border">
+                                                <div>
+                                                    <span className="text-gray-500 mr-1.5">
+                                                        {lang === 'vi' ? 'Trạng thái giao:' : 'Status:'}
+                                                    </span>
+                                                    <span className="font-bold text-primary">
+                                                        {effectiveShip.status}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-gray-500 mr-1.5">
+                                                        {lang === 'vi' ? 'Cước vận chuyển:' : 'Shipping fee:'}
+                                                    </span>
+                                                    <span className="font-semibold text-gray-900">
+                                                        {effectiveShip.freeShippingApplied
+                                                            ? (lang === 'vi' ? 'Miễn phí' : 'Free')
+                                                            : formatCurrency(effectiveShip.shippingFee, lang)}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* Lịch sử tracking mốc */}
+                                            {trackingHistory.length > 0 && (
+                                                <div className="pt-1 space-y-2">
+                                                    <p className="text-xs font-semibold text-gray-700">
+                                                        {lang === 'vi' ? 'Hành trình vận chuyển:' : 'Tracking checkpoints:'}
+                                                    </p>
+                                                    {trackingHistory.map((ev, i) => (
+                                                        <div key={i} className="flex gap-2.5 text-xs">
+                                                            <div className="flex flex-col items-center">
+                                                                <div className={`w-2 h-2 rounded-full mt-1 ${i === 0 ? 'bg-primary' : 'bg-gray-300'}`} />
+                                                                {i < trackingHistory.length - 1 && <div className="w-0.5 h-6 bg-gray-200 mt-0.5" />}
+                                                            </div>
+                                                            <div className="flex-1 pb-1">
+                                                                <p className="font-medium text-gray-800">
+                                                                    {ev.description || ev.carrierStatus}
+                                                                </p>
+                                                                {ev.location && <p className="text-[11px] text-gray-400">{ev.location}</p>}
+                                                                <p className="text-[10px] text-gray-400">{formatDate(ev.occurredAt, lang)}</p>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="py-3 text-center text-xs text-gray-500">
+                                            {lang === 'vi'
+                                                ? 'Đơn hàng chưa phát sinh vận đơn vận chuyển từ hệ thống Fulfillment.'
+                                                : 'No shipment has been generated for this order yet.'}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })()}
 
                         <div className="flex justify-between items-center pt-3 border-t border-border">
                             <span className="text-sm text-gray-600 font-medium">
