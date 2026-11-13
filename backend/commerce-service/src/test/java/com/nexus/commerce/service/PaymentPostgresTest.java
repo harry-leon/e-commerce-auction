@@ -67,6 +67,96 @@ class PaymentPostgresTest {
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
 
+    /** Snapshot gắn refundId riêng; UPDATE cùng state không tạo tin trùng, rollback không rò sự kiện. */
+    @Test
+    void refundNotificationSnapshotIsAtomicAndDeduplicated() throws Exception {
+        UUID refund = newRefundRequest();
+        var snapshot = jdbc.queryForObject("SELECT payload::text FROM refund_notification_outbox WHERE refund_id=?", String.class, refund);
+        var event = new ObjectMapper().readTree(snapshot);
+        assertEquals(refund.toString(), event.get("refundId").asText());
+        assertEquals("REFUND_REQUESTED", event.get("type").asText());
+        assertEquals(50000, event.get("amount").asInt());
+        assertEquals(8, event.size());
+        jdbc.update("UPDATE refund_requests SET status=status WHERE id=?", refund);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_outbox WHERE refund_id=?", Integer.class, refund));
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            jdbc.update("UPDATE refund_requests SET status='UNKNOWN' WHERE id=?", refund);
+            tx.setRollbackOnly();
+        });
+        assertEquals("REQUESTED", refundState(refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_outbox WHERE refund_id=?", Integer.class, refund));
+    }
+
+    /** Mất ACK gửi lại đúng eventId/payload; tám lỗi đưa dead letter, không ảnh hưởng trạng thái refund. */
+    @Test
+    void refundNotificationRetriesSameSnapshotAndStopsAfterEightErrors() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        when(remote.configured()).thenReturn(true);
+        doThrow(new IllegalStateException("must-not-store-sensitive-message")).when(remote).sendInbox(any());
+        var worker = new RefundNotificationWorker(jdbc, remote, refundTransactionManager);
+        for (int i = 0; i < 8; i++) {
+            jdbc.update("UPDATE refund_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", event);
+            worker.deliver(event);
+        }
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(8)).sendInbox(any());
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals("IllegalStateException", jdbc.queryForObject("SELECT last_error_type FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals("REQUESTED", refundState(refund));
+    }
+
+    /** Sau mất ACK, lần giao sau phải giữ nguyên payload/id; backoff ngăn gửi lại ngay trong cùng tick. */
+    @Test
+    void refundNotificationLostAckRetriesIdenticalPayload() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        when(remote.configured()).thenReturn(true);
+        org.mockito.Mockito.doThrow(new IllegalStateException("lost ACK")).doNothing().when(remote).sendInbox(any());
+        var worker = new RefundNotificationWorker(jdbc, remote, refundTransactionManager);
+        worker.deliver(event);
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+        jdbc.update("UPDATE refund_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", event);
+        worker.deliver(event);
+        var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(2)).sendInbox(captor.capture());
+        assertEquals(captor.getAllValues().getFirst(), captor.getAllValues().getLast());
+        assertEquals("DELIVERED", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+    }
+
+    /** Worker bỏ qua row đang được instance khác giao và không gửi lại sau ACK; OAuth thiếu giữ backlog. */
+    @Test
+    void concurrentRefundNotificationWorkersDeliverOnce() throws Exception {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        var worker = new RefundNotificationWorker(jdbc, remote, refundTransactionManager);
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.never()).sendInbox(any());
+        when(remote.configured()).thenReturn(true);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            entered.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) { throw new IllegalStateException("Test timeout"); }
+            return null;
+        }).when(remote).sendInbox(any());
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = pool.submit(() -> worker.deliver(event));
+            try {
+                assertEquals(true, entered.await(5, TimeUnit.SECONDS));
+                pool.submit(() -> worker.deliver(event)).get(3, TimeUnit.SECONDS);
+            } finally { release.countDown(); }
+            first.get(5, TimeUnit.SECONDS);
+        }
+        worker.deliver(event);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+        assertEquals("DELIVERED", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+    }
+
     /** SUCCEEDED thủ công cần khớp snapshot và receipt; replay trả cùng audit, không ghi đè terminal hoặc nhân bản receipt. */
     @Test
     void manualRefundSuccessIsAuditedAndIdempotent() {
@@ -228,6 +318,9 @@ class PaymentPostgresTest {
         dispatcher.dispatch(refund);
         assertEquals("SUCCEEDED", refundState(refund));
         assertEquals(manualReceipt, jdbc.queryForObject("SELECT provider_ref FROM refund_provider_receipts WHERE refund_id=?", String.class, refund));
+        // Cảnh báo xung đột vẫn phát dù quyết định tài chính SUCCEEDED được giữ nguyên.
+        assertEquals("REFUND_REQUIRES_REVIEW", jdbc.queryForObject("SELECT payload->>'type' FROM refund_notification_outbox "
+                + "WHERE refund_id=? ORDER BY source_version DESC LIMIT 1", String.class, refund));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_result_conflicts WHERE refund_id=?", Integer.class, refund));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_payment_holds WHERE payment_id=?", Integer.class, paymentId));
     }

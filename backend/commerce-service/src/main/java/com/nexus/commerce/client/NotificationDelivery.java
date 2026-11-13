@@ -29,13 +29,25 @@ public class NotificationDelivery {
     /** Thiếu OAuth thì giữ nguyên backlog, không gửi anonymous và không báo đã giao giả. */
     public boolean configured() { return tokens.configured(); }
 
-    /** Chỉ worker gọi sau commit; 401 xóa cache để lần retry lấy token mới, mọi lỗi khác chuyển về outbox. */
-    public void send(Map<String, Object> event) {
+    /**
+     * Gửi riêng inbox/push, ACK 204 sau commit ở Notification; không cố gửi email cho loại sự kiện chưa có template.
+     * Retry giữ nguyên eventId/payload từ outbox. 401 xóa cache token, không chuyển tiếp JWT người dùng.
+     */
+    public void sendInbox(Map<String, Object> event) {
         try {
             var response = client.post().uri("/internal/commerce-notifications").headers(h -> h.setBearerAuth(tokens.get()))
                     .body(event).retrieve().toBodilessEntity();
-            // Chỉ ACK 204 đúng contract, không đánh dấu done nếu proxy redirect hoặc trả trang HTML 200.
             if (response.getStatusCode().value() != 204) { throw new IllegalStateException("Notification không trả ACK 204"); }
+        } catch (RestClientResponseException error) {
+            if (error.getStatusCode().value() == 401) { tokens.invalidate(); }
+            throw error;
+        }
+    }
+
+    /** Chỉ worker gọi sau commit; 401 xóa cache để lần retry lấy token mới, mọi lỗi khác chuyển về outbox. */
+    public void send(Map<String, Object> event) {
+        try {
+            sendInbox(event);
             // Email dùng key riêng, dữ liệu snapshot từ DB; lỗi SMTP giữ toàn bộ outbox để retry sau commit thanh toán.
             if (event.get("recipientEmail") instanceof String email && !email.isBlank()) {
                 var payload = new java.util.LinkedHashMap<String, Object>(event);
