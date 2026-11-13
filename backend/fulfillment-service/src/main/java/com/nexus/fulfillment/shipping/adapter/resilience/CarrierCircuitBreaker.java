@@ -41,10 +41,14 @@ public class CarrierCircuitBreaker {
         this(carrierCode, 3, 10000L, 2);
     }
 
+    /**
+     * Khởi tạo Circuit Breaker với các tham số ngưỡng lỗi và cooldown tùy chỉnh.
+     * Quy tắc: cooldownDurationMs tối thiểu là 1ms (thay vì cố định 1000ms) để hỗ trợ cấu hình linh hoạt và kiểm thử nhanh.
+     */
     public CarrierCircuitBreaker(String carrierCode, int failureThreshold, long cooldownDurationMs, int permittedHalfOpenProbes) {
         this.carrierCode = carrierCode != null ? carrierCode.toUpperCase() : "UNKNOWN";
         this.failureThreshold = Math.max(1, failureThreshold);
-        this.cooldownDurationMs = Math.max(1000L, cooldownDurationMs);
+        this.cooldownDurationMs = Math.max(1L, cooldownDurationMs);
         this.permittedHalfOpenProbes = Math.max(1, permittedHalfOpenProbes);
     }
 

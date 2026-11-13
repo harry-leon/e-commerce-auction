@@ -20,9 +20,13 @@ public class ShippingEventListener {
     private static final Logger log = LoggerFactory.getLogger(ShippingEventListener.class);
 
     private final ShippingService shippingService;
+    private final org.springframework.beans.factory.ObjectProvider<com.nexus.fulfillment.service.WarehouseFulfillmentService> fulfillmentServiceProvider;
 
-    public ShippingEventListener(ShippingService shippingService) {
+    public ShippingEventListener(
+            ShippingService shippingService,
+            org.springframework.beans.factory.ObjectProvider<com.nexus.fulfillment.service.WarehouseFulfillmentService> fulfillmentServiceProvider) {
         this.shippingService = shippingService;
+        this.fulfillmentServiceProvider = fulfillmentServiceProvider;
     }
 
     /**
@@ -66,9 +70,23 @@ public class ShippingEventListener {
                 event.shipmentId(), event.orderId(), event.carrierCode(), event.reason());
     }
 
+    /**
+     * Lắng nghe sự kiện kiện hàng bị trả về kho xuất (ShipmentReturnedEvent).
+     * Tự động kích hoạt hoàn kho vật lý cho các SKU của đơn hàng theo cơ chế idempotent.
+     */
     @EventListener
     public void onShipmentReturned(ShipmentReturnedEvent event) {
         log.warn("ShipmentReturnedEvent: shipmentId={}, orderId={}, carrier={}, reason={}",
                 event.shipmentId(), event.orderId(), event.carrierCode(), event.reason());
+        if (event.shipmentId() != null) {
+            try {
+                com.nexus.fulfillment.service.WarehouseFulfillmentService fulfillmentService = fulfillmentServiceProvider.getIfAvailable();
+                if (fulfillmentService != null) {
+                    fulfillmentService.processReturn(event.shipmentId(), event.reason());
+                }
+            } catch (Exception ex) {
+                log.warn("Lỗi khi tự động xử lý hoàn kho cho vận đơn {}: {}", event.shipmentId(), ex.getMessage());
+            }
+        }
     }
 }
