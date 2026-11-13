@@ -33,6 +33,7 @@ import {
     Settings2,
     Shield,
     ClipboardList,
+    BootstrapSpinner,
 } from '../../components/UI'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Auction, Order, OrderStatus } from '../../types'
@@ -72,11 +73,23 @@ import {
 } from '../../api/inventory'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
-// Dùng activity-history từ User Service cho nhật ký của tài khoản Admin hiện tại.
+/** Hiển thị spinner dùng chung trong vùng dữ liệu Admin khi một trang hoặc tab đang chờ API. */
+function AdminLoading({ label }: { label: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-gray-500">
+            <BootstrapSpinner size="lg" />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    )
+}
+
+// Dùng activity-history từ User Service cho nhật ký Admin và trả loading để trang không nháy empty-state trước phản hồi.
 function useAdminActivity(userId?: string) {
     const [items, setItems] = useState<any[]>([])
+    const [loading, setLoading] = useState(true)
     useEffect(() => {
         let active = true
+        setLoading(true)
         api<any>(userId ? `/users/${encodeURIComponent(userId)}/activity-history?page=0&size=100` : '/users/me/activity-history?page=0&size=100')
             .then((response) => {
                 const data = response?.data
@@ -91,15 +104,16 @@ function useAdminActivity(userId?: string) {
                 })))
             })
             .catch(() => { if (active) setItems([]) })
+            .finally(() => { if (active) setLoading(false) })
         return () => { active = false }
     }, [userId])
-    return items
+    return { items, loading }
 }
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
     const { lang, navigate } = useApp()
-    const recentEvents = useAdminActivity()
+    const { items: recentEvents, loading: activityLoading } = useAdminActivity()
     const [dashboard, setDashboard] = useState<any>(null)
     const [refreshing, setRefreshing] = useState(true)
     const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
@@ -193,6 +207,14 @@ export function AdminDashboardPage() {
             value: dashboard?.auctions.ok ? String(dashboard.auctions.total) : '—',
         },
     ]
+    if (!dashboard) {
+        return (
+            <AdminLayout title={tr(lang, 'dashboard')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
+
     return (
         <AdminLayout title={tr(lang, 'dashboard')}>
             {sources.some((source) => !source.ok) && (
@@ -314,7 +336,7 @@ export function AdminDashboardPage() {
                             </div>
                         </div>
                     ))}
-                    {!recentEvents.length && <p className="text-sm text-gray-500">{lang === 'en' ? 'No recent activity.' : 'Chưa có hoạt động gần đây.'}</p>}
+                    {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : !recentEvents.length && <p className="text-sm text-gray-500">{lang === 'en' ? 'No recent activity.' : 'Chưa có hoạt động gần đây.'}</p>}
                 </div>
             </div>
         </AdminLayout>
@@ -436,9 +458,7 @@ export function AdminUsersPage() {
                         </Button>
                     </div>
                 ) : usersLoading ? (
-                    <div className="p-8 text-center text-gray-500">
-                        {lang === 'en' ? 'Loading accounts...' : 'Đang tải tài khoản...'}
-                    </div>
+                    <AdminLoading label={tr(lang, 'loading')} />
                 ) : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState icon={<Users size={20} />} title={tr(lang, 'noData')} />
@@ -642,16 +662,30 @@ export function AdminUserDetailPage() {
     const { lang, pageParams } = useApp()
     const userId = String(pageParams?.id || '')
     const [user, setUser] = useState<ReturnType<typeof mapUser> | null>(null)
-    const userActivity = useAdminActivity(userId)
+    const [userLoading, setUserLoading] = useState(true)
+    const { items: userActivity, loading: activityLoading } = useAdminActivity(userId)
+    // Tải hồ sơ riêng theo userId; giữ màn hình ở trạng thái spinner tới khi API trả dữ liệu hoặc lỗi.
     useEffect(() => {
         let active = true
-        if (!userId) return
+        if (!userId) {
+            setUserLoading(false)
+            return
+        }
+        setUserLoading(true)
         api<any>(`/users/${encodeURIComponent(userId)}`)
             .then((response) => { if (active && response?.data) setUser(mapUser(response.data)) })
             .catch(() => { if (active) setUser(null) })
+            .finally(() => { if (active) setUserLoading(false) })
         return () => { active = false }
     }, [userId])
     const [tab, setTab] = useState('info')
+    if (userLoading) {
+        return (
+            <AdminLayout title={tr(lang, 'editUser')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
     if (!user) return <AdminLayout title={tr(lang, 'editUser')}><div className="nexus-card p-8 text-center text-gray-500">{tr(lang, 'noData')}</div></AdminLayout>
     return (
         <AdminLayout title={tr(lang, 'editUser')}>
@@ -742,7 +776,7 @@ export function AdminUserDetailPage() {
                     )}
                     {tab === 'activity' && (
                         <div className="space-y-3">
-                            {userActivity.map((e) => (
+                            {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : userActivity.map((e) => (
                                 <div key={e.id} className="flex gap-3 p-3 bg-gray-50 rounded-xl">
                                     <div className="text-gray-500">
                                         {e.type === 'ORDER' ? (
@@ -791,6 +825,7 @@ export function AdminRolesPage() {
     const [createOpen, setCreateOpen] = useState(false)
     const [rolesList, setRolesList] = useState<any[]>([])
     const [selectedRole, setSelectedRole] = useState<any>(null)
+    const [rolesLoading, setRolesLoading] = useState(true)
 
     // Tải danh sách vai trò và phân quyền N-N thật từ User Service (/api/v1/roles)
     // Chức năng: Tải danh mục vai trò hệ thống kèm quyền hạn.
@@ -826,7 +861,16 @@ export function AdminRolesPage() {
                 }
             })
             .catch(() => {})
+            .finally(() => setRolesLoading(false))
     }, [])
+
+    if (rolesLoading) {
+        return (
+            <AdminLayout title={tr(lang, 'roleManagement')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
 
     return (
         <AdminLayout title={tr(lang, 'roleManagement')}>
@@ -1270,18 +1314,7 @@ export function AdminOrdersPage() {
             {/* Bảng dữ liệu quản lý đơn hàng */}
             <div className="nexus-card">
                 {loading ? (
-                    <div className="py-12 text-center text-gray-400">
-                        <div
-                            className="spinner-border text-primary mb-2"
-                            style={{ color: '#ee4d2d' }}
-                            role="status"
-                        >
-                            <span className="visually-hidden">Loading...</span>
-                        </div>
-                        <p>
-                            {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
-                        </p>
-                    </div>
+                    <AdminLoading label={tr(lang, 'loading')} />
                 ) : (
                     <DataTable
                         columns={[
@@ -1661,11 +1694,12 @@ export function AdminAuctionsPage() {
 
     // Dữ liệu danh sách phiên đấu giá
     const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
+    const [auctionsLoading, setAuctionsLoading] = useState(true)
     const [sellerAccounts, setSellerAccounts] = useState<
         Record<string, Pick<ApiUser, 'fullName' | 'email'>>
     >({})
 
-    // Tải danh sách toàn bộ phiên đấu giá
+    // Tải danh sách phiên đấu giá; spinner chỉ dùng cho lần gọi đầu để polling nền không làm nhấp nháy bảng.
     const loadAuctions = async () => {
         try {
             const res = await auctionsApi.getAuctions({
@@ -1683,6 +1717,8 @@ export function AdminAuctionsPage() {
                 status: (auctionReviews[a.id]?.status as any) || a.status,
             }))
             setLiveAuctions(fallback)
+        } finally {
+            setAuctionsLoading(false)
         }
     }
 
@@ -2030,7 +2066,7 @@ export function AdminAuctionsPage() {
 
             {/* Bảng dữ liệu quản trị phiên đấu giá */}
             <div className="nexus-card">
-                <DataTable
+                {auctionsLoading ? <AdminLoading label={tr(lang, 'loading')} /> : <DataTable
                     columns={[
                         {
                             key: 'id',
@@ -2228,7 +2264,7 @@ export function AdminAuctionsPage() {
                     ]}
                     data={filteredAuctions}
                     rowKey={(r) => r.id}
-                />
+                />}
             </div>
 
             {/* Modal Admin Cưỡng chế Hủy phiên do Vi phạm */}
@@ -2624,6 +2660,14 @@ export function AdminReputationPage() {
         }
     }
 
+    if (loading) {
+        return (
+            <AdminLayout title={tr(lang, 'reputationManagement')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
+
     return (
         <AdminLayout title={tr(lang, 'reputationManagement')}>
             <div className="grid grid-cols-2 gap-6">
@@ -2748,7 +2792,7 @@ export function AdminReputationPage() {
 // ─── Admin Event Logs ──────────────────────────────────────────────────────────
 export function AdminEventLogsPage() {
     const { lang } = useApp()
-    const activity = useAdminActivity()
+    const { items: activity, loading: activityLoading } = useAdminActivity()
     const [search, setSearch] = useState('')
     const [typeFilter, setTypeFilter] = useState('all')
     const filtered = activity.filter(
@@ -2781,7 +2825,7 @@ export function AdminEventLogsPage() {
                 </select>
             </div>
             <div className="nexus-card">
-                {filtered.length === 0 ? (
+                {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState icon={<ClipboardList size={20} />} title={tr(lang, 'noData')} />
                     </div>
@@ -2836,7 +2880,7 @@ export function AdminEventLogsPage() {
 // ─── Admin Audit Logs ──────────────────────────────────────────────────────────
 export function AdminAuditLogsPage() {
     const { lang } = useApp()
-    const activity = useAdminActivity()
+    const { items: activity, loading: activityLoading } = useAdminActivity()
     return (
         <AdminLayout title={tr(lang, 'auditLogs')}>
             <div className="nexus-card">
@@ -2845,7 +2889,7 @@ export function AdminAuditLogsPage() {
                         ? 'Read-only audit trail of all system changes.'
                         : 'Nhật ký kiểm tra chỉ đọc của tất cả thay đổi hệ thống.'}
                 </div>
-                <DataTable
+                {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : <DataTable
                     columns={[
                         {
                             key: 'type',
@@ -2881,7 +2925,7 @@ export function AdminAuditLogsPage() {
                     ]}
                     data={activity}
                     rowKey={(r) => r.id}
-                />
+                />}
             </div>
         </AdminLayout>
     )
@@ -3954,6 +3998,14 @@ export function AdminWarehousesPage() {
         } finally {
             setReconciling(false)
         }
+    }
+
+    if (loading) {
+        return (
+            <AdminLayout title={tr(lang, 'warehouseManagement')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
     }
 
     return (
