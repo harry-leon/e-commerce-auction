@@ -879,7 +879,7 @@ export const auctionsApi = {
         } catch (error) {
             throw error
         }
-},
+    },
 
     /** Tải lịch sử bid phân trang từ Auction Service và chuẩn hóa về AuctionBid cho các màn chi tiết. */
     async getBidHistory(auctionId: string, page = 1, limit = 100): Promise<AuctionBid[]> {
