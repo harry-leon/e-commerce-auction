@@ -55,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({PaymentReceiptService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -64,6 +64,37 @@ import org.springframework.transaction.annotation.Transactional;
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
+    @Autowired private PaymentReceiptService receipts;
+
+    /**
+     * IPN fixture đi qua HMAC/transaction thật rồi tải JSONB từ PostgreSQL: replay giữ biên nhận thu gốc,
+     * không thêm Payment/outbox; Buyer khác bị chặn. Không gọi merchant sandbox trong test này.
+     */
+    @Test
+    void receiptUsesCommittedIpnSnapshotWithoutCreatingNewFinancialRecords() throws Exception {
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none")
+                .subject(buyer.toString()).build();
+        var auth = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_BUYER")));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> receipts.download(paymentId, auth));
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        var first = receipts.download(paymentId, auth);
+        var json = new ObjectMapper().findAndRegisterModules().writeValueAsString(first);
+        int paymentCount = jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId);
+        int outboxCount = jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId);
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+        var second = receipts.download(paymentId, auth);
+        assertEquals(json, new ObjectMapper().findAndRegisterModules().writeValueAsString(second));
+        assertEquals(new BigDecimal("50000.00"), second.prices().total());
+        assertEquals(paymentCount, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+        assertEquals(outboxCount, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
+        var other = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(UUID.randomUUID().toString()).build(),
+                auth.getAuthorities());
+        assertEquals(404, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> receipts.download(paymentId, other)).getHttpStatus().value());
+    }
+
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
     @Autowired private RefundNotificationReplayService notificationReplays;
