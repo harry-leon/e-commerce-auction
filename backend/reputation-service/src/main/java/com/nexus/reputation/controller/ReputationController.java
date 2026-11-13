@@ -3,13 +3,19 @@ package com.nexus.reputation.controller;
 import com.nexus.common.exception.BusinessException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.common.response.ApiResponse;
+import com.nexus.reputation.dto.AdminAdjustReputationRequest;
 import com.nexus.reputation.dto.PenaltyResponse;
+import com.nexus.reputation.dto.RatingResponse;
 import com.nexus.reputation.dto.ReputationEligibilityResponse;
 import com.nexus.reputation.dto.ReputationSummaryResponse;
+import com.nexus.reputation.dto.ResolveDisputeRequest;
 import com.nexus.reputation.enums.EligibilityAction;
+import com.nexus.reputation.enums.PenaltyRefType;
+import com.nexus.reputation.enums.TrustLevel;
 import com.nexus.reputation.service.ReputationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -23,21 +29,18 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Controller tra cứu điểm uy tín, điều kiện tham gia đấu giá và lịch sử xử phạt cho người dùng.
- * Quy tắc:
- * - GET /api/v1/reputations/{userId}: công khai tóm tắt uy tín (phục vụ hiển thị shop/uy tín).
- * - GET /api/v1/reputations/{userId}/eligibility: kiểm tra ngưỡng điểm tối thiểu cho BID hoặc CREATE_AUCTION.
- * - GET /api/v1/reputations/me: tra cứu hồ sơ uy tín của chính tài khoản đang đăng nhập.
- * - GET /api/v1/reputations/{userId}/penalties: chỉ chính chủ hoặc ADMIN/SUPPORT mới được xem biên bản phạt.
+ * Controller tra cứu điểm uy tín, điều kiện đấu giá, lịch sử xử phạt và kiểm duyệt Admin/Support.
  */
 @RestController
 @RequestMapping("/api/v1/reputations")
-@Tag(name = "Reputation", description = "API tra cứu điểm uy tín và lịch sử xử phạt")
+@Tag(name = "Reputation", description = "API tra cứu điểm uy tín, điều kiện đấu giá và kiểm duyệt Admin")
 public class ReputationController {
 
     private final ReputationService reputationService;
@@ -89,6 +92,61 @@ public class ReputationController {
         }
         Page<PenaltyResponse> page = reputationService.getPenalties(userId, pageable);
         return ResponseEntity.ok(ApiResponse.ok(page.getContent()));
+    }
+
+    /** Admin/Support tra cứu danh sách hồ sơ uy tín phân trang, hỗ trợ lọc theo trustLevel. */
+    @GetMapping("/admin/users")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPPORT')")
+    @Operation(summary = "[Admin/Support] Tra cứu danh sách điểm uy tín")
+    public ResponseEntity<ApiResponse<List<ReputationSummaryResponse>>> adminListReputations(
+            @RequestParam(required = false) TrustLevel trustLevel,
+            @PageableDefault(size = 20, sort = "score", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.ok(reputationService.adminGetReputations(trustLevel, pageable)));
+    }
+
+    /** Admin/Support tra cứu danh sách đánh giá (lọc các bản ghi đang bị khiếu nại hoặc theo rateeId). */
+    @GetMapping("/admin/ratings")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPPORT')")
+    @Operation(summary = "[Admin/Support] Tra cứu đánh giá và khiếu nại")
+    public ResponseEntity<ApiResponse<List<RatingResponse>>> adminListRatings(
+            @RequestParam(required = false) Boolean disputedOnly,
+            @RequestParam(required = false) UUID rateeId,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.ok(reputationService.adminGetRatings(disputedOnly, rateeId, pageable)));
+    }
+
+    /** Admin/Support tra cứu toàn bộ nhật ký xử phạt và điều chỉnh điểm thủ công. */
+    @GetMapping("/admin/penalties")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPPORT')")
+    @Operation(summary = "[Admin/Support] Tra cứu nhật ký xử phạt và điều chỉnh điểm")
+    public ResponseEntity<ApiResponse<List<PenaltyResponse>>> adminListPenalties(
+            @RequestParam(required = false) UUID userId,
+            @RequestParam(required = false) PenaltyRefType refType,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.ok(reputationService.adminGetPenalties(userId, refType, pageable)));
+    }
+
+    /** Chỉ Admin mới được điều chỉnh điểm uy tín thủ công kèm lý do kiểm toán. */
+    @PostMapping("/admin/adjustments")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "[Admin] Điều chỉnh điểm uy tín thủ công")
+    public ResponseEntity<ApiResponse<PenaltyResponse>> adminAdjustReputation(
+            @Valid @RequestBody AdminAdjustReputationRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        UUID adminId = parseSubject(jwt);
+        return ResponseEntity.ok(ApiResponse.ok(reputationService.adminAdjustReputation(adminId, request)));
+    }
+
+    /** Chỉ Admin mới được phán quyết khiếu nại đánh giá (DISMISS hoặc INVALIDATE). */
+    @PostMapping("/admin/ratings/{ratingId}/dispute/resolve")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "[Admin] Xử lý khiếu nại đánh giá")
+    public ResponseEntity<ApiResponse<RatingResponse>> resolveDispute(
+            @PathVariable UUID ratingId,
+            @Valid @RequestBody ResolveDisputeRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        UUID adminId = parseSubject(jwt);
+        return ResponseEntity.ok(ApiResponse.ok(reputationService.resolveRatingDispute(ratingId, adminId, request)));
     }
 
     private UUID parseSubject(Jwt jwt) {

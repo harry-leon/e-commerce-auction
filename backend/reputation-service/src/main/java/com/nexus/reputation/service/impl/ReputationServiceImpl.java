@@ -5,14 +5,18 @@ import com.nexus.common.exception.ErrorCode;
 import com.nexus.reputation.client.OrderVerificationClient;
 import com.nexus.reputation.client.OrderVerificationClient.VerifiedOrder;
 import com.nexus.reputation.config.ReputationProperties;
+import com.nexus.reputation.dto.AdminAdjustReputationRequest;
 import com.nexus.reputation.dto.ApplyPenaltyRequest;
 import com.nexus.reputation.dto.CreateRatingRequest;
+import com.nexus.reputation.dto.DisputeRatingRequest;
 import com.nexus.reputation.dto.PenaltyResponse;
 import com.nexus.reputation.dto.RatingResponse;
 import com.nexus.reputation.dto.RecordTransactionRequest;
 import com.nexus.reputation.dto.RecordTransactionRequest.TransactionOutcome;
 import com.nexus.reputation.dto.ReputationEligibilityResponse;
 import com.nexus.reputation.dto.ReputationSummaryResponse;
+import com.nexus.reputation.dto.ResolveDisputeRequest;
+import com.nexus.reputation.dto.ResolveDisputeRequest.DisputeResolution;
 import com.nexus.reputation.entity.Penalty;
 import com.nexus.reputation.entity.Rating;
 import com.nexus.reputation.entity.Reputation;
@@ -46,12 +50,12 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Cài đặt nghiệp vụ điểm uy tín, đánh giá hai chiều, tính TrustLevel, điều kiện đấu giá và xử phạt (SRS §3.5.3).
+ * Cài đặt nghiệp vụ điểm uy tín, đánh giá hai chiều, tính TrustLevel, điều kiện đấu giá và kiểm duyệt Admin (SRS §3.5.3).
  *
- * Quy tắc tính điểm đánh giá:
- * - 5 sao -> +3 điểm; 4 sao -> +1 điểm; 3 sao -> 0 điểm; 2 sao -> -3 điểm; 1 sao -> -5 điểm (sàn 0).
- * - Cập nhật đồng thời avgRating/totalRatings (loại trừ đánh giá bị khiếu nại) và TrustLevel.
- * - Phát sự kiện UserRatedEvent, ReputationScoreUpdatedEvent, TrustLevelChangedEvent sau commit DB.
+ * Quy tắc chính:
+ * - Đánh giá: 5->+3, 4->+1, 3->0, 2->-3, 1->-5 điểm; cấm tự đánh giá, tối đa 1 lần mỗi bên/đơn.
+ * - Điều kiện đấu giá: BID >= 40, CREATE_AUCTION >= 50 (khi bật FEATURE_REPUTATION_ENFORCEMENT).
+ * - Khiếu nại & Admin: chỉ rateeId hoặc ADMIN/SUPPORT được gắn cờ; ADMIN xử lý DISMISS/INVALIDATE idempotent.
  */
 @Service
 public class ReputationServiceImpl implements ReputationService {
@@ -111,18 +115,7 @@ public class ReputationServiceImpl implements ReputationService {
         int currentScore = rep != null ? rep.getScore() : properties.getInitialScore();
         TrustLevel currentLevel = rep != null ? rep.getTrustLevel() : TrustLevel.STANDARD;
         return penaltyRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable)
-                .map(p -> new PenaltyResponse(
-                        p.getId(),
-                        p.getUserId(),
-                        p.getRefType(),
-                        p.getRefId(),
-                        p.getScoreDelta(),
-                        currentScore,
-                        currentScore,
-                        currentLevel,
-                        p.getReason(),
-                        false,
-                        p.getCreatedAt()));
+                .map(p -> toPenaltyResponse(p, currentScore, currentScore, currentLevel, false));
     }
 
     @Override
@@ -132,7 +125,6 @@ public class ReputationServiceImpl implements ReputationService {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thông tin xử phạt không hợp lệ");
         }
 
-        // Bước 1: Phản hồi idempotent nhanh nếu biên bản phạt cho cùng (user, refType, refId) đã tồn tại.
         Optional<Penalty> existingFast = penaltyRepository.findByUserIdAndRefTypeAndRefId(
                 request.userId(), request.refType(), request.refId());
         if (existingFast.isPresent()) {
@@ -141,10 +133,8 @@ public class ReputationServiceImpl implements ReputationService {
             return replayResponse(existingFast.get(), current);
         }
 
-        // Bước 2: Khởi tạo (nếu mới) rồi khóa bi quan hồ sơ uy tín để tránh mất cập nhật khi trừ điểm đồng thời.
         Reputation rep = lockOrCreateReputation(request.userId());
 
-        // Bước 3: Kiểm tra lại bên trong khóa dòng để chắc chắn không trừ điểm hai lần khi hai worker chạy song song.
         Optional<Penalty> existingLocked = penaltyRepository.findByUserIdAndRefTypeAndRefId(
                 request.userId(), request.refType(), request.refId());
         if (existingLocked.isPresent()) {
@@ -168,10 +158,7 @@ public class ReputationServiceImpl implements ReputationService {
         }
         reputationRepository.saveAndFlush(rep);
 
-        String normalizedReason = request.reason().trim();
-        if (normalizedReason.length() > 500) {
-            normalizedReason = normalizedReason.substring(0, 500);
-        }
+        String normalizedReason = normalizeReason(request.reason(), "Xử phạt vi phạm uy tín");
         Instant now = Instant.now();
         Penalty penalty = new Penalty(
                 UUID.randomUUID(),
@@ -212,19 +199,7 @@ public class ReputationServiceImpl implements ReputationService {
             publishAfterCommit(new TrustLevelChangedEvent(request.userId(), previousLevel, newLevel, newScore, now));
         }
 
-        return new PenaltyResponse(
-                saved.getId(),
-                saved.getUserId(),
-                saved.getRefType(),
-                saved.getRefId(),
-                saved.getScoreDelta(),
-                previousScore,
-                newScore,
-                newLevel,
-                saved.getReason(),
-                false,
-                saved.getCreatedAt()
-        );
+        return toPenaltyResponse(saved, previousScore, newScore, newLevel, false);
     }
 
     @Override
@@ -243,7 +218,6 @@ public class ReputationServiceImpl implements ReputationService {
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR, "Hệ thống đánh giá chưa được khởi tạo");
         }
 
-        // Kiểm tra trùng trước khi gọi sang commerce-service để tiết kiệm round-trip không cần thiết.
         if (ratingRepository.existsByOrderIdAndRaterId(request.orderId(), raterId)) {
             throw new BusinessException(ErrorCode.REVIEW_ALREADY_EXISTS,
                     "Bạn đã đánh giá đối tác cho đơn hàng này");
@@ -253,7 +227,6 @@ public class ReputationServiceImpl implements ReputationService {
             verifyOrderEligibility(raterId, request.orderId(), request.rateeId());
         }
 
-        // Khởi tạo và khóa bi quan hồ sơ rateeId để cập nhật điểm uy tín an toàn dưới đồng thời.
         Reputation rateeRep = lockOrCreateReputation(request.rateeId());
 
         if (ratingRepository.existsByOrderIdAndRaterId(request.orderId(), raterId)) {
@@ -408,6 +381,231 @@ public class ReputationServiceImpl implements ReputationService {
         return toSummaryResponse(rep);
     }
 
+    @Override
+    @Transactional
+    public RatingResponse flagRatingDispute(
+            UUID ratingId,
+            UUID actorId,
+            boolean isPrivileged,
+            DisputeRatingRequest request) {
+        if (ratingId == null || (!isPrivileged && actorId == null)) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thiếu mã đánh giá hoặc danh tính người yêu cầu");
+        }
+        Rating rating = ratingRepository.findById(ratingId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REVIEW_NOT_FOUND, "Không tìm thấy bản ghi đánh giá"));
+
+        if (!isPrivileged && !rating.getRateeId().equals(actorId)) {
+            throw new BusinessException(ErrorCode.REVIEW_NOT_OWNER,
+                    "Chỉ người nhận đánh giá hoặc Quản trị viên/Hỗ trợ mới được gắn cờ khiếu nại");
+        }
+        if (rating.isDisputed()) {
+            return toRatingResponse(rating);
+        }
+
+        rating.setDisputed(true);
+        Rating saved = ratingRepository.saveAndFlush(rating);
+        String reasonNote = (request != null && request.reason() != null) ? request.reason().trim() : "";
+        log.info("Đã gắn cờ khiếu nại đánh giá [{}] bởi actor [{}] (privileged={}, reason='{}')",
+                ratingId, actorId, isPrivileged, reasonNote);
+        return toRatingResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public RatingResponse resolveRatingDispute(UUID ratingId, UUID adminId, ResolveDisputeRequest request) {
+        if (ratingId == null || adminId == null || request == null
+                || request.resolution() == null || request.reason() == null || request.reason().isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thông tin xử lý khiếu nại không hợp lệ");
+        }
+
+        Rating rating = ratingRepository.findById(ratingId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REVIEW_NOT_FOUND, "Không tìm thấy bản ghi đánh giá"));
+
+        if (request.resolution() == DisputeResolution.DISMISS) {
+            rating.setDisputed(false);
+            Rating saved = ratingRepository.saveAndFlush(rating);
+            log.info("Admin [{}] bác bỏ khiếu nại cho đánh giá [{}]: {}", adminId, ratingId, request.reason().trim());
+            return toRatingResponse(saved);
+        }
+
+        Reputation rep = lockOrCreateReputation(rating.getRateeId());
+        rating.setDisputed(true);
+        ratingRepository.saveAndFlush(rating);
+
+        // Chống hoàn tác điểm nhiều lần nếu Admin gửi lặp yêu cầu INVALIDATE trên cùng một ratingId.
+        Optional<Penalty> existingReversal = penaltyRepository.findByUserIdAndRefTypeAndRefId(
+                rating.getRateeId(), PenaltyRefType.RATING, rating.getId());
+        if (existingReversal.isPresent()) {
+            return toRatingResponse(rating);
+        }
+
+        int originalDelta = rating.isAggregated() ? ratingScoreDelta(rating.getScore()) : 0;
+        int reversalDelta = -originalDelta;
+        int previousScore = rep.getScore();
+        TrustLevel previousLevel = rep.getTrustLevel();
+        int newScore = Math.max(0, previousScore + reversalDelta);
+        TrustLevel newLevel = resolveTrustLevel(newScore);
+
+        if (reversalDelta != 0) {
+            rep.setScore(newScore);
+            rep.setTrustLevel(newLevel);
+            reputationRepository.saveAndFlush(rep);
+        }
+
+        Instant now = Instant.now();
+        String auditReason = normalizeReason(
+                "[ADMIN " + adminId + "] Hủy hiệu lực đánh giá: " + request.reason().trim(),
+                "Hủy hiệu lực đánh giá do khiếu nại hợp lệ");
+        try {
+            penaltyRepository.saveAndFlush(new Penalty(
+                    UUID.randomUUID(),
+                    rating.getRateeId(),
+                    auditReason,
+                    reversalDelta,
+                    PenaltyRefType.RATING,
+                    rating.getId(),
+                    now
+            ));
+        } catch (DataIntegrityViolationException duplicate) {
+            return toRatingResponse(rating);
+        }
+
+        log.info("Admin [{}] hủy hiệu lực đánh giá [{}] (reversalDelta={}, {} -> {})",
+                adminId, ratingId, reversalDelta, previousScore, newScore);
+
+        if (reversalDelta != 0) {
+            publishAfterCommit(new ReputationScoreUpdatedEvent(
+                    rating.getRateeId(), "DISPUTE_INVALIDATED", reversalDelta, previousScore, newScore, newLevel, now));
+        }
+        if (previousLevel != newLevel) {
+            publishAfterCommit(new TrustLevelChangedEvent(rating.getRateeId(), previousLevel, newLevel, newScore, now));
+        }
+
+        return toRatingResponse(rating);
+    }
+
+    @Override
+    @Transactional
+    public PenaltyResponse adminAdjustReputation(UUID adminId, AdminAdjustReputationRequest request) {
+        if (adminId == null || request == null || request.userId() == null
+                || request.reason() == null || request.reason().isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Thông tin điều chỉnh điểm uy tín không hợp lệ");
+        }
+        if (request.scoreDelta() == 0 || Math.abs(request.scoreDelta()) > 200) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE,
+                    "Mức điều chỉnh điểm phải khác 0 và nằm trong [-200, +200]");
+        }
+
+        UUID refId = request.refId() != null ? request.refId() : UUID.randomUUID();
+        if (request.refId() != null) {
+            Optional<Penalty> existingFast = penaltyRepository.findByUserIdAndRefTypeAndRefId(
+                    request.userId(), PenaltyRefType.MANUAL, refId);
+            if (existingFast.isPresent()) {
+                Reputation current = reputationRepository.findById(request.userId())
+                        .orElseGet(() -> new Reputation(request.userId(), properties.getInitialScore(), TrustLevel.STANDARD));
+                return replayResponse(existingFast.get(), current);
+            }
+        }
+
+        Reputation rep = lockOrCreateReputation(request.userId());
+        if (request.refId() != null) {
+            Optional<Penalty> existingLocked = penaltyRepository.findByUserIdAndRefTypeAndRefId(
+                    request.userId(), PenaltyRefType.MANUAL, refId);
+            if (existingLocked.isPresent()) {
+                return replayResponse(existingLocked.get(), rep);
+            }
+        }
+
+        int previousScore = rep.getScore();
+        TrustLevel previousLevel = rep.getTrustLevel();
+        int newScore = Math.max(0, previousScore + request.scoreDelta());
+        TrustLevel newLevel = resolveTrustLevel(newScore);
+
+        rep.setScore(newScore);
+        rep.setTrustLevel(newLevel);
+        reputationRepository.saveAndFlush(rep);
+
+        Instant now = Instant.now();
+        String auditReason = normalizeReason(
+                "[ADMIN " + adminId + "] " + request.reason().trim(),
+                "Điều chỉnh điểm uy tín thủ công");
+        Penalty saved;
+        try {
+            saved = penaltyRepository.saveAndFlush(new Penalty(
+                    UUID.randomUUID(),
+                    request.userId(),
+                    auditReason,
+                    request.scoreDelta(),
+                    PenaltyRefType.MANUAL,
+                    refId,
+                    now
+            ));
+        } catch (DataIntegrityViolationException duplicate) {
+            Penalty raced = penaltyRepository.findByUserIdAndRefTypeAndRefId(
+                    request.userId(), PenaltyRefType.MANUAL, refId)
+                    .orElseThrow(() -> duplicate);
+            return replayResponse(raced, rep);
+        }
+
+        log.info("Admin [{}] điều chỉnh điểm uy tín user [{}]: delta={} ({} -> {}, level={})",
+                adminId, request.userId(), request.scoreDelta(), previousScore, newScore, newLevel);
+
+        publishAfterCommit(new ReputationScoreUpdatedEvent(
+                request.userId(), "ADMIN_MANUAL", request.scoreDelta(), previousScore, newScore, newLevel, now));
+        if (previousLevel != newLevel) {
+            publishAfterCommit(new TrustLevelChangedEvent(request.userId(), previousLevel, newLevel, newScore, now));
+        }
+
+        return toPenaltyResponse(saved, previousScore, newScore, newLevel, false);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ReputationSummaryResponse> adminGetReputations(TrustLevel trustLevel, Pageable pageable) {
+        Page<Reputation> page = trustLevel != null
+                ? reputationRepository.findByTrustLevelOrderByScoreDesc(trustLevel, pageable)
+                : reputationRepository.findAll(pageable);
+        return page.map(this::toSummaryResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<RatingResponse> adminGetRatings(Boolean disputedOnly, UUID rateeId, Pageable pageable) {
+        boolean onlyDisputed = Boolean.TRUE.equals(disputedOnly);
+        Page<Rating> page;
+        if (rateeId != null && onlyDisputed) {
+            page = ratingRepository.findByRateeIdAndDisputedTrueOrderByCreatedAtDesc(rateeId, pageable);
+        } else if (rateeId != null) {
+            page = ratingRepository.findByRateeIdOrderByCreatedAtDesc(rateeId, pageable);
+        } else if (onlyDisputed) {
+            page = ratingRepository.findByDisputedTrueOrderByCreatedAtDesc(pageable);
+        } else {
+            page = ratingRepository.findAllByOrderByCreatedAtDesc(pageable);
+        }
+        return page.map(this::toRatingResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<PenaltyResponse> adminGetPenalties(UUID userId, PenaltyRefType refType, Pageable pageable) {
+        Page<Penalty> page;
+        if (userId != null && refType != null) {
+            page = penaltyRepository.findByUserIdAndRefTypeOrderByCreatedAtDesc(userId, refType, pageable);
+        } else if (userId != null) {
+            page = penaltyRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
+        } else if (refType != null) {
+            page = penaltyRepository.findByRefTypeOrderByCreatedAtDesc(refType, pageable);
+        } else {
+            page = penaltyRepository.findAllByOrderByCreatedAtDesc(pageable);
+        }
+        return page.map(p -> {
+            Reputation rep = reputationRepository.findById(p.getUserId()).orElse(null);
+            int currentScore = rep != null ? rep.getScore() : properties.getInitialScore();
+            TrustLevel currentLevel = rep != null ? rep.getTrustLevel() : TrustLevel.STANDARD;
+            return toPenaltyResponse(p, currentScore, currentScore, currentLevel, false);
+        });
+    }
+
     protected static int ratingScoreDelta(int starScore) {
         return switch (starScore) {
             case 5 -> 3;
@@ -482,6 +680,14 @@ public class ReputationServiceImpl implements ReputationService {
         return trimmed.length() > 1000 ? trimmed.substring(0, 1000) : trimmed;
     }
 
+    private String normalizeReason(String raw, String fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        String trimmed = raw.trim();
+        return trimmed.length() > 500 ? trimmed.substring(0, 500) : trimmed;
+    }
+
     private RatingResponse toRatingResponse(Rating rating) {
         return new RatingResponse(
                 rating.getId(),
@@ -493,6 +699,27 @@ public class ReputationServiceImpl implements ReputationService {
                 rating.isAggregated(),
                 rating.isDisputed(),
                 rating.getCreatedAt()
+        );
+    }
+
+    private PenaltyResponse toPenaltyResponse(
+            Penalty penalty,
+            int previousScore,
+            int newScore,
+            TrustLevel trustLevel,
+            boolean idempotentReplay) {
+        return new PenaltyResponse(
+                penalty.getId(),
+                penalty.getUserId(),
+                penalty.getRefType(),
+                penalty.getRefId(),
+                penalty.getScoreDelta(),
+                previousScore,
+                newScore,
+                trustLevel,
+                penalty.getReason(),
+                idempotentReplay,
+                penalty.getCreatedAt()
         );
     }
 
@@ -534,19 +761,7 @@ public class ReputationServiceImpl implements ReputationService {
     }
 
     private PenaltyResponse replayResponse(Penalty penalty, Reputation rep) {
-        return new PenaltyResponse(
-                penalty.getId(),
-                penalty.getUserId(),
-                penalty.getRefType(),
-                penalty.getRefId(),
-                penalty.getScoreDelta(),
-                rep.getScore(),
-                rep.getScore(),
-                rep.getTrustLevel(),
-                penalty.getReason(),
-                true,
-                penalty.getCreatedAt()
-        );
+        return toPenaltyResponse(penalty, rep.getScore(), rep.getScore(), rep.getTrustLevel(), true);
     }
 
     private void publishAfterCommit(Object event) {

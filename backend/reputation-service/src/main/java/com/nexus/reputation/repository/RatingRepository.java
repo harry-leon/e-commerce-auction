@@ -25,4 +25,12 @@ public interface RatingRepository extends JpaRepository<Rating, UUID> {
 
     @Query("SELECT COALESCE(AVG(r.score), 0.0) FROM Rating r WHERE r.rateeId = :rateeId AND r.disputed = false")
     Double findAverageScoreByRateeId(@Param("rateeId") UUID rateeId);
+
+    Page<Rating> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
+    Page<Rating> findByDisputedTrueOrderByCreatedAtDesc(Pageable pageable);
+
+    Page<Rating> findByRateeIdOrderByCreatedAtDesc(UUID rateeId, Pageable pageable);
+
+    Page<Rating> findByRateeIdAndDisputedTrueOrderByCreatedAtDesc(UUID rateeId, Pageable pageable);
 }

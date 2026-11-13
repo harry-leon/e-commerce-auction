@@ -45,7 +45,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/internal/reputations/**").access((auth, context) ->
                     new AuthorizationDecision(
                         ServiceIdentity.permits(auth.get(), "nexus-commerce-service", "REPUTATION.PENALTY")))
-                // Lịch sử xử phạt và hồ sơ /me bắt buộc xác thực JWT trước khi mở rule public cho tóm tắt {userId}.
+                // Endpoint kiểm duyệt Admin/Support, hồ sơ /me và lịch sử xử phạt bắt buộc JWT trước khi mở rule public.
+                .requestMatchers("/api/v1/reputations/admin/**").authenticated()
                 .requestMatchers(HttpMethod.GET,
                     "/api/v1/reputations/me", "/api/v1/reputations/*/penalties").authenticated()
                 .requestMatchers(HttpMethod.GET,
