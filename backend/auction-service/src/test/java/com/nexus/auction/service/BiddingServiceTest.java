@@ -354,6 +354,10 @@ class BiddingServiceTest {
         when(auctionSettlementRepository.existsByAuctionId(auctionId)).thenReturn(false);
 
         AtomicBoolean firstSave = new AtomicBoolean(true);
+        // Hai transaction thật có persistence context riêng; không chia sẻ entity đang bị thread khác đổi giá.
+        // Mỗi lần đọc dùng snapshot mới để test tập trung vào optimistic conflict ở save, tránh lỗi validation ngẫu nhiên.
+        when(auctionRepository.findById(auctionId)).thenAnswer(invocation ->
+                Optional.of(createStandardAuction(auctionId, sellerId)));
         when(auctionRepository.save(any(Auction.class))).thenAnswer(invocation -> {
             if (firstSave.compareAndSet(true, false)) {
                 return invocation.getArgument(0);
