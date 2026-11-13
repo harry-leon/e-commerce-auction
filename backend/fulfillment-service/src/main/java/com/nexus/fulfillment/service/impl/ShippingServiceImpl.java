@@ -91,6 +91,11 @@ public class ShippingServiceImpl implements ShippingService {
     private final ApplicationEventPublisher eventPublisher;
     private final FulfillmentEventOutboxService outboxService;
     private final CarrierResilienceManager resilienceManager;
+    private com.nexus.fulfillment.service.ShipmentDispatchGuard dispatchGuard;
+
+    /** Spring bắt buộc tiêm guard DB; constructor unit test phải gắn fixture riêng, không cho production bỏ qua dấu gửi. */
+    @Autowired
+    public void setDispatchGuard(com.nexus.fulfillment.service.ShipmentDispatchGuard guard) { this.dispatchGuard = guard; }
 
     public ShippingServiceImpl(
             ShipmentRepository shipmentRepository,
@@ -228,26 +233,18 @@ public class ShippingServiceImpl implements ShippingService {
         Carrier carrier = resolveOrProvisionCarrier(adapter.getCarrierCode());
 
         // Tạo vận đơn chỉ một lần qua Circuit Breaker; timeout phải đối soát carrier, không retry mutation tự động.
-        CarrierCreateShipmentResult carrierResult = resilienceManager.executeWithResilience(
+        if (dispatchGuard == null) { throw new IllegalStateException("Thiếu durable dispatch guard"); }
+        // Snapshot chuẩn hóa sau resolve kho/carrier được commit trước khi HTTP bắt đầu.
+        var dispatchRequest = new CarrierCreateShipmentRequest(request.orderId(), warehouse.getId(), warehouse.getAddress(),
+                request.recipientName(), request.recipientPhone(), request.shippingAddress(), request.toDistrictId(),
+                request.toWardCode(), request.weightGrams(), request.codAmount(), request.orderTotal(), request.serviceType(), request.note());
+        CarrierCreateShipmentResult carrierResult = dispatchGuard.send(adapter.getCarrierCode(), dispatchRequest,
+                () -> resilienceManager.executeWithResilience(
                 adapter.getCarrierCode(),
                 "createShipment",
-                () -> adapter.createShipment(new CarrierCreateShipmentRequest(
-                        request.orderId(),
-                        warehouse.getId(),
-                        warehouse.getAddress(),
-                        request.recipientName(),
-                        request.recipientPhone(),
-                        request.shippingAddress(),
-                        request.toDistrictId(),
-                        request.toWardCode(),
-                        request.weightGrams(),
-                        request.codAmount(),
-                        request.orderTotal(),
-                        request.serviceType(),
-                        request.note()
-                )),
+                () -> adapter.createShipment(dispatchRequest),
                 null
-        );
+        ));
 
         BigDecimal threshold = properties.getShipping().getFreeShippingThreshold();
         boolean freeShipping = isFreeShipping(request.orderTotal(), threshold);
