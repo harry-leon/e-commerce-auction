@@ -28,6 +28,7 @@ import {
 } from './UI'
 import { NOTIFICATIONS } from '../mockData'
 import { api, type Envelope, type ApiCategory } from '../api/client'
+import { useSessionStore } from '../features/auth/sessionStore'
 
 // Simple monochrome SVG icons per category
 function IconElectronics(p: SVGProps<SVGSVGElement>) {
@@ -180,6 +181,7 @@ export function PublicHeader() {
         return () => controller.abort()
     }, [])
     const { lang, navigate, user, setUser, cartCount } = useApp()
+    const sessionReady = useSessionStore((state) => state.sessionReady)
     const [searchQ, setSearchQ] = useState('')
     const [userOpen, setUserOpen] = useState(false)
     const [notifOpen, setNotifOpen] = useState(false)
@@ -237,7 +239,7 @@ export function PublicHeader() {
                 {/* Right controls */}
                 <div className="flex items-center gap-2 shrink-0 ml-auto">
                     {/* Notifications */}
-                    {user && (
+                    {sessionReady && user && (
                         <div
                             className="relative"
                             onMouseEnter={() => setNotifOpen(true)}
@@ -333,7 +335,9 @@ export function PublicHeader() {
                     </button>
 
                     {/* User menu */}
-                    {user ? (
+                    {!sessionReady ? (
+                        <div className="w-36 h-10" aria-hidden="true" />
+                    ) : user ? (
                         <div className="relative">
                             <button
                                 onClick={() => setUserOpen((o) => !o)}
@@ -797,13 +801,6 @@ const ADMIN_NAV = [
         group: 'main',
     },
     {
-        id: 'admin-profile',
-        label: 'Profile',
-        labelVi: 'Hồ sơ',
-        icon: <User2 size={15} />,
-        group: 'main',
-    },
-    {
         id: 'admin-categories',
         label: 'Categories',
         labelVi: 'Danh mục',
@@ -943,15 +940,13 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                 style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('home')} className="flex items-center gap-2">
+                    {/* Logo trong Admin luôn đưa quản trị viên về Dashboard, không chuyển sang storefront Buyer. */}
+                    <button onClick={() => navigate('admin-dashboard')} className="flex items-center gap-2">
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Shield size={14} className="text-white" />
                         </div>
                         <span className="text-white font-black text-lg">Nexus</span>
                     </button>
-                    <p className="text-xs text-gray-500 mt-1">
-                        {lang === 'en' ? 'Admin Console' : 'Bảng quản trị'}
-                    </p>
                 </div>
                 <nav className="flex-1 min-h-0 p-3 overflow-y-auto space-y-1">
                     {groups.map((g) => {
@@ -977,7 +972,13 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                 </nav>
                 <div className="p-3 border-t border-white/10">
                     {user && (
-                        <div className="flex items-center gap-2 px-3 py-2 mb-2">
+                        // Đặt lối vào hồ sơ tại khu vực tài khoản để menu quản lý không có mục Profile riêng.
+                        <button
+                            type="button"
+                            aria-label={lang === 'en' ? 'Open Admin Nexus profile' : 'Mở hồ sơ Admin Nexus'}
+                            onClick={() => navigate('admin-profile')}
+                            className="admin-sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
+                        >
                             <img
                                 src={user.avatar}
                                 alt=""
@@ -989,7 +990,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                                 </p>
                                 <p className="text-gray-500 text-[11px] truncate">Admin</p>
                             </div>
-                        </div>
+                        </button>
                     )}
                     {/* Chức năng: Cho phép Admin chuyển nhanh sang xem trang mua hàng của Buyer */}
                     <button

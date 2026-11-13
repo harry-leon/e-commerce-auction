@@ -580,15 +580,8 @@ export function AdminUsersPage() {
                         onRowClick={(r) => navigate('admin-user-detail', { id: r.id })}
                     />
                 )}
-                {!usersLoadError && !usersLoading && filtered.length > usersPerPage && (
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
-                        <span className="text-sm text-gray-500">
-                            {tr(lang, 'showingUserRange', {
-                                from: String(firstUser),
-                                to: String(lastUser),
-                                total: String(filtered.length),
-                            })}
-                        </span>
+                {!usersLoadError && !usersLoading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
                         <nav aria-label={tr(lang, 'userPagination')}>
                             <Pagination
                                 page={currentPage}
@@ -1104,6 +1097,10 @@ export function AdminOrdersPage() {
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState('')
     const [statusFilter, setStatusFilter] = useState('all')
+    // Phân trang tại bảng để trang đơn hàng dài vẫn gọn trong nexus-card.
+    const [ordersPage, setOrdersPage] = useState(1)
+    const ordersPerPage = 10
+    const visibleOrders = orders.slice((ordersPage - 1) * ordersPerPage, ordersPage * ordersPerPage)
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
     const [overrideStatus, setOverrideStatus] = useState<string>('')
     const [overrideReason, setOverrideReason] = useState<string>('')
@@ -1157,6 +1154,8 @@ export function AdminOrdersPage() {
     useEffect(() => {
         loadAdminOrders()
     }, [statusFilter, search])
+
+    useEffect(() => setOrdersPage(1), [statusFilter, search])
 
     // Cập nhật giá trị khi mở modal xem chi tiết
     useEffect(() => {
@@ -1339,11 +1338,6 @@ export function AdminOrdersPage() {
                     <option value="CANCELLED">{tr(lang, 'statusCancelled')}</option>
                     <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                 </select>
-                <span className="text-xs text-gray-400 ml-auto">
-                    {lang === 'en'
-                        ? `Showing ${orders.length} orders`
-                        : `Hiển thị ${orders.length} đơn hàng`}
-                </span>
             </div>
 
             {/* Bảng dữ liệu quản lý đơn hàng */}
@@ -1416,10 +1410,17 @@ export function AdminOrdersPage() {
                                 ),
                             },
                         ]}
-                        data={orders}
+                        data={visibleOrders}
                         rowKey={(r) => r.id}
                         onRowClick={setSelectedOrder}
                     />
+                )}
+                {!loading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}>
+                            <Pagination page={ordersPage} total={orders.length} perPage={ordersPerPage} onChange={setOrdersPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} />
+                        </nav>
+                    </div>
                 )}
             </div>
 
@@ -1707,6 +1708,9 @@ export function AdminAuctionsPage() {
     const { lang, showToast, auctionReviews, reviewAuction, createdAuctions } = useApp()
     const [tab, setTab] = useState('all')
     const [searchQuery, setSearchQuery] = useState('')
+    // Lọc tab/từ khóa trước, sau đó chỉ render mười phiên trên mỗi trang.
+    const [auctionsPage, setAuctionsPage] = useState(1)
+    const auctionsPerPage = 10
 
     // State cho Modal Buộc hủy phiên vi phạm
     const [cancelOpen, setCancelOpen] = useState(false)
@@ -1998,6 +2002,12 @@ export function AdminAuctionsPage() {
                 sku.includes(q)
             )
         })
+
+    const visibleAuctions = filteredAuctions.slice(
+        (auctionsPage - 1) * auctionsPerPage,
+        auctionsPage * auctionsPerPage,
+    )
+    useEffect(() => setAuctionsPage(1), [tab, searchQuery])
 
     const pendingCount = allAuctions.filter((a) => a.status === 'pending_approval').length
     const activeCount = allAuctions.filter((a) => a.status === 'active').length
@@ -2297,9 +2307,14 @@ export function AdminAuctionsPage() {
                             },
                         },
                     ]}
-                    data={filteredAuctions}
+                    data={visibleAuctions}
                     rowKey={(r) => r.id}
                 />}
+                {!auctionsLoading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={auctionsPage} total={filteredAuctions.length} perPage={auctionsPerPage} onChange={setAuctionsPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                    </div>
+                )}
             </div>
 
             {/* Modal Admin Cưỡng chế Hủy phiên do Vi phạm */}
@@ -3203,6 +3218,10 @@ export function AdminProductsPage() {
     const [statusTab, setStatusTab] = useState<'DRAFT' | 'ACTIVE' | 'INACTIVE'>('DRAFT')
     const [loading, setLoading] = useState(true)
     const [products, setProducts] = useState<any[]>([])
+    // Giữ dữ liệu tab hiện tại, chỉ render tối đa mười sản phẩm mỗi trang.
+    const [productsPage, setProductsPage] = useState(1)
+    const productsPerPage = 10
+    const visibleProducts = products.slice((productsPage - 1) * productsPerPage, productsPage * productsPerPage)
     const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
 
     /**
@@ -3276,6 +3295,8 @@ export function AdminProductsPage() {
             mounted = false
         }
     }, [statusTab, refreshKey, lang])
+
+    useEffect(() => setProductsPage(1), [statusTab])
 
     // Phê duyệt sản phẩm mở bán thật trên Catalog Service
     const handleApprove = async (id: string) => {
@@ -3488,9 +3509,14 @@ export function AdminProductsPage() {
                                 ),
                             },
                         ]}
-                        data={products}
+                        data={visibleProducts}
                         rowKey={(r) => r.id}
                     />
+                )}
+                {!loading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={productsPage} total={products.length} perPage={productsPerPage} onChange={setProductsPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                    </div>
                 )}
             </div>
 
@@ -3720,6 +3746,14 @@ export function AdminProductsPage() {
  */
 export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
+    const [warehouseTab, setWarehouseTab] = useState('directory')
+    const [warehousePage, setWarehousePage] = useState(1)
+    const [stockPage, setStockPage] = useState(1)
+    const [ledgerPage, setLedgerPage] = useState(1)
+    const [warehouseTotal, setWarehouseTotal] = useState(0)
+    const [stockTotal, setStockTotal] = useState(0)
+    const [ledgerTotal, setLedgerTotal] = useState(0)
+    const inventoryPageSize = 10
     const [warehouses, setWarehouses] = useState<WarehouseResponse[]>([])
     const [stocks, setStocks] = useState<InventoryStockResponse[]>([])
     const [ledger, setLedger] = useState<InventoryLedgerResponse[]>([])
@@ -3786,12 +3820,13 @@ export function AdminWarehousesPage() {
             try {
                 const codeFilter = skuFilter.trim() || undefined
                 const [whRes, invRes, ledRes] = await Promise.all([
-                    listWarehouses({ size: 50 }, controller.signal),
+                    listWarehouses({ page: warehousePage - 1, size: inventoryPageSize }, controller.signal),
                     listInventory(
                         {
                             warehouseId: selectedWarehouseId || undefined,
                             skuCode: codeFilter,
-                            size: 50,
+                            page: stockPage - 1,
+                            size: inventoryPageSize,
                         },
                         controller.signal,
                     ),
@@ -3799,7 +3834,8 @@ export function AdminWarehousesPage() {
                         {
                             warehouseId: selectedWarehouseId || undefined,
                             skuCode: codeFilter,
-                            size: 25,
+                            page: ledgerPage - 1,
+                            size: inventoryPageSize,
                         },
                         controller.signal,
                     ),
@@ -3808,6 +3844,9 @@ export function AdminWarehousesPage() {
                 setWarehouses(whRes.items)
                 setStocks(invRes.items)
                 setLedger(ledRes.items)
+                setWarehouseTotal(whRes.pagination.totalElements)
+                setStockTotal(invRes.pagination.totalElements)
+                setLedgerTotal(ledRes.pagination.totalElements)
                 if (!inboundWarehouseId && whRes.items.length > 0) {
                     setInboundWarehouseId(whRes.items[0].id)
                 }
@@ -3827,7 +3866,13 @@ export function AdminWarehousesPage() {
             active = false
             controller.abort()
         }
-    }, [selectedWarehouseId, skuFilter, reloadTick])
+    }, [selectedWarehouseId, skuFilter, reloadTick, warehousePage, stockPage, ledgerPage])
+
+    // Khi đổi bộ lọc, quay về trang đầu để tránh yêu cầu trang không còn dữ liệu.
+    useEffect(() => {
+        setStockPage(1)
+        setLedgerPage(1)
+    }, [selectedWarehouseId, skuFilter])
 
     const openCreateWarehouse = () => {
         setEditingWh(null)
@@ -4051,6 +4096,20 @@ export function AdminWarehousesPage() {
                 </div>
             )}
 
+            {/* Ba tab tách danh sách kho, tồn theo SKU và sổ cái để tránh cuộn qua các khối không liên quan. */}
+            <div className="mb-4">
+                <Tabs
+                    tabs={[
+                        { id: 'directory', label: lang === 'en' ? 'Warehouse Directory' : 'Danh mục kho hàng' },
+                        { id: 'stock', label: lang === 'en' ? 'SKU Inventory' : 'Lọc mã SKU' },
+                        { id: 'ledger', label: lang === 'en' ? 'System Inventory Ledger' : 'Sổ cái biến động kho toàn hệ thống' },
+                    ]}
+                    active={warehouseTab}
+                    onChange={setWarehouseTab}
+                />
+            </div>
+
+            {warehouseTab === 'directory' && <>
             <div className="nexus-card mb-5">
                 <div className="p-5 border-b border-border flex flex-wrap items-center justify-between gap-3">
                     <span className="font-bold">
@@ -4139,6 +4198,9 @@ export function AdminWarehousesPage() {
                     data={warehouses}
                     rowKey={(w) => w.id}
                 />
+                <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={warehousePage} total={warehouseTotal} perPage={inventoryPageSize} onChange={setWarehousePage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                </div>
             </div>
 
             {reconciliations.length > 0 && (
@@ -4172,8 +4234,9 @@ export function AdminWarehousesPage() {
                     </div>
                 </div>
             )}
+            </>}
 
-            <div className="nexus-card mb-5">
+            {warehouseTab === 'stock' && <div className="nexus-card mb-5">
                 <div className="p-5 border-b border-border flex flex-wrap items-end justify-between gap-3">
                     <div className="flex flex-wrap items-end gap-3">
                         <div className="w-56">
@@ -4281,9 +4344,12 @@ export function AdminWarehousesPage() {
                     data={stocks}
                     rowKey={(r) => `${r.skuId}-${r.warehouseId}`}
                 />
-            </div>
+                <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={stockPage} total={stockTotal} perPage={inventoryPageSize} onChange={setStockPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                </div>
+            </div>}
 
-            <div className="nexus-card">
+            {warehouseTab === 'ledger' && <div className="nexus-card">
                 <div className="p-5 border-b border-border font-bold">
                     {lang === 'en'
                         ? 'System Inventory Ledger'
@@ -4326,7 +4392,10 @@ export function AdminWarehousesPage() {
                         ))
                     )}
                 </div>
-            </div>
+                <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={ledgerPage} total={ledgerTotal} perPage={inventoryPageSize} onChange={setLedgerPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                </div>
+            </div>}
 
             <Modal
                 open={whModalOpen}
