@@ -17,7 +17,7 @@ export const VERSIONS = {
     catalog: 7,
     // V9/V10 thêm dispatch và audit recovery; fixture không gửi carrier hoặc chốt kết quả giả.
     fulfillment: 10,
-    // V18/V19 thêm inbox/outbox và delivery Shipping; không seed refund hoặc sự kiện carrier giả cho dữ liệu lịch sử.
+    // V18–V20 thêm inbox/delivery/replay audit Shipping; không seed refund hoặc sự kiện carrier giả cho dữ liệu lịch sử.
     commerce: 20,
     auction: 3,
     reputation: 3,
