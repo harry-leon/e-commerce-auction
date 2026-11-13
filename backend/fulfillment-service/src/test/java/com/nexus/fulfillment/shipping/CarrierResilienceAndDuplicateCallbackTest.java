@@ -118,6 +118,11 @@ class CarrierResilienceAndDuplicateCallbackTest {
                 outboxService,
                 resilienceManager
         );
+        // Fixture guard không dùng DB ở test resilience; PostgreSQL test riêng bảo vệ commit/UNKNOWN thực.
+        var guard = org.mockito.Mockito.mock(com.nexus.fulfillment.service.ShipmentDispatchGuard.class);
+        org.mockito.Mockito.when(guard.send(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenAnswer(call -> ((java.util.function.Supplier<?>) call.getArgument(2)).get());
+        shippingService.setDispatchGuard(guard);
     }
 
     @Test
