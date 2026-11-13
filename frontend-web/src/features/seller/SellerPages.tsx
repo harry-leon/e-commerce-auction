@@ -2902,7 +2902,7 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Items' : 'Sản phẩm',
                                 render: (r: Order) => (
                                     <div className="flex items-center gap-2">
-                                        {r.items[0]?.image && (
+                                        {Boolean(r.items[0]?.image) && (
                                             <img
                                                 src={r.items[0].image}
                                                 alt=""
@@ -3218,11 +3218,17 @@ export function SellerOrdersPage() {
                                         className="flex items-center justify-between p-3 gap-3"
                                     >
                                         <div className="flex items-center gap-3">
-                                            <img
-                                                src={item.image}
-                                                alt=""
-                                                className="w-12 h-12 object-cover rounded-lg border border-border"
-                                            />
+                                            {item.image ? (
+                                                <img
+                                                    src={item.image}
+                                                    alt=""
+                                                    className="w-12 h-12 object-cover rounded-lg border border-border"
+                                                />
+                                            ) : (
+                                                <div className="w-12 h-12 rounded-lg border border-border bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+                                                    <Package size={20} />
+                                                </div>
+                                            )}
                                             <div>
                                                 <p className="text-sm font-medium text-gray-900">
                                                     {item.productName}

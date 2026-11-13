@@ -2194,9 +2194,11 @@ export function CheckoutPage() {
                                                 <div className="text-right">
                                                     {opt.freeShippingApplied ? (
                                                         <div className="flex flex-col items-end">
-                                                            <span className="text-xs line-through text-gray-400">
-                                                                {formatCurrency(opt.originalFee, lang)}
-                                                            </span>
+                                                            {opt.originalFee !== undefined && opt.originalFee > 0 && (
+                                                                <span className="text-xs line-through text-gray-400">
+                                                                    {formatCurrency(opt.originalFee, lang)}
+                                                                </span>
+                                                            )}
                                                             <span className="font-bold text-green-600 text-sm">
                                                                 {lang === 'vi' ? 'Miễn phí' : 'Free'}
                                                             </span>
