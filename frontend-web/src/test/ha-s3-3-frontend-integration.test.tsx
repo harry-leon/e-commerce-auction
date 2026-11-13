@@ -247,6 +247,7 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
                 discount: 0,
                 total: 1235000,
                 status: 'SHIPPED',
+                refundStatus: 'none',
                 shippingAddress: '123 Lê Lợi, Phường Bến Nghé, Quận 1, TP.HCM',
                 createdAt: '2026-11-12T10:00:00Z',
                 updatedAt: '2026-11-13T08:00:00Z',
@@ -272,8 +273,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             vi.spyOn(shippingApi, 'getShipmentByOrderId').mockResolvedValue(mockShipment)
             vi.spyOn(shippingApi, 'getShipmentTracking').mockResolvedValue({
                 shipmentId: 'ship-101',
+                orderId: 'ORD-TEST-001',
                 trackingNumber: 'GHN-VN-987654321',
-                currentStatus: 'IN_TRANSIT',
+                status: 'IN_TRANSIT',
                 carrier: 'GHN',
                 history: [
                     {
@@ -330,6 +332,7 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
                 discount: 0,
                 total: 850000,
                 status: 'DELIVERED',
+                refundStatus: 'none',
                 shippingAddress: '456 Hai Bà Trưng, Q3, TP.HCM',
                 createdAt: '2026-11-10T10:00:00Z',
                 updatedAt: '2026-11-13T09:00:00Z',
@@ -414,6 +417,7 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
                     discount: 0,
                     total: 530000,
                     status: 'DELIVERED',
+                    refundStatus: 'none',
                     shippingAddress: '789 Trần Hưng Đạo, Q5',
                     createdAt: '2026-11-11T10:00:00Z',
                     updatedAt: '2026-11-13T09:00:00Z',
@@ -667,6 +671,7 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
                 discount: 0,
                 total: 130000,
                 status: 'SHIPPED',
+                refundStatus: 'none',
                 shippingAddress: 'HCM',
                 createdAt: '2026-11-13T00:00:00Z',
                 updatedAt: '2026-11-13T00:00:00Z',
@@ -760,6 +765,7 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
                 discount: 0,
                 total: 230000,
                 status: 'PROCESSING',
+                refundStatus: 'none',
                 shippingAddress: 'HCM',
                 createdAt: '2026-11-13T00:00:00Z',
                 updatedAt: '2026-11-13T00:00:00Z',
