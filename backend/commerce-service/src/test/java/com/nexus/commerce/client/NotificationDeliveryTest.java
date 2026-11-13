@@ -62,6 +62,15 @@ class NotificationDeliveryTest {
     @AfterEach
     void cleanup() { server.stop(0); }
 
+    /** Refund chỉ dùng inbox/push: chưa có email template, ACK không phụ thuộc endpoint SMTP. */
+    @Test
+    void refundInboxDoesNotCallUnsupportedEmailTransport() {
+        delivery.sendInbox(Map.of("id", "refund-event", "refundId", "refund-id", "type", "REFUND_SUCCEEDED",
+                "recipientEmail", "buyer@example.test"));
+        assertTrue(payload.contains("refund-id"));
+        assertEquals(null, emailPayload);
+    }
+
     /** Gửi lặp dùng cache OAuth; payload giữ UUID snapshot và bearer chỉ là token service account. */
     @Test
     void sendsUsingServiceTokenAndCachesOAuth() {
