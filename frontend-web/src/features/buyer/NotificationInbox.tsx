@@ -78,6 +78,43 @@ function MonitorIcon({ size = 12, className = '' }: { size?: number; className?:
     )
 }
 
+/**
+ * Chuyển đổi mã loại thông báo (enum thô) sang nhãn tiếng Việt/tiếng Anh thân thiện với người dùng (DoD UI sạch).
+ * Đầu vào: type (ví dụ 'AUCTION_WON', 'AUCTION_OUTBID'), lang ('vi' | 'en').
+ * Kết quả: Chuỗi nhãn hiển thị dễ hiểu, không để lộ enum thô hệ thống trên giao diện.
+ */
+function formatNotificationType(type?: string, lang: string = 'vi'): string {
+    if (!type) return ''
+    const mapVi: Record<string, string> = {
+        AUCTION_WON: 'Trúng đấu giá',
+        AUCTION_OUTBID: 'Bị trả giá cao hơn',
+        AUCTION_PAYMENT_REMINDER: 'Nhắc thanh toán',
+        ORDER_PLACED: 'Đơn hàng mới',
+        ORDER_CREATED: 'Đơn hàng mới',
+        PAYMENT_SUCCESS: 'Thanh toán thành công',
+        PAYMENT_FAILED: 'Thanh toán thất bại',
+        ORDER_STATUS_CHANGED: 'Cập nhật đơn hàng',
+        REFUND_REQUESTED: 'Yêu cầu hoàn tiền',
+        REFUND_ISSUED: 'Hoàn tiền thành công',
+        REFUND_REJECTED: 'Từ chối hoàn tiền',
+    }
+    const mapEn: Record<string, string> = {
+        AUCTION_WON: 'Auction Won',
+        AUCTION_OUTBID: 'Outbid',
+        AUCTION_PAYMENT_REMINDER: 'Payment Reminder',
+        ORDER_PLACED: 'Order Placed',
+        ORDER_CREATED: 'Order Placed',
+        PAYMENT_SUCCESS: 'Payment Success',
+        PAYMENT_FAILED: 'Payment Failed',
+        ORDER_STATUS_CHANGED: 'Order Update',
+        REFUND_REQUESTED: 'Refund Requested',
+        REFUND_ISSUED: 'Refund Issued',
+        REFUND_REJECTED: 'Refund Rejected',
+    }
+    if (lang === 'vi') return mapVi[type] || type.replace(/_/g, ' ')
+    return mapEn[type] || type.replace(/_/g, ' ')
+}
+
 export function NotificationInbox() {
     const { user, navigate } = useApp()
     return (
@@ -268,10 +305,17 @@ function InboxContent({
             {/* Tiêu đề & Action Bar */}
             <div className="nexus-card p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                        <Bell className="text-primary" size={24} />
-                        {lang === 'vi' ? 'Hộp thư Thông báo' : 'Notifications Inbox'}
-                    </h1>
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                            <Bell className="text-primary" size={24} />
+                            {lang === 'vi' ? 'Hộp thư Thông báo' : 'Notifications Inbox'}
+                        </h1>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-100 text-primary border border-orange-200">
+                            {lang === 'vi'
+                                ? `${inbox?.unreadCount ?? 0} chưa đọc · ${inbox?.totalElements ?? 0} thông báo`
+                                : `${inbox?.unreadCount ?? 0} unread · ${inbox?.totalElements ?? 0} notifications`}
+                        </span>
+                    </div>
                     <p className="text-sm text-gray-500 mt-1">
                         {lang === 'vi'
                             ? 'Theo dõi cập nhật đơn hàng, thanh toán, đấu giá và uy tín tài khoản.'
@@ -399,7 +443,6 @@ function InboxContent({
                             </Button>
                         </div>
                     )}
-
                     {loading && (
                         <div
                             className="py-16 text-center text-gray-500 flex flex-col items-center justify-center gap-2"
@@ -452,8 +495,8 @@ function InboxContent({
                                                     {item.title}
                                                 </h3>
                                                 {item.type && (
-                                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-gray-100 text-gray-600">
-                                                        {item.type}
+                                                    <span className="text-[10px] font-bold tracking-wide px-2 py-0.5 rounded bg-orange-50 text-orange-700 border border-orange-200">
+                                                        {formatNotificationType(item.type, lang)}
                                                     </span>
                                                 )}
                                             </div>
@@ -469,17 +512,66 @@ function InboxContent({
                                         </div>
                                     </div>
 
-                                    {!item.read && (
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            disabled={saving || loading}
-                                            onClick={() => void markRead(item.id)}
-                                            className="text-xs shrink-0"
-                                        >
-                                            {lang === 'vi' ? 'Đánh dấu đã đọc' : 'Mark read'}
-                                        </Button>
-                                    )}
+                                                                        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                        {/* Nút hành động thanh toán cho thông báo thắng đấu giá */}
+                                        {(item.type === 'AUCTION_WON' || item.type === 'AUCTION_PAYMENT_REMINDER') && (
+                                            <button
+                                                className="px-3 py-1 bg-[#ee4d2d] text-white text-xs font-semibold rounded-md hover:bg-[#d03e20] transition-colors shadow-sm"
+                                                onClick={() => {
+                                                    if (item.auctionId) {
+                                                        navigate('auction-payment' as any, { auctionId: item.auctionId })
+                                                    } else if (item.orderId) {
+                                                        navigate('order-detail' as any, { id: item.orderId })
+                                                    } else if (item.paymentLink) {
+                                                        window.location.href = item.paymentLink
+                                                    }
+                                                }}
+                                            >
+                                                {lang === 'vi' ? 'Thanh toán ngay' : 'Pay now'}
+                                            </button>
+                                        )}
+
+                                        {/* Nút xem lại phiên đấu giá khi bị trả giá cao hơn (Outbid) */}
+                                        {item.type === 'AUCTION_OUTBID' && (
+                                            <button
+                                                className="px-3 py-1 bg-amber-600 text-white text-xs font-semibold rounded-md hover:bg-amber-700 transition-colors shadow-sm"
+                                                onClick={() => {
+                                                    if (item.auctionId) {
+                                                        navigate('auction-detail' as any, { id: item.auctionId })
+                                                    } else {
+                                                        navigate('auction-list')
+                                                    }
+                                                }}
+                                            >
+                                                {lang === 'vi' ? 'Đấu giá lại' : 'Re-bid'}
+                                            </button>
+                                        )}
+
+                                        {/* Nút xem đơn hàng cho thông báo đơn thông thường */}
+                                        {item.type !== 'AUCTION_WON' &&
+                                            item.type !== 'AUCTION_PAYMENT_REMINDER' &&
+                                            item.type !== 'AUCTION_OUTBID' &&
+                                            item.orderId && (
+                                                <button
+                                                    className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-md hover:bg-gray-200 transition-colors"
+                                                    onClick={() => navigate('order-detail' as any, { id: item.orderId })}
+                                                >
+                                                    {lang === 'vi' ? 'Xem đơn hàng' : 'View order'}
+                                                </button>
+                                            )}
+
+                                        {!item.read && (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={saving || loading}
+                                                onClick={() => void markRead(item.id)}
+                                                className="text-xs shrink-0"
+                                            >
+                                                {lang === 'vi' ? 'Đánh dấu đã đọc' : 'Mark read'}
+                                            </Button>
+                                        )}
+                                    </div>
                                 </div>
                             ))}
                         </div>

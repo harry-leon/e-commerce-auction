@@ -9,7 +9,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 /**
- * Cấp HTTP client nội bộ Auction → Commerce/Inventory/Reputation bằng service account riêng.
+ * Cấp HTTP client nội bộ Auction → Commerce/Inventory/Reputation/Notification bằng service account riêng.
  * Không tự thực thi settlement/order/reserve; nghiệp vụ gọi bean khi contract tương ứng được triển khai.
  * Thiếu secret thì lỗi khi gọi; timeout 5 giây, không retry mutation để tránh tạo dữ liệu trùng.
  */
@@ -42,6 +42,13 @@ public class AuctionServiceClients {
     @Bean
     RestClient auctionReputationClient(ClientCredentialsToken token,
             @Value("${REPUTATION_SERVICE_URL:http://localhost:8087}") String url) {
+        return internalClient(url, token);
+    }
+
+    /** Client HTTP tới Notification Service để gửi thông báo Outbid hoặc sự kiện đấu giá realtime. */
+    @Bean
+    RestClient auctionNotificationClient(ClientCredentialsToken token,
+            @Value("${NOTIFICATION_SERVICE_URL:http://localhost:8086}") String url) {
         return internalClient(url, token);
     }
 

@@ -1,10 +1,22 @@
 import { api, ApiClientError } from './client'
 
 export const NOTIFICATIONS_CHANGED = 'nexus:notifications-changed'
+
+/**
+ * Cấu trúc thông báo đẩy PUSH qua WebSocket STOMP.
+ * Bổ sung các trường ngữ cảnh đấu giá: type (AUCTION_WON, AUCTION_OUTBID,...),
+ * orderId, auctionId, paymentLink, paymentDeadline để giao diện hiển thị nút thao tác.
+ */
 export interface NotificationPush {
     id: string
     title: string
     content: string
+    type?: string
+    orderId?: string
+    auctionId?: string
+    paymentLink?: string | null
+    paymentDeadline?: string | null
+    occurredAt?: string
 }
 
 /**

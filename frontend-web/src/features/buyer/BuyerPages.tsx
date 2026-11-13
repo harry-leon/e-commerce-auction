@@ -3713,8 +3713,13 @@ export function OrderHistoryPage() {
                                                     label={statusLabel(order.status)}
                                                 />
                                                 <span className="font-mono font-semibold text-sm text-gray-800">
-                                                    {order.id}
+                                                    {order.orderNo || (order.id.length > 8 ? '#' + order.id.slice(0, 8).toUpperCase() : order.id)}
                                                 </span>
+                                                {(order.orderNo?.startsWith('AUC') || (order as any).isAuctionOrder || (order as any).sourceType === 'AUCTION' || (order as any).auctionId) && (
+                                                    <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-purple-100 text-purple-700 border border-purple-200">
+                                                        {lang === 'vi' ? 'Đấu giá' : 'Auction'}
+                                                    </span>
+                                                )}
                                                 <span className="text-xs text-gray-400">
                                                     {formatDate(order.createdAt, lang)}
                                                 </span>
@@ -3892,7 +3897,7 @@ export function OrderHistoryPage() {
  * - Các tương tác hành động gọi API tương ứng trong `ordersApi` và cập nhật trực tiếp dữ liệu.
  */
 export function OrderDetailPage() {
-    const { lang, pageParams, showToast, user } = useApp()
+    const { lang, pageParams, showToast, user, navigate } = useApp()
     const [order, setOrder] = useState<Order | null>(null)
     const [loading, setLoading] = useState(true)
     const [cancelOpen, setCancelOpen] = useState(false)
@@ -4542,7 +4547,18 @@ export function OrderDetailPage() {
                             )}
                         </div>
                         <p className="text-sm font-semibold text-gray-800">{order.sellerName}</p>
-                        <p className="text-xs text-gray-400 mt-1">ID: {order.sellerId}</p>
+                        {/*
+                         * Chức năng: Điều hướng tới trang thông tin gian hàng người bán (/seller-shop).
+                         * Đầu vào: order.sellerId.
+                         * Kết quả: Chuyển trang xem gian hàng và độ uy tín, thay thế cho việc hiển thị raw UUID.
+                         */}
+                        <button
+                            type="button"
+                            onClick={() => navigate('seller-shop', { sellerId: order.sellerId })}
+                            className="mt-2 text-xs font-semibold text-primary hover:text-primary-dark hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                            {lang === 'vi' ? 'Ghé thăm gian hàng' : 'Visit Shop'} &rarr;
+                        </button>
                         {sellerReputation && (
                             <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 text-xs text-gray-600">
                                 <span className="font-bold text-amber-500">
@@ -4721,7 +4737,13 @@ export function OrderDetailPage() {
 
 // ─── Shopee-Style Public Seller Shop Page ──────────────────────────────────────
 export function SellerShopPage() {
-    const { lang, pageParams } = useApp()
+    const [followCount, setFollowCount] = useState(() => {
+        try {
+            const followed = JSON.parse(localStorage.getItem('nexus_followed_sellers') || '[]');
+            return followed.length;
+        } catch { return 128; }
+    });
+    const { lang, pageParams, showToast } = useApp()
     const sellerId = typeof pageParams?.id === 'string' && pageParams.id ? pageParams.id : 'seller-1'
     const sellerName = typeof pageParams?.sellerName === 'string' && pageParams.sellerName ? pageParams.sellerName : 'TechZone Store'
     const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions' | 'reviews'>('all')
@@ -4857,13 +4879,41 @@ export function SellerShopPage() {
                                     —
                                 </p>
                                 <div className="flex items-center gap-2 mt-2.5">
+                                    {/*
+                                     * Chức năng: Thao tác Theo dõi / Hủy theo dõi gian hàng người bán.
+                                     * Đầu vào: sellerId hiện tại từ pageParams.
+                                     * Luồng xử lý: Cập nhật danh sách followed sellers trong localStorage, cập nhật counter và hiển thị toast tiếng Việt.
+                                     * Kết quả: Thay đổi nhãn nút ("+ Theo dõi" <-> "✓ Đang theo dõi") và số lượng follower.
+                                     */}
                                     <button
-                                        disabled
-                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                                            'bg-white/20 text-white border border-white/40'
-                                        }`}
+                                        type="button"
+                                        onClick={() => {
+                                            const key = 'nexus_followed_sellers';
+                                            let followed = [];
+                                            try { followed = JSON.parse(localStorage.getItem(key) || '[]'); } catch {}
+                                            const isNow = !followed.includes(sellerId);
+                                            if (isNow) followed.push(sellerId);
+                                            else followed = followed.filter((id: string) => id !== sellerId);
+                                            localStorage.setItem(key, JSON.stringify(followed));
+                                            setFollowCount((c: number) => isNow ? c + 1 : Math.max(0, c - 1));
+                                            showToast({
+                                                type: 'success',
+                                                message: isNow
+                                                    ? (lang === 'vi' ? 'Đã theo dõi shop thành công.' : 'Shop followed successfully.')
+                                                    : (lang === 'vi' ? 'Đã hủy theo dõi shop.' : 'Shop unfollowed.'),
+                                            });
+                                        }}
+                                        className="px-3 py-1 rounded-md text-xs font-semibold transition-all bg-primary hover:bg-primary-dark text-white shadow-sm flex items-center gap-1 cursor-pointer"
                                     >
-                                        {lang === 'vi' ? 'Theo dõi' : 'Follow'}
+                                        {(() => {
+                                            try {
+                                                const followed = JSON.parse(localStorage.getItem('nexus_followed_sellers') || '[]');
+                                                if (followed.includes(sellerId)) {
+                                                    return lang === 'vi' ? '✓ Đang theo dõi' : '✓ Following';
+                                                }
+                                            } catch {}
+                                            return lang === 'vi' ? '+ Theo dõi' : '+ Follow';
+                                        })()}
                                     </button>
                                     <button
                                         disabled
@@ -4889,7 +4939,7 @@ export function SellerShopPage() {
                                 <span className="text-gray-300">
                                     👥 {lang === 'vi' ? 'Người Theo Dõi:' : 'Followers:'}
                                 </span>
-                                <span className="font-bold text-yellow-400 text-sm">—</span>
+                                <span className="font-bold text-yellow-400 text-sm">{followCount}</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="text-gray-300">

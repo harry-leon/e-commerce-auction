@@ -94,11 +94,19 @@ function AppInner() {
     const [pageTransitioning, setPageTransitioning] = useState(false)
     const prevPageRef = useRef(page)
     // Một socket theo phiên UI; đổi tài khoản/logout dọn socket cũ, không dùng token/profile demo làm xác thực.
+    // Phân loại toast theo sự kiện realtime: AUCTION_WON (success), AUCTION_OUTBID (warning), thông báo khác (info).
     useEffect(() => {
         if (!user?.id || !/^[0-9a-f-]{36}$/i.test(user.id)) return
         const refreshInbox = () => window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
         return connectNotificationStream((event) => {
-            showToast({ type: 'info', message: event.title })
+            const toastType =
+                event.type === 'AUCTION_WON'
+                    ? 'success'
+                    : event.type === 'AUCTION_OUTBID'
+                      ? 'warning'
+                      : 'info'
+            const msg = event.content ? `${event.title}: ${event.content}` : event.title
+            showToast({ type: toastType, message: msg, duration: 6000 })
             refreshInbox()
         }, refreshInbox)
     }, [user?.id, showToast])

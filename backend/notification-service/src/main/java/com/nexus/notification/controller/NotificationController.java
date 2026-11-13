@@ -27,10 +27,36 @@ public class NotificationController {
 
     public NotificationController(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
-    /** Ngữ cảnh refund chỉ hiển thị cho chủ inbox; không lộ evidence, provider reference hoặc lỗi giao nhận nội bộ. */
-    public record Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt, UUID refundId) {
+    /**
+     * DTO thông báo hiển thị cho người dùng: hỗ trợ cả đơn hàng, hoàn tiền, đấu giá và liên kết thanh toán.
+     * Ngữ cảnh refund/auction chỉ hiển thị cho chủ inbox; không lộ evidence, provider reference hoặc lỗi nội bộ.
+     */
+    public record Item(
+            UUID id,
+            UUID orderId,
+            String type,
+            String title,
+            String content,
+            boolean read,
+            Instant createdAt,
+            UUID refundId,
+            UUID auctionId,
+            String paymentLink,
+            Instant paymentDeadline
+    ) {
+        /** Constructor tương thích ngược cho client/test 7 tham số. */
         public Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt) {
-            this(id, orderId, type, title, content, read, createdAt, null);
+            this(id, orderId, type, title, content, read, createdAt, null, null, null, null);
+        }
+
+        /** Constructor tương thích ngược cho ngữ cảnh refund 8 tham số. */
+        public Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt, UUID refundId) {
+            this(id, orderId, type, title, content, read, createdAt, refundId, null, null, null);
+        }
+
+        /** Constructor tương thích ngược cho ngữ cảnh đấu giá 10 tham số. */
+        public Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt, UUID auctionId, String paymentLink, Instant paymentDeadline) {
+            this(id, orderId, type, title, content, read, createdAt, null, auctionId, paymentLink, paymentDeadline);
         }
     }
     /** Tổng số chưa đọc tính toàn hộp thư, không chỉ riêng trang đang xem. */
@@ -47,12 +73,19 @@ public class NotificationController {
         }
         UUID user = user(jwt);
         String where = " FROM notifications WHERE user_id=? AND channel='IN_APP' AND status IN ('SENT','READ')";
-        List<Item> rows = jdbc.query("SELECT id,order_id,event_type,title,content,status,created_at,refund_id" + where
+        List<Item> rows = jdbc.query("SELECT id,order_id,event_type,title,content,status,created_at,refund_id,auction_id,payment_link,payment_deadline" + where
                 + " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?", (rs, row) -> new Item(
-                        rs.getObject("id", UUID.class), rs.getObject("order_id", UUID.class), rs.getString("event_type"),
-                        rs.getString("title"), rs.getString("content"), "READ".equals(rs.getString("status")),
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("order_id", UUID.class),
+                        rs.getString("event_type"),
+                        rs.getString("title"),
+                        rs.getString("content"),
+                        "READ".equals(rs.getString("status")),
                         rs.getTimestamp("created_at").toLocalDateTime().toInstant(java.time.ZoneOffset.UTC),
-                        rs.getObject("refund_id", UUID.class)), user, size, (long) page * size);
+                        rs.getObject("refund_id", UUID.class),
+                        rs.getObject("auction_id", UUID.class),
+                        rs.getString("payment_link"),
+                        rs.getTimestamp("payment_deadline") != null ? rs.getTimestamp("payment_deadline").toInstant() : null), user, size, (long) page * size);
         long total = jdbc.queryForObject("SELECT count(*)" + where, Long.class, user);
         long unread = jdbc.queryForObject("SELECT count(*)" + where + " AND status='SENT'", Long.class, user);
         return ApiResponse.ok(new Inbox(rows, total, unread));

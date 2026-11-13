@@ -199,6 +199,16 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                         {lang === 'vi' ? 'Thử lại thanh toán' : 'Retry Payment'}
                     </Button>
                 )}
+                {/*
+                 * Chức năng: Điều hướng người dùng tới màn hình chi tiết đơn hàng sau thanh toán.
+                 * Đầu vào: current.orderId từ kết quả thanh toán.
+                 * Kết quả: Chuyển sang màn hình /order-detail với ID đơn hàng.
+                 */}
+                {current?.orderId && (
+                    <Button variant="primary" onClick={() => navigate('order-detail', { id: current.orderId })}>
+                        {lang === 'vi' ? 'Xem chi tiết đơn hàng' : 'View order details'}
+                    </Button>
+                )}
                 <Button variant="outline" onClick={() => navigate('order-history')}>
                     {lang === 'vi' ? 'Lịch sử đơn hàng' : 'Order history'}
                 </Button>
