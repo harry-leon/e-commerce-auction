@@ -374,10 +374,19 @@ export function AdminUsersPage() {
                 u.email.includes(search)),
     )
 
+    // Tab lọc dùng cùng tập user từ API; số lượng phản ánh danh sách hiện tải về và không gọi thêm endpoint.
+    const roleTabs = [
+        { value: 'all', label: tr(lang, 'all') },
+        { value: 'admin', label: tr(lang, 'roleAdmin') },
+        { value: 'buyer', label: tr(lang, 'roleBuyer') },
+        { value: 'seller', label: tr(lang, 'roleSeller') },
+        { value: 'support', label: tr(lang, 'roleSupport') },
+    ]
+
     return (
         <AdminLayout title={tr(lang, 'userManagement')}>
-            <div className="flex items-center justify-between mb-5">
-                <div className="flex gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                <div className="flex flex-wrap items-center gap-3">
                     <Input
                         icon={<Search size={14} />}
                         placeholder={lang === 'en' ? 'Search users...' : 'Tìm người dùng...'}
@@ -385,19 +394,25 @@ export function AdminUsersPage() {
                         onChange={(e) => setSearch(e.target.value)}
                         className="w-64"
                     />
-                    <select
-                        value={roleFilter}
-                        onChange={(e) => setRoleFilter(e.target.value)}
-                        className="nexus-input text-sm py-2 w-36"
-                    >
-                        {['all', 'buyer', 'seller', 'admin', 'support'].map((r) => (
-                            <option key={r} value={r}>
-                                {r === 'all'
-                                    ? tr(lang, 'all')
-                                    : r.charAt(0).toUpperCase() + r.slice(1)}
-                            </option>
-                        ))}
-                    </select>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label={tr(lang, 'filterUsersByRole')}>
+                        {roleTabs.map((tab) => {
+                            const count = tab.value === 'all'
+                                ? allUsers.length
+                                : allUsers.filter((user) => user.role === tab.value).length
+                            const selected = roleFilter === tab.value
+                            return (
+                                <button
+                                    key={tab.value}
+                                    type="button"
+                                    aria-pressed={selected}
+                                    onClick={() => setRoleFilter(tab.value)}
+                                    className={`nexus-btn nexus-btn-sm ${selected ? 'nexus-btn-primary' : 'nexus-btn-outline'}`}
+                                >
+                                    {tab.label}<span aria-label={tr(lang, 'userCount', { count: String(count) })}>{count}</span>
+                                </button>
+                            )
+                        })}
+                    </div>
                 </div>
                 <Button
                     variant="primary"
