@@ -26,6 +26,8 @@ Endpoint chỉ đọc trong transaction; không có migration, bảng phát hàn
 
 Biên nhận phản ánh khoản thu gốc, không khẳng định đã giao hàng, còn bao nhiêu tiền có thể hoàn hoặc refund đã thành công. Trạng thái Order sau đó không thay đổi giá thu gốc. API không cung cấp lịch sử điều chỉnh/refund. Đây **chưa phải** registry chứng từ bất biến/chứng từ điều chỉnh hoàn chỉnh: nếu dữ liệu Payment bị sửa trái contract ở DB thì bản tải sẽ phản ánh dữ liệu đó. Cần chốt policy BA, cơ chế phát hành/audit, liên kết điều chỉnh refund, retention, định dạng PDF và provider hóa đơn trước khi đánh dấu toàn bộ TT-S3-07 hoàn tất.
 
+Phần tiếp theo có [API biên nhận refund riêng](TT_S3_REFUND_RECEIPT.md), liên kết qua originalReceiptId và giữ nguyên biên nhận thu gốc. Đây là bản xuất registry refund đã đối soát, chưa phải hóa đơn điều chỉnh hoặc registry phát hành chứng từ bất biến.
+
 ## Kiểm tra
 
 - Unit: quyền chủ đơn/Admin, subject sai, trạng thái chưa xác nhận, snapshot/tổng/bằng chứng hỏng, ID ổn định khi Order đổi state.
