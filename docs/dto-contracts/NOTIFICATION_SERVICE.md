@@ -97,4 +97,3 @@ Chi tiết version và bằng chứng: [TT-S2-1 register](../TT-S2-1_ORDER_PAYME
 `GET /api/v1/notifications` trả thêm refundId nullable; ownership giữ nguyên theo JWT. Push sau commit có cùng refundId. Đây là contract IN_APP/PUSH, chưa phải refund email hoặc producer Commerce chạy thật.
 
 Admin có thể đọc trạng thái `/actuator/health/notificationTransport`; broker simple chỉ phù hợp một instance. Chi tiết [consumer và health](../TT_S3_NOTIFICATION_REFUND_CONSUMER.md).
-
