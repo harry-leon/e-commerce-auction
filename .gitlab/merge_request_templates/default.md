@@ -6,6 +6,7 @@
 
 ## Ticket
 NEX-
+Closes #xx(Issue đang làm)
 
 ## Cách test
 <!-- Các bước test thủ công / test tự động đã thêm -->
