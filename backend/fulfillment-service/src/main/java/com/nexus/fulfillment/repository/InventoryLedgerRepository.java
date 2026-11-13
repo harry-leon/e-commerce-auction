@@ -44,6 +44,16 @@ public interface InventoryLedgerRepository extends Repository<InventoryLedger, U
     Optional<InventoryLedger> findByIdempotencyKey(String idempotencyKey);
 
     /**
+     * Kiểm tra sự tồn tại của bản ghi sổ cái theo loại tham chiếu (ref_type) và mã tham chiếu (ref_id).
+     * Phục vụ xác thực tính Idempotent cho các luồng xuất kho và hoàn trả hàng (SHIPMENT, SHIPMENT_RETURN).
+     *
+     * @param refType Loại chứng từ tham chiếu (ví dụ: "SHIPMENT", "SHIPMENT_RETURN")
+     * @param refId Khóa định danh của chứng từ (ví dụ: shipmentId)
+     * @return true nếu đã có bản ghi sổ cái tương ứng trong hệ thống
+     */
+    boolean existsByRefTypeAndRefId(String refType, UUID refId);
+
+    /**
      * Tra cứu bản ghi sổ cái theo inventory, loại biến động và mã chứng từ refId phục vụ chống lặp theo chứng từ.
      */
     Optional<InventoryLedger> findFirstByInventoryIdAndMovementTypeAndRefId(

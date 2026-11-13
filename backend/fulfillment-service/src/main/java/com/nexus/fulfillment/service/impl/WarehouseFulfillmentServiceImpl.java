@@ -15,6 +15,7 @@ import com.nexus.fulfillment.enums.ReservationStatus;
 import com.nexus.fulfillment.enums.ShipmentStatus;
 import com.nexus.fulfillment.event.InventoryCommittedEvent;
 import com.nexus.fulfillment.event.ShipmentPickedUpEvent;
+import com.nexus.fulfillment.event.ShipmentReturnedEvent;
 import com.nexus.fulfillment.repository.InventoryLedgerRepository;
 import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.InventoryReservationRepository;
@@ -187,6 +188,118 @@ public class WarehouseFulfillmentServiceImpl implements WarehouseFulfillmentServ
 
         log.info("Vận đơn {} xuất kho thành công (SHIPPED), đã trừ tồn và ghi Sổ cái tồn kho", shipmentId);
         return toResponse(shipment);
+    }
+
+    /**
+     * Xử lý hoàn kho khi vận đơn giao hàng thất bại hoặc người mua trả hàng (SRS §3.6.1, §3.6.2, KH-S3-3).
+     *
+     * Chức năng:
+     * - Cập nhật trạng thái vận đơn sang RETURNED và ghi nhận lịch sử trạng thái.
+     * - Hoàn trả tồn kho vật lý (total_qty và available_qty) cho các SKU đã xuất thuộc vận đơn này.
+     * - Ghi dòng biến động bất biến INBOUND (ref_type = SHIPMENT_RETURN) vào bảng inventory_ledger.
+     * - Phát sự kiện miền ShipmentReturnedEvent và ghi Transactional Outbox.
+     *
+     * Luồng xử lý:
+     * 1. Tra cứu vận đơn theo shipmentId (ném SHIPMENT_NOT_FOUND nếu không tìm thấy).
+     * 2. Kiểm tra tính Idempotent: kiểm tra xem đã có bản ghi sổ cái SHIPMENT_RETURN cho shipmentId chưa.
+     *    Nếu đã hoàn kho trước đó -> trả về kết quả ngay, không tăng trùng tồn kho.
+     * 3. Chuyển trạng thái vận đơn sang RETURNED nếu chưa ở trạng thái này.
+     * 4. Duyệt các phiếu giữ kho CONFIRMED của đơn hàng tại đúng kho xuất -> tăng lại total_qty & available_qty.
+     * 5. Lưu bản ghi INBOUND vào inventory_ledger với ref_type = SHIPMENT_RETURN.
+     */
+    @Override
+    @Transactional
+    public ShipmentResponse processReturn(UUID shipmentId, String reason) {
+        Shipment shipment = getShipmentOrThrow(shipmentId);
+
+        // Kiểm tra Idempotent: nếu đã hoàn kho trước đó (đã có bản ghi sổ cái SHIPMENT_RETURN)
+        boolean alreadyRestocked = ledgerRepository.existsByRefTypeAndRefId("SHIPMENT_RETURN", shipmentId);
+        if (alreadyRestocked && shipment.getStatus() == ShipmentStatus.RETURNED) {
+            log.info("Vận đơn {} đã được xử lý hoàn kho trước đó (Idempotent)", shipmentId);
+            return toResponse(shipment);
+        }
+
+        String effectiveReason = (reason != null && !reason.isBlank())
+                ? reason.trim()
+                : "Khách hàng hoàn trả hoặc giao hàng không thành công";
+
+        // Cập nhật trạng thái vận đơn sang RETURNED nếu chưa ở trạng thái này
+        if (shipment.getStatus() != ShipmentStatus.RETURNED) {
+            shipment.setStatus(ShipmentStatus.RETURNED);
+            shipment.setUpdatedAt(Instant.now());
+            shipmentRepository.save(shipment);
+
+            historyRepository.save(new ShipmentStatusHistory(
+                    shipment,
+                    "RETURNED",
+                    ShipmentStatus.RETURNED,
+                    null,
+                    effectiveReason,
+                    Instant.now()
+            ));
+        }
+
+        // Hoàn trả tồn kho vật lý và ghi sổ cái bất biến nếu chưa hoàn
+        if (!alreadyRestocked) {
+            restockWarehouseInventory(shipment, effectiveReason);
+        }
+
+        // Phát sự kiện miền ShipmentReturnedEvent và ghi outbox
+        eventPublisher.publishEvent(ShipmentReturnedEvent.of(
+                shipment.getId(),
+                shipment.getOrderId(),
+                shipment.getCarrierCode(),
+                shipment.getTrackingNo(),
+                effectiveReason
+        ));
+        outboxService.enqueueShipmentReturned(shipment, effectiveReason);
+
+        log.info("Vận đơn {} đã hoàn kho (RETURNED) thành công, cập nhật tồn khả dụng và sổ cái bất biến", shipmentId);
+        return toResponse(shipment);
+    }
+
+    private void restockWarehouseInventory(Shipment shipment, String reason) {
+        List<InventoryReservation> reservations = reservationRepository.findByRefTypeAndRefId(
+                ReservationRefType.ORDER,
+                shipment.getOrderId()
+        );
+
+        for (InventoryReservation res : reservations) {
+            if (res.getInventory() != null && res.getInventory().getWarehouse() != null
+                    && res.getInventory().getWarehouse().getId().equals(shipment.getWarehouse().getId())) {
+
+                // Chỉ hoàn kho khi phiếu giữ hàng đã CONFIRMED (đã xuất hàng)
+                if (res.getStatus() == ReservationStatus.CONFIRMED) {
+                    Inventory inventory = inventoryRepository.findByIdForUpdate(res.getInventory().getId())
+                            .orElseThrow(() -> new BusinessException(
+                                    ErrorCode.INVENTORY_NOT_FOUND,
+                                    "Không tìm thấy bản ghi tồn kho liên kết với phiếu giữ hàng " + res.getId()
+                            ));
+
+                    int qty = res.getQuantity();
+                    inventory.setTotalQty(inventory.getTotalQty() + qty);
+                    inventoryRepository.save(inventory);
+
+                    // Ghi sổ cái bất biến loại INBOUND cho hàng hoàn trả
+                    InventoryLedger returnLedger = new InventoryLedger(
+                            UUID.randomUUID(),
+                            inventory,
+                            LedgerMovementType.INBOUND,
+                            qty,
+                            "SHIPMENT_RETURN",
+                            shipment.getId(),
+                            Instant.now(),
+                            null,
+                            "Nhập hoàn kho hàng từ vận đơn trả về " + shipment.getTrackingNo() + ": " + reason,
+                            null
+                    );
+                    ledgerRepository.save(returnLedger);
+
+                    log.info("Đã hoàn kho SKU {} (qty={}) và ghi ledger INBOUND (SHIPMENT_RETURN) theo vận đơn {}",
+                            inventory.getSkuId(), qty, shipment.getId());
+                }
+            }
+        }
     }
 
     private void commitWarehouseInventory(Shipment shipment) {

@@ -36,6 +36,14 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, UUID>, Jpa
     boolean existsByCodeIgnoreCase(String code);
 
     /**
+     * Lấy danh sách tất cả các kho hàng đang hoạt động (isActive = true).
+     * Phục vụ thuật toán phân bổ kho hàng đa kho (WarehouseStockAllocationService).
+     *
+     * @return Danh sách kho hàng đang hoạt động
+     */
+    List<Warehouse> findByIsActiveTrue();
+
+    /**
      * Lấy danh sách kho đang hoạt động sắp xếp theo mã kho tăng dần.
      */
     List<Warehouse> findByIsActiveTrueOrderByCodeAsc();

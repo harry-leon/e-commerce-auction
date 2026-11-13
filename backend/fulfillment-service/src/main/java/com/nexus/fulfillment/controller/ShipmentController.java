@@ -129,6 +129,32 @@ public class ShipmentController {
         return ApiResponse.ok(warehouseFulfillmentService.ship(shipmentId));
     }
 
+    /**
+     * Xử lý hoàn kho kiện hàng trả về (Return Process - SRS §3.6.1, §3.6.2, KH-S3-3).
+     *
+     * Chức năng:
+     * - Tiếp nhận yêu cầu hoàn trả kiện hàng khi giao thất bại hoặc người mua trả hàng.
+     * Đầu vào và kết quả:
+     * - Đầu vào: shipmentId (UUID) và reason tùy chọn (String).
+     * - Kết quả: ShipmentResponse với trạng thái RETURNED và tồn kho vật lý được hoàn lại.
+     * Luồng xử lý:
+     * - Gọi WarehouseFulfillmentService.processReturn để chuyển trạng thái, bù tồn kho và ghi sổ cái bất biến.
+     * Quy tắc và lý do:
+     * - Yêu cầu quyền ADMIN, SELLER, SUPPORT hoặc FULFILLMENT.SHIP.
+     * - Xử lý Idempotent: gọi lại không nhân bản tồn kho.
+     */
+    @PostMapping("/{shipmentId}/return")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SELLER', 'SUPPORT') or hasAuthority('FULFILLMENT.SHIP')")
+    @Operation(
+            summary = "Xử lý hoàn trả hàng về kho (Return Process)",
+            description = "Chuyển trạng thái sang RETURNED, hoàn trả tồn kho vào kho xuất ban đầu và ghi sổ cái bất biến")
+    public ApiResponse<ShipmentResponse> returnShipment(
+            @PathVariable UUID shipmentId,
+            @RequestParam(required = false) String reason
+    ) {
+        return ApiResponse.ok(warehouseFulfillmentService.processReturn(shipmentId, reason));
+    }
+
     @GetMapping("/{shipmentId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'BUYER', 'SELLER', 'SUPPORT') or hasAuthority('SHIPPING.VIEW_SHIPMENT')")
     @Operation(summary = "Xem chi tiết vận đơn theo ID")

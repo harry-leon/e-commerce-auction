@@ -157,7 +157,7 @@ class WarehouseStockAllocationServiceTest {
         // Cần cả 3 kho -> vi phạm giới hạn 2 kho -> ném lỗi INVENTORY_INSUFFICIENT
         assertThatThrownBy(() -> allocationService.computeAllocation(request))
                 .isInstanceOf(BusinessException.class)
-                .extracting(ex -> ((BusinessException) ex).getErrorCode())
-                .isEqualTo(ErrorCode.INVENTORY_INSUFFICIENT);
+                .extracting(ex -> ((BusinessException) ex).getCode())
+                .isEqualTo(ErrorCode.INVENTORY_INSUFFICIENT.name());
     }
 }

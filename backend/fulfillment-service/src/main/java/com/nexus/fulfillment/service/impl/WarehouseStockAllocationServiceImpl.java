@@ -95,7 +95,24 @@ public class WarehouseStockAllocationServiceImpl implements WarehouseStockAlloca
             }
         }
 
-        // Bước 2: Thử tìm một kho đơn lẻ khác có khả năng đáp ứng 100% các mặt hàng (1 kho)
+        // Bước 2: Khi kho mặc định WH_001 có một phần hàng khả dụng (> 0), ưu tiên xuất tối đa từ WH_001
+        // và kết hợp thêm 1 kho phụ (tổng 2 kho) nhằm tối ưu vận hành tại trung tâm fulfillment chính.
+        if (defaultWarehouse != null && defaultWarehouse.isActive() && maxWarehouses >= 2) {
+            boolean defaultHasAnyStock = request.items().stream().anyMatch(item -> {
+                Optional<Inventory> inv = inventoryRepository.findBySkuIdAndWarehouseId(item.skuId(), defaultWarehouse.getId());
+                return inv.isPresent() && inv.get().getAvailableQty() > 0;
+            });
+            if (defaultHasAnyStock) {
+                StockAllocationResponse splitWithDefault = trySplitBetweenTwoWarehouses(
+                        request.orderId(), defaultWarehouse, activeWarehouses, request.items()
+                );
+                if (splitWithDefault != null && splitWithDefault.totalWarehouses() > 1) {
+                    return splitWithDefault;
+                }
+            }
+        }
+
+        // Bước 3: Thử tìm một kho đơn lẻ khác có khả năng đáp ứng 100% các mặt hàng (1 kho) khi WH_001 không có hàng
         for (Warehouse candidate : activeWarehouses) {
             if (defaultWarehouse != null && candidate.getId().equals(defaultWarehouse.getId())) {
                 continue;
@@ -120,17 +137,7 @@ public class WarehouseStockAllocationServiceImpl implements WarehouseStockAlloca
             }
         }
 
-        // Bước 3: Thử kết hợp kho mặc định WH_001 + 1 kho phụ (tổng 2 kho)
-        if (defaultWarehouse != null && defaultWarehouse.isActive() && maxWarehouses >= 2) {
-            StockAllocationResponse splitWithDefault = trySplitBetweenTwoWarehouses(
-                    request.orderId(), defaultWarehouse, activeWarehouses, request.items()
-            );
-            if (splitWithDefault != null) {
-                return splitWithDefault;
-            }
-        }
-
-        // Bước 4: Thử kết hợp bất kỳ 2 kho nào trong hệ thống (tổng 2 kho)
+        // Bước 4: Thử kết hợp bất kỳ 2 kho nào trong hệ thống (tổng 2 kho) khi các phương án trên chưa thỏa mãn
         if (maxWarehouses >= 2) {
             for (Warehouse w1 : activeWarehouses) {
                 StockAllocationResponse plan = trySplitBetweenTwoWarehouses(
