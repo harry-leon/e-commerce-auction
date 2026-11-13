@@ -1,5 +1,11 @@
 # Quy tắc mật khẩu Nexus
 
+## Quyền lệnh tạo shipment từ Commerce
+
+`nexus-realm.json` khai báo realm role `SHIPPING.ORDER_PAID`, gán cho service account và scope mapping của `nexus-commerce-service`. Endpoint `POST /api/v1/shipments/events/order-paid` bắt buộc đồng thời `azp=nexus-commerce-service` và privilege này; Buyer/Admin hoặc service token chỉ có INVENTORY.ORDER không đủ quyền. JSON không hỗ trợ comment nên giải thích cấu hình được lưu tại đây.
+
+Realm đã tồn tại không tự nhận role từ `--import-realm`: người vận hành cần tạo role, gán vào đúng service account và client scope mapping qua Keycloak Admin, sau đó lấy token mới và kiểm tra claim. Không xóa realm để cập nhật role. Source thay đổi này chưa tự áp dụng lên IAM đang chạy và chưa tạo producer Commerce gửi event; token cũ chưa có quyền sẽ bị 403 theo chủ đích.
+
 `nexus-realm.json` đặt cùng policy với Gateway đăng ký và `ChangePasswordRequest` ở User: mật khẩu mới dài 8–100 ký tự, có chữ hoa Unicode, chữ số và ít nhất một dấu/ký hiệu (ví dụ `@`, `!`, `#`). Khoảng trắng không được tính là ký tự đặc biệt. Không thêm yêu cầu này vào login/mật khẩu hiện tại để tránh chặn tài khoản cũ trước khi người dùng đổi mật khẩu.
 
 Gateway trả HTTP 422 với `error.details` cho đăng ký sai policy trước khi gọi IAM. User kiểm tra bằng Bean Validation trước khi đổi mật khẩu. Keycloak áp dụng policy cho trang đặt lại mật khẩu qua email. Nhóm FE phụ trách hiển thị yêu cầu và lỗi chi tiết; thay đổi lần này không chỉnh source FE. Contract BE để FE tích hợp nằm trong `docs/dto-contracts/API_GATEWAY.md` và `docs/dto-contracts/USER_SERVICE.md`.

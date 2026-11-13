@@ -16,7 +16,6 @@ import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ShipmentStatus;
 import com.nexus.fulfillment.enums.WarehouseType;
 import com.nexus.fulfillment.event.OrderPaidEvent;
-import com.nexus.fulfillment.event.ShipmentDeliveredEvent;
 import com.nexus.fulfillment.repository.FulfillmentOutboxEventRepository;
 import com.nexus.fulfillment.repository.ShipmentRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
