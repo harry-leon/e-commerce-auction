@@ -35,6 +35,17 @@ import {
     Trash2,
     Clock,
 } from '../../components/UI'
+import {
+    reputationApi,
+    type ReputationSummary,
+    type RatingResponse,
+    type ReputationEligibility,
+} from '../../api/reputation'
+import {
+    TrustLevelBadge,
+    RatingStars,
+    RatingsList,
+} from '../../components/ReputationRating'
 import { PRODUCTS, AUCTIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
@@ -3701,7 +3712,7 @@ export function OrderHistoryPage() {
  * - Các tương tác hành động gọi API tương ứng trong `ordersApi` và cập nhật trực tiếp dữ liệu.
  */
 export function OrderDetailPage() {
-    const { lang, pageParams, showToast } = useApp()
+    const { lang, pageParams, showToast, user } = useApp()
     const [order, setOrder] = useState<Order | null>(null)
     const [loading, setLoading] = useState(true)
     const [cancelOpen, setCancelOpen] = useState(false)
@@ -3711,6 +3722,8 @@ export function OrderDetailPage() {
     const [reviewed, setReviewed] = useState(false)
     const [disputeOpen, setDisputeOpen] = useState(false)
     const [disputeReason, setDisputeReason] = useState('')
+    const [sellerReputation, setSellerReputation] = useState<ReputationSummary | null>(null)
+    const [reviewSubmitting, setReviewSubmitting] = useState(false)
 
     // Nạp chi tiết đơn hàng
     const loadDetail = async () => {
@@ -3721,6 +3734,17 @@ export function OrderDetailPage() {
             if (data) {
                 setOrder(data)
                 setReviewed(Boolean(data.reviewed))
+                if (data.sellerId) {
+                    reputationApi.getUserReputation(data.sellerId).then(setSellerReputation).catch(() => {})
+                }
+                reputationApi.getRatingsForOrder(data.id).then((ratings) => {
+                    const existing = ratings.find((r) => r.rateeId === data.sellerId || (user && r.raterId === user.id))
+                    if (existing) {
+                        setReviewed(true)
+                        setRating(existing.score)
+                        setComment(existing.comment || '')
+                    }
+                }).catch(() => {})
             }
         } finally {
             setLoading(false)
@@ -4075,8 +4099,8 @@ export function OrderDetailPage() {
                         </div>
                     )}
 
-                    {/* Đánh giá đơn hàng */}
-                    {order.status === 'DELIVERED' && !reviewed && (
+                    {/* Đánh giá đơn hàng (Sprint 3 - HA-S3-2) */}
+                    {(order.status === 'DELIVERED' || order.status === 'COMPLETED') && !reviewed && (
                         <div className="nexus-card p-5 border-primary/20 bg-primary-light/30">
                             <h3 className="font-bold mb-2">{tr(lang, 'leaveReview')}</h3>
                             <p className="text-sm text-gray-500 mb-3">
@@ -4084,13 +4108,45 @@ export function OrderDetailPage() {
                                     ? 'How was your purchase? Share your experience with others.'
                                     : 'Trải nghiệm mua sắm của bạn thế nào? Hãy chia sẻ đánh giá của bạn.'}
                             </p>
-                            <Button variant="primary" size="sm" onClick={() => setReviewOpen(true)}>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={() => {
+                                    if (user && user.id === order.sellerId) {
+                                        showToast({
+                                            type: 'error',
+                                            message:
+                                                lang === 'vi'
+                                                    ? 'Bạn không thể tự đánh giá chính mình'
+                                                    : 'You cannot rate yourself',
+                                        })
+                                        return
+                                    }
+                                    setReviewOpen(true)
+                                }}
+                            >
                                 {tr(lang, 'leaveReview')}
                             </Button>
                         </div>
                     )}
                     {reviewed && (
-                        <AlertBanner type="success" message={tr(lang, 'alreadyReviewed')} />
+                        <div className="nexus-card p-4 bg-green-50/70 border border-green-200 rounded-xl space-y-1">
+                            <div className="flex items-center gap-2 text-green-800 font-semibold text-sm">
+                                <CheckCircle size={16} className="text-green-600" />
+                                <span>{tr(lang, 'alreadyReviewed')}</span>
+                            </div>
+                            {rating > 0 && (
+                                <div className="flex items-center gap-2 pt-1 text-xs text-gray-700">
+                                    <RatingStars value={rating} readOnly size={14} />
+                                    <span className="font-bold">({rating}/5)</span>
+                                    {comment && (
+                                        <span className="italic text-gray-600 truncate max-w-md">
+                                            - "{comment}"
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
 
@@ -4153,9 +4209,29 @@ export function OrderDetailPage() {
                     </div>
 
                     <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-2">{tr(lang, 'seller')}</h3>
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-bold">{tr(lang, 'seller')}</h3>
+                            {sellerReputation && (
+                                <TrustLevelBadge
+                                    level={sellerReputation.trustLevel}
+                                    score={sellerReputation.score}
+                                    size="sm"
+                                />
+                            )}
+                        </div>
                         <p className="text-sm font-semibold text-gray-800">{order.sellerName}</p>
                         <p className="text-xs text-gray-400 mt-1">ID: {order.sellerId}</p>
+                        {sellerReputation && (
+                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 text-xs text-gray-600">
+                                <span className="font-bold text-amber-500">
+                                    ★ {sellerReputation.avgRating.toFixed(1)}
+                                </span>
+                                <span>
+                                    ({sellerReputation.totalRatings}{' '}
+                                    {lang === 'vi' ? 'đánh giá' : 'reviews'})
+                                </span>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -4174,25 +4250,75 @@ export function OrderDetailPage() {
                 danger
             />
 
-            {/* Modal đánh giá */}
+            {/* Modal đánh giá người bán (Sprint 3 - HA-S3-2) */}
             <Modal
                 open={reviewOpen}
                 onClose={() => setReviewOpen(false)}
                 title={tr(lang, 'leaveReview')}
                 footer={
                     <>
-                        <Button variant="outline" onClick={() => setReviewOpen(false)}>
+                        <Button variant="outline" onClick={() => setReviewOpen(false)} disabled={reviewSubmitting}>
                             {tr(lang, 'cancel')}
                         </Button>
                         <Button
                             variant="primary"
-                            onClick={() => {
-                                setReviewed(true)
-                                setReviewOpen(false)
-                                showToast({ type: 'success', message: tr(lang, 'reviewSubmitted') })
+                            disabled={reviewSubmitting}
+                            onClick={async () => {
+                                if (user && user.id === order.sellerId) {
+                                    showToast({
+                                        type: 'error',
+                                        message:
+                                            lang === 'vi'
+                                                ? 'Bạn không thể tự đánh giá chính mình'
+                                                : 'You cannot rate yourself',
+                                    })
+                                    return
+                                }
+                                if (rating < 1 || rating > 5) {
+                                    showToast({
+                                        type: 'error',
+                                        message:
+                                            lang === 'vi'
+                                                ? 'Vui lòng chọn từ 1 đến 5 sao'
+                                                : 'Please select 1 to 5 stars',
+                                    })
+                                    return
+                                }
+                                setReviewSubmitting(true)
+                                try {
+                                    await reputationApi.createRating({
+                                        orderId: order.id,
+                                        rateeId: order.sellerId,
+                                        score: rating,
+                                        comment: comment.trim(),
+                                    })
+                                    setReviewed(true)
+                                    setReviewOpen(false)
+                                    showToast({
+                                        type: 'success',
+                                        message: tr(lang, 'reviewSubmitted'),
+                                    })
+                                } catch (err: any) {
+                                    showToast({
+                                        type: 'error',
+                                        message:
+                                            err?.message ||
+                                            (lang === 'vi'
+                                                ? 'Không thể gửi đánh giá'
+                                                : 'Failed to submit review'),
+                                    })
+                                } finally {
+                                    setReviewSubmitting(false)
+                                }
                             }}
                         >
-                            {lang === 'en' ? 'Submit Review' : 'Gửi đánh giá'}
+                            {reviewSubmitting
+                                ? lang === 'en'
+                                    ? 'Submitting...'
+                                    : 'Đang gửi...'
+                                : lang === 'en'
+                                  ? 'Submit Review'
+                                  : 'Gửi đánh giá'}
                         </Button>
                     </>
                 }
@@ -4276,8 +4402,12 @@ export function SellerShopPage() {
     const { lang, pageParams, showToast } = useApp()
     const sellerId = (pageParams?.id as string) || 'seller-1'
     const sellerName = (pageParams?.sellerName as string) || 'TechZone Store'
-    const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions'>('all')
+    const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions' | 'reviews'>('all')
     const [isFollowing, setIsFollowing] = useState(false)
+    const [sellerReputation, setSellerReputation] = useState<ReputationSummary | null>(null)
+    const [sellerRatings, setSellerRatings] = useState<RatingResponse[]>([])
+    const [ratingsLoading, setRatingsLoading] = useState(false)
+    const [ratingsError, setRatingsError] = useState<string | null>(null)
 
     const sellerProducts = PRODUCTS.filter(
         (p) => p.sellerId === sellerId || p.sellerName === sellerName,
@@ -4286,6 +4416,33 @@ export function SellerShopPage() {
     const sellerAuctions = AUCTIONS.filter(
         (a) => a.sellerId === sellerId || a.sellerName === sellerName,
     )
+
+    useEffect(() => {
+        let active = true
+        reputationApi
+            .getUserReputation(sellerId)
+            .then((rep) => {
+                if (active) setSellerReputation(rep)
+            })
+            .catch(() => {})
+
+        setRatingsLoading(true)
+        reputationApi
+            .getRatingsForUser(sellerId, 0, 50)
+            .then((res) => {
+                if (active) setSellerRatings(res.content)
+            })
+            .catch((err) => {
+                if (active) setRatingsError(err?.message || null)
+            })
+            .finally(() => {
+                if (active) setRatingsLoading(false)
+            })
+
+        return () => {
+            active = false
+        }
+    }, [sellerId])
 
     return (
         <BuyerLayout>
@@ -4311,9 +4468,18 @@ export function SellerShopPage() {
                                 </span>
                             </div>
                             <div className="flex-1 min-w-0">
-                                <h2 className="font-bold text-base text-white truncate">
-                                    {sellerName}
-                                </h2>
+                                <div className="flex items-center gap-2">
+                                    <h2 className="font-bold text-base text-white truncate">
+                                        {sellerName}
+                                    </h2>
+                                    {sellerReputation && (
+                                        <TrustLevelBadge
+                                            level={sellerReputation.trustLevel}
+                                            score={sellerReputation.score}
+                                            size="sm"
+                                        />
+                                    )}
+                                </div>
                                 <p className="text-xs text-gray-300 mt-0.5">
                                     {lang === 'vi' ? 'Online 5 phút trước' : 'Active 5m ago'}
                                 </p>
@@ -4385,7 +4551,9 @@ export function SellerShopPage() {
                                     ★ {lang === 'vi' ? 'Đánh Giá:' : 'Rating:'}
                                 </span>
                                 <span className="font-bold text-yellow-400 text-sm">
-                                    4.9 (8.7k {lang === 'vi' ? 'Đánh Giá' : 'Reviews'})
+                                    {sellerReputation
+                                        ? `${sellerReputation.avgRating.toFixed(1)} (${sellerReputation.totalRatings} ${lang === 'vi' ? 'Đánh Giá' : 'Reviews'})`
+                                        : `4.9 (8.7k ${lang === 'vi' ? 'Đánh Giá' : 'Reviews'})`}
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -4435,6 +4603,11 @@ export function SellerShopPage() {
                                 label: lang === 'vi' ? 'ĐANG ĐẤU GIÁ' : 'LIVE AUCTIONS',
                                 count: sellerAuctions.length,
                             },
+                            {
+                                id: 'reviews' as const,
+                                label: lang === 'vi' ? 'ĐÁNH GIÁ SHOP' : 'SHOP REVIEWS',
+                                count: sellerRatings.length || (sellerReputation?.totalRatings ?? 0),
+                            },
                         ].map((tab) => (
                             <button
                                 key={tab.id}
@@ -4457,8 +4630,27 @@ export function SellerShopPage() {
                     </p>
                 </div>
 
-                {/* Product Cards Grid */}
-                {shopTab === 'auctions' ? (
+                {/* Content Area */}
+                {shopTab === 'reviews' ? (
+                    <div className="bg-white p-6 rounded-xl border border-border">
+                        <h3 className="font-bold text-base mb-4 text-gray-900">
+                            {lang === 'vi' ? 'Đánh giá từ khách hàng' : 'Customer Reviews'}
+                        </h3>
+                        <RatingsList
+                            ratings={sellerRatings}
+                            loading={ratingsLoading}
+                            error={ratingsError}
+                            onRetry={() => {
+                                setRatingsLoading(true)
+                                reputationApi
+                                    .getRatingsForUser(sellerId, 0, 50)
+                                    .then((res) => setSellerRatings(res.content))
+                                    .catch((err) => setRatingsError(err?.message || null))
+                                    .finally(() => setRatingsLoading(false))
+                            }}
+                        />
+                    </div>
+                ) : shopTab === 'auctions' ? (
                     sellerAuctions.length > 0 ? (
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
                             {sellerAuctions.map((auc) => (
@@ -4484,6 +4676,238 @@ export function SellerShopPage() {
                         ))}
                     </div>
                 )}
+            </div>
+        </BuyerLayout>
+    )
+}
+
+// ─── My Reputation & Ratings Page (Sprint 3 - HA-S3-2) ──────────────────────────
+export function MyReputationPage() {
+    const { lang, user, navigate } = useApp()
+    const [reputation, setReputation] = useState<ReputationSummary | null>(null)
+    const [eligibility, setEligibility] = useState<ReputationEligibility | null>(null)
+    const [ratings, setRatings] = useState<RatingResponse[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+
+    const loadData = useCallback(async () => {
+        if (!user) return
+        setLoading(true)
+        setError(null)
+        try {
+            const [rep, elig, rates] = await Promise.all([
+                reputationApi.getMyReputation(),
+                reputationApi.checkEligibility(user.id, 'BID'),
+                reputationApi.getRatingsForUser(user.id, 0, 50),
+            ])
+            setReputation(rep)
+            setEligibility(elig)
+            setRatings(rates.content)
+        } catch (err: any) {
+            setError(
+                err?.message ||
+                    (lang === 'vi'
+                        ? 'Không thể tải thông tin uy tín'
+                        : 'Failed to load reputation profile'),
+            )
+        } finally {
+            setLoading(false)
+        }
+    }, [user, lang])
+
+    useEffect(() => {
+        loadData()
+    }, [loadData])
+
+    if (!user) {
+        return (
+            <BuyerLayout>
+                <div className="py-20 text-center">
+                    <p className="text-gray-500 mb-4">
+                        {lang === 'vi'
+                            ? 'Vui lòng đăng nhập để xem điểm uy tín.'
+                            : 'Please sign in to view reputation.'}
+                    </p>
+                    <Button variant="primary" onClick={() => navigate('login')}>
+                        {lang === 'vi' ? 'Đăng nhập' : 'Sign in'}
+                    </Button>
+                </div>
+            </BuyerLayout>
+        )
+    }
+
+    return (
+        <BuyerLayout>
+            <div className="max-w-4xl mx-auto space-y-6">
+                <Breadcrumb
+                    items={[
+                        { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
+                        {
+                            label:
+                                lang === 'vi'
+                                    ? 'Hồ sơ uy tín & Đánh giá'
+                                    : 'Reputation & Ratings',
+                        },
+                    ]}
+                />
+
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900">
+                            {lang === 'vi' ? 'Điểm uy tín & Đánh giá' : 'Reputation & Ratings'}
+                        </h1>
+                        <p className="text-sm text-gray-500 mt-1">
+                            {lang === 'vi'
+                                ? 'Hệ thống tính điểm uy tín và phân cấp độ dựa trên lịch sử giao dịch và đánh giá từ cộng đồng.'
+                                : 'Trust level and reputation score calculated based on transaction history and community feedback.'}
+                        </p>
+                    </div>
+                </div>
+
+                {loading ? (
+                    <div className="py-16 text-center text-gray-500" role="status">
+                        <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        <p className="text-sm">
+                            {lang === 'vi'
+                                ? 'Đang tải hồ sơ uy tín...'
+                                : 'Loading reputation profile...'}
+                        </p>
+                    </div>
+                ) : error ? (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex justify-between items-center">
+                        <span>{error}</span>
+                        <Button size="sm" variant="outline" onClick={loadData}>
+                            {lang === 'vi' ? 'Thử lại' : 'Retry'}
+                        </Button>
+                    </div>
+                ) : reputation ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                            {/* Card điểm uy tín & Trust Level */}
+                            <div className="nexus-card p-6 border border-border">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                    {lang === 'vi' ? 'Cấp độ uy tín' : 'Trust Level'}
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <TrustLevelBadge level={reputation.trustLevel} size="lg" />
+                                </div>
+                                <div className="mt-4 pt-3 border-t border-gray-100 flex items-baseline justify-between">
+                                    <span className="text-xs text-gray-500">
+                                        {lang === 'vi' ? 'Điểm số:' : 'Score:'}
+                                    </span>
+                                    <span className="text-2xl font-black text-gray-900">
+                                        {reputation.score}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Card đánh giá cộng đồng */}
+                            <div className="nexus-card p-6 border border-border">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                    {lang === 'vi' ? 'Đánh giá trung bình' : 'Average Rating'}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-3xl font-black text-amber-500">
+                                        ★{' '}
+                                        {reputation.avgRating
+                                            ? reputation.avgRating.toFixed(1)
+                                            : '5.0'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    {lang === 'vi'
+                                        ? `Dựa trên ${reputation.totalRatings || ratings.length} lượt đánh giá hợp lệ`
+                                        : `Based on ${reputation.totalRatings || ratings.length} verified ratings`}
+                                </p>
+                            </div>
+
+                            {/* Card điều kiện đấu giá */}
+                            <div className="nexus-card p-6 border border-border">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                    {lang === 'vi' ? 'Điều kiện đấu giá' : 'Auction Eligibility'}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <span
+                                        className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${eligibility?.eligible ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
+                                    >
+                                        {eligibility?.eligible
+                                            ? lang === 'vi'
+                                                ? '✓ Đủ điều kiện'
+                                                : '✓ Eligible'
+                                            : lang === 'vi'
+                                              ? '✗ Chưa đủ điều kiện'
+                                              : '✗ Ineligible'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    {lang === 'vi'
+                                        ? `Yêu cầu tối thiểu: ${eligibility?.minRequiredScore ?? 40} điểm`
+                                        : `Minimum required: ${eligibility?.minRequiredScore ?? 40} pts`}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Thống kê giao dịch */}
+                        <div className="nexus-card p-6 border border-border">
+                            <h3 className="font-bold text-base mb-4 text-gray-900">
+                                {lang === 'vi'
+                                    ? 'Thống kê hoạt động giao dịch'
+                                    : 'Transaction Statistics'}
+                            </h3>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                <div className="p-4 bg-gray-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-gray-900">
+                                        {reputation.totalTx}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {lang === 'vi' ? 'Tổng giao dịch' : 'Total Transactions'}
+                                    </p>
+                                </div>
+                                <div className="p-4 bg-emerald-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-emerald-700">
+                                        {reputation.successTx}
+                                    </p>
+                                    <p className="text-xs text-emerald-600 mt-1">
+                                        {lang === 'vi' ? 'Thành công' : 'Successful'}
+                                    </p>
+                                </div>
+                                <div className="p-4 bg-red-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-red-700">
+                                        {reputation.failedTx}
+                                    </p>
+                                    <p className="text-xs text-red-600 mt-1">
+                                        {lang === 'vi' ? 'Thất bại/Bỏ cọc' : 'Failed/Defaults'}
+                                    </p>
+                                </div>
+                                <div className="p-4 bg-blue-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-blue-700">
+                                        {reputation.auctionWon}
+                                    </p>
+                                    <p className="text-xs text-blue-600 mt-1">
+                                        {lang === 'vi' ? 'Đấu giá thắng' : 'Auctions Won'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Lịch sử đánh giá nhận được */}
+                        <div className="nexus-card p-6 border border-border">
+                            <h3 className="font-bold text-base mb-4 text-gray-900">
+                                {lang === 'vi'
+                                    ? 'Lịch sử đánh giá từ cộng đồng'
+                                    : 'Received Community Ratings'}
+                            </h3>
+                            <RatingsList
+                                ratings={ratings}
+                                emptyMessage={
+                                    lang === 'vi'
+                                        ? 'Bạn chưa nhận được đánh giá nào.'
+                                        : 'You have not received any ratings yet.'
+                                }
+                            />
+                        </div>
+                    </>
+                ) : null}
             </div>
         </BuyerLayout>
     )
