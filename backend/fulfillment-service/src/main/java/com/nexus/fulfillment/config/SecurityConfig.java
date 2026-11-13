@@ -35,6 +35,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
+                .requestMatchers("/api/v1/shipments/callbacks/**").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/inventory/sku/**").permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/inventory/check", "/api/v1/inventory/stocks/batch").permitAll()
                 // API thay đổi giữ kho chỉ nhận service token đúng azp + privilege; JWT buyer/seller không đủ quyền.

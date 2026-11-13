@@ -57,6 +57,12 @@ class ShippingControllerTest {
     @MockitoBean
     private ShippingService shippingService;
 
+    @MockitoBean
+    private com.nexus.fulfillment.shipping.adapter.resilience.CarrierResilienceManager resilienceManager;
+
+    @MockitoBean
+    private com.nexus.fulfillment.service.WarehouseFulfillmentService warehouseFulfillmentService;
+
     @Test
     @DisplayName("POST /api/v1/shipping/quotes: yêu cầu SHIPPING.QUOTE, trả 401 khi thiếu token và 200 khi hợp lệ")
     void quoteShipping_securityAndEnvelope() throws Exception {
@@ -152,5 +158,96 @@ class ShippingControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].code").value("GHN"))
                 .andExpect(jsonPath("$.data[0].isDefault").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/shipments/callbacks/{carrierCode}: tiếp nhận webhook công khai và trả về vận đơn")
+    void callback_publicEndpointSuccess() throws Exception {
+        UUID shipmentId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+        com.nexus.fulfillment.dto.request.CarrierWebhookRequest request =
+                new com.nexus.fulfillment.dto.request.CarrierWebhookRequest(
+                        "evt-12345", "GHN-12345678", "delivering", "GHN", "Ha Noi", "Dang trung chuyen", Instant.now()
+                );
+
+        ShipmentResponse mockResponse = new ShipmentResponse(
+                shipmentId, orderId, warehouseId, "WH_001", "GHN", "STANDARD",
+                new BigDecimal("22.00"), false, "GHN-12345678", ShipmentStatus.IN_TRANSIT,
+                3, Instant.now().plusSeconds(86400), "Nguyen Van A", "0901234567",
+                "123 Le Loi", Instant.now(), Instant.now()
+        );
+
+        when(shippingService.processCarrierWebhook(eq("GHN"), any())).thenReturn(mockResponse);
+
+        mockMvc.perform(post("/api/v1/shipments/callbacks/GHN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("IN_TRANSIT"))
+                .andExpect(jsonPath("$.data.trackingNumber").value("GHN-12345678"));
+    }
+
+    @Test
+    @DisplayName("Pick, Pack, Ship APIs: yêu cầu quyền FULFILLMENT tương ứng và cập nhật trạng thái kho")
+    void pickPackShip_success() throws Exception {
+        UUID shipmentId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID warehouseId = UUID.randomUUID();
+
+        ShipmentResponse pickingResponse = new ShipmentResponse(
+                shipmentId, orderId, warehouseId, "WH_001", "GHN", "STANDARD",
+                new BigDecimal("22.00"), false, "GHN-12345678", ShipmentStatus.PICKING,
+                3, null, "Nguyen Van A", "0901234567", "123 Le Loi", Instant.now(), Instant.now()
+        );
+        ShipmentResponse packedResponse = new ShipmentResponse(
+                shipmentId, orderId, warehouseId, "WH_001", "GHN", "STANDARD",
+                new BigDecimal("22.00"), false, "GHN-12345678", ShipmentStatus.PACKED,
+                3, null, "Nguyen Van A", "0901234567", "123 Le Loi", Instant.now(), Instant.now()
+        );
+        ShipmentResponse shippedResponse = new ShipmentResponse(
+                shipmentId, orderId, warehouseId, "WH_001", "GHN", "STANDARD",
+                new BigDecimal("22.00"), false, "GHN-12345678", ShipmentStatus.SHIPPED,
+                3, null, "Nguyen Van A", "0901234567", "123 Le Loi", Instant.now(), Instant.now()
+        );
+
+        when(warehouseFulfillmentService.pick(shipmentId)).thenReturn(pickingResponse);
+        when(warehouseFulfillmentService.pack(shipmentId)).thenReturn(packedResponse);
+        when(warehouseFulfillmentService.ship(shipmentId)).thenReturn(shippedResponse);
+
+        mockMvc.perform(post("/api/v1/shipments/{id}/pick", shipmentId)
+                        .with(jwt().authorities(new SimpleGrantedAuthority("FULFILLMENT.PICK"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PICKING"));
+
+        mockMvc.perform(post("/api/v1/shipments/{id}/pack", shipmentId)
+                        .with(jwt().authorities(new SimpleGrantedAuthority("FULFILLMENT.PACK"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PACKED"));
+
+        mockMvc.perform(post("/api/v1/shipments/{id}/ship", shipmentId)
+                        .with(jwt().authorities(new SimpleGrantedAuthority("FULFILLMENT.SHIP"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SHIPPED"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/shipping/resilience: trả về thông tin trạng thái circuit breaker của các carrier")
+    void resilience_status() throws Exception {
+        when(resilienceManager.getResilienceStatuses()).thenReturn(List.of(
+                new com.nexus.fulfillment.dto.response.CarrierResilienceStatus(
+                        "GHN",
+                        com.nexus.fulfillment.shipping.adapter.resilience.CarrierCircuitBreakerState.CLOSED,
+                        0, 10, 10, 3, 3, 3000L, Instant.now()
+                )
+        ));
+
+        mockMvc.perform(get("/api/v1/shipping/resilience")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("SHIPPING.RESILIENCE"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].carrierCode").value("GHN"))
+                .andExpect(jsonPath("$.data[0].state").value("CLOSED"))
+                .andExpect(jsonPath("$.data[0].timeoutMs").value(3000));
     }
 }

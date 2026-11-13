@@ -2,12 +2,15 @@ package com.nexus.fulfillment.controller;
 
 import com.nexus.common.response.ApiResponse;
 import com.nexus.fulfillment.dto.request.CreateWarehouseRequest;
+import com.nexus.fulfillment.dto.request.StockAllocationRequest;
 import com.nexus.fulfillment.dto.request.UpdateWarehouseRequest;
 import com.nexus.fulfillment.dto.response.InventoryStockResponse;
+import com.nexus.fulfillment.dto.response.StockAllocationResponse;
 import com.nexus.fulfillment.dto.response.WarehouseResponse;
 import com.nexus.fulfillment.enums.WarehouseType;
 import com.nexus.fulfillment.service.InventoryService;
 import com.nexus.fulfillment.service.WarehouseService;
+import com.nexus.fulfillment.service.WarehouseStockAllocationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -29,23 +32,29 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST API quản lý danh mục Kho hàng (Warehouse) và tra cứu tồn kho theo từng kho.
+ * REST API quản lý danh mục Kho hàng (Warehouse), tra cứu tồn kho theo từng kho và phân bổ kho cho đơn hàng (SRS §3.6.1, KH-S3-2).
  *
  * Phân quyền:
  * - Đọc danh sách/chi tiết kho và tồn theo kho: ADMIN, SUPPORT, SELLER (Seller chỉ thấy tồn kho của SKU mình sở hữu).
  * - Tạo mới hoặc cập nhật thông tin kho: chỉ ADMIN hoặc INVENTORY.MANAGE.
+ * - Phân bổ tồn kho theo quy tắc DEFAULT_WAREHOUSE_ID và MAX_WAREHOUSES_PER_ORDER = 2: authenticated users hoặc internal service.
  */
 @RestController
 @RequestMapping("/api/v1/warehouses")
-@Tag(name = "Warehouse Management", description = "Quản lý danh mục kho hàng và tồn kho theo kho")
+@Tag(name = "Warehouse Management", description = "Quản lý danh mục kho hàng, tồn kho theo kho và thuật toán phân bổ kho")
 public class WarehouseController {
 
     private final WarehouseService warehouseService;
     private final InventoryService inventoryService;
+    private final WarehouseStockAllocationService allocationService;
 
-    public WarehouseController(WarehouseService warehouseService, InventoryService inventoryService) {
+    public WarehouseController(
+            WarehouseService warehouseService,
+            InventoryService inventoryService,
+            WarehouseStockAllocationService allocationService) {
         this.warehouseService = warehouseService;
         this.inventoryService = inventoryService;
+        this.allocationService = allocationService;
     }
 
     @GetMapping
@@ -87,6 +96,15 @@ public class WarehouseController {
     ) {
         Page<InventoryStockResponse> page = inventoryService.listInventory(skuId, skuCode, warehouseId, sellerId, pageable);
         return ApiResponse.ok(page);
+    }
+
+    @PostMapping("/allocate")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(
+            summary = "Phân bổ kho hàng cho đơn hàng (Stock Allocation)",
+            description = "Tính toán phương án phân bổ tồn kho tối ưu ưu tiên DEFAULT_WAREHOUSE_ID (WH_001) và tối đa MAX_WAREHOUSES_PER_ORDER = 2 kho")
+    public ApiResponse<StockAllocationResponse> allocateStock(@Valid @RequestBody StockAllocationRequest request) {
+        return ApiResponse.ok(allocationService.computeAllocation(request));
     }
 
     @PostMapping

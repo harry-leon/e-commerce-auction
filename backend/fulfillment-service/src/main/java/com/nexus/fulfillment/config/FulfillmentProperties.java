@@ -15,16 +15,17 @@ import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * Lớp cấu hình thuộc tính nghiệp vụ dành riêng cho fulfillment-service.
+ * Lớp cấu hình thuộc tính nghiệp vụ dành riêng cho fulfillment-service (SRS §2.6, §3.6.1, §3.6.2, KH-S3-2).
  *
  * Chức năng:
  * - Ánh xạ type-safe các tham số cấu hình từ prefix 'app.fulfillment' nạp từ Spring Cloud Config Server.
  * - Hỗ trợ cập nhật tham số tại runtime thông qua @RefreshScope và actuator refresh endpoint.
- * - Quản lý các cấu hình liên quan đến vòng đời giữ hàng đấu giá (SRS §2.6, §3.6.1).
+ * - Quản lý các cấu hình liên quan đến đa kho, số lượng kho tối đa cho đơn hàng (MAX_WAREHOUSES_PER_ORDER = 2),
+ *   timeout API vận chuyển (SHIPPING_API_TIMEOUT_MS = 3000), giới hạn retry (SHIPPING_RETRY_LIMIT = 3),
+ *   và chu kỳ polling cập nhật hành trình vận đơn.
  *
  * Quy tắc và lý do:
- * - Quản lý tập trung các thông số giao vận và giữ kho (bán vượt, timeout giữ kho, anti-sniping extension).
- * - Sử dụng getter/setter thuần theo chuẩn thiết kế không Lombok của fulfillment-service.
+ * - Dùng getter/setter thuần theo chuẩn thiết kế không Lombok của fulfillment-service.
  * - Có sẵn giá trị mặc định để ứng dụng và các unit test vẫn chạy độc lập an toàn khi Config Server chưa bật.
  * - Dùng Bean Validation (@Validated, @NotNull, @Min) ngăn chặn cấu hình sai giá trị âm hoặc không hợp lệ.
  */
@@ -39,6 +40,13 @@ public class FulfillmentProperties {
      */
     @NotNull
     private String defaultWarehouseCode = "WH_001";
+
+    /**
+     * Số lượng kho hàng tối đa được phép phân bổ cho một đơn hàng (SRS §2.6: MAX_WAREHOUSES_PER_ORDER = 2).
+     */
+    @NotNull
+    @Min(value = 1, message = "Số lượng kho tối đa cho một đơn hàng tối thiểu là 1")
+    private Integer maxWarehousesPerOrder = 2;
 
     /**
      * Thời gian hết hạn lệnh giữ hàng tồn kho tính theo phút (SRS §2.6: INVENTORY_RESERVATION_TIMEOUT_MINUTES = 30).
@@ -98,6 +106,14 @@ public class FulfillmentProperties {
 
     public void setDefaultWarehouseCode(String defaultWarehouseCode) {
         this.defaultWarehouseCode = defaultWarehouseCode;
+    }
+
+    public Integer getMaxWarehousesPerOrder() {
+        return maxWarehousesPerOrder;
+    }
+
+    public void setMaxWarehousesPerOrder(Integer maxWarehousesPerOrder) {
+        this.maxWarehousesPerOrder = maxWarehousesPerOrder;
     }
 
     public Integer getReservationTimeoutMinutes() {
@@ -178,6 +194,27 @@ public class FulfillmentProperties {
         private Integer autoConfirmDays = 7;
 
         /**
+         * Thời gian timeout tối đa cho các lệnh gọi API hãng vận chuyển tính theo mili-giây (SRS §2.6: SHIPPING_API_TIMEOUT_MS = 3000).
+         */
+        @NotNull
+        @Min(value = 100, message = "Timeout gọi API hãng vận chuyển tối thiểu là 100ms")
+        private Integer apiTimeoutMs = 3000;
+
+        /**
+         * Số lần thử lại tối đa khi gọi API hãng vận chuyển gặp lỗi mạng/timeout (SRS §2.6: SHIPPING_RETRY_LIMIT = 3).
+         */
+        @NotNull
+        @Min(value = 1, message = "Giới hạn retry gọi API vận chuyển tối thiểu là 1")
+        private Integer retryLimit = 3;
+
+        /**
+         * Chu kỳ chạy job định kỳ polling trạng thái các vận đơn đang hoạt động tính theo mili-giây (mặc định 60s).
+         */
+        @NotNull
+        @Min(value = 1000, message = "Chu kỳ polling vận đơn tối thiểu là 1000ms")
+        private Long pollingIntervalMs = 60000L;
+
+        /**
          * Danh sách hãng vận chuyển được hệ thống hỗ trợ (SRS §2.6: SUPPORTED_CARRIERS = GHN, GHTK).
          */
         @NotEmpty
@@ -234,6 +271,30 @@ public class FulfillmentProperties {
             this.autoConfirmDays = autoConfirmDays;
         }
 
+        public Integer getApiTimeoutMs() {
+            return apiTimeoutMs;
+        }
+
+        public void setApiTimeoutMs(Integer apiTimeoutMs) {
+            this.apiTimeoutMs = apiTimeoutMs;
+        }
+
+        public Integer getRetryLimit() {
+            return retryLimit;
+        }
+
+        public void setRetryLimit(Integer retryLimit) {
+            this.retryLimit = retryLimit;
+        }
+
+        public Long getPollingIntervalMs() {
+            return pollingIntervalMs;
+        }
+
+        public void setPollingIntervalMs(Long pollingIntervalMs) {
+            this.pollingIntervalMs = pollingIntervalMs;
+        }
+
         public List<String> getSupportedCarriers() {
             return supportedCarriers;
         }
@@ -277,7 +338,7 @@ public class FulfillmentProperties {
 
     /**
      * Cấu hình endpoint, token xác thực và timeout cho từng adapter hãng vận chuyển.
-     * Khi token rỗng, adapter tự động dùng chế độ sandbox mô phỏng nội bộ để dev/test không phụ thuộc mạng ngoài.
+     * Mặc định connectTimeoutMs = 3000 và readTimeoutMs = 3000 (SRS §2.6: SHIPPING_API_TIMEOUT_MS = 3000).
      */
     public static class CarrierEndpoint {
         @NotBlank
@@ -286,10 +347,10 @@ public class FulfillmentProperties {
         private String shopId = "";
 
         @Min(value = 100, message = "Timeout kết nối tối thiểu 100ms")
-        private int connectTimeoutMs = 5000;
+        private int connectTimeoutMs = 3000;
 
         @Min(value = 100, message = "Timeout đọc tối thiểu 100ms")
-        private int readTimeoutMs = 5000;
+        private int readTimeoutMs = 3000;
 
         public CarrierEndpoint() {
         }
@@ -298,6 +359,8 @@ public class FulfillmentProperties {
             this.baseUrl = baseUrl;
             this.token = token;
             this.shopId = shopId;
+            this.connectTimeoutMs = 3000;
+            this.readTimeoutMs = 3000;
         }
 
         public String getBaseUrl() {

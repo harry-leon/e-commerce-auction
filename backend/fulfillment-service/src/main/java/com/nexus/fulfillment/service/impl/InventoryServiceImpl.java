@@ -453,6 +453,24 @@ public class InventoryServiceImpl implements InventoryService {
     public ReservationResponse reserveStock(CreateReservationRequest request) {
         List<ResolvedReservationItem> resolvedItems = resolveAndSortReservationItems(request.items());
 
+        // Kiểm tra giới hạn số lượng kho hàng phân bổ cho một đơn hàng (SRS §2.6: MAX_WAREHOUSES_PER_ORDER = 2).
+        if (request.refType() == ReservationRefType.ORDER) {
+            long distinctWarehouses = resolvedItems.stream()
+                    .map(item -> item.warehouse().getId())
+                    .distinct()
+                    .count();
+            int maxWarehouses = (properties.getMaxWarehousesPerOrder() != null && properties.getMaxWarehousesPerOrder() > 0)
+                    ? properties.getMaxWarehousesPerOrder()
+                    : 2;
+            if (distinctWarehouses > maxWarehouses) {
+                throw new BusinessException(
+                        ErrorCode.INVENTORY_INSUFFICIENT,
+                        "Số lượng kho hàng phân bổ cho đơn hàng (" + distinctWarehouses + ") vượt quá giới hạn tối đa cho phép ("
+                                + maxWarehouses + " kho theo MAX_WAREHOUSES_PER_ORDER = 2)"
+                );
+            }
+        }
+
         // Kiểm tra và khóa theo (refType, refId) cho cả ORDER và AUCTION để chống giữ kho lặp khi retry HTTP.
         List<InventoryReservation> existing = reservationRepository.findByRefTypeAndRefIdForUpdate(
                 request.refType(),

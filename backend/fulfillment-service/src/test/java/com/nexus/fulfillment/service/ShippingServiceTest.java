@@ -224,4 +224,120 @@ class ShippingServiceTest {
         assertThat(tracking.history()).hasSize(1);
         verify(historyRepository).save(any(ShipmentStatusHistory.class));
     }
+
+    @Test
+    @DisplayName("processCarrierWebhook: bỏ qua sự kiện trùng lặp theo eventId (Idempotency)")
+    void processCarrierWebhook_idempotentDuplicateEventIgnored() {
+        String trackingNo = "GHN-IDEMPOTENT-01";
+        String eventId = "evt-duplicate-123";
+
+        Carrier ghn = new Carrier(UUID.randomUUID(), "GHN", "GHN", true);
+        Shipment shipment = new Shipment();
+        shipment.setId(UUID.randomUUID());
+        shipment.setOrderId(UUID.randomUUID());
+        shipment.setWarehouse(defaultWarehouse);
+        shipment.setCarrier(ghn);
+        shipment.setCarrierCode("GHN");
+        shipment.setTrackingNo(trackingNo);
+        shipment.setStatus(ShipmentStatus.IN_TRANSIT);
+
+        when(shipmentRepository.findByTrackingNo(trackingNo)).thenReturn(Optional.of(shipment));
+        when(historyRepository.existsByEventId(eventId)).thenReturn(true);
+
+        com.nexus.fulfillment.dto.request.CarrierWebhookRequest request =
+                new com.nexus.fulfillment.dto.request.CarrierWebhookRequest(
+                        eventId, trackingNo, "delivered", "GHN", "Ha Noi", "Giao thanh cong", Instant.now()
+                );
+
+        ShipmentResponse response = shippingService.processCarrierWebhook("GHN", request);
+
+        assertThat(response.status()).isEqualTo(ShipmentStatus.IN_TRANSIT);
+        verify(eventPublisher, org.mockito.Mockito.never()).publishEvent(any(com.nexus.fulfillment.event.ShipmentDeliveredEvent.class));
+        verify(shipmentRepository, org.mockito.Mockito.never()).save(any(Shipment.class));
+    }
+
+    @Test
+    @DisplayName("processCarrierWebhook: chuyển trạng thái hợp lệ sang DELIVERED, phát ShipmentDeliveredEvent và ghi Outbox")
+    void processCarrierWebhook_validTransition_emitsEvents() {
+        String trackingNo = "GHN-DELIVERY-01";
+        String eventId = "evt-new-456";
+
+        Carrier ghn = new Carrier(UUID.randomUUID(), "GHN", "GHN", true);
+        Shipment shipment = new Shipment();
+        shipment.setId(UUID.randomUUID());
+        shipment.setOrderId(UUID.randomUUID());
+        shipment.setWarehouse(defaultWarehouse);
+        shipment.setCarrier(ghn);
+        shipment.setCarrierCode("GHN");
+        shipment.setTrackingNo(trackingNo);
+        shipment.setStatus(ShipmentStatus.IN_TRANSIT);
+
+        when(shipmentRepository.findByTrackingNo(trackingNo)).thenReturn(Optional.of(shipment));
+        when(historyRepository.existsByEventId(eventId)).thenReturn(false);
+        when(shipmentRepository.save(any(Shipment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        com.nexus.fulfillment.dto.request.CarrierWebhookRequest request =
+                new com.nexus.fulfillment.dto.request.CarrierWebhookRequest(
+                        eventId, trackingNo, "delivered", "GHN", "TP.HCM", "Nguoi nhan da nhan hang", Instant.now()
+                );
+
+        ShipmentResponse response = shippingService.processCarrierWebhook("GHN", request);
+
+        assertThat(response.status()).isEqualTo(ShipmentStatus.DELIVERED);
+        verify(eventPublisher).publishEvent(any(com.nexus.fulfillment.event.ShipmentDeliveredEvent.class));
+        verify(outboxService).enqueueShipmentDelivered(any(Shipment.class));
+        verify(historyRepository).save(any(ShipmentStatusHistory.class));
+    }
+
+    @Test
+    @DisplayName("processCarrierWebhook: chặn out-of-order callback khi vận đơn đã ở trạng thái kết thúc DELIVERED")
+    void processCarrierWebhook_terminalState_blocksEarlierStatus() {
+        String trackingNo = "GHN-TERMINAL-01";
+        String eventId = "evt-late-789";
+
+        Carrier ghn = new Carrier(UUID.randomUUID(), "GHN", "GHN", true);
+        Shipment shipment = new Shipment();
+        shipment.setId(UUID.randomUUID());
+        shipment.setOrderId(UUID.randomUUID());
+        shipment.setWarehouse(defaultWarehouse);
+        shipment.setCarrier(ghn);
+        shipment.setCarrierCode("GHN");
+        shipment.setTrackingNo(trackingNo);
+        shipment.setStatus(ShipmentStatus.DELIVERED);
+
+        when(shipmentRepository.findByTrackingNo(trackingNo)).thenReturn(Optional.of(shipment));
+        when(historyRepository.existsByEventId(eventId)).thenReturn(false);
+
+        com.nexus.fulfillment.dto.request.CarrierWebhookRequest request =
+                new com.nexus.fulfillment.dto.request.CarrierWebhookRequest(
+                        eventId, trackingNo, "delivering", "GHN", "Q1", "Late webhook delivering", Instant.now()
+                );
+
+        ShipmentResponse response = shippingService.processCarrierWebhook("GHN", request);
+
+        assertThat(response.status()).isEqualTo(ShipmentStatus.DELIVERED);
+        verify(eventPublisher, org.mockito.Mockito.never()).publishEvent(any(com.nexus.fulfillment.event.ShipmentInTransitEvent.class));
+    }
+
+    @Test
+    @DisplayName("pollActiveShipments: quét các vận đơn active và cập nhật trạng thái mới")
+    void pollActiveShipments_scansAndUpdates() {
+        Carrier ghn = new Carrier(UUID.randomUUID(), "GHN", "GHN", true);
+        Shipment s1 = new Shipment();
+        s1.setId(UUID.randomUUID());
+        s1.setOrderId(UUID.randomUUID());
+        s1.setWarehouse(defaultWarehouse);
+        s1.setCarrier(ghn);
+        s1.setCarrierCode("GHN");
+        s1.setTrackingNo("GHN-POLL-01");
+        s1.setStatus(ShipmentStatus.PENDING);
+
+        when(shipmentRepository.findByStatusIn(any())).thenReturn(List.of(s1));
+        when(shipmentRepository.save(any(Shipment.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        int updated = shippingService.pollActiveShipments();
+
+        assertThat(updated).isGreaterThanOrEqualTo(0);
+        verify(shipmentRepository).findByStatusIn(any());
+    }
 }

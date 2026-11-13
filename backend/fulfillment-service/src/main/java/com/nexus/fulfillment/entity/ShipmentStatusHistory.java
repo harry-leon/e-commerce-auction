@@ -16,8 +16,16 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Lịch sử chuyển trạng thái của vận đơn theo phản hồi từ hãng vận chuyển (SRS §3.6.2).
- * Ghi lại cặp trạng thái gốc từ carrier (carrierStatus) và trạng thái chuẩn hóa nội bộ (internalStatus).
+ * Lịch sử chuyển trạng thái của vận đơn theo phản hồi từ hãng vận chuyển hoặc thao tác kho (SRS §3.6.2, KH-S3-2).
+ *
+ * Chức năng:
+ * - Ghi lại cặp trạng thái gốc từ carrier (carrierStatus) và trạng thái chuẩn hóa nội bộ (internalStatus).
+ * - Lưu trữ event_id (mã sự kiện/giao dịch từ carrier callback hoặc polling) phục vụ cơ chế xử lý idempotent.
+ * - Lưu trữ ghi chú/lý do chi tiết (notes) khi giao dịch thất bại, chuyển trạng thái hoặc lý do trả hàng.
+ *
+ * Quy tắc và lý do:
+ * - Cột event_id được đánh UNIQUE INDEX trong migration V8 để đảm bảo idempotent ở cấp cơ sở dữ liệu.
+ * - Thời gian occurredAt mặc định là thời điểm ghi nhận nếu carrier không cung cấp mốc thời gian cụ thể.
  */
 @Entity
 @Table(name = "shipment_status_history")
@@ -38,6 +46,12 @@ public class ShipmentStatusHistory {
     @Column(name = "internal_status", nullable = false, length = 30)
     private ShipmentStatus internalStatus;
 
+    @Column(name = "event_id", length = 128)
+    private String eventId;
+
+    @Column(name = "notes", length = 500)
+    private String notes;
+
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
 
@@ -49,10 +63,22 @@ public class ShipmentStatusHistory {
             String carrierStatus,
             ShipmentStatus internalStatus,
             Instant occurredAt) {
+        this(shipment, carrierStatus, internalStatus, null, null, occurredAt);
+    }
+
+    public ShipmentStatusHistory(
+            Shipment shipment,
+            String carrierStatus,
+            ShipmentStatus internalStatus,
+            String eventId,
+            String notes,
+            Instant occurredAt) {
         this.id = UUID.randomUUID();
         this.shipment = shipment;
         this.carrierStatus = carrierStatus;
         this.internalStatus = internalStatus;
+        this.eventId = eventId;
+        this.notes = notes;
         this.occurredAt = occurredAt != null ? occurredAt : Instant.now();
     }
 
@@ -96,6 +122,22 @@ public class ShipmentStatusHistory {
 
     public void setInternalStatus(ShipmentStatus internalStatus) {
         this.internalStatus = internalStatus;
+    }
+
+    public String getEventId() {
+        return eventId;
+    }
+
+    public void setEventId(String eventId) {
+        this.eventId = eventId;
+    }
+
+    public String getNotes() {
+        return notes;
+    }
+
+    public void setNotes(String notes) {
+        this.notes = notes;
     }
 
     public Instant getOccurredAt() {

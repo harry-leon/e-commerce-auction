@@ -49,6 +49,7 @@ app:
   # Cấu hình dự phòng cục bộ cho fulfillment-service khi chưa kết nối Config Server
   fulfillment:
     default-warehouse-code: ${DEFAULT_WAREHOUSE_ID:WH_001}
+    max-warehouses-per-order: ${MAX_WAREHOUSES_PER_ORDER:2}
     reservation-timeout-minutes: ${INVENTORY_RESERVATION_TIMEOUT_MINUTES:30}
     allow-oversell: ${ALLOW_OVERSELL:false}
     reservation-sweep-interval-ms: ${INVENTORY_RESERVATION_SWEEP_INTERVAL_MS:60000}
@@ -60,6 +61,9 @@ app:
       default-delivery-days: ${FULFILLMENT_DEFAULT_DELIVERY_DAYS:3}
       max-retry-attempts: ${FULFILLMENT_MAX_RETRY_ATTEMPTS:3}
       auto-confirm-days: ${FULFILLMENT_AUTO_CONFIRM_DAYS:7}
+      api-timeout-ms: ${SHIPPING_API_TIMEOUT_MS:3000}
+      retry-limit: ${SHIPPING_RETRY_LIMIT:3}
+      polling-interval-ms: ${SHIPPING_POLLING_INTERVAL_MS:60000}
       supported-carriers: ${SUPPORTED_CARRIERS:GHN,GHTK}
       default-carrier: ${DEFAULT_CARRIER:GHN}
       free-shipping-threshold: ${FREE_SHIPPING_THRESHOLD:100}
@@ -67,13 +71,13 @@ app:
         base-url: ${GHN_API_URL:https://dev-online-gateway.ghn.vn}
         token: ${GHN_API_TOKEN:}
         shop-id: ${GHN_SHOP_ID:}
-        connect-timeout-ms: ${GHN_CONNECT_TIMEOUT_MS:5000}
-        read-timeout-ms: ${GHN_READ_TIMEOUT_MS:5000}
+        connect-timeout-ms: ${GHN_CONNECT_TIMEOUT_MS:3000}
+        read-timeout-ms: ${GHN_READ_TIMEOUT_MS:3000}
       ghtk:
         base-url: ${GHTK_API_URL:https://services.giaohangtietkiem.vn}
         token: ${GHTK_API_TOKEN:}
-        connect-timeout-ms: ${GHTK_CONNECT_TIMEOUT_MS:5000}
-        read-timeout-ms: ${GHTK_READ_TIMEOUT_MS:5000}
+        connect-timeout-ms: ${GHTK_CONNECT_TIMEOUT_MS:3000}
+        read-timeout-ms: ${GHTK_READ_TIMEOUT_MS:3000}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.

@@ -102,6 +102,14 @@ public class CarrierAdapterRegistry {
         return adapter;
     }
 
+    /** Lấy adapter tùy chọn theo mã hãng, trả về rỗng nếu không tìm thấy (dùng khi fallback webhook). */
+    public java.util.Optional<ShippingCarrierAdapter> findAdapter(String carrierCode) {
+        if (carrierCode == null || carrierCode.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.ofNullable(adaptersByCode.get(carrierCode.trim().toUpperCase(Locale.ROOT)));
+    }
+
     /** Trả về danh sách adapter thuộc SUPPORTED_CARRIERS theo đúng thứ tự cấu hình. */
     public List<ShippingCarrierAdapter> getSupportedAdapters() {
         List<ShippingCarrierAdapter> result = new ArrayList<>();
