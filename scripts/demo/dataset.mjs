@@ -18,7 +18,7 @@ export const VERSIONS = {
     // V7/V8 chỉ bổ sung carrier/tracking và mở rộng trạng thái; fixture cũ dùng được với default mới.
     fulfillment: 8,
     // V13–V15 thêm refund/attempt/audit, không seed vì bộ demo không chứng minh tiền thật đã được hoàn.
-    commerce: 16,
+    commerce: 17,
     auction: 3,
     reputation: 3,
     notification: 5,

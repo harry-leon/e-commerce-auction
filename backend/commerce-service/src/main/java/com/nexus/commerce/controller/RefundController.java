@@ -33,6 +33,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class RefundController {
     private final RefundRequestService requests;
     private final RefundResolutionService resolutions;
+    private final com.nexus.commerce.service.RefundNotificationReplayService notificationReplays;
+
+    /** Admin yêu cầu giao lại dead letter; actor lấy từ JWT, chỉ trả auditId và không gửi HTTP trong request. */
+    @PostMapping("/deliveries/{id}/retry")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Đưa thông báo refund dead letter về hàng đợi với audit và idempotency")
+    public ApiResponse<ReplayResponse> replayNotification(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader("Idempotency-Key") UUID key, @Valid @RequestBody ReplayRequest body) {
+        return ApiResponse.ok(new ReplayResponse(notificationReplays.replay(id, actor(jwt), key, body.reason())));
+    }
+
+    /** Lý do phục vụ audit nội bộ, không chứa secret hoặc token. */
+    public record ReplayRequest(@NotBlank @Size(max = 500) String reason) { }
+    /** AuditId ổn định khi retry cùng key; không khẳng định Notification đã nhận sự kiện. */
+    public record ReplayResponse(UUID auditId) { }
 
     /** Admin ghi kết quả đối soát có bằng chứng, không gọi provider; key chống lặp quyết định sau timeout. */
     @PostMapping("/{id}/manual-resolution")

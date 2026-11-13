@@ -55,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -66,6 +66,65 @@ import org.springframework.transaction.annotation.Transactional;
 class PaymentPostgresTest {
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
+    @Autowired private RefundNotificationReplayService notificationReplays;
+
+    /** Replay chỉ reset dead letter; retry cùng key giữ audit cũ kể cả worker đã giao, khác nội dung bị 409. */
+    @Test
+    void notificationReplayIsAuditedAndIdempotent() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        String payload = jdbc.queryForObject("SELECT payload::text FROM refund_notification_outbox WHERE id=?", String.class, event);
+        UUID actor = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> notificationReplays.replay(event, actor, key, "Đã sửa OAuth"));
+        jdbc.update("UPDATE refund_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", event);
+        UUID audit = notificationReplays.replay(event, actor, key, "Đã sửa OAuth");
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals(0, jdbc.queryForObject("SELECT attempts FROM refund_notification_outbox WHERE id=?", Integer.class, event));
+        assertEquals(payload, jdbc.queryForObject("SELECT payload::text FROM refund_notification_outbox WHERE id=?", String.class, event));
+        jdbc.update("UPDATE refund_notification_outbox SET status='DELIVERED' WHERE id=?", event);
+        assertEquals(audit, notificationReplays.replay(event, actor, key, "Đã sửa OAuth"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> notificationReplays.replay(event, actor, key, "Khác nội dung"));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_replays WHERE event_id=?", Integer.class, event));
+        assertEquals("REQUESTED", refundState(refund));
+    }
+
+    /** Rollback transaction quản trị phải giữ dead letter và không để lại audit nửa chừng. */
+    @Test
+    void notificationReplayRollbackPreservesDeadLetter() {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        jdbc.update("UPDATE refund_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", event);
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            notificationReplays.replay(event, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra");
+            tx.setRollbackOnly();
+        });
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM refund_notification_outbox WHERE id=?", String.class, event));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_notification_replays WHERE event_id=?", Integer.class, event));
+    }
+
+    /** Hai Admin replay cùng event chỉ được reset một lần; loser nhận conflict, không tạo audit giả. */
+    @Test
+    void concurrentNotificationReplaysResetOnlyOnce() throws Exception {
+        UUID refund = newRefundRequest();
+        UUID event = jdbc.queryForObject("SELECT id FROM refund_notification_outbox WHERE refund_id=?", UUID.class, refund);
+        jdbc.update("UPDATE refund_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", event);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.concurrent.Callable<Boolean> attempt = () -> {
+                start.await();
+                try {
+                    notificationReplays.replay(event, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra OAuth");
+                    return true;
+                } catch (com.nexus.common.exception.ApiException conflict) { return false; }
+            };
+            var first = pool.submit(attempt);
+            var second = pool.submit(attempt);
+            start.countDown();
+            assertEquals(1, (first.get(5, TimeUnit.SECONDS) ? 1 : 0) + (second.get(5, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_notification_replays WHERE event_id=?", Integer.class, event));
+    }
 
     /** Snapshot gắn refundId riêng; UPDATE cùng state không tạo tin trùng, rollback không rò sự kiện. */
     @Test
