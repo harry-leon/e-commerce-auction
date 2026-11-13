@@ -24,6 +24,7 @@ class KeycloakClientTest {
     private final UUID userId = UUID.randomUUID();
     private final List<String> calls = new ArrayList<>();
     private int status = 200;
+    private boolean userMissing;
 
     @BeforeEach
     void startProvider() throws Exception {
@@ -39,6 +40,9 @@ class KeycloakClientTest {
                     path.contains("/role-mappings/") ? "[" + role + "," + privilege + "]" :
                     path.endsWith("/composites") ? "[" + privilege + "]" : "[" + role + "," + privilege + "]";
             int responseStatus = status;
+            if (userMissing && path.endsWith("/users/" + userId + "/role-mappings/realm/composite")) {
+                responseStatus = 404;
+            }
             if (!exchange.getRequestMethod().equals("GET") && !path.endsWith("/token") && status == 200) {
                 responseStatus = 204;
             }
@@ -61,6 +65,13 @@ class KeycloakClientTest {
         assertEquals("PROFILE.VIEW", client.privilegeRoles().getFirst().name());
         assertEquals(Set.of("PROFILE.VIEW"), client.privileges(roleId.toString()));
         assertEquals(Set.of("ROLE_BUYER", "PROFILE.VIEW"), client.authorities(userId));
+    }
+
+    @Test
+    void returnsNoAuthoritiesWhenLinkedKeycloakUserIsMissing() {
+        userMissing = true;
+
+        assertEquals(Set.of(), client.authorities(userId));
     }
 
     @Test
