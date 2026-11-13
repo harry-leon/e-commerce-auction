@@ -15,8 +15,8 @@ export const SERVICES = [
 export const VERSIONS = {
     user: 6,
     catalog: 7,
-    // V9/V10 thêm dispatch và audit recovery; fixture không gửi carrier hoặc chốt kết quả giả.
-    fulfillment: 10,
+    // V9–V11 thêm dispatch/recovery/replay audit; fixture không gửi carrier hoặc reset backlog giả.
+    fulfillment: 11,
     // V13–V17 thêm refund/outbox/audit; không seed vì demo không chứng minh đã hoàn tiền thật.
     commerce: 17,
     auction: 3,
