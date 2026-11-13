@@ -325,3 +325,14 @@ Luồng payment winner TT-S2-3: [contract và trạng thái PROCESSING/REQUIRES_
   }
 }
 ```
+## Refund request API — Sprint 3
+
+`POST /api/v1/refunds`: ROLE_ADMIN, `Idempotency-Key` UUID bắt buộc, body `{paymentId, reason}`.
+Amount toàn phần được lấy từ payment VNPAY SUCCESS có reference hợp lệ, không nhận amount/status từ client.
+Lần đầu trả 201, replay cùng key/nội dung trả 200; cùng key khác nội dung hoặc không còn hạn mức trả 409.
+
+`GET /api/v1/refunds/{id}`: chủ đơn hoặc Admin; ngoài ownership/không tồn tại trả 404.
+Response theo envelope: `refundId, paymentId, orderId, amount, currency, status, createdAt`.
+API hiện chỉ lưu `REQUESTED`, chưa có dispatch provider, chưa chuyển Order REFUNDED hoặc release kho.
+Migration V13 tạo `refund_requests`; có test PostgreSQL cạnh tranh hạn mức và replay.
+Chi tiết: [contract refund](../TT_S3_REFUND_INTEGRATION_CONTRACT.md).
