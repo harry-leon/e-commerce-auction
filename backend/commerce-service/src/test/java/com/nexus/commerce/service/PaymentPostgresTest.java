@@ -52,18 +52,86 @@ import org.springframework.transaction.annotation.Transactional;
         "spring.jpa.hibernate.ddl-auto=validate", "spring.cloud.config.enabled=false", "eureka.client.enabled=false",
         "spring.jpa.show-sql=false", "logging.level.org.hibernate.SQL=OFF", "app.payment.vnpay.tmn-code=TESTONLY",
         "app.payment.vnpay.hash-secret=unit-test-only-not-a-credential",
-        "app.payment.vnpay.return-url=https://example.test/payment-result"
+        "app.payment.vnpay.return-url=https://example.test/payment-result", "app.shipping.handoff-enabled=true"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
-        PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
+        PaymentService.class, PaymentInventoryWorker.class, ShippingHandoffOutbox.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
         com.nexus.commerce.service.impl.OrderServiceImpl.class,
         com.nexus.commerce.dto.mapper.OrderMapper.class, com.nexus.commerce.statemachine.OrderStatusStateMachine.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
+    @Autowired private ShippingHandoffOutbox handoffs;
+    @Autowired private com.nexus.commerce.repository.OrderRepository handoffOrders;
+    @Autowired private com.nexus.commerce.repository.PaymentRepository handoffPayments;
+
+    /** REGULAR/AUCTION đều chỉ ghi một ý định sau kho; IPN lặp và hai worker không tạo thêm id/snapshot. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void shippingHandoffRequiresInventoryAndIsIdempotent(boolean auction) throws Exception {
+        if (auction) { winner(false); }
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        assertEquals(0, handoffCount());
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> { gate.await(); worker.run(); return true; });
+            var second = pool.submit(() -> { gate.await(); worker.run(); return true; });
+            gate.countDown(); first.get(20, TimeUnit.SECONDS); second.get(20, TimeUnit.SECONDS);
+        }
+        assertEquals(1, handoffCount());
+        var original = jdbc.queryForMap("SELECT * FROM shipping_handoff_tasks WHERE order_id=?", orderId);
+        assertEquals(paymentId, original.get("payment_id"));
+        assertEquals("WAITING_PARCEL", original.get("state"));
+        assertEquals(new BigDecimal("50000.00"), original.get("amount"));
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+        worker.run();
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx ->
+                handoffs.enqueue(handoffOrders.findForPaymentWithItems(orderId).orElseThrow(), handoffPayments.findById(paymentId).orElseThrow()));
+        assertEquals(original, jdbc.queryForMap("SELECT * FROM shipping_handoff_tasks WHERE order_id=?", orderId));
+        assertThrows(org.springframework.transaction.IllegalTransactionStateException.class, () -> handoffs.enqueue(null, null));
+    }
+
+    /** Refund/hold được tạo sau IPN nhưng trước xác nhận kho phải chặn ý định mới; không cản ghi nhận tiền PAID. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void financialReviewPreventsShippingHandoff(boolean hold) {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        if (hold) { jdbc.update("INSERT INTO refund_payment_holds(payment_id,reason) VALUES (?,'FIXTURE')", paymentId); }
+        else { refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Fixture đã có refund chờ duyệt"); }
+        worker.run();
+        assertEquals("PAID", orderState());
+        assertEquals(0, handoffCount());
+    }
+
+    /** Lỗi deferred commit ở handoff rollback PAID/CONFIRMED/task.done; retry commit kho cùng ref rồi ghi đúng một ý định. */
+    @Test
+    void shippingHandoffCommitFailureRollsBackInventoryConfirmation() {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        jdbc.execute("CREATE FUNCTION handoff_reject_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$");
+        jdbc.execute("CREATE CONSTRAINT TRIGGER handoff_reject_fixture AFTER INSERT ON shipping_handoff_tasks "
+                + "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.order_id='" + orderId + "'::uuid) EXECUTE FUNCTION handoff_reject_fixture()");
+        try { assertThrows(RuntimeException.class, () -> worker.run()); }
+        finally {
+            jdbc.execute("DROP TRIGGER handoff_reject_fixture ON shipping_handoff_tasks");
+            jdbc.execute("DROP FUNCTION handoff_reject_fixture()");
+        }
+        assertEquals("PENDING_PAYMENT", orderState());
+        assertEquals("PENDING", jdbc.queryForObject("SELECT inventory_status FROM payments WHERE id=?", String.class, paymentId));
+        assertEquals(0, handoffCount());
+        assertEquals(false, jdbc.queryForObject("SELECT done FROM payment_inventory_tasks WHERE target_id=? AND action='COMMIT'", Boolean.class, paymentId));
+        worker.run();
+        assertEquals("PAID", orderState());
+        assertEquals(1, handoffCount());
+    }
+
+    /** Đếm theo order fixture, không phụ thuộc tác vụ hợp lệ còn lại từ ca đã commit trước đó. */
+    private int handoffCount() {
+        return jdbc.queryForObject("SELECT count(*) FROM shipping_handoff_tasks WHERE order_id=?", Integer.class, orderId);
+    }
+
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
     @Autowired private RefundNotificationReplayService notificationReplays;
