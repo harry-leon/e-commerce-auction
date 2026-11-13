@@ -55,7 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -67,6 +67,69 @@ class PaymentPostgresTest {
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
     @Autowired private RefundNotificationReplayService notificationReplays;
+    @Autowired private ShippingEventInboxService shippingInbox;
+
+    /** Pickup→Delivered cập nhật Order/history/outbox một lần; callback cũ không hạ trạng thái hoặc phát tin trùng. */
+    @Test
+    void shippingInboxDeduplicatesAndNeverRegressesDeliveredOrder() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        shippingInbox.receive(event);
+        shippingInbox.receive(event);
+        assertEquals("SHIPPED", orderState(event.orderId()));
+        var delivered = shippingEvent(event, "ShipmentDelivered", "DELIVERED");
+        shippingInbox.receive(delivered);
+        shippingInbox.receive(shippingEvent(event, "ShipmentInTransit", "IN_TRANSIT"));
+        assertEquals("DELIVERED", orderState(event.orderId()));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_outbox WHERE order_id=?", Integer.class, event.orderId()));
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE order_id=?", Integer.class, event.orderId()));
+        var changed = new ShippingEventInboxService.Event(event.eventId(), event.eventType(), event.occurredAt(), event.shipmentId(),
+                event.orderId(), event.carrier(), "CHANGED", event.status());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingInbox.receive(changed));
+    }
+
+    /** Delivered trước Pickup được rollback và retry sau handover; Returned chỉ đánh dấu review, không hoàn tiền/đổi Order. */
+    @Test
+    void outOfOrderShippingIsRetryableAndReturnDoesNotRefund() {
+        var event = shippingFixture("ShipmentDelivered", "DELIVERED");
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingInbox.receive(event));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE event_id=?", Integer.class, event.eventId()));
+        shippingInbox.receive(shippingEvent(event, "ShipmentPickedUp", "PICKED_UP"));
+        shippingInbox.receive(event);
+        shippingInbox.receive(shippingEvent(event, "ShipmentReturned", "RETURNED"));
+        assertEquals("DELIVERED", orderState(event.orderId()));
+        assertEquals("ShipmentReturned", jdbc.queryForObject("SELECT review_event_type FROM shipping_order_bindings WHERE order_id=?", String.class, event.orderId()));
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+    }
+
+    /** Rollback phải hủy đồng thời binding/inbox/history/notification; shipment khác không được chiếm order đã bind. */
+    @Test
+    void shippingInboxRollbackIsAtomicAndBindingCannotBeReplaced() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            shippingInbox.receive(event); tx.setRollbackOnly();
+        });
+        assertEquals("PROCESSING", orderState(event.orderId()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_order_bindings WHERE order_id=?", Integer.class, event.orderId()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_outbox WHERE order_id=?", Integer.class, event.orderId()));
+        shippingInbox.receive(event);
+        var other = new ShippingEventInboxService.Event(UUID.randomUUID(), event.eventType(), event.occurredAt(), UUID.randomUUID(),
+                event.orderId(), event.carrier(), event.trackingNumber(), event.status());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingInbox.receive(other));
+    }
+
+    /** Fixture dùng payment/IPN thật trong test, rồi mô phỏng Seller đã chuẩn bị PROCESSING; không gọi carrier. */
+    private ShippingEventInboxService.Event shippingFixture(String type, String status) {
+        payments.ipn(callback("00", "00", "5000000"));
+        UUID order = jdbc.queryForObject("SELECT order_id FROM payments WHERE id=?", UUID.class, paymentId);
+        jdbc.update("UPDATE orders SET status='PROCESSING' WHERE id=?", order);
+        return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
+                UUID.randomUUID(), order, "GHN", "TRACK-TEST", status);
+    }
+    private ShippingEventInboxService.Event shippingEvent(ShippingEventInboxService.Event base, String type, String status) {
+        return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
+                base.shipmentId(), base.orderId(), base.carrier(), base.trackingNumber(), status);
+    }
+    private String orderState(UUID id) { return jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, id); }
 
     /** Replay chỉ reset dead letter; retry cùng key giữ audit cũ kể cả worker đã giao, khác nội dung bị 409. */
     @Test
