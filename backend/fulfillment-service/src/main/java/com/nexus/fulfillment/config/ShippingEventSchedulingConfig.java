@@ -2,10 +2,13 @@ package com.nexus.fulfillment.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /** Tách HTTP outbox chậm khỏi polling/sweeper; Spring đóng scheduler khi context dừng. */
 @Configuration
+// Worker HTTP vẫn phải được schedule khi vận hành tắt cả polling carrier và sweeper kho.
+@EnableScheduling
 public class ShippingEventSchedulingConfig {
     /** Giữ scheduler mặc định riêng để Spring không đưa polling/sweeper vào luồng HTTP event. */
     @Bean
