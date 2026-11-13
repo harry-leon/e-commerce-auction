@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -63,7 +64,8 @@ public class ShipmentController {
     }
 
     @PostMapping("/events/order-paid")
-    @PreAuthorize("isAuthenticated()")
+    // Chỉ Commerce đã xác minh kết quả nghiệp vụ được phát lệnh; role người dùng/Admin không thay thế service identity.
+    @PreAuthorize("T(com.nexus.common.security.ServiceIdentity).permits(authentication, 'nexus-commerce-service', 'SHIPPING.ORDER_PAID')")
     @Operation(
             summary = "Tạo vận đơn tự động từ sự kiện OrderPaid",
             description = "Tiếp nhận OrderPaid để tạo vận đơn idempotent theo DEFAULT_CARRIER hoặc quy tắc hãng")

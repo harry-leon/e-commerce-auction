@@ -11,8 +11,6 @@ import com.nexus.fulfillment.repository.InventoryRepository;
 import com.nexus.fulfillment.repository.WarehouseRepository;
 import com.nexus.fulfillment.service.WarehouseStockAllocationService;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
