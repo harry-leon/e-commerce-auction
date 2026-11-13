@@ -39,7 +39,8 @@ class BaselineMigrationPostgresTest {
             }
             var baseline = migrate(url, schema, "latest");
             baseline.migrate();
-            assertEquals("5", baseline.info().current().getVersion().getVersion());
+            // V6 chỉ thêm refund context nullable, giữ toàn bộ thông báo/attempt cũ.
+            assertEquals("6", baseline.info().current().getVersion().getVersion());
             assertEquals(0, baseline.migrate().migrationsExecuted);
             assertEquals(previous > 0 ? 2 : 0, jdbc.queryForObject("SELECT count(*) FROM "
                 + schema + ".notifications", Integer.class));
@@ -85,7 +86,7 @@ class BaselineMigrationPostgresTest {
 
             var upgraded = migrate(url, schema, "latest");
             upgraded.migrate();
-            assertEquals("5", upgraded.info().current().getVersion().getVersion());
+            assertEquals("6", upgraded.info().current().getVersion().getVersion());
             assertEquals(0, upgraded.migrate().migrationsExecuted);
             assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".notifications", Integer.class));
             assertEquals("Legacy Email", jdbc.queryForObject(
