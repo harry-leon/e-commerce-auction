@@ -1,4 +1,4 @@
-import { api, ApiClientError, readSession } from './client'
+import { api, readSession } from './client'
 import type { ApiResponse } from './client'
 import type { Order, OrderStatus, UserRole } from '../types'
 import { ORDERS } from '../mockData'
@@ -314,8 +314,6 @@ export function readLocalMockOrders(): Order[] {
     return SEED_ORDERS
 }
 
-const SEED_ORDER_IDS = new Set(SEED_ORDERS.map((o) => o.id))
-
 /**
  * Lưu danh sách đơn hàng vào localStorage để các màn hình dùng chung và phản ánh sự thay đổi.
  */
@@ -340,28 +338,9 @@ export function writeLocalMockOrders(orders: Order[]): void {
  * Lỗi & giới hạn: Nếu người dùng đã đăng nhập thật (có JWT) mà nhận lỗi 401 hoặc lỗi nghiệp vụ 400/422, vẫn ném lỗi để hiển thị đúng thông báo từ backend.
  */
 function canFallbackToMock(error: unknown): boolean {
-    if (error instanceof ApiClientError) {
-        if (error.status === 401 && !readSession()) {
-            return true
-        }
-        return [404, 500, 502, 503, 504].includes(error.status) || error.code === 'BACKEND_OFFLINE'
-    }
-    return error instanceof TypeError || error instanceof ReferenceError
-}
-
-/** Kho withdrawal dùng chung localStorage để trạng thái duyệt không chỉ tồn tại trong component Admin. */
-function readLocalMockWithdrawals(): WithdrawalRequest[] {
-    try {
-        const raw = localStorage.getItem(WITHDRAWAL_STORAGE_KEY)
-        if (raw) {
-            const parsed = JSON.parse(raw)
-            if (Array.isArray(parsed)) return parsed
-        }
-    } catch {
-        // Storage không khả dụng thì dùng fixture trong bộ nhớ cho phiên hiện tại.
-    }
-    writeLocalMockWithdrawals(SEED_WITHDRAWALS)
-    return SEED_WITHDRAWALS
+    // Buyer/Seller/Admin chỉ dùng dữ liệu Commerce Service; lỗi API phải được báo lên UI, không đổi sang đơn demo.
+    void error
+    return false
 }
 
 function writeLocalMockWithdrawals(requests: WithdrawalRequest[]): void {
@@ -415,67 +394,16 @@ export const ordersApi = {
         const query = new URLSearchParams()
         if (params?.role) query.set('role', params.role)
         if (params?.status && params.status !== 'all') query.set('status', params.status)
-        if (params?.search) query.set('search', params.search)
-
-        // 1. Cố gắng lấy từ backend API nếu có — unwrap theo ApiResponse<OrderSummaryResponse[]> chuẩn V2
-        let backendOrders: Order[] = []
-        let hasBackendData = false
-        try {
-            const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
-            const envelope = await api<ApiResponse<OrderPayload[]>>(path)
-            const list = envelope?.data
-            if (Array.isArray(list)) {
-                backendOrders = list.map(normalizeOrder)
-                hasBackendData = true
-            }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Backend chưa có endpoint hoặc lỗi kết nối → fallback sang mock data
-        }
-
-        // 2. Đọc kho lưu trữ cục bộ (mock fixtures và các đơn sandbox vừa tạo)
-        let localOrders = readLocalMockOrders()
-        const { role, status, search, userId } = params || {}
-
-        if (role === 'buyer') {
-            localOrders = userId ? localOrders.filter((o) => o.buyerId === userId) : []
-        } else if (role === 'seller') {
-            localOrders = userId ? localOrders.filter((o) => o.sellerId === userId) : []
-        }
-
-        if (status && status !== 'all') {
-            localOrders = localOrders.filter((o) => o.status.toLowerCase() === status.toLowerCase())
-        }
-
-        if (search && search.trim()) {
-            const q = search.trim().toLowerCase()
-            localOrders = localOrders.filter(
-                (o) =>
-                    o.id.toLowerCase().includes(q) ||
-                    (o.orderNo && o.orderNo.toLowerCase().includes(q)) ||
-                    (o.buyerName && o.buyerName.toLowerCase().includes(q)) ||
-                    (o.sellerName && o.sellerName.toLowerCase().includes(q)) ||
-                    (o.items && o.items.some((item) => item.productName.toLowerCase().includes(q))),
-            )
-        }
-
-        // Nếu Backend trả dữ liệu thành công: Hợp nhất đơn thật và đơn sandbox cục bộ
-        if (hasBackendData) {
-            const existingIds = new Set(backendOrders.map((o) => o.id))
-            const existingNos = new Set(
-                backendOrders.map((o) => (o as any).orderNo).filter(Boolean),
-            )
-            const customSandboxOrders = localOrders.filter(
-                (o) =>
-                    !SEED_ORDER_IDS.has(o.id) &&
-                    !existingIds.has(o.id) &&
-                    !existingNos.has(o.id) &&
-                    (!o.orderNo || !existingNos.has(o.orderNo)),
-            )
-            return [...backendOrders, ...customSandboxOrders]
-        }
-
-        return localOrders
+        const path = `/orders${query.toString() ? `?${query.toString()}` : ''}`
+        const envelope = await api<ApiResponse<OrderPayload[]>>(path)
+        const list = Array.isArray(envelope?.data) ? envelope.data : []
+        const orders = list.map(normalizeOrder)
+        if (!params?.search?.trim()) return orders
+        const term = params.search.trim().toLowerCase()
+        return orders.filter((order) =>
+            [order.id, order.orderNo, order.buyerName, order.sellerName, ...order.items.map((item) => item.productName)]
+                .some((value) => value?.toLowerCase().includes(term)),
+        )
     },
 
     /**
@@ -493,26 +421,10 @@ export const ordersApi = {
     async getOrderById(id: string): Promise<Order | null> {
         const isUuid =
             /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
-
-        // 1. Thử gọi backend API nếu là UUID — unwrap theo ApiResponse<OrderPayload> chuẩn V2
-        if (isUuid) {
-            try {
-                const envelope = await api<ApiResponse<OrderPayload>>(
-                    `/orders/${encodeURIComponent(id)}`,
-                )
-                const order = envelope?.data
-                if (order && order.id) {
-                    return normalizeOrder(order)
-                }
-            } catch (error) {
-                if (!canFallbackToMock(error)) throw error
-            }
-        }
-
-        // 2. Tìm trong mock data (khớp cả id lẫn orderNo)
-        const orders = readLocalMockOrders()
-        const found = orders.find((o) => o.id === id || (o as any).orderNo === id)
-        return found ? normalizeOrder(found) : null
+        if (!isUuid) return null
+        const envelope = await api<ApiResponse<OrderPayload>>(`/orders/${encodeURIComponent(id)}`)
+        const order = envelope?.data
+        return order?.id ? normalizeOrder(order) : null
     },
 
     /**
@@ -520,52 +432,17 @@ export const ordersApi = {
      * Chức năng: Gọi POST /api/v1/orders/checkout/preview để Backend kiểm tra giá live, tồn kho và tính voucher.
      * Đầu vào: data (CheckoutPreviewRequest gồm itemIds, shippingAddress, voucherCode).
      * Kết quả: CheckoutPreviewResponse (subtotal, discountAmount, shippingFee, taxAmount, totalAmount, isOrderable).
-     * Luồng xử lý: Gọi API backend -> nếu backend chưa triển khai (404/503) thì tính toán mock fallback.
+     * Luồng xử lý: Gọi API backend và chỉ trả dữ liệu đã được server tính toán.
      * Quy tắc & lý do: Không trừ tồn kho hay tạo đơn, chỉ phục vụ hiển thị preview trước khi bấm Đặt Hàng.
      * Lỗi & giới hạn: Trả về isOrderable=false và warnings nếu có món hàng không hợp lệ.
      */
     async checkoutPreview(data: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
-        try {
-            const response = await api<
-                { success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse
-            >('/orders/checkout/preview', {
-                method: 'POST',
-                body: JSON.stringify(data),
-            })
-            const result =
-                'data' in response && response.data
-                    ? response.data
-                    : (response as CheckoutPreviewResponse)
-            if (result && typeof result.totalAmount === 'number') {
-                return result
-            }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-        }
-
-        const subtotal = 429.98
-        const discountAmount = data.voucherCode === 'NEXUS10' ? 42.99 : 0
-        const shippingFee = 5.0
-        const taxAmount = (subtotal - discountAmount) * 0.08
-        const totalAmount = subtotal - discountAmount + shippingFee + taxAmount
-
-        return {
-            subtotal,
-            discountAmount,
-            shippingFee,
-            taxAmount,
-            totalAmount,
-            appliedVoucher:
-                data.voucherCode === 'NEXUS10'
-                    ? {
-                          code: 'NEXUS10',
-                          discountValue: 42.99,
-                          description: 'Giảm 10% tổng đơn hàng',
-                      }
-                    : null,
-            isOrderable: true,
-            warnings: [],
-        }
+        const response = await api<{ success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse>(
+            '/orders/checkout/preview', { method: 'POST', body: JSON.stringify(data) },
+        )
+        const result = 'data' in response && response.data ? response.data : response as CheckoutPreviewResponse
+        if (!result || typeof result.totalAmount !== 'number') throw new Error('Checkout preview response is invalid')
+        return result
     },
 
     /**
@@ -930,23 +807,15 @@ export const ordersApi = {
         writeLocalMockWithdrawals(SEED_WITHDRAWALS)
     },
 
-    /** Danh sách yêu cầu rút tiền mock dùng chung màn Admin; không gọi backend tài chính thật. */
+    /** Không có API yêu cầu rút tiền trong backend hiện tại nên không trả dữ liệu giả. */
     getWithdrawalRequests(): WithdrawalRequest[] {
-        return readLocalMockWithdrawals()
+        return []
     },
 
-    /** Duyệt yêu cầu rút tiền trong mock store và giữ lại thời điểm duyệt sau khi reload. */
+    /** Từ chối thao tác duyệt cho đến khi có API tài chính thật. */
     approveWithdrawal(id: string): WithdrawalRequest {
-        const requests = readLocalMockWithdrawals()
-        const index = requests.findIndex((request) => request.id === id)
-        if (index === -1) throw new Error('Withdrawal request not found')
-        requests[index] = {
-            ...requests[index],
-            status: 'approved',
-            approvedAt: new Date().toISOString(),
-        }
-        writeLocalMockWithdrawals(requests)
-        return requests[index]
+        void id
+        throw new Error('Withdrawal API is not available')
     },
 
     /**

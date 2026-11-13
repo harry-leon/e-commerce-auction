@@ -35,7 +35,6 @@ import {
     Trash2,
     Clock,
 } from '../../components/UI'
-import { PRODUCTS, AUCTIONS } from '../../mockData'
 import { CATEGORY_ICONS } from '../../components/Layout'
 import { getEffectivePaymentStatus } from '../../payment'
 import { calculateEstimatedPricing } from '../../utils/pricingEngine'
@@ -82,6 +81,7 @@ import {
     type CartResponse,
     type CartItemResponse,
 } from '../../api/cart'
+import { getBatchStock } from '../../api/inventory'
 
 function getAuctionCurrentBid(auction: unknown) {
     if (!auction || typeof auction !== 'object') return 0
@@ -160,6 +160,28 @@ export function HomePage() {
     const { data: catData, loading: catLoading } = useLoad<Envelope<ApiCategory[]>>('/categories')
     // Tải danh sách sản phẩm thật từ Catalog Service backend (/api/v1/products) với SWR cache
     const { data: prodData, loading: prodLoading } = useLoad<Envelope<ApiProduct[]>>('/products')
+    const [liveStockBySku, setLiveStockBySku] = useState<Record<string, number>>({})
+
+    // Buyer cards dùng cùng nguồn Fulfillment với trang chi tiết; SKU chưa có bản ghi kho được xem là 0.
+    useEffect(() => {
+        let active = true
+        const skuIds = (prodData?.data || []).flatMap((product) =>
+            (product.skus || []).map((sku) => sku.id).filter(Boolean),
+        )
+        if (skuIds.length === 0) {
+            setLiveStockBySku({})
+            return () => { active = false }
+        }
+        getBatchStock({ skuIds })
+            .then((stocks) => {
+                if (!active) return
+                setLiveStockBySku(Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty])))
+            })
+            .catch(() => {
+                if (active) setLiveStockBySku({})
+            })
+        return () => { active = false }
+    }, [prodData])
 
     /**
      * Chức năng: Ánh xạ danh mục trực tiếp từ Catalog backend kết nối Supabase; không dùng CATEGORIES mockData.
@@ -205,7 +227,7 @@ export function HomePage() {
             description: p.description || '',
             descriptionVi: p.description || '',
             enableAuction: p.auctionEnabled || false,
-            stock: 50,
+            stock: liveStockBySku[sku?.id || ''] ?? 0,
             rating: 5.0,
             reviewCount: 0,
             condition: 'new' as const,
@@ -3716,7 +3738,11 @@ export function OrderDetailPage() {
     const loadDetail = async () => {
         setLoading(true)
         try {
-            const targetId = (pageParams?.id as string) || 'ORD-20240215-001'
+            const targetId = typeof pageParams?.id === 'string' ? pageParams.id : ''
+            if (!targetId) {
+                setOrder(null)
+                return
+            }
             const data = await ordersApi.getOrderById(targetId)
             if (data) {
                 setOrder(data)
@@ -4273,19 +4299,48 @@ export function OrderDetailPage() {
 
 // ─── Shopee-Style Public Seller Shop Page ──────────────────────────────────────
 export function SellerShopPage() {
-    const { lang, pageParams, showToast } = useApp()
-    const sellerId = (pageParams?.id as string) || 'seller-1'
-    const sellerName = (pageParams?.sellerName as string) || 'TechZone Store'
+    const { lang, pageParams } = useApp()
+    const sellerId = typeof pageParams?.id === 'string' ? pageParams.id : ''
+    const sellerName = typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : ''
     const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions'>('all')
-    const [isFollowing, setIsFollowing] = useState(false)
-
-    const sellerProducts = PRODUCTS.filter(
-        (p) => p.sellerId === sellerId || p.sellerName === sellerName,
+    const { data: shopProductsEnvelope } = useLoad<Envelope<ApiProduct[]>>(
+        sellerId ? `/products/seller/${encodeURIComponent(sellerId)}` : '',
     )
-    const displayProducts = sellerProducts.length > 0 ? sellerProducts : PRODUCTS.slice(0, 8)
-    const sellerAuctions = AUCTIONS.filter(
-        (a) => a.sellerId === sellerId || a.sellerName === sellerName,
-    )
+    const displayProducts: Product[] = (shopProductsEnvelope?.data || []).map((product) => ({
+        id: product.id,
+        name: product.name,
+        nameVi: product.name,
+        description: product.description || '',
+        descriptionVi: product.description || '',
+        price: product.skus?.[0]?.price ?? 0,
+        originalPrice: product.skus?.[0]?.originalPrice,
+        images: product.images?.map((image) => image.url) || [],
+        category: '',
+        categoryId: product.categoryId,
+        location: '',
+        sku: formatSkuDisplay(product.skus?.[0]?.id, product.skus?.[0]?.skuCode),
+        skuId: product.skus?.[0]?.id,
+        stock: 0,
+        status: (product.status || 'draft').toLowerCase() as Product['status'],
+        sellerId: product.sellerId || sellerId,
+        sellerName,
+        sellerTrust: 'bronze',
+        sellerRating: 0,
+        rating: 0,
+        reviewCount: 0,
+        weight: 0,
+        enableAuction: product.auctionEnabled || false,
+        createdAt: product.createdAt || '',
+    }))
+    const [sellerAuctions, setSellerAuctions] = useState<Auction[]>([])
+    useEffect(() => {
+        let active = true
+        if (!sellerId) return
+        auctionsApi.getAuctions({ sellerId, status: 'all', limit: 100 })
+            .then((result) => { if (active) setSellerAuctions(result.items) })
+            .catch(() => { if (active) setSellerAuctions([]) })
+        return () => { active = false }
+    }, [sellerId])
 
     return (
         <BuyerLayout>
@@ -4306,56 +4361,25 @@ export function SellerShopPage() {
                                 <div className="w-16 h-16 rounded-full bg-white text-gray-900 font-black text-2xl flex items-center justify-center shadow-lg border-2 border-white">
                                     {sellerName[0]}
                                 </div>
-                                <span className="absolute -bottom-1 -right-1 bg-red-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                                    Mall
-                                </span>
                             </div>
                             <div className="flex-1 min-w-0">
                                 <h2 className="font-bold text-base text-white truncate">
                                     {sellerName}
                                 </h2>
                                 <p className="text-xs text-gray-300 mt-0.5">
-                                    {lang === 'vi' ? 'Online 5 phút trước' : 'Active 5m ago'}
+                                    —
                                 </p>
                                 <div className="flex items-center gap-2 mt-2.5">
                                     <button
-                                        onClick={() => {
-                                            setIsFollowing(!isFollowing)
-                                            showToast({
-                                                type: 'success',
-                                                message: !isFollowing
-                                                    ? lang === 'vi'
-                                                        ? `Đã theo dõi ${sellerName}`
-                                                        : `Followed ${sellerName}`
-                                                    : lang === 'vi'
-                                                      ? 'Đã bỏ theo dõi'
-                                                      : 'Unfollowed',
-                                            })
-                                        }}
+                                        disabled
                                         className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
-                                            isFollowing
-                                                ? 'bg-white/20 text-white border border-white/40'
-                                                : 'bg-red-600 hover:bg-red-700 text-white shadow-sm'
+                                            'bg-white/20 text-white border border-white/40'
                                         }`}
                                     >
-                                        {isFollowing
-                                            ? lang === 'vi'
-                                                ? '✓ Đang Theo Dõi'
-                                                : '✓ Following'
-                                            : lang === 'vi'
-                                              ? '+ Theo Dõi'
-                                              : '+ Follow'}
+                                        {lang === 'vi' ? 'Theo dõi' : 'Follow'}
                                     </button>
                                     <button
-                                        onClick={() =>
-                                            showToast({
-                                                type: 'info',
-                                                message:
-                                                    lang === 'vi'
-                                                        ? `Mở khung chat với ${sellerName}`
-                                                        : `Chatting with ${sellerName}`,
-                                            })
-                                        }
+                                        disabled
                                         className="px-3 py-1 rounded-md text-xs font-semibold bg-white/20 hover:bg-white/30 text-white border border-white/30 transition-all"
                                     >
                                         💬 {lang === 'vi' ? 'Chat' : 'Chat'}
@@ -4378,14 +4402,14 @@ export function SellerShopPage() {
                                 <span className="text-gray-300">
                                     👥 {lang === 'vi' ? 'Người Theo Dõi:' : 'Followers:'}
                                 </span>
-                                <span className="font-bold text-yellow-400 text-sm">3,1k</span>
+                                <span className="font-bold text-yellow-400 text-sm">—</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="text-gray-300">
                                     ★ {lang === 'vi' ? 'Đánh Giá:' : 'Rating:'}
                                 </span>
                                 <span className="font-bold text-yellow-400 text-sm">
-                                    4.9 (8.7k {lang === 'vi' ? 'Đánh Giá' : 'Reviews'})
+                                    —
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -4393,7 +4417,7 @@ export function SellerShopPage() {
                                     ⚡ {lang === 'vi' ? 'Tỉ Lệ Phản Hồi:' : 'Response Rate:'}
                                 </span>
                                 <span className="font-bold text-green-400 text-sm">
-                                    99% ({lang === 'vi' ? 'Trong Vài Giờ' : 'In Hours'})
+                                    —
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -4401,7 +4425,7 @@ export function SellerShopPage() {
                                     🕒 {lang === 'vi' ? 'Tham Gia:' : 'Joined:'}
                                 </span>
                                 <span className="font-bold text-white text-sm">
-                                    {lang === 'vi' ? '2 năm trước' : '2 years ago'}
+                                    —
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -4409,7 +4433,7 @@ export function SellerShopPage() {
                                     📍 {lang === 'vi' ? 'Kho Hàng:' : 'Location:'}
                                 </span>
                                 <span className="font-bold text-white text-sm">
-                                    {lang === 'vi' ? 'TP. Hồ Chí Minh' : 'HCMC, VN'}
+                                        —
                                 </span>
                             </div>
                         </div>
