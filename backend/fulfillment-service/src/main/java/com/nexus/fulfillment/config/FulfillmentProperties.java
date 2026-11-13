@@ -1,8 +1,14 @@
 package com.nexus.fulfillment.config;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.stereotype.Component;
@@ -171,6 +177,39 @@ public class FulfillmentProperties {
         @Min(value = 1, message = "Thời gian tự động xác nhận tối thiểu phải là 1 ngày")
         private Integer autoConfirmDays = 7;
 
+        /**
+         * Danh sách hãng vận chuyển được hệ thống hỗ trợ (SRS §2.6: SUPPORTED_CARRIERS = GHN, GHTK).
+         */
+        @NotEmpty
+        private List<String> supportedCarriers = new ArrayList<>(List.of("GHN", "GHTK"));
+
+        /**
+         * Hãng vận chuyển mặc định khi đơn hàng không chỉ định cụ thể (SRS §2.6: DEFAULT_CARRIER = GHN).
+         */
+        @NotBlank
+        private String defaultCarrier = "GHN";
+
+        /**
+         * Ngưỡng giá trị đơn hàng được miễn phí vận chuyển (SRS §2.6: FREE_SHIPPING_THRESHOLD = 100).
+         */
+        @NotNull
+        @DecimalMin(value = "0", message = "Ngưỡng miễn phí vận chuyển không được âm")
+        private BigDecimal freeShippingThreshold = new BigDecimal("100");
+
+        /**
+         * Cấu hình kết nối API sandbox/production cho Giao Hàng Nhanh (GHN).
+         */
+        @Valid
+        @NotNull
+        private CarrierEndpoint ghn = new CarrierEndpoint("https://dev-online-gateway.ghn.vn", "", "");
+
+        /**
+         * Cấu hình kết nối API sandbox/production cho Giao Hàng Tiết Kiệm (GHTK).
+         */
+        @Valid
+        @NotNull
+        private CarrierEndpoint ghtk = new CarrierEndpoint("https://services.giaohangtietkiem.vn", "", "");
+
         public Integer getDefaultDeliveryDays() {
             return defaultDeliveryDays;
         }
@@ -193,6 +232,112 @@ public class FulfillmentProperties {
 
         public void setAutoConfirmDays(Integer autoConfirmDays) {
             this.autoConfirmDays = autoConfirmDays;
+        }
+
+        public List<String> getSupportedCarriers() {
+            return supportedCarriers;
+        }
+
+        public void setSupportedCarriers(List<String> supportedCarriers) {
+            this.supportedCarriers = supportedCarriers;
+        }
+
+        public String getDefaultCarrier() {
+            return defaultCarrier;
+        }
+
+        public void setDefaultCarrier(String defaultCarrier) {
+            this.defaultCarrier = defaultCarrier;
+        }
+
+        public BigDecimal getFreeShippingThreshold() {
+            return freeShippingThreshold;
+        }
+
+        public void setFreeShippingThreshold(BigDecimal freeShippingThreshold) {
+            this.freeShippingThreshold = freeShippingThreshold;
+        }
+
+        public CarrierEndpoint getGhn() {
+            return ghn;
+        }
+
+        public void setGhn(CarrierEndpoint ghn) {
+            this.ghn = ghn;
+        }
+
+        public CarrierEndpoint getGhtk() {
+            return ghtk;
+        }
+
+        public void setGhtk(CarrierEndpoint ghtk) {
+            this.ghtk = ghtk;
+        }
+    }
+
+    /**
+     * Cấu hình endpoint, token xác thực và timeout cho từng adapter hãng vận chuyển.
+     * Khi token rỗng, adapter tự động dùng chế độ sandbox mô phỏng nội bộ để dev/test không phụ thuộc mạng ngoài.
+     */
+    public static class CarrierEndpoint {
+        @NotBlank
+        private String baseUrl;
+        private String token = "";
+        private String shopId = "";
+
+        @Min(value = 100, message = "Timeout kết nối tối thiểu 100ms")
+        private int connectTimeoutMs = 5000;
+
+        @Min(value = 100, message = "Timeout đọc tối thiểu 100ms")
+        private int readTimeoutMs = 5000;
+
+        public CarrierEndpoint() {
+        }
+
+        public CarrierEndpoint(String baseUrl, String token, String shopId) {
+            this.baseUrl = baseUrl;
+            this.token = token;
+            this.shopId = shopId;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
+
+        public String getShopId() {
+            return shopId;
+        }
+
+        public void setShopId(String shopId) {
+            this.shopId = shopId;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = connectTimeoutMs;
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = readTimeoutMs;
         }
     }
 }

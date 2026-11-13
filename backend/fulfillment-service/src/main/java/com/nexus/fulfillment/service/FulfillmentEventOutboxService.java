@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.fulfillment.entity.FulfillmentOutboxEvent;
 import com.nexus.fulfillment.entity.Inventory;
 import com.nexus.fulfillment.entity.SellerSku;
+import com.nexus.fulfillment.entity.Shipment;
 import com.nexus.fulfillment.repository.FulfillmentOutboxEventRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class FulfillmentEventOutboxService {
 
     public static final String EVENT_INVENTORY_INBOUND_COMPLETED = "InventoryInboundCompleted";
+    public static final String EVENT_SHIPMENT_CREATED = "ShipmentCreated";
 
     private final FulfillmentOutboxEventRepository outboxRepository;
     private final ObjectMapper objectMapper;
@@ -62,6 +64,36 @@ public class FulfillmentEventOutboxService {
         entry.setAggregateType("SELLER_SKU");
         entry.setAggregateId(sellerSku.getId());
         entry.setEventType(EVENT_INVENTORY_INBOUND_COMPLETED);
+        entry.setPayload(serialize(body));
+        entry.setDone(false);
+        entry.setAttempts(0);
+        entry.setNextAttemptAt(now);
+        outboxRepository.save(entry);
+    }
+
+    /** Ghi sự kiện ShipmentCreated (SRS §2.8) vào bảng outbox trong cùng transaction tạo vận đơn. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void enqueueShipmentCreated(Shipment shipment) {
+        Instant now = Instant.now();
+        UUID eventId = UUID.randomUUID();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("eventId", eventId);
+        body.put("eventType", EVENT_SHIPMENT_CREATED);
+        body.put("occurredAt", now.toString());
+        body.put("shipmentId", shipment.getId());
+        body.put("orderId", shipment.getOrderId());
+        body.put("warehouseId", shipment.getWarehouse() != null ? shipment.getWarehouse().getId() : null);
+        body.put("carrier", shipment.getCarrierCode());
+        body.put("serviceType", shipment.getServiceType());
+        body.put("shippingFee", shipment.getShippingFee());
+        body.put("trackingNumber", shipment.getTrackingNo());
+        body.put("status", shipment.getStatus() != null ? shipment.getStatus().name() : null);
+
+        FulfillmentOutboxEvent entry = new FulfillmentOutboxEvent();
+        entry.setId(eventId);
+        entry.setAggregateType("SHIPMENT");
+        entry.setAggregateId(shipment.getId());
+        entry.setEventType(EVENT_SHIPMENT_CREATED);
         entry.setPayload(serialize(body));
         entry.setDone(false);
         entry.setAttempts(0);
