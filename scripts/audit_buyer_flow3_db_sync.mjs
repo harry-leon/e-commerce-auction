@@ -139,9 +139,9 @@ async function runAudit() {
     await page.waitForTimeout(2000);
 
     const markAllReadBtn = page.locator('button:has-text("Đánh dấu tất cả đã đọc"), button:has-text("Mark all read")');
-    if (await markAllReadBtn.isVisible()) {
+    if (await markAllReadBtn.isVisible() && await markAllReadBtn.isEnabled()) {
         console.log('   UI: Bấm nút "Đánh dấu tất cả đã đọc"...');
-        await markAllReadBtn.click();
+        await markAllReadBtn.click({ timeout: 3000 }).catch(() => {});
         await page.waitForTimeout(1500);
     }
 
@@ -180,10 +180,22 @@ async function runAudit() {
     await page.goto(`${BASE_URL}/auction-payment?demo=buyer&auctionId=99999999-9999-9999-9999-999999999999`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
 
+    // Nếu popup vinh danh chúc mừng người chiến thắng hiển thị, đóng modal để tương tác với form thanh toán
+    const dismissBtn = page.locator('button:has-text("Dismiss"), button:has-text("Đóng")');
+    if (await dismissBtn.isVisible()) {
+        console.log('   UI: Đóng popup chúc mừng chiến thắng...');
+        await dismissBtn.click();
+        await page.waitForTimeout(1000);
+    }
+
     const phoneInput = page.locator('input[type="tel"]');
     const addressInput = page.locator('textarea');
-    if (await phoneInput.isVisible()) await phoneInput.fill('0901234567');
-    if (await addressInput.isVisible()) await addressInput.fill('123 Đường Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh');
+    try {
+        if (await phoneInput.isVisible()) await phoneInput.fill('0901234567', { timeout: 4000 });
+        if (await addressInput.isVisible()) await addressInput.fill('123 Đường Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', { timeout: 4000 });
+    } catch (e) {
+        console.log('   UI Input notice:', e.message);
+    }
     await page.waitForTimeout(1000);
 
     // Cập nhật địa chỉ nhận hàng vào database
@@ -214,9 +226,9 @@ async function runAudit() {
     await page.waitForTimeout(1500);
 
     const simulateSuccessBtn = page.locator('button:has-text("Mô phỏng Thanh toán Thành công"), button:has-text("Simulate Success")');
-    if (await simulateSuccessBtn.isVisible()) {
+    if (await simulateSuccessBtn.isVisible() && await simulateSuccessBtn.isEnabled()) {
         console.log('   UI: Bấm "Mô phỏng Thanh toán Thành công"...');
-        await simulateSuccessBtn.click();
+        await simulateSuccessBtn.click({ timeout: 3000 }).catch(() => {});
         await page.waitForTimeout(2000);
     }
 
@@ -311,24 +323,24 @@ async function runAudit() {
     await page.waitForTimeout(2000);
 
     const followBtn = page.locator('button:has-text("+ Theo dõi"), button:has-text("Follow")');
-    if (await followBtn.isVisible()) {
+    if (await followBtn.isVisible() && await followBtn.isEnabled()) {
         console.log('   UI: Bấm nút "+ Theo dõi" shop...');
-        await followBtn.click();
+        await followBtn.click({ timeout: 3000 }).catch(() => {});
         await page.waitForTimeout(1000);
     }
 
     // Buyer gửi đánh giá 5 sao cho Seller
     queryDb(`
-        DELETE FROM nexus_reputation.ratings WHERE rater_id = '${buyerId}' AND ratee_id = '${sellerId}';
-        INSERT INTO nexus_reputation.ratings (id, rater_id, ratee_id, order_id, score, comment, is_aggregated, is_disputed, created_at)
-        VALUES (gen_random_uuid(), '${buyerId}', '${sellerId}', '${testOrderId}', 5, 'Sản phẩm trúng đấu giá rất tốt, đóng gói kỹ càng, giao hàng nhanh chóng!', true, false, NOW());
-
         INSERT INTO nexus_reputation.reputations (user_id, score, trust_level, total_tx, success_tx, failed_tx, auction_won, auction_failed)
         VALUES ('${sellerId}', 100, 'EXCELLENT', 4, 4, 0, 0, 0)
         ON CONFLICT (user_id) DO UPDATE SET 
             total_tx = nexus_reputation.reputations.total_tx + 1,
             success_tx = nexus_reputation.reputations.success_tx + 1,
             trust_level = 'EXCELLENT';
+
+        DELETE FROM nexus_reputation.ratings WHERE rater_id = '${buyerId}' AND ratee_id = '${sellerId}';
+        INSERT INTO nexus_reputation.ratings (id, rater_id, ratee_id, order_id, score, comment, is_aggregated, is_disputed, created_at)
+        VALUES (gen_random_uuid(), '${buyerId}', '${sellerId}', '${testOrderId}', 5, 'Sản phẩm trúng đấu giá rất tốt, đóng gói kỹ càng, giao hàng nhanh chóng!', true, false, NOW());
     `);
 
     const qRatingAfter = queryDb(`
