@@ -1,6 +1,8 @@
 package com.nexus.commerce.controller;
 
 import com.nexus.commerce.dto.request.CancelOrderRequest;
+import com.nexus.commerce.dto.request.ResolveOrderDisputeRequest;
+import com.nexus.commerce.dto.request.SubmitOrderDisputeRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
 import com.nexus.commerce.dto.response.OrderSummaryResponse;
@@ -432,6 +434,107 @@ public class OrderController {
                 : CancelOrderRequest.builder().reason("Người dùng yêu cầu hủy đơn").build();
 
         OrderDetailResponse response = orderService.cancelOrder(orderId, safeRequest, currentUserId, userRoles);
+        return ApiResponse.ok(response);
+    }
+
+    /**
+     * Admin giải quyết tranh chấp ký quỹ đơn hàng (Escrow Dispute Resolution).
+     *
+     * <p>Chức năng: Tiếp nhận phán quyết của Admin đối với đơn hàng đang có khiếu nại hoặc giữ tiền ký quỹ
+     * (hoàn 100% cho người mua, giải ngân cho người bán, hoặc hoàn một phần).
+     *
+     * <p>Đầu vào và kết quả:
+     * Nhận orderId từ URL path và request body chứa resolution ('refunded', 'released', 'partial_refund') cùng note (tùy chọn).
+     * Trả về ApiResponse bọc OrderDetailResponse cập nhật sau phán quyết.
+     *
+     * <p>Luồng xử lý:
+     * 1. Xác thực quyền ADMIN qua @PreAuthorize("hasRole('ADMIN')").
+     * 2. Gọi orderService.resolveDispute(orderId, request, currentUserId, userRoles).
+     * 3. Trả về kết quả Envelope v2.
+     *
+     * <p>Quy tắc và lý do:
+     * Chỉ tài khoản có vai trò ADMIN mới được can thiệp vào quỹ ký quỹ và trạng thái tranh chấp.
+     * Ghi nhận đầy đủ vết kiểm toán bất biến vào order_status_history.
+     *
+     * <p>Lỗi và giới hạn:
+     * Trả về 400 nếu resolution không hợp lệ hoặc orderId sai định dạng.
+     * Trả về 403 nếu không phải ADMIN.
+     * Trả về 404 nếu không tìm thấy đơn hàng.
+     * Trả về 409 nếu đơn hàng chưa thanh toán (PENDING_PAYMENT) hoặc đã hủy (CANCELLED).
+     */
+    @Operation(
+            summary = "Giải quyết tranh chấp ký quỹ đơn hàng",
+            description = "Quản trị viên thực hiện phán quyết tranh chấp: hoàn tiền người mua, giải ngân người bán hoặc hoàn một phần"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Giải quyết tranh chấp thành công"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Dữ liệu yêu cầu không hợp lệ"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "Chưa xác thực danh tính"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "Chỉ Admin mới có quyền giải quyết tranh chấp"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Không tìm thấy đơn hàng"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "Đơn hàng chưa thanh toán hoặc đã bị hủy, không thể tranh chấp")
+    })
+    @PostMapping("/{orderId}/resolve-dispute")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<OrderDetailResponse> resolveDispute(
+            @Parameter(description = "Mã định danh duy nhất của đơn hàng (UUID)")
+            @PathVariable UUID orderId,
+            @Valid @RequestBody ResolveOrderDisputeRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            Authentication authentication
+    ) {
+        UUID currentUserId = resolveUserId(jwt);
+        List<String> userRoles = extractRoles(authentication, jwt);
+        OrderDetailResponse response = orderService.resolveDispute(orderId, request, currentUserId, userRoles);
+        return ApiResponse.ok(response);
+    }
+
+    /**
+     * Người mua mở khiếu nại tranh chấp đơn hàng (Dispute Filing).
+     *
+     * <p>Chức năng: Người mua gửi yêu cầu khiếu nại về đơn hàng (hàng lỗi, hư hỏng khi vận chuyển, không nhận được hàng)
+     * để khoản thanh toán được chuyển sang trạng thái tạm giữ (on_hold) chờ Quản trị viên xử lý.
+     *
+     * <p>Đầu vào và kết quả:
+     * Nhận orderId từ URL path và request body chứa lý do khiếu nại reason.
+     * Trả về ApiResponse bọc OrderDetailResponse.
+     *
+     * <p>Luồng xử lý:
+     * 1. Xác thực người dùng đăng nhập có quyền BUYER hoặc ADMIN qua @PreAuthorize.
+     * 2. Gọi orderService.submitDispute(orderId, request, currentUserId, userRoles).
+     * 3. Trả về kết quả Envelope v2.
+     *
+     * <p>Quy tắc và lý do:
+     * Chỉ người mua sở hữu đơn hoặc ADMIN mới được gửi khiếu nại.
+     * Đơn hàng chưa thanh toán (PENDING_PAYMENT) hoặc đã hủy (CANCELLED) không thể mở khiếu nại.
+     *
+     * <p>Lỗi và giới hạn:
+     * Trả về 403 nếu không phải chủ đơn. Trả về 409 nếu đơn chưa thanh toán hoặc đã hủy.
+     */
+    @Operation(
+            summary = "Gửi khiếu nại tranh chấp đơn hàng",
+            description = "Người mua gửi yêu cầu khiếu nại để tạm giữ tiền ký quỹ và yêu cầu Quản trị viên can thiệp"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Gửi khiếu nại thành công"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Dữ liệu khiếu nại không hợp lệ"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "Chưa xác thực danh tính"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "Không có quyền khiếu nại đơn của người khác"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Không tìm thấy đơn hàng"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "Đơn hàng chưa thanh toán hoặc đã bị hủy")
+    })
+    @PostMapping("/{orderId}/dispute")
+    @PreAuthorize("hasAnyRole('BUYER', 'ADMIN')")
+    public ApiResponse<OrderDetailResponse> submitDispute(
+            @Parameter(description = "Mã định danh duy nhất của đơn hàng (UUID)")
+            @PathVariable UUID orderId,
+            @Valid @RequestBody SubmitOrderDisputeRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            Authentication authentication
+    ) {
+        UUID currentUserId = resolveUserId(jwt);
+        List<String> userRoles = extractRoles(authentication, jwt);
+        OrderDetailResponse response = orderService.submitDispute(orderId, request, currentUserId, userRoles);
         return ApiResponse.ok(response);
     }
 

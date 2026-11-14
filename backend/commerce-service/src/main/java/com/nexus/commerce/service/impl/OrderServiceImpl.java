@@ -6,6 +6,8 @@ import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.OrderMapper;
 import com.nexus.commerce.dto.request.CancelOrderRequest;
 import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
+import com.nexus.commerce.dto.request.ResolveOrderDisputeRequest;
+import com.nexus.commerce.dto.request.SubmitOrderDisputeRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
 import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
@@ -894,6 +896,183 @@ public class OrderServiceImpl implements OrderService {
         } else {
             log.info("Các phiếu giữ kho đã tồn tại trong đơn hàng [{}] (Idempotent), bỏ qua cập nhật lặp", orderId);
         }
+    }
+
+    /**
+     * Quản trị viên xử lý tranh chấp ký quỹ của đơn hàng (Dispute Resolution).
+     *
+     * <p>Chức năng: Ghi nhận quyết định xử lý tranh chấp của Admin ('refunded', 'released', 'partial_refund')
+     * và cập nhật trạng thái đơn hàng cùng lịch sử kiểm toán bất biến.
+     *
+     * <p>Đầu vào và kết quả:
+     * - Đầu vào: orderId (UUID), request chứa resolution ('refunded', 'released', 'partial_refund') và note tùy chọn,
+     *   adminId (UUID người thực hiện), userRoles (danh sách quyền).
+     * - Kết quả: OrderDetailResponse sau khi đã cập nhật trạng thái và lưu DB.
+     *
+     * <p>Luồng xử lý:
+     * 1. Xác thực quyền ADMIN: Người dùng phải có quyền ADMIN, nếu không ném AUTH_FORBIDDEN.
+     * 2. Khóa và nạp bản ghi đơn hàng qua findOrderForUpdate(orderId).
+     * 3. Kiểm tra điều kiện nghiệp vụ: Đơn hàng ở trạng thái PENDING_PAYMENT hoặc CANCELLED
+     *    không thể xử lý tranh chấp ký quỹ -> ném ORDER_STATUS_INVALID.
+     * 4. Xác định trạng thái đích:
+     *    - 'refunded': Hoàn tiền 100% cho người mua -> Order chuyển sang REFUNDED; gọi enqueueRelease hoàn trả tồn kho nếu là đơn thường.
+     *    - 'released' hoặc 'partial_refund': Giải ngân tiền ký quỹ cho người bán -> Order chuyển sang COMPLETED.
+     * 5. Cập nhật Order.status nếu có thay đổi và lưu vào orderRepository.
+     * 6. Ghi nhận vết kiểm toán bất biến vào order_status_history với định dạng "[ADMIN] [DISPUTE:<RESOLUTION>] note".
+     * 7. Trả về OrderDetailResponse đầy đủ.
+     *
+     * <p>Quy tắc và lý do:
+     * - Thao tác chỉ dành riêng cho Admin để can thiệp an toàn vào dòng tiền ký quỹ.
+     * - Chạy trong @Transactional để đồng bộ trạng thái đơn và lịch sử kiểm toán.
+     * - Chuỗi ghi chú được giới hạn tối đa 500 ký tự theo schema bảng order_status_history.
+     *
+     * <p>Lỗi và giới hạn:
+     * - Ném AUTH_FORBIDDEN nếu không có quyền ADMIN.
+     * - Ném ORDER_NOT_FOUND nếu không tìm thấy đơn.
+     * - Ném ORDER_STATUS_INVALID nếu đơn chưa thanh toán hoặc đã hủy.
+     * - Ném INVALID_PARAM_VALUE nếu resolution không hợp lệ.
+     */
+    @Override
+    @Transactional
+    public OrderDetailResponse resolveDispute(
+            UUID orderId,
+            ResolveOrderDisputeRequest request,
+            UUID adminId,
+            List<String> userRoles
+    ) {
+        if (!hasRole(userRoles, OrderStatusStateMachine.ROLE_ADMIN)) {
+            throw new BusinessException(
+                    ErrorCode.AUTH_FORBIDDEN,
+                    "Chỉ Quản trị viên mới có quyền giải quyết tranh chấp đơn hàng"
+            );
+        }
+        if (request == null || request.resolution() == null || request.resolution().isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Nghị quyết tranh chấp không được để trống");
+        }
+
+        Order order = findOrderForUpdate(orderId);
+        OrderStatus currentStatus = order.getStatus();
+
+        if (currentStatus == OrderStatus.PENDING_PAYMENT || currentStatus == OrderStatus.CANCELLED) {
+            throw new BusinessException(
+                    ErrorCode.ORDER_STATUS_INVALID,
+                    "Không thể giải quyết tranh chấp cho đơn hàng chưa thanh toán hoặc đã bị hủy"
+            );
+        }
+
+        String resolution = request.resolution().trim().toLowerCase(Locale.ROOT);
+        OrderStatus targetStatus;
+        switch (resolution) {
+            case "refunded" -> targetStatus = OrderStatus.REFUNDED;
+            case "released", "partial_refund" -> targetStatus = OrderStatus.COMPLETED;
+            default -> throw new BusinessException(
+                    ErrorCode.INVALID_PARAM_VALUE,
+                    "Nghị quyết tranh chấp không hợp lệ: " + request.resolution()
+            );
+        }
+
+        if (currentStatus != targetStatus) {
+            order.setStatus(targetStatus);
+            order = orderRepository.save(order);
+            if (targetStatus == OrderStatus.REFUNDED) {
+                enqueueRelease(order);
+            }
+        }
+
+        String cleanNote = (request.note() != null && !request.note().isBlank()) ? request.note().trim() : "";
+        String auditPrefix = "[ADMIN] [DISPUTE:" + resolution.toUpperCase(Locale.ROOT) + "] ";
+        String reason = auditPrefix + cleanNote;
+        if (reason.length() > MAX_REASON_LENGTH) {
+            reason = reason.substring(0, MAX_REASON_LENGTH);
+        }
+
+        OrderStatusHistory historyRecord = OrderStatusHistory.builder()
+                .order(order)
+                .fromStatus(currentStatus)
+                .toStatus(targetStatus)
+                .reason(reason)
+                .changedAt(Instant.now())
+                .build();
+        orderStatusHistoryRepository.save(historyRecord);
+
+        log.info("Admin [{}] đã giải quyết tranh chấp cho đơn hàng [{}] với nghị quyết [{}] (từ [{}] sang [{}])",
+                adminId, orderId, resolution, currentStatus, targetStatus);
+
+        return orderMapper.toDetailResponse(order);
+    }
+
+    /**
+     * Người mua mở khiếu nại tranh chấp đơn hàng (Dispute Filing).
+     *
+     * <p>Chức năng: Tiếp nhận khiếu nại từ Buyer đối với đơn hàng đang giao hoặc đã nhận có sự cố,
+     * ghi nhận lý do vào vết kiểm toán để Quản trị viên xem xét tạm giữ hoặc xử lý ký quỹ.
+     *
+     * <p>Đầu vào và kết quả:
+     * - Đầu vào: orderId (UUID), request chứa reason khiếu nại, currentUserId (UUID người mua), userRoles.
+     * - Kết quả: OrderDetailResponse sau khi đã ghi nhận lịch sử.
+     *
+     * <p>Luồng xử lý:
+     * 1. Khóa và nạp bản ghi đơn hàng qua findOrderForUpdate(orderId).
+     * 2. Kiểm tra quyền sở hữu: Người gọi phải là người mua sở hữu đơn (order.buyerId == currentUserId)
+     *    hoặc là ADMIN; người khác ném AUTH_FORBIDDEN.
+     * 3. Kiểm tra điều kiện đơn hàng: Đơn phải ở trạng thái đã thanh toán hoặc đang/đã giao
+     *    (PAID, PROCESSING, SHIPPED, DELIVERED, COMPLETED). Không cho phép khiếu nại đơn PENDING_PAYMENT hoặc CANCELLED.
+     * 4. Ghi nhận bản ghi OrderStatusHistory với prefix "[BUYER] [DISPUTE_FILED] reason".
+     * 5. Trả về OrderDetailResponse.
+     *
+     * <p>Quy tắc và lý do:
+     * - Đảm bảo tính toàn vẹn đa người dùng (Multi-tenant Ownership Isolation).
+     * - Giới hạn độ dài lý do tối đa 500 ký tự.
+     *
+     * <p>Lỗi và giới hạn:
+     * - Ném AUTH_FORBIDDEN nếu không phải chủ đơn.
+     * - Ném ORDER_STATUS_INVALID nếu đơn chưa thanh toán hoặc đã hủy.
+     */
+    @Override
+    @Transactional
+    public OrderDetailResponse submitDispute(
+            UUID orderId,
+            SubmitOrderDisputeRequest request,
+            UUID currentUserId,
+            List<String> userRoles
+    ) {
+        if (request == null || request.reason() == null || request.reason().isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "Lý do khiếu nại không được để trống");
+        }
+
+        Order order = findOrderForUpdate(orderId);
+        boolean isAdmin = hasRole(userRoles, OrderStatusStateMachine.ROLE_ADMIN);
+        if (!isAdmin && !order.getBuyerId().equals(currentUserId)) {
+            throw new BusinessException(
+                    ErrorCode.AUTH_FORBIDDEN,
+                    "Bạn chỉ có quyền gửi khiếu nại cho đơn hàng của chính mình"
+            );
+        }
+
+        OrderStatus currentStatus = order.getStatus();
+        if (currentStatus == OrderStatus.PENDING_PAYMENT || currentStatus == OrderStatus.CANCELLED) {
+            throw new BusinessException(
+                    ErrorCode.ORDER_STATUS_INVALID,
+                    "Không thể khiếu nại đơn hàng chưa thanh toán hoặc đã bị hủy"
+            );
+        }
+
+        String rawReason = request.reason().trim();
+        String formattedReason = formatAuditReason("BUYER", "[DISPUTE_FILED] " + rawReason, currentStatus);
+
+        OrderStatusHistory historyRecord = OrderStatusHistory.builder()
+                .order(order)
+                .fromStatus(currentStatus)
+                .toStatus(currentStatus)
+                .reason(formattedReason)
+                .changedAt(Instant.now())
+                .build();
+        orderStatusHistoryRepository.save(historyRecord);
+
+        log.info("Người mua [{}] đã mở khiếu nại cho đơn hàng [{}]: [{}]",
+                currentUserId, orderId, rawReason);
+
+        return orderMapper.toDetailResponse(order);
     }
 
     /**
