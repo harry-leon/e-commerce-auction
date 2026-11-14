@@ -67,6 +67,28 @@ import org.springframework.transaction.annotation.Transactional;
 class PaymentPostgresTest {
     @Autowired private ShippingDispatchClaimService dispatchClaims;
 
+    /** Preflight đọc lại hold sau claim; replay claim vẫn là kết quả cũ, không được dùng nó để vượt review mới. */
+    @Test
+    void dispatchPreflightRechecksFinancialStateAndReturnsBoundSnapshot() {
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> dispatchClaims.handoff(orderId));
+        UUID handoff = confirmedHandoff(); UUID caller = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        assertEquals(handoff, dispatchClaims.handoff(orderId).id());
+        var body = new ShippingDispatchClaimService.Command(handoff, UUID.randomUUID());
+        var claim = dispatchClaims.claim(caller, key, body).claim();
+        var authorization = dispatchClaims.preflight(caller, claim.id());
+        assertEquals(claim, authorization.claim());
+        assertEquals(orderId, authorization.snapshot().orderId());
+        assertEquals(new BigDecimal("50000.00"), authorization.snapshot().total());
+        assertEquals("CLAIMED", dispatchClaims.handoff(orderId).state());
+        assertEquals(404, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> dispatchClaims.preflight(UUID.randomUUID(), claim.id())).getHttpStatus().value());
+        jdbc.update("INSERT INTO refund_payment_holds(payment_id,reason) VALUES (?,'LATE_FIXTURE')", paymentId);
+        assertEquals(claim, dispatchClaims.claim(caller, key, body).claim());
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> dispatchClaims.preflight(caller, claim.id())).getHttpStatus().value());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM shipping_dispatch_claims WHERE id=?", Integer.class, claim.id()));
+    }
+
     /** Claim/replay giữ id và parcel; key khác/đổi kiện không cấp quyền lần hai, refund mới sau claim bị chặn. */
     @Test
     void dispatchClaimIsDurableIdempotentAndBlocksNewRefunds() {
