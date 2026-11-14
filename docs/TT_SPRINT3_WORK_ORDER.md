@@ -1,8 +1,10 @@
 # Thứ tự triển khai Sprint 3 — Tiến Thương
 
+> **Cập nhật 14/11/2026:** đây là kế hoạch và các ghi nhận lịch sử, không dùng các dòng “chưa có” bên dưới làm backlog hiện tại. Xem [bảng đối chiếu source, bằng chứng local và việc còn phải nghiệm thu](TT_S3_UAT_HANDOFF.md). Có implementation/MR/test local không đồng nghĩa provider sandbox, pipeline hoặc UAT đã hoàn tất.
+
 Phạm vi theo phân công 16–27/11/2026 trong PROJECT_PLAN_SPRINT2_TO_4.md. Đây là kế hoạch dựa trên source đã đọc, chưa phải kết quả nghiệm thu provider. Mã TT-S3 dưới đây là mã đề xuất, chưa phải issue GitLab đã tạo.
 
-## 1. Hiện trạng cần giữ lại
+## 1. Baseline khi lập kế hoạch
 
 | Phần | Bằng chứng source | Kết luận |
 | --- | --- | --- |
