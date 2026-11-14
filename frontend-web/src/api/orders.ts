@@ -737,16 +737,21 @@ export const ordersApi = {
 
     /**
      * Buyer mở khiếu nại đơn hàng -> chuyển khoản tiền sang trạng thái 'on_hold' (tạm giữ) để Admin xử lý.
+     * Luồng: Gọi POST /orders/{id}/dispute lên backend; nếu thành công trả về đơn hàng đã cập nhật; fallback mock khi mất mạng.
      */
     async submitOrderDispute(id: string, reason: string): Promise<Order> {
         try {
-            await api(`/orders/${id}/dispute`, {
+            const resp = await api<any>(`/orders/${id}/dispute`, {
                 method: 'POST',
                 body: JSON.stringify({ reason }),
             })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
-            // Fallback
+            // Fallback sang mock cục bộ khi backend offline
         }
 
         const orders = readLocalMockOrders()
@@ -770,6 +775,7 @@ export const ordersApi = {
      * - 'released': Chuyển tiền cho người bán.
      * - 'refunded': Hoàn tiền 100% cho người mua.
      * - 'partial_refund': Hoàn một phần tiền cho người mua, phần còn lại chuyển cho người bán.
+     * Luồng: Gọi POST /orders/{id}/resolve-dispute lên backend; nếu thành công trả về đơn hàng đã cập nhật; fallback mock khi mất mạng.
      */
     async resolveOrderDispute(
         id: string,
@@ -777,13 +783,17 @@ export const ordersApi = {
         note?: string,
     ): Promise<Order> {
         try {
-            await api(`/orders/${id}/resolve-dispute`, {
+            const resp = await api<any>(`/orders/${id}/resolve-dispute`, {
                 method: 'POST',
                 body: JSON.stringify({ resolution, note }),
             })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
-            // Fallback
+            // Fallback sang mock cục bộ khi backend offline
         }
 
         const orders = readLocalMockOrders()
