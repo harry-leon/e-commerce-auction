@@ -32,6 +32,22 @@ class ShippingEventDeliveryPostgresTest {
     private ShippingEventDeliveryWorker worker;
     private String schema;
 
+    /** Query health phải chỉ đếm backlog shipment chưa ACK, nhận diện cả dead letter lẫn pending quá tuổi trên PostgreSQL. */
+    @Test
+    void transportHealthTracksRealPendingAndDeadLetterRows() throws Exception {
+        var health = new com.nexus.fulfillment.config.ShippingEventTransportHealth(jdbc, client, true, 300);
+        UUID dead = fixture("SHIPMENT", "ShipmentDelivered");
+        assertEquals(org.springframework.boot.actuate.health.Status.UP, health.health().getStatus());
+        jdbc.update("UPDATE fulfillment_event_outbox SET attempts=8 WHERE id=?", dead);
+        UUID old = fixture("SHIPMENT", "ShipmentCreated");
+        jdbc.update("UPDATE fulfillment_event_outbox SET created_at=CURRENT_TIMESTAMP-interval '1 hour' WHERE id=?", old);
+        assertEquals(org.springframework.boot.actuate.health.Status.OUT_OF_SERVICE, health.health().getStatus());
+        assertEquals(1L, health.health().getDetails().get("deadLetters"));
+        assertEquals(1L, health.health().getDetails().get("overdue"));
+        jdbc.update("UPDATE fulfillment_event_outbox SET done=true WHERE id IN (?,?)", dead, old);
+        assertEquals(org.springframework.boot.actuate.health.Status.UP, health.health().getStatus());
+    }
+
     /** Schema UUID riêng cho từng test, Flyway thật; không dùng dữ liệu service đang chạy. */
     @BeforeEach
     void setup() {

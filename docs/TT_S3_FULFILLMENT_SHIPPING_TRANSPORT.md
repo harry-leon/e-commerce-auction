@@ -9,7 +9,7 @@ Worker giao sáu loại shipment trong fulfillment_event_outbox sang API nội b
 - Tái dùng URL/token-url/client-id/client-secret của CommerceShippingClient như tài liệu preparation; service account phải có COMMERCE.SHIPPING_EVENTS ngoài COMMERCE.SHIPPING_READ nếu dùng cả preview. Không dùng token Admin/Buyer và không lưu secret vào source.
 - HTTP connect/read timeout 5 giây, không redirect/retry bên trong client. POST chỉ ACK 204 được coi đã giao; 401 xóa cache token cho lần retry sau. Lỗi chỉ mang status, không response body/cause nhạy cảm.
 
-Scheduler HTTP riêng, scheduler mặc định riêng cho polling/sweeper; Spring dừng khi context đóng. Feature tắt hoặc thiếu OAuth giữ backlog nguyên vẹn. Chưa có health indicator riêng cho đường HTTP này; broker health không chứng minh Commerce reachable.
+Scheduler HTTP riêng, scheduler mặc định riêng cho polling/sweeper; Spring dừng khi context đóng. Feature tắt hoặc thiếu OAuth giữ backlog nguyên vẹn. Có [health cấu hình/backlog cục bộ](TT_S3_FULFILLMENT_TRANSPORT_HEALTH.md), không probe downstream; broker health không chứng minh Commerce reachable.
 
 ## Delivery và lỗi
 
@@ -19,7 +19,7 @@ ACK 204 đặt done=true, published_at và xóa last_error. Lỗi tăng attempts
 
 `done=false AND attempts>=8` là dead letter cho worker này; không xóa row hoặc báo done giả. Không sửa payload/id để né consumer dedup. Lỗi chỉ giữ `HTTP_status`, INVALID_SNAPSHOT hoặc tên class; không giữ thông điệp/token/PII. `last_error` chỉ có ý nghĩa vận hành, không dùng để quyết định trạng thái tài chính hoặc shipment.
 
-Chưa có API replay có audit hoặc UI/list cho dead letter shipping; không reset attempts bằng SQL như một quy trình hoàn chỉnh. Truy vấn chỉ đọc: `SELECT id,event_type,aggregate_id,attempts,last_error FROM fulfillment_event_outbox WHERE aggregate_type='SHIPMENT' AND done=false AND attempts>=8;`. Cần bổ sung audit/replay trước khi coi vận hành đã hoàn tất.
+V11 có [API replay Admin với audit](TT_S3_SHIPPING_EVENT_REPLAY.md), không reset attempts bằng SQL để né lịch sử. Truy vấn chỉ đọc: `SELECT id,event_type,aggregate_id,attempts,last_error FROM fulfillment_event_outbox WHERE aggregate_type='SHIPMENT' AND done=false AND attempts>=8;`. UI/list và health/alert vẫn cần bổ sung.
 
 Không đảm bảo thứ tự tuyệt đối giữa event khi backoff. Commerce !156 giữ transition một chiều và trả 409 khi prerequisite chưa tới; backlog lâu hơn giới hạn retry cần xử lý dead letter. Worker không tự chuyển PAID→PROCESSING, không gọi createShipment, refund hoặc restock. Không có broker/Kafka producer mới trong thay đổi này; đây là HTTP transactional outbox.
 
@@ -27,4 +27,4 @@ Không đảm bảo thứ tự tuyệt đối giữa event khi backoff. Commerce
 
 PostgreSQL tạm + Flyway thật kiểm tra mất ACK giữ id/payload, backoff/dead letter, poison, không lấy event kho, hai worker không gửi cùng row và tắt/thiếu OAuth giữ backlog. HTTP localhost kiểm tra bearer, cache/401 refresh và chỉ ACK 204. Không gọi carrier/IAM thật hoặc thay flag môi trường đang dùng.
 
-Phần còn lại: deploy/kiểm chứng IAM + consumer !156, replay có audit, HTTP health/alert, Notification ORDER_SHIPPED/ORDER_DELIVERED và worker Commerce → Notification, test tích hợp hai service thật/sandbox/UAT. Test mock không chứng minh đã bật đường truyền hoặc đã gửi thông báo cho người dùng.
+V11 bổ sung replay có audit và MR !162 thêm health cục bộ; phần còn lại là UI/list, receiver cảnh báo live, deploy/kiểm chứng IAM + consumer !156 và test tích hợp hai service thật/sandbox/UAT. Notification Shipping và worker Commerce → Notification thuộc !158/!159, cần review/deploy riêng. Test mock không chứng minh đã bật đường truyền hoặc đã gửi thông báo cho người dùng.
