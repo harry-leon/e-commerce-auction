@@ -849,6 +849,29 @@ export const auctionsApi = {
         const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
 
         try {
+            // Tải danh mục sản phẩm từ Catalog để nạp metadata (tên, ảnh Cloudinary) vào auctionProductCache nếu cache chưa có
+            if (auctionProductCache.size === 0) {
+                try {
+                    const prodEnv = await api<ApiResponse<ApiProduct[]> | ApiProduct[]>('/products?size=100')
+                    const prodList = prodEnv && typeof prodEnv === 'object' && 'data' in prodEnv
+                        ? (prodEnv as ApiResponse<ApiProduct[]>).data
+                        : prodEnv
+                    if (Array.isArray(prodList)) {
+                        for (const p of prodList) {
+                            const sku = p.skus?.[0]
+                            cacheAuctionProduct(p.id, {
+                                name: p.name,
+                                nameVi: p.name,
+                                sku: sku?.id || 'N/A',
+                                images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : undefined,
+                            })
+                        }
+                    }
+                } catch {
+                    // Tiếp tục nếu endpoint catalog tạm thời không phản hồi
+                }
+            }
+
             const envelope = await api<ApiResponse<unknown> | unknown[]>(`/auctions${qs}`)
             const rawData =
                 envelope && typeof envelope === 'object' && 'data' in envelope
@@ -941,6 +964,34 @@ export const auctionsApi = {
 
             const validated = validateAndNormalizeAuction(rawData)
             if (validated) {
+                // Nếu sản phẩm chưa có tên chi tiết hoặc ảnh thực tế từ database, gọi Catalog Service lấy thông tin sản phẩm
+                if (validated.product.name === 'Auction Product' || !auctionProductCache.has(validated.productId)) {
+                    try {
+                        const prodRes = await api<ApiResponse<ApiProduct> | ApiProduct>(`/products/${encodeURIComponent(validated.productId)}`)
+                        const p = prodRes && typeof prodRes === 'object' && 'data' in prodRes
+                            ? (prodRes as ApiResponse<ApiProduct>).data
+                            : (prodRes as ApiProduct)
+                        if (p && p.name) {
+                            const sku = p.skus?.[0]
+                            const entry: AuctionProductCacheEntry = {
+                                name: p.name,
+                                nameVi: p.name,
+                                sku: sku?.id || 'N/A',
+                                images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : undefined,
+                            }
+                            cacheAuctionProduct(p.id, entry)
+                            validated.product.name = p.name
+                            validated.product.nameVi = p.name
+                            validated.product.description = p.description || ''
+                            validated.product.descriptionVi = p.description || ''
+                            if (entry.images && entry.images.length > 0) {
+                                validated.product.images = entry.images
+                            }
+                        }
+                    } catch {
+                        // Tiếp tục với thông tin hiện có nếu catalog tạm không phản hồi
+                    }
+                }
                 // Endpoint lịch sử là nguồn chuẩn mới được bổ sung; giữ detail hoạt động nếu route bid tạm lỗi.
                 const bids = await this.getBidHistory(id).catch(() => validated.bids)
                 return {

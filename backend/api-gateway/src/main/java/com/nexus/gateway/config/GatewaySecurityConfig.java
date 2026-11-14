@@ -81,10 +81,12 @@ public class GatewaySecurityConfig {
                 // thông qua rule anyExchange().authenticated() của Gateway và @PreAuthorize tại Auction Service.
                 .pathMatchers(HttpMethod.GET, "/api/v1/auctions/**")
                     .permitAll()
-                // Mở API GET tra cứu tồn kho SKU công khai để khách và người mua kiểm tra số lượng khả dụng
+                // Mở API GET tra cứu tồn kho SKU và POST batch stock công khai để khách và người mua kiểm tra số lượng khả dụng
                 // trước khi thêm vào giỏ hàng hoặc bấm Mua ngay mà không bị chặn 401 tại Gateway.
                 // Các thao tác quản trị kho (nhập kho, điều chỉnh, tạo kho) vẫn được bảo vệ bằng JWT và phân quyền ADMIN/SELLER.
                 .pathMatchers(HttpMethod.GET, "/api/v1/inventory/sku/**")
+                    .permitAll()
+                .pathMatchers(HttpMethod.POST, "/api/v1/inventory/stocks/batch", "/api/v1/inventory/check")
                     .permitAll()
                 // Các endpoint cá nhân, xử phạt và quản trị uy tín bắt buộc xác thực JWT trước khi mở phần public.
                 .pathMatchers(HttpMethod.GET, "/api/v1/reputations/me",

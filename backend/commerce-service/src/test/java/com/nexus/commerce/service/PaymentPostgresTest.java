@@ -55,7 +55,8 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PaymentReceiptService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+// Giữ cả receipt và Shipping inbox/replay trong context để kiểm tra hồi quy hai luồng trên cùng schema tích hợp.
+@Import({PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -98,6 +99,204 @@ class PaymentPostgresTest {
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
     @Autowired private RefundNotificationReplayService notificationReplays;
+    @Autowired private ShippingEventInboxService shippingInbox;
+    @Autowired private ShippingNotificationReplayService shippingReplays;
+
+    /** Health dùng SQL thật, chỉ đếm pending/dead letter, bỏ qua delivered và nhận biết backlog quá tuổi. */
+    @Test
+    void shippingNotificationHealthCountsActualBacklog() {
+        UUID id = shippingDeadLetter();
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class); when(remote.configured()).thenReturn(true);
+        var health = new com.nexus.commerce.config.ShippingNotificationTransportHealth(jdbc, remote, true, 300);
+        assertEquals(org.springframework.boot.actuate.health.Status.OUT_OF_SERVICE, health.health().getStatus());
+        assertEquals(true, ((Number) health.health().getDetails().get("deadLetters")).longValue() >= 1);
+        jdbc.update("UPDATE shipping_notification_outbox SET status='PENDING',created_at=now()-interval '1 hour' WHERE id=?", id);
+        assertEquals(true, ((Number) health.health().getDetails().get("overdue")).longValue() >= 1);
+        long pending = ((Number) health.health().getDetails().get("pending")).longValue();
+        jdbc.update("UPDATE shipping_notification_outbox SET status='DELIVERED' WHERE id=?", id);
+        assertEquals(pending - 1, ((Number) health.health().getDetails().get("pending")).longValue());
+    }
+
+    /** Replay chỉ DEAD_LETTER, audit/key giữ nguyên sau ACK; payload không đổi và key khác nội dung bị chặn. */
+    @Test
+    void shippingReplayPreservesSnapshotAndStableAudit() {
+        UUID id = shippingDeadLetter(); UUID actor = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        String payload = jdbc.queryForObject("SELECT payload::text FROM shipping_notification_outbox WHERE id=?", String.class, id);
+        UUID audit = shippingReplays.replay(id, actor, key, "Đã sửa OAuth");
+        assertEquals("PENDING", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        assertEquals(0, jdbc.queryForObject("SELECT attempts FROM shipping_notification_outbox WHERE id=?", Integer.class, id));
+        assertEquals(payload, jdbc.queryForObject("SELECT payload::text FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        jdbc.update("UPDATE shipping_notification_outbox SET status='DELIVERED' WHERE id=?", id);
+        assertEquals(audit, shippingReplays.replay(id, actor, key, "Đã sửa OAuth"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingReplays.replay(id, actor, key, "Khác nội dung"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingReplays.replay(id, actor, UUID.randomUUID(), "Đã sửa OAuth"));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingReplays.replay(id, actor, key, " "));
+    }
+
+    /** Rollback không rò audit/reset; hai Admin cùng event chỉ một lần reset thành công. */
+    @Test
+    void shippingReplayIsAtomicAndConcurrentSafe() throws Exception {
+        UUID id = shippingDeadLetter();
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            shippingReplays.replay(id, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra"); tx.setRollbackOnly();
+        });
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_replays WHERE event_id=?", Integer.class, id));
+        CountDownLatch start = new CountDownLatch(1);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.concurrent.Callable<Boolean> replay = () -> {
+                start.await();
+                try { shippingReplays.replay(id, UUID.randomUUID(), UUID.randomUUID(), "Đã kiểm tra"); return true; }
+                catch (com.nexus.common.exception.ApiException conflict) { return false; }
+            };
+            var first = pool.submit(replay); var second = pool.submit(replay); start.countDown();
+            assertEquals(1, (first.get(5, TimeUnit.SECONDS) ? 1 : 0) + (second.get(5, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_replays WHERE event_id=?", Integer.class, id));
+    }
+
+    /** Fixture giữ event/snapshot do inbox thật tạo; chỉ mô phỏng kết quả delivery đã hết retry, không gọi Notification thật. */
+    private UUID shippingDeadLetter() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP"); shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        jdbc.update("UPDATE shipping_notification_outbox SET status='DEAD_LETTER',attempts=8 WHERE id=?", id);
+        return id;
+    }
+
+    /** Mất ACK gửi lại cùng notification snapshot/id; backoff chặn retry tức thì và không gọi luồng email. */
+    @Test
+    void shippingNotificationRetriesSamePayloadAndFinishesOnlyAfterAck() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        when(remote.configured()).thenReturn(true);
+        org.mockito.Mockito.doThrow(new IllegalStateException("lost ACK")).doNothing().when(remote).sendInbox(any());
+        var worker = new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, true);
+        worker.deliver(id); worker.deliver(id);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+        jdbc.update("UPDATE shipping_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", id);
+        worker.deliver(id); worker.deliver(id);
+        var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(2)).sendInbox(captor.capture());
+        assertEquals(captor.getAllValues().getFirst(), captor.getAllValues().getLast());
+        assertEquals("DELIVERED", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.never()).send(any());
+    }
+
+    /** Hai worker chỉ giao một row; tắt feature/OAuth thiếu giữ backlog không query gửi HTTP. */
+    @Test
+    void shippingNotificationIsDisabledByDefaultAndConcurrentSafe() throws Exception {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP"); shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class);
+        new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, false).run();
+        var worker = new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, true);
+        worker.run(); worker.deliver(id);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.never()).sendInbox(any());
+        when(remote.configured()).thenReturn(true);
+        CountDownLatch entered = new CountDownLatch(1); CountDownLatch release = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            entered.countDown();
+            if (!release.await(10, TimeUnit.SECONDS)) { throw new IllegalStateException("Test timeout"); }
+            return null;
+        }).when(remote).sendInbox(any());
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = pool.submit(() -> worker.deliver(id));
+            try {
+                assertEquals(true, entered.await(10, TimeUnit.SECONDS));
+                pool.submit(() -> worker.deliver(id)).get(3, TimeUnit.SECONDS);
+            } finally { release.countDown(); }
+            first.get(10, TimeUnit.SECONDS);
+        }
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(1)).sendInbox(any());
+    }
+
+    /** Tám lỗi giữ dead letter không chứa message; snapshot lệch phải dừng trước HTTP, không ảnh hưởng Order. */
+    @Test
+    void shippingNotificationRetainsDeadLetterAndRejectsPoison() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP"); shippingInbox.receive(event);
+        UUID id = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=?", UUID.class, event.orderId());
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class); when(remote.configured()).thenReturn(true);
+        doThrow(new IllegalStateException("Sensitive upstream body")).when(remote).sendInbox(any());
+        var worker = new ShippingNotificationWorker(jdbc, remote, refundTransactionManager, true);
+        for (int i = 0; i < 8; i++) {
+            jdbc.update("UPDATE shipping_notification_outbox SET next_attempt_at=now()-interval '1 second' WHERE id=?", id);
+            worker.deliver(id);
+        }
+        worker.deliver(id);
+        org.mockito.Mockito.verify(remote, org.mockito.Mockito.times(8)).sendInbox(any());
+        assertEquals("DEAD_LETTER", jdbc.queryForObject("SELECT status FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        assertEquals("IllegalStateException", jdbc.queryForObject("SELECT last_error_type FROM shipping_notification_outbox WHERE id=?", String.class, id));
+        shippingInbox.receive(shippingEvent(event, "ShipmentDelivered", "DELIVERED"));
+        UUID poison = jdbc.queryForObject("SELECT id FROM shipping_notification_outbox WHERE order_id=? AND event_type='ORDER_DELIVERED'", UUID.class, event.orderId());
+        jdbc.update("UPDATE shipping_notification_outbox SET payload='{}'::jsonb WHERE id=?", poison);
+        worker.deliver(poison);
+        assertEquals("INVALID_SNAPSHOT", jdbc.queryForObject("SELECT last_error_type FROM shipping_notification_outbox WHERE id=?", String.class, poison));
+        assertEquals("DELIVERED", orderState(event.orderId()));
+    }
+
+    /** Pickup→Delivered cập nhật Order/history/outbox một lần; callback cũ không hạ trạng thái hoặc phát tin trùng. */
+    @Test
+    void shippingInboxDeduplicatesAndNeverRegressesDeliveredOrder() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        shippingInbox.receive(event);
+        shippingInbox.receive(event);
+        assertEquals("SHIPPED", orderState(event.orderId()));
+        var delivered = shippingEvent(event, "ShipmentDelivered", "DELIVERED");
+        shippingInbox.receive(delivered);
+        shippingInbox.receive(shippingEvent(event, "ShipmentInTransit", "IN_TRANSIT"));
+        assertEquals("DELIVERED", orderState(event.orderId()));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_outbox WHERE order_id=?", Integer.class, event.orderId()));
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE order_id=?", Integer.class, event.orderId()));
+        var changed = new ShippingEventInboxService.Event(event.eventId(), event.eventType(), event.occurredAt(), event.shipmentId(),
+                event.orderId(), event.carrier(), "CHANGED", event.status());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingInbox.receive(changed));
+    }
+
+    /** Delivered trước Pickup được rollback và retry sau handover; Returned chỉ đánh dấu review, không hoàn tiền/đổi Order. */
+    @Test
+    void outOfOrderShippingIsRetryableAndReturnDoesNotRefund() {
+        var event = shippingFixture("ShipmentDelivered", "DELIVERED");
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingInbox.receive(event));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE event_id=?", Integer.class, event.eventId()));
+        shippingInbox.receive(shippingEvent(event, "ShipmentPickedUp", "PICKED_UP"));
+        shippingInbox.receive(event);
+        shippingInbox.receive(shippingEvent(event, "ShipmentReturned", "RETURNED"));
+        assertEquals("DELIVERED", orderState(event.orderId()));
+        assertEquals("ShipmentReturned", jdbc.queryForObject("SELECT review_event_type FROM shipping_order_bindings WHERE order_id=?", String.class, event.orderId()));
+        assertEquals("SUCCESS", jdbc.queryForObject("SELECT status FROM payments WHERE id=?", String.class, paymentId));
+    }
+
+    /** Rollback phải hủy đồng thời binding/inbox/history/notification; shipment khác không được chiếm order đã bind. */
+    @Test
+    void shippingInboxRollbackIsAtomicAndBindingCannotBeReplaced() {
+        var event = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            shippingInbox.receive(event); tx.setRollbackOnly();
+        });
+        assertEquals("PROCESSING", orderState(event.orderId()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_order_bindings WHERE order_id=?", Integer.class, event.orderId()));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_notification_outbox WHERE order_id=?", Integer.class, event.orderId()));
+        shippingInbox.receive(event);
+        var other = new ShippingEventInboxService.Event(UUID.randomUUID(), event.eventType(), event.occurredAt(), UUID.randomUUID(),
+                event.orderId(), event.carrier(), event.trackingNumber(), event.status());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> shippingInbox.receive(other));
+    }
+
+    /** Fixture dùng payment/IPN thật trong test, rồi mô phỏng Seller đã chuẩn bị PROCESSING; không gọi carrier. */
+    private ShippingEventInboxService.Event shippingFixture(String type, String status) {
+        payments.ipn(callback("00", "00", "5000000"));
+        UUID order = jdbc.queryForObject("SELECT order_id FROM payments WHERE id=?", UUID.class, paymentId);
+        jdbc.update("UPDATE orders SET status='PROCESSING' WHERE id=?", order);
+        return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
+                UUID.randomUUID(), order, "GHN", "TRACK-TEST", status);
+    }
+    private ShippingEventInboxService.Event shippingEvent(ShippingEventInboxService.Event base, String type, String status) {
+        return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
+                base.shipmentId(), base.orderId(), base.carrier(), base.trackingNumber(), status);
+    }
+    private String orderState(UUID id) { return jdbc.queryForObject("SELECT status FROM orders WHERE id=?", String.class, id); }
 
     /** Replay chỉ reset dead letter; retry cùng key giữ audit cũ kể cả worker đã giao, khác nội dung bị 409. */
     @Test
