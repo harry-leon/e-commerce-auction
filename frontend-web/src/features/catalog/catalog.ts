@@ -21,3 +21,18 @@ export function price(product: ApiProduct) {
         .map((sku) => Number(sku.price))
     return prices.length ? `${Math.min(...prices).toLocaleString('vi-VN')} ₫` : 'Chưa có giá bán'
 }
+
+/**
+ * Chỉ giữ sản phẩm có ít nhất một SKU đang hoạt động và còn số lượng bán được.
+ * SKU không có dữ liệu tồn kho được xem là không khả dụng để tránh quảng bá hàng chưa xác nhận.
+ */
+export function filterInStockProducts(
+    products: ApiProduct[],
+    availableQtyBySku: Record<string, number>,
+): ApiProduct[] {
+    return products.filter((product) =>
+        (Array.isArray(product.skus) ? product.skus : []).some(
+            (sku) => sku.status === 'ACTIVE' && (availableQtyBySku[sku.id] ?? 0) > 0,
+        ),
+    )
+}
