@@ -35,7 +35,7 @@ SELECT id,order_id,parcel_id,claim_id,state,attempts,last_error_type,created_at,
 FROM shipment_dispatch_jobs WHERE state<>'COMMITTED' ORDER BY created_at;
 ```
 
-Đối chiếu theo orderId với shipment_dispatch_attempts/shipments và bằng chứng carrier. API manual-resolution hiện có chỉ phục hồi shipment/guard, chưa tự đóng/requeue job. Chưa có API cập nhật trạng thái job, release claim, metric/alert riêng hoặc SLA/retention; health event outbox không thay giám sát bảng này. Không kết luận cần gửi lại chỉ vì worker/claim timeout hoặc job đã REVIEW.
+Đối chiếu theo orderId với shipment_dispatch_attempts/shipments và bằng chứng carrier. API manual-resolution chỉ phục hồi shipment/guard; [API đối soát job có audit](TT_S3_DISPATCH_JOB_RECONCILIATION.md) đóng REVIEW khi có shipment/guard khớp, không requeue. Chưa có release claim/requeue job, metric/alert riêng hoặc SLA/retention; health event outbox không thay giám sát bảng này. Không kết luận cần gửi lại chỉ vì worker/claim timeout hoặc job đã REVIEW.
 
 ## Kiểm chứng
 
