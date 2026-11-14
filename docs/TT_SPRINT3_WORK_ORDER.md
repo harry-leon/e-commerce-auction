@@ -68,4 +68,5 @@ Giữ đúng phân công Tiến Thương: contract shipping/payment/refund/event
 
 - MR !164 bổ sung kiểm chứng Shipping bằng Keycloak/PostgreSQL/ba JVM cô lập, mất ACK/replay/restart; dependency !156–!163 vẫn cần review/merge. Không thay thế carrier sandbox hoặc UAT.
 - Tiếp TT-S3-07 bằng [API tải biên nhận thu tiền nội bộ](TT_S3_PAYMENT_RECEIPT.md) từ snapshot Payment SUCCESS; không tạo lại module Payment. Đây là phần đầu receipt, chưa hoàn tất hóa đơn/registry phát hành/điều chỉnh refund hoặc policy BA.
+- Tiếp phần liên kết refund bằng [biên nhận hoàn tiền nội bộ](TT_S3_REFUND_RECEIPT.md), chỉ xuất khi SUCCEEDED có registry/bằng chứng nguồn khớp và không có hold/conflict. Giữ nguyên biên nhận thu gốc; chưa thay thế hóa đơn điều chỉnh hoặc nghiệm thu provider/BA.
 - Các mục chưa được nghiệm thu vẫn phải giữ trạng thái riêng: merchant/carrier sandbox và callback ingress thật; workflow hủy đã thu tiền theo policy BA; tự động tạo shipment sau xác nhận tiền/kho; vận hành IAM/alert/push reconnect; chứng từ điều chỉnh và UAT/pipeline. Chỉ đánh dấu hoàn tất khi có bằng chứng tương ứng, không suy ra từ unit/mock hoặc MR đã mở.
