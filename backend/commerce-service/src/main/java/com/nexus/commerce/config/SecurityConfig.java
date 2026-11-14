@@ -44,6 +44,14 @@ public class SecurityConfig {
                         com.nexus.common.security.ServiceIdentity.permits(auth.get(),
                             "nexus-fulfillment-service", "COMMERCE.SHIPPING_READ")))
                 // Claim là mutation riêng: SHIPPING_READ/role Admin không được cấp quyền giữ hoặc chặn refund.
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/internal/commerce/shipping-handoffs/*")
+                    .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(), "nexus-fulfillment-service", "COMMERCE.SHIPPING_DISPATCH")))
+                // Preflight trả PII nên cần cả quyền đọc; matcher riêng đứng trước namespace Auction.
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/internal/commerce/shipping-dispatch-claims/*/preflight")
+                    .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(), "nexus-fulfillment-service", "COMMERCE.SHIPPING_DISPATCH")
+                        && com.nexus.common.security.ServiceIdentity.permits(auth.get(), "nexus-fulfillment-service", "COMMERCE.SHIPPING_READ")))
                 .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/internal/commerce/shipping-dispatch-claims")
                     .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                         com.nexus.common.security.ServiceIdentity.permits(auth.get(),

@@ -19,6 +19,8 @@ class ShippingDispatchClaimServiceTest {
         assertEquals(503, assertThrows(ApiException.class, () -> service.claim(UUID.randomUUID(), UUID.randomUUID(),
                 new ShippingDispatchClaimService.Command(UUID.randomUUID(), UUID.randomUUID()))).getHttpStatus().value());
         assertEquals(400, assertThrows(ApiException.class, () -> service.claim(null, null, null)).getHttpStatus().value());
+        assertEquals(503, assertThrows(ApiException.class, () -> service.handoff(UUID.randomUUID())).getHttpStatus().value());
+        assertEquals(503, assertThrows(ApiException.class, () -> service.preflight(UUID.randomUUID(), UUID.randomUUID())).getHttpStatus().value());
         verifyNoInteractions(jdbc, locks);
     }
 }
