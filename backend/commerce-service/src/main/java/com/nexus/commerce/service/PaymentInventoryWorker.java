@@ -28,10 +28,11 @@ public class PaymentInventoryWorker {
     private final OrderRepository orders;
     private final PaymentRepository payments;
     private final NotificationOutbox notifications;
+    private final ShippingHandoffOutbox shipping;
 
     public PaymentInventoryWorker(JdbcTemplate jdbc, InventoryClient inventory, InventoryServiceToken tokens,
                                     PlatformTransactionManager manager, OrderRepository orders,
-                                    PaymentRepository payments, NotificationOutbox notifications) {
+                                    PaymentRepository payments, NotificationOutbox notifications, ShippingHandoffOutbox shipping) {
         this.jdbc = jdbc;
         this.inventory = inventory;
         this.tokens = tokens;
@@ -39,6 +40,7 @@ public class PaymentInventoryWorker {
         this.orders = orders;
         this.payments = payments;
         this.notifications = notifications;
+        this.shipping = shipping;
     }
 
     /** Mỗi tick xử lý tối đa 10 tác vụ, từng transaction riêng; thiếu config không đánh dấu hoàn thành giả. */
@@ -144,6 +146,9 @@ public class PaymentInventoryWorker {
         }
         payment.setInventoryStatus("CONFIRMED");
         order.setStatus(OrderStatus.PAID);
+        // Chỉ sau thu tiền + commit kho: ghi ý định WAITING_PARCEL cùng transaction, chưa gửi carrier.
+        // Proxy MANDATORY đánh dấu rollback nếu ghi lỗi, kể cả processOne bắt exception để ghi retry.
+        shipping.enqueue(order, payment);
         // Chỉ log định danh server sau xác nhận kho, không ghi token, URL ký hoặc payload IPN.
         org.slf4j.LoggerFactory.getLogger(PaymentInventoryWorker.class).atInfo()
                 .addKeyValue("orderId", orderId).addKeyValue("paymentId", payment.getId())
