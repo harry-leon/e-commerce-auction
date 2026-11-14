@@ -15,8 +15,8 @@ export const SERVICES = [
 export const VERSIONS = {
     user: 6,
     catalog: 7,
-    // V13 thêm dispatch job; không seed job hoặc gọi carrier khi migration/demo.
-    fulfillment: 13,
+    // V14 thêm audit đóng job đã xác nhận, không seed/backfill quyết định hoặc phát lại carrier.
+    fulfillment: 14,
     // Tích hợp kiện V12 và claim V22; giữ schema mới nhất của cả hai service, không seed dispatch giả.
     // V22 thêm quyền dispatch, không seed/backfill claim hoặc tự chặn refund của đơn demo/lịch sử.
     commerce: 22,

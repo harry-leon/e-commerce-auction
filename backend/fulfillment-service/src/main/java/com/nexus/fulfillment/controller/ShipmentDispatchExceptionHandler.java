@@ -6,8 +6,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-/** Ánh xạ lỗi shipment/preparation/khai báo kiện/recovery đúng status, không để 409/401 thành lỗi server chung. */
-@RestControllerAdvice(assignableTypes = {ShipmentParcelController.class, ShipmentDispatchResolutionController.class, ShipmentPreparationController.class,
+/** Ánh xạ lỗi shipment/kiện/job reconciliation/recovery đúng status, không để 409/401 thành lỗi server chung. */
+@RestControllerAdvice(assignableTypes = {DispatchJobReconciliationController.class, ShipmentParcelController.class, ShipmentDispatchResolutionController.class, ShipmentPreparationController.class,
         ShipmentController.class, ShippingEventReplayController.class})
 public class ShipmentDispatchExceptionHandler {
     /** Chỉ trả mã/thông điệp nghiệp vụ đã kiểm soát; không trả cause/stacktrace hoặc snapshot PII. */
