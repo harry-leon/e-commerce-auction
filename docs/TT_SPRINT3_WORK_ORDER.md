@@ -61,3 +61,12 @@ Làm TT-S3-01 trước: tạo bảng contract hủy/refund/events với request/
 Phần nền V13/API tiếp nhận đã có MR !138. Phần làm tiếp ở local gồm quyền Shipping, codec/HTTP Merchant API mặc định tắt, V14/worker/approval/recovery và V15/đối soát thủ công/audit/receipt registry/hold; có test MVC/PostgreSQL/mock. Chưa nghiệm thu provider sandbox, chưa bật dispatch lên môi trường đang dùng, chưa nối workflow hủy đơn đã thu tiền/notification/invoice. Các bước 5–8 vẫn cần triển khai và UAT.
 
 Cập nhật phần đã tách review: !142 quyền Shipping, !143 Merchant HTTP, !144 refund worker/đối soát thủ công, !145 Notification refund consumer/health. Producer Commerce V16 ghi outbox refund và giao inbox/push đang ở nhánh riêng; xem [contract, giới hạn và thứ tự triển khai](TT_S3_REFUND_NOTIFICATION_OUTBOX.md). Có MR/test local không đồng nghĩa đã merge, pipeline xanh hoặc nghiệm thu sandbox. Bước 5 còn replay vận hành/email/envelope chung; bước 6–8 và chốt policy với BA vẫn chưa hoàn tất.
+
+## 6. Phạm vi tiếp tục — 13/11/2026
+
+Giữ đúng phân công Tiến Thương: contract shipping/payment/refund/events; chuẩn bị provider/callback; hủy/refund/chống trùng/đối soát; notification transport/push/health; nối Commerce–Shipping–Notification; invoice/receipt, quyền/recovery và hỗ trợ test toàn luồng. Không coi mỗi thay đổi kỹ thuật hoặc mỗi MR là một task phân công mới.
+
+- MR !164 bổ sung kiểm chứng Shipping bằng Keycloak/PostgreSQL/ba JVM cô lập, mất ACK/replay/restart; dependency !156–!163 vẫn cần review/merge. Không thay thế carrier sandbox hoặc UAT.
+- Tiếp TT-S3-07 bằng [API tải biên nhận thu tiền nội bộ](TT_S3_PAYMENT_RECEIPT.md) từ snapshot Payment SUCCESS; không tạo lại module Payment. Đây là phần đầu receipt, chưa hoàn tất hóa đơn/registry phát hành/điều chỉnh refund hoặc policy BA.
+- Tiếp phần liên kết refund bằng [biên nhận hoàn tiền nội bộ](TT_S3_REFUND_RECEIPT.md), chỉ xuất khi SUCCEEDED có registry/bằng chứng nguồn khớp và không có hold/conflict. Giữ nguyên biên nhận thu gốc; chưa thay thế hóa đơn điều chỉnh hoặc nghiệm thu provider/BA.
+- Các mục chưa được nghiệm thu vẫn phải giữ trạng thái riêng: merchant/carrier sandbox và callback ingress thật; workflow hủy đã thu tiền theo policy BA; tự động tạo shipment sau xác nhận tiền/kho; vận hành IAM/alert/push reconnect; chứng từ điều chỉnh và UAT/pipeline. Chỉ đánh dấu hoàn tất khi có bằng chứng tương ứng, không suy ra từ unit/mock hoặc MR đã mở.
