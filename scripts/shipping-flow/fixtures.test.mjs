@@ -2,6 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createIamFixture, createFlowFixture } from "./fixtures.mjs";
 
+/** Cùng quyền nhưng khác azp phải đến được phép kiểm tra identity; notifier không được quyền dispatch/read. */
+test("dispatch fixture isolates identity checks without granting notifier financial access", () => {
+    const fixture = createIamFixture("dispatch-test", { dispatch: true });
+    const roles = (id) => fixture.realm.users.find((user) => user.serviceAccountClientId === id).realmRoles;
+    for (const id of ["nexus-fulfillment-service", "nexus-wrong-service"]) {
+        assert(roles(id).includes("COMMERCE.SHIPPING_DISPATCH"));
+        assert(roles(id).includes("COMMERCE.SHIPPING_READ"));
+    }
+    assert.deepEqual(roles("nexus-commerce-notifier"), ["NOTIFICATION_WRITER"]);
+    assert(!createIamFixture("legacy").realm.roles.realm.some(({ name }) => name === "COMMERCE.SHIPPING_DISPATCH"));
+});
+
 /** Notifier không được quyền Shipping/merchant, client sai có cùng privilege để test azp độc lập với role. */
 test("realm fixture separates notifier, shipping identity and user roles", () => {
     const fixture = createIamFixture("isolated-test");
