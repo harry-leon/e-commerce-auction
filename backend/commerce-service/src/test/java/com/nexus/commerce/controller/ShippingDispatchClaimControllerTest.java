@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,6 +34,26 @@ class ShippingDispatchClaimControllerTest {
     private static final String PATH = "/api/v1/internal/commerce/shipping-dispatch-claims";
     @Autowired private MockMvc mvc;
     @MockitoBean private ShippingDispatchClaimService service;
+
+    /** Handoff cần DISPATCH, preflight trả PII cần thêm READ; browser/Admin không được thay service identity. */
+    @Test
+    void protectsHandoffAndPreflightWithBothPrivileges() throws Exception {
+        UUID caller = UUID.randomUUID(); UUID order = UUID.randomUUID(); UUID id = UUID.randomUUID();
+        var dispatch = new SimpleGrantedAuthority("COMMERCE.SHIPPING_DISPATCH");
+        var read = new SimpleGrantedAuthority("COMMERCE.SHIPPING_READ");
+        var auth = jwt().jwt(j -> j.subject(caller.toString()).claim("azp", "nexus-fulfillment-service")).authorities(dispatch, read);
+        String handoffPath = "/api/v1/internal/commerce/shipping-handoffs/" + order;
+        String preflight = PATH + "/" + id + "/preflight";
+        mvc.perform(get(handoffPath)).andExpect(status().isUnauthorized());
+        mvc.perform(get(handoffPath).with(jwt().jwt(j -> j.claim("azp", "web")).authorities(dispatch, read))).andExpect(status().isForbidden());
+        mvc.perform(post(preflight).with(jwt().jwt(j -> j.claim("azp", "nexus-fulfillment-service")).authorities(dispatch))).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+        when(service.handoff(order)).thenReturn(new ShippingDispatchClaimService.Handoff(id, order, "WAITING_PARCEL"));
+        mvc.perform(get(handoffPath).with(auth)).andExpect(status().isOk()).andExpect(jsonPath("$.data.orderId").value(order.toString()));
+        when(service.preflight(caller, id)).thenReturn(new ShippingDispatchClaimService.Authorization(
+                new ShippingDispatchClaimService.Claim(id, order, UUID.randomUUID(), UUID.randomUUID(), Instant.now()), null));
+        mvc.perform(post(preflight).with(auth)).andExpect(status().isOk()).andExpect(jsonPath("$.data.claim.id").value(id.toString()));
+    }
 
     /** Sai client dù có cùng privilege, hoặc đúng client chỉ có READ, đều chặn trước service. */
     @Test
