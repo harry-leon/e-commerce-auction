@@ -496,30 +496,45 @@ export function Tabs({
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
+/** Phân trang danh sách tại client; nhãn nút điều hướng do trang gọi truyền vào để giữ i18n. */
 export function Pagination({
     page,
     total,
     perPage,
     onChange,
+    previousLabel,
+    nextLabel,
 }: {
     page: number
     total: number
     perPage: number
     onChange: (p: number) => void
+    previousLabel?: string
+    nextLabel?: string
 }) {
-    const pages = Math.ceil(total / perPage)
-    if (pages <= 1) return null
+    const pages = Math.max(1, Math.ceil(total / perPage))
+    // Giữ tối đa năm số trang; dấu ba chấm cho biết còn trang trước hoặc sau dãy đang hiển thị.
+    const visiblePages = pages <= 5
+        ? Array.from({ length: pages }, (_, index) => index + 1)
+        : page <= 3
+          ? [1, 2, 3, 4, 5]
+          : page >= pages - 2
+            ? Array.from({ length: 5 }, (_, index) => pages - 4 + index)
+            : Array.from({ length: 5 }, (_, index) => page - 2 + index)
+    const showLeadingEllipsis = pages > 5 && page > 3
+    const showTrailingEllipsis = pages > 5 && page < pages - 2
     return (
         <div className="flex items-center gap-1">
             <button
                 onClick={() => onChange(page - 1)}
                 disabled={page === 1}
+                aria-label={previousLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronLeft size={14} />
             </button>
-            {Array.from({ length: Math.min(pages, 7) }, (_, i) => {
-                const p = i + 1
+            {showLeadingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
+            {visiblePages.map((p) => {
                 return (
                     <button
                         key={p}
@@ -530,9 +545,11 @@ export function Pagination({
                     </button>
                 )
             })}
+            {showTrailingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
             <button
                 onClick={() => onChange(page + 1)}
                 disabled={page === pages}
+                aria-label={nextLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronRight size={14} />

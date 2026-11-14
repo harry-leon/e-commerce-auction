@@ -33,6 +33,8 @@ import {
     Settings2,
     Shield,
     ClipboardList,
+    BootstrapSpinner,
+    Pagination,
 } from '../../components/UI'
 import { getEffectivePaymentStatus } from '../../payment'
 import type { Auction, Order, OrderStatus } from '../../types'
@@ -72,11 +74,23 @@ import {
 } from '../../api/inventory'
 import { useLoad, clearLoadCache } from '../../hooks/useLoad'
 
-// Dùng activity-history từ User Service cho nhật ký của tài khoản Admin hiện tại.
+/** Hiển thị spinner dùng chung trong vùng dữ liệu Admin khi một trang hoặc tab đang chờ API. */
+function AdminLoading({ label }: { label: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-gray-500">
+            <BootstrapSpinner size="lg" />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    )
+}
+
+// Dùng activity-history từ User Service cho nhật ký Admin và trả loading để trang không nháy empty-state trước phản hồi.
 function useAdminActivity(userId?: string) {
     const [items, setItems] = useState<any[]>([])
+    const [loading, setLoading] = useState(true)
     useEffect(() => {
         let active = true
+        setLoading(true)
         api<any>(userId ? `/users/${encodeURIComponent(userId)}/activity-history?page=0&size=100` : '/users/me/activity-history?page=0&size=100')
             .then((response) => {
                 const data = response?.data
@@ -91,15 +105,16 @@ function useAdminActivity(userId?: string) {
                 })))
             })
             .catch(() => { if (active) setItems([]) })
+            .finally(() => { if (active) setLoading(false) })
         return () => { active = false }
     }, [userId])
-    return items
+    return { items, loading }
 }
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 export function AdminDashboardPage() {
     const { lang, navigate } = useApp()
-    const recentEvents = useAdminActivity()
+    const { items: recentEvents, loading: activityLoading } = useAdminActivity()
     const [dashboard, setDashboard] = useState<any>(null)
     const [refreshing, setRefreshing] = useState(true)
     const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
@@ -193,6 +208,14 @@ export function AdminDashboardPage() {
             value: dashboard?.auctions.ok ? String(dashboard.auctions.total) : '—',
         },
     ]
+    if (!dashboard) {
+        return (
+            <AdminLayout title={tr(lang, 'dashboard')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
+
     return (
         <AdminLayout title={tr(lang, 'dashboard')}>
             {sources.some((source) => !source.ok) && (
@@ -314,7 +337,7 @@ export function AdminDashboardPage() {
                             </div>
                         </div>
                     ))}
-                    {!recentEvents.length && <p className="text-sm text-gray-500">{lang === 'en' ? 'No recent activity.' : 'Chưa có hoạt động gần đây.'}</p>}
+                    {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : !recentEvents.length && <p className="text-sm text-gray-500">{lang === 'en' ? 'No recent activity.' : 'Chưa có hoạt động gần đây.'}</p>}
                 </div>
             </div>
         </AdminLayout>
@@ -326,6 +349,7 @@ export function AdminUsersPage() {
     const { lang, navigate, showToast } = useApp()
     const [search, setSearch] = useState('')
     const [roleFilter, setRoleFilter] = useState('all')
+    const [usersPage, setUsersPage] = useState(1)
     const [createOpen, setCreateOpen] = useState(false)
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [apiUsers, setApiUsers] = useState<ApiUser[]>([])
@@ -373,31 +397,58 @@ export function AdminUsersPage() {
                 u.fullName.toLowerCase().includes(search.toLowerCase()) ||
                 u.email.includes(search)),
     )
+    const usersPerPage = 10
+    const totalPages = Math.max(1, Math.ceil(filtered.length / usersPerPage))
+    const currentPage = Math.min(usersPage, totalPages)
+    const firstUser = filtered.length === 0 ? 0 : (currentPage - 1) * usersPerPage + 1
+    const lastUser = Math.min(currentPage * usersPerPage, filtered.length)
+    const visibleUsers = filtered.slice(firstUser - 1, lastUser)
+
+    // Tab lọc dùng cùng tập user từ API; số lượng phản ánh danh sách hiện tải về và không gọi thêm endpoint.
+    const roleTabs = [
+        { value: 'all', label: tr(lang, 'all') },
+        { value: 'admin', label: tr(lang, 'roleAdmin') },
+        { value: 'buyer', label: tr(lang, 'roleBuyer') },
+        { value: 'seller', label: tr(lang, 'roleSeller') },
+        { value: 'support', label: tr(lang, 'roleSupport') },
+    ]
 
     return (
         <AdminLayout title={tr(lang, 'userManagement')}>
-            <div className="flex items-center justify-between mb-5">
-                <div className="flex gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                <div className="flex flex-wrap items-center gap-3">
                     <Input
                         icon={<Search size={14} />}
                         placeholder={lang === 'en' ? 'Search users...' : 'Tìm người dùng...'}
                         value={search}
-                        onChange={(e) => setSearch(e.target.value)}
+                        onChange={(e) => {
+                            setUsersPage(1)
+                            setSearch(e.target.value)
+                        }}
                         className="w-64"
                     />
-                    <select
-                        value={roleFilter}
-                        onChange={(e) => setRoleFilter(e.target.value)}
-                        className="nexus-input text-sm py-2 w-36"
-                    >
-                        {['all', 'buyer', 'seller', 'admin', 'support'].map((r) => (
-                            <option key={r} value={r}>
-                                {r === 'all'
-                                    ? tr(lang, 'all')
-                                    : r.charAt(0).toUpperCase() + r.slice(1)}
-                            </option>
-                        ))}
-                    </select>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label={tr(lang, 'filterUsersByRole')}>
+                        {roleTabs.map((tab) => {
+                            const count = tab.value === 'all'
+                                ? allUsers.length
+                                : allUsers.filter((user) => user.role === tab.value).length
+                            const selected = roleFilter === tab.value
+                            return (
+                                <button
+                                    key={tab.value}
+                                    type="button"
+                                    aria-pressed={selected}
+                                    onClick={() => {
+                                        setUsersPage(1)
+                                        setRoleFilter(tab.value)
+                                    }}
+                                    className={`nexus-btn nexus-btn-sm ${selected ? 'nexus-btn-primary' : 'nexus-btn-outline'}`}
+                                >
+                                    {tab.label}<span aria-label={tr(lang, 'userCount', { count: String(count) })}>{count}</span>
+                                </button>
+                            )
+                        })}
+                    </div>
                 </div>
                 <Button
                     variant="primary"
@@ -421,9 +472,7 @@ export function AdminUsersPage() {
                         </Button>
                     </div>
                 ) : usersLoading ? (
-                    <div className="p-8 text-center text-gray-500">
-                        {lang === 'en' ? 'Loading accounts...' : 'Đang tải tài khoản...'}
-                    </div>
+                    <AdminLoading label={tr(lang, 'loading')} />
                 ) : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState icon={<Users size={20} />} title={tr(lang, 'noData')} />
@@ -526,10 +575,24 @@ export function AdminUsersPage() {
                                 ),
                             },
                         ]}
-                        data={filtered}
+                        data={visibleUsers}
                         rowKey={(r) => r.id}
                         onRowClick={(r) => navigate('admin-user-detail', { id: r.id })}
                     />
+                )}
+                {!usersLoadError && !usersLoading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'userPagination')}>
+                            <Pagination
+                                page={currentPage}
+                                total={filtered.length}
+                                perPage={usersPerPage}
+                                onChange={setUsersPage}
+                                previousLabel={tr(lang, 'previousPage')}
+                                nextLabel={tr(lang, 'nextPage')}
+                            />
+                        </nav>
+                    </div>
                 )}
             </div>
 
@@ -627,16 +690,30 @@ export function AdminUserDetailPage() {
     const { lang, pageParams } = useApp()
     const userId = String(pageParams?.id || '')
     const [user, setUser] = useState<ReturnType<typeof mapUser> | null>(null)
-    const userActivity = useAdminActivity(userId)
+    const [userLoading, setUserLoading] = useState(true)
+    const { items: userActivity, loading: activityLoading } = useAdminActivity(userId)
+    // Tải hồ sơ riêng theo userId; giữ màn hình ở trạng thái spinner tới khi API trả dữ liệu hoặc lỗi.
     useEffect(() => {
         let active = true
-        if (!userId) return
+        if (!userId) {
+            setUserLoading(false)
+            return
+        }
+        setUserLoading(true)
         api<any>(`/users/${encodeURIComponent(userId)}`)
             .then((response) => { if (active && response?.data) setUser(mapUser(response.data)) })
             .catch(() => { if (active) setUser(null) })
+            .finally(() => { if (active) setUserLoading(false) })
         return () => { active = false }
     }, [userId])
     const [tab, setTab] = useState('info')
+    if (userLoading) {
+        return (
+            <AdminLayout title={tr(lang, 'editUser')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
     if (!user) return <AdminLayout title={tr(lang, 'editUser')}><div className="nexus-card p-8 text-center text-gray-500">{tr(lang, 'noData')}</div></AdminLayout>
     return (
         <AdminLayout title={tr(lang, 'editUser')}>
@@ -727,7 +804,7 @@ export function AdminUserDetailPage() {
                     )}
                     {tab === 'activity' && (
                         <div className="space-y-3">
-                            {userActivity.map((e) => (
+                            {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : userActivity.map((e) => (
                                 <div key={e.id} className="flex gap-3 p-3 bg-gray-50 rounded-xl">
                                     <div className="text-gray-500">
                                         {e.type === 'ORDER' ? (
@@ -776,6 +853,7 @@ export function AdminRolesPage() {
     const [createOpen, setCreateOpen] = useState(false)
     const [rolesList, setRolesList] = useState<any[]>([])
     const [selectedRole, setSelectedRole] = useState<any>(null)
+    const [rolesLoading, setRolesLoading] = useState(true)
 
     // Tải danh sách vai trò và phân quyền N-N thật từ User Service (/api/v1/roles)
     // Chức năng: Tải danh mục vai trò hệ thống kèm quyền hạn.
@@ -811,7 +889,16 @@ export function AdminRolesPage() {
                 }
             })
             .catch(() => {})
+            .finally(() => setRolesLoading(false))
     }, [])
+
+    if (rolesLoading) {
+        return (
+            <AdminLayout title={tr(lang, 'roleManagement')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
 
     return (
         <AdminLayout title={tr(lang, 'roleManagement')}>
@@ -1010,6 +1097,10 @@ export function AdminOrdersPage() {
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState('')
     const [statusFilter, setStatusFilter] = useState('all')
+    // Phân trang tại bảng để trang đơn hàng dài vẫn gọn trong nexus-card.
+    const [ordersPage, setOrdersPage] = useState(1)
+    const ordersPerPage = 10
+    const visibleOrders = orders.slice((ordersPage - 1) * ordersPerPage, ordersPage * ordersPerPage)
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
     const [overrideStatus, setOverrideStatus] = useState<string>('')
     const [overrideReason, setOverrideReason] = useState<string>('')
@@ -1063,6 +1154,8 @@ export function AdminOrdersPage() {
     useEffect(() => {
         loadAdminOrders()
     }, [statusFilter, search])
+
+    useEffect(() => setOrdersPage(1), [statusFilter, search])
 
     // Cập nhật giá trị khi mở modal xem chi tiết
     useEffect(() => {
@@ -1245,28 +1338,12 @@ export function AdminOrdersPage() {
                     <option value="CANCELLED">{tr(lang, 'statusCancelled')}</option>
                     <option value="REFUNDED">{tr(lang, 'statusRefunded')}</option>
                 </select>
-                <span className="text-xs text-gray-400 ml-auto">
-                    {lang === 'en'
-                        ? `Showing ${orders.length} orders`
-                        : `Hiển thị ${orders.length} đơn hàng`}
-                </span>
             </div>
 
             {/* Bảng dữ liệu quản lý đơn hàng */}
             <div className="nexus-card">
                 {loading ? (
-                    <div className="py-12 text-center text-gray-400">
-                        <div
-                            className="spinner-border text-primary mb-2"
-                            style={{ color: '#ee4d2d' }}
-                            role="status"
-                        >
-                            <span className="visually-hidden">Loading...</span>
-                        </div>
-                        <p>
-                            {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
-                        </p>
-                    </div>
+                    <AdminLoading label={tr(lang, 'loading')} />
                 ) : (
                     <DataTable
                         columns={[
@@ -1333,10 +1410,17 @@ export function AdminOrdersPage() {
                                 ),
                             },
                         ]}
-                        data={orders}
+                        data={visibleOrders}
                         rowKey={(r) => r.id}
                         onRowClick={setSelectedOrder}
                     />
+                )}
+                {!loading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}>
+                            <Pagination page={ordersPage} total={orders.length} perPage={ordersPerPage} onChange={setOrdersPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} />
+                        </nav>
+                    </div>
                 )}
             </div>
 
@@ -1624,6 +1708,9 @@ export function AdminAuctionsPage() {
     const { lang, showToast, auctionReviews, reviewAuction, createdAuctions } = useApp()
     const [tab, setTab] = useState('all')
     const [searchQuery, setSearchQuery] = useState('')
+    // Lọc tab/từ khóa trước, sau đó chỉ render mười phiên trên mỗi trang.
+    const [auctionsPage, setAuctionsPage] = useState(1)
+    const auctionsPerPage = 10
 
     // State cho Modal Buộc hủy phiên vi phạm
     const [cancelOpen, setCancelOpen] = useState(false)
@@ -1646,11 +1733,12 @@ export function AdminAuctionsPage() {
 
     // Dữ liệu danh sách phiên đấu giá
     const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
+    const [auctionsLoading, setAuctionsLoading] = useState(true)
     const [sellerAccounts, setSellerAccounts] = useState<
         Record<string, Pick<ApiUser, 'fullName' | 'email'>>
     >({})
 
-    // Tải danh sách toàn bộ phiên đấu giá
+    // Tải danh sách phiên đấu giá; spinner chỉ dùng cho lần gọi đầu để polling nền không làm nhấp nháy bảng.
     const loadAuctions = async () => {
         try {
             const res = await auctionsApi.getAuctions({
@@ -1668,6 +1756,8 @@ export function AdminAuctionsPage() {
                 status: (auctionReviews[a.id]?.status as any) || a.status,
             }))
             setLiveAuctions(fallback)
+        } finally {
+            setAuctionsLoading(false)
         }
     }
 
@@ -1913,6 +2003,12 @@ export function AdminAuctionsPage() {
             )
         })
 
+    const visibleAuctions = filteredAuctions.slice(
+        (auctionsPage - 1) * auctionsPerPage,
+        auctionsPage * auctionsPerPage,
+    )
+    useEffect(() => setAuctionsPage(1), [tab, searchQuery])
+
     const pendingCount = allAuctions.filter((a) => a.status === 'pending_approval').length
     const activeCount = allAuctions.filter((a) => a.status === 'active').length
     const scheduledCount = allAuctions.filter((a) => a.status === 'scheduled').length
@@ -2015,7 +2111,7 @@ export function AdminAuctionsPage() {
 
             {/* Bảng dữ liệu quản trị phiên đấu giá */}
             <div className="nexus-card">
-                <DataTable
+                {auctionsLoading ? <AdminLoading label={tr(lang, 'loading')} /> : <DataTable
                     columns={[
                         {
                             key: 'id',
@@ -2211,9 +2307,14 @@ export function AdminAuctionsPage() {
                             },
                         },
                     ]}
-                    data={filteredAuctions}
+                    data={visibleAuctions}
                     rowKey={(r) => r.id}
-                />
+                />}
+                {!auctionsLoading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={auctionsPage} total={filteredAuctions.length} perPage={auctionsPerPage} onChange={setAuctionsPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                    </div>
+                )}
             </div>
 
             {/* Modal Admin Cưỡng chế Hủy phiên do Vi phạm */}
@@ -2609,6 +2710,14 @@ export function AdminReputationPage() {
         }
     }
 
+    if (loading) {
+        return (
+            <AdminLayout title={tr(lang, 'reputationManagement')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
+
     return (
         <AdminLayout title={tr(lang, 'reputationManagement')}>
             <div className="grid grid-cols-2 gap-6">
@@ -2733,7 +2842,7 @@ export function AdminReputationPage() {
 // ─── Admin Event Logs ──────────────────────────────────────────────────────────
 export function AdminEventLogsPage() {
     const { lang } = useApp()
-    const activity = useAdminActivity()
+    const { items: activity, loading: activityLoading } = useAdminActivity()
     const [search, setSearch] = useState('')
     const [typeFilter, setTypeFilter] = useState('all')
     const filtered = activity.filter(
@@ -2766,7 +2875,7 @@ export function AdminEventLogsPage() {
                 </select>
             </div>
             <div className="nexus-card">
-                {filtered.length === 0 ? (
+                {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState icon={<ClipboardList size={20} />} title={tr(lang, 'noData')} />
                     </div>
@@ -2821,7 +2930,7 @@ export function AdminEventLogsPage() {
 // ─── Admin Audit Logs ──────────────────────────────────────────────────────────
 export function AdminAuditLogsPage() {
     const { lang } = useApp()
-    const activity = useAdminActivity()
+    const { items: activity, loading: activityLoading } = useAdminActivity()
     return (
         <AdminLayout title={tr(lang, 'auditLogs')}>
             <div className="nexus-card">
@@ -2830,7 +2939,7 @@ export function AdminAuditLogsPage() {
                         ? 'Read-only audit trail of all system changes.'
                         : 'Nhật ký kiểm tra chỉ đọc của tất cả thay đổi hệ thống.'}
                 </div>
-                <DataTable
+                {activityLoading ? <AdminLoading label={tr(lang, 'loading')} /> : <DataTable
                     columns={[
                         {
                             key: 'type',
@@ -2866,7 +2975,7 @@ export function AdminAuditLogsPage() {
                     ]}
                     data={activity}
                     rowKey={(r) => r.id}
-                />
+                />}
             </div>
         </AdminLayout>
     )
@@ -3109,6 +3218,10 @@ export function AdminProductsPage() {
     const [statusTab, setStatusTab] = useState<'DRAFT' | 'ACTIVE' | 'INACTIVE'>('DRAFT')
     const [loading, setLoading] = useState(true)
     const [products, setProducts] = useState<any[]>([])
+    // Giữ dữ liệu tab hiện tại, chỉ render tối đa mười sản phẩm mỗi trang.
+    const [productsPage, setProductsPage] = useState(1)
+    const productsPerPage = 10
+    const visibleProducts = products.slice((productsPage - 1) * productsPerPage, productsPage * productsPerPage)
     const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
 
     /**
@@ -3182,6 +3295,8 @@ export function AdminProductsPage() {
             mounted = false
         }
     }, [statusTab, refreshKey, lang])
+
+    useEffect(() => setProductsPage(1), [statusTab])
 
     // Phê duyệt sản phẩm mở bán thật trên Catalog Service
     const handleApprove = async (id: string) => {
@@ -3394,9 +3509,14 @@ export function AdminProductsPage() {
                                 ),
                             },
                         ]}
-                        data={products}
+                        data={visibleProducts}
                         rowKey={(r) => r.id}
                     />
+                )}
+                {!loading && (
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={productsPage} total={products.length} perPage={productsPerPage} onChange={setProductsPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                    </div>
                 )}
             </div>
 
@@ -3626,6 +3746,14 @@ export function AdminProductsPage() {
  */
 export function AdminWarehousesPage() {
     const { lang, showToast } = useApp()
+    const [warehouseTab, setWarehouseTab] = useState('directory')
+    const [warehousePage, setWarehousePage] = useState(1)
+    const [stockPage, setStockPage] = useState(1)
+    const [ledgerPage, setLedgerPage] = useState(1)
+    const [warehouseTotal, setWarehouseTotal] = useState(0)
+    const [stockTotal, setStockTotal] = useState(0)
+    const [ledgerTotal, setLedgerTotal] = useState(0)
+    const inventoryPageSize = 10
     const [warehouses, setWarehouses] = useState<WarehouseResponse[]>([])
     const [stocks, setStocks] = useState<InventoryStockResponse[]>([])
     const [ledger, setLedger] = useState<InventoryLedgerResponse[]>([])
@@ -3692,12 +3820,13 @@ export function AdminWarehousesPage() {
             try {
                 const codeFilter = skuFilter.trim() || undefined
                 const [whRes, invRes, ledRes] = await Promise.all([
-                    listWarehouses({ size: 50 }, controller.signal),
+                    listWarehouses({ page: warehousePage - 1, size: inventoryPageSize }, controller.signal),
                     listInventory(
                         {
                             warehouseId: selectedWarehouseId || undefined,
                             skuCode: codeFilter,
-                            size: 50,
+                            page: stockPage - 1,
+                            size: inventoryPageSize,
                         },
                         controller.signal,
                     ),
@@ -3705,7 +3834,8 @@ export function AdminWarehousesPage() {
                         {
                             warehouseId: selectedWarehouseId || undefined,
                             skuCode: codeFilter,
-                            size: 25,
+                            page: ledgerPage - 1,
+                            size: inventoryPageSize,
                         },
                         controller.signal,
                     ),
@@ -3714,6 +3844,9 @@ export function AdminWarehousesPage() {
                 setWarehouses(whRes.items)
                 setStocks(invRes.items)
                 setLedger(ledRes.items)
+                setWarehouseTotal(whRes.pagination.totalElements)
+                setStockTotal(invRes.pagination.totalElements)
+                setLedgerTotal(ledRes.pagination.totalElements)
                 if (!inboundWarehouseId && whRes.items.length > 0) {
                     setInboundWarehouseId(whRes.items[0].id)
                 }
@@ -3733,7 +3866,13 @@ export function AdminWarehousesPage() {
             active = false
             controller.abort()
         }
-    }, [selectedWarehouseId, skuFilter, reloadTick])
+    }, [selectedWarehouseId, skuFilter, reloadTick, warehousePage, stockPage, ledgerPage])
+
+    // Khi đổi bộ lọc, quay về trang đầu để tránh yêu cầu trang không còn dữ liệu.
+    useEffect(() => {
+        setStockPage(1)
+        setLedgerPage(1)
+    }, [selectedWarehouseId, skuFilter])
 
     const openCreateWarehouse = () => {
         setEditingWh(null)
@@ -3941,6 +4080,14 @@ export function AdminWarehousesPage() {
         }
     }
 
+    if (loading) {
+        return (
+            <AdminLayout title={tr(lang, 'warehouseManagement')}>
+                <AdminLoading label={tr(lang, 'loading')} />
+            </AdminLayout>
+        )
+    }
+
     return (
         <AdminLayout title={tr(lang, 'warehouseManagement')}>
             {loadError && (
@@ -3949,6 +4096,20 @@ export function AdminWarehousesPage() {
                 </div>
             )}
 
+            {/* Ba tab tách danh sách kho, tồn theo SKU và sổ cái để tránh cuộn qua các khối không liên quan. */}
+            <div className="mb-4">
+                <Tabs
+                    tabs={[
+                        { id: 'directory', label: lang === 'en' ? 'Warehouse Directory' : 'Danh mục kho hàng' },
+                        { id: 'stock', label: lang === 'en' ? 'SKU Inventory' : 'Lọc mã SKU' },
+                        { id: 'ledger', label: lang === 'en' ? 'System Inventory Ledger' : 'Sổ cái biến động kho toàn hệ thống' },
+                    ]}
+                    active={warehouseTab}
+                    onChange={setWarehouseTab}
+                />
+            </div>
+
+            {warehouseTab === 'directory' && <>
             <div className="nexus-card mb-5">
                 <div className="p-5 border-b border-border flex flex-wrap items-center justify-between gap-3">
                     <span className="font-bold">
@@ -4037,6 +4198,9 @@ export function AdminWarehousesPage() {
                     data={warehouses}
                     rowKey={(w) => w.id}
                 />
+                <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={warehousePage} total={warehouseTotal} perPage={inventoryPageSize} onChange={setWarehousePage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                </div>
             </div>
 
             {reconciliations.length > 0 && (
@@ -4070,8 +4234,9 @@ export function AdminWarehousesPage() {
                     </div>
                 </div>
             )}
+            </>}
 
-            <div className="nexus-card mb-5">
+            {warehouseTab === 'stock' && <div className="nexus-card mb-5">
                 <div className="p-5 border-b border-border flex flex-wrap items-end justify-between gap-3">
                     <div className="flex flex-wrap items-end gap-3">
                         <div className="w-56">
@@ -4179,9 +4344,12 @@ export function AdminWarehousesPage() {
                     data={stocks}
                     rowKey={(r) => `${r.skuId}-${r.warehouseId}`}
                 />
-            </div>
+                <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={stockPage} total={stockTotal} perPage={inventoryPageSize} onChange={setStockPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                </div>
+            </div>}
 
-            <div className="nexus-card">
+            {warehouseTab === 'ledger' && <div className="nexus-card">
                 <div className="p-5 border-b border-border font-bold">
                     {lang === 'en'
                         ? 'System Inventory Ledger'
@@ -4224,7 +4392,10 @@ export function AdminWarehousesPage() {
                         ))
                     )}
                 </div>
-            </div>
+                <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}><Pagination page={ledgerPage} total={ledgerTotal} perPage={inventoryPageSize} onChange={setLedgerPage} previousLabel={tr(lang, 'previousPage')} nextLabel={tr(lang, 'nextPage')} /></nav>
+                </div>
+            </div>}
 
             <Modal
                 open={whModalOpen}

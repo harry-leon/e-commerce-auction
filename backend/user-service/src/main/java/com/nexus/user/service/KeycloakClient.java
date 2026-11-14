@@ -42,6 +42,10 @@ public class KeycloakClient {
         factory.setReadTimeout(Duration.ofSeconds(10));
         this.client = RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
                 .defaultStatusHandler(status -> status.isError(), (request, response) -> {
+                    if (response.getStatusCode().value() == 404) {
+                        throw new ApiException("IAM_USER_NOT_FOUND", HttpStatus.NOT_FOUND,
+                                "Không tìm thấy tài khoản trong Keycloak", null);
+                    }
                     throw new ApiException("IAM_PROVIDER_ERROR", HttpStatus.BAD_GATEWAY,
                             "Không thể thực hiện yêu cầu IAM", null);
                 }).build();
@@ -101,8 +105,14 @@ public class KeycloakClient {
 
     /** Đọc mappings hiệu lực gồm role và privilege; Keycloak thực hiện mở rộng composite. */
     public Set<String> authorities(UUID userId) {
-        RealmRole[] values = get("/users/{id}/role-mappings/realm/composite", userId).retrieve().body(RealmRole[].class);
-        return values == null ? Set.of() : Arrays.stream(values).map(RealmRole::name).collect(Collectors.toSet());
+        try {
+            RealmRole[] values = get("/users/{id}/role-mappings/realm/composite", userId).retrieve().body(RealmRole[].class);
+            return values == null ? Set.of() : Arrays.stream(values).map(RealmRole::name).collect(Collectors.toSet());
+        } catch (ApiException exception) {
+            // Hồ sơ DB vẫn được liệt kê nếu IAM đã mất user liên kết; chỉ role thiếu, lỗi IAM khác vẫn phải báo.
+            if ("IAM_USER_NOT_FOUND".equals(exception.getCode())) { return Set.of(); }
+            throw exception;
+        }
     }
 
     /** Gán toàn bộ role ứng dụng sau khi xác minh tất cả mã; không đụng role hệ thống. */

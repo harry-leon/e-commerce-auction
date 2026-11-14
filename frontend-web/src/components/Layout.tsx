@@ -27,7 +27,9 @@ import {
     CreditCard,
 } from './UI'
 import { NOTIFICATIONS } from '../mockData'
+// Giữ cả phiên đăng nhập cho menu quản trị và tìm kiếm/lọc tồn kho từ nhánh dev.
 import { api, errorMessage, type Envelope, type ApiCategory, type ApiProduct } from '../api/client'
+import { useSessionStore } from '../features/auth/sessionStore'
 import { getBatchStock } from '../api/inventory'
 import { filterInStockProducts } from '../features/catalog/catalog'
 
@@ -181,10 +183,10 @@ export function PublicHeader() {
             .catch(() => setCategories([]))
         return () => controller.abort()
     }, [])
+    // Session quyết định menu được phép hiện; pageParams giữ từ khóa tìm kiếm khi điều hướng từ Discovery.
     const { lang, navigate, user, setUser, cartCount, pageParams } = useApp()
-    const [searchQ, setSearchQ] = useState(
-        typeof pageParams?.q === 'string' ? pageParams.q : '',
-    )
+    const sessionReady = useSessionStore((state) => state.sessionReady)
+    const [searchQ, setSearchQ] = useState(typeof pageParams?.q === 'string' ? pageParams.q : '')
     const [suggestions, setSuggestions] = useState<ApiProduct[]>([])
     const [suggestionsOpen, setSuggestionsOpen] = useState(false)
     const [suggestionsLoading, setSuggestionsLoading] = useState(false)
@@ -364,7 +366,7 @@ export function PublicHeader() {
                 {/* Right controls */}
                 <div className="flex items-center gap-2 shrink-0 ml-auto">
                     {/* Notifications */}
-                    {user && (
+                    {sessionReady && user && (
                         <div
                             className="relative"
                             onMouseEnter={() => setNotifOpen(true)}
@@ -460,7 +462,9 @@ export function PublicHeader() {
                     </button>
 
                     {/* User menu */}
-                    {user ? (
+                    {!sessionReady ? (
+                        <div className="w-36 h-10" aria-hidden="true" />
+                    ) : user ? (
                         <div className="relative">
                             <button
                                 onClick={() => setUserOpen((o) => !o)}
@@ -924,13 +928,6 @@ const ADMIN_NAV = [
         group: 'main',
     },
     {
-        id: 'admin-profile',
-        label: 'Profile',
-        labelVi: 'Hồ sơ',
-        icon: <User2 size={15} />,
-        group: 'main',
-    },
-    {
         id: 'admin-categories',
         label: 'Categories',
         labelVi: 'Danh mục',
@@ -1063,23 +1060,25 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
     }
 
     return (
-        <div className="min-h-screen flex bg-page">
+        // Khung Admin bám viewport; sidebar và vùng nội dung tự cuộn dọc thay vì kéo dài trang ngoài.
+        <div className="h-screen w-screen flex overflow-hidden bg-page">
             <aside
-                className="w-56 min-h-screen flex flex-col shrink-0"
+                className="w-56 h-full min-h-0 flex flex-col shrink-0"
                 style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('home')} className="flex items-center gap-2">
+                    {/* Logo trong Admin luôn đưa quản trị viên về Dashboard, không chuyển sang storefront Buyer. */}
+                    <button
+                        onClick={() => navigate('admin-dashboard')}
+                        className="flex items-center gap-2"
+                    >
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Shield size={14} className="text-white" />
                         </div>
                         <span className="text-white font-black text-lg">Nexus</span>
                     </button>
-                    <p className="text-xs text-gray-500 mt-1">
-                        {lang === 'en' ? 'Admin Console' : 'Bảng quản trị'}
-                    </p>
                 </div>
-                <nav className="flex-1 p-3 overflow-y-auto space-y-1">
+                <nav className="flex-1 min-h-0 p-3 overflow-y-auto space-y-1">
                     {groups.map((g) => {
                         const items = ADMIN_NAV.filter((n) => n.group === g)
                         return (
@@ -1103,7 +1102,15 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                 </nav>
                 <div className="p-3 border-t border-white/10">
                     {user && (
-                        <div className="flex items-center gap-2 px-3 py-2 mb-2">
+                        // Đặt lối vào hồ sơ tại khu vực tài khoản để menu quản lý không có mục Profile riêng.
+                        <button
+                            type="button"
+                            aria-label={
+                                lang === 'en' ? 'Open Admin Nexus profile' : 'Mở hồ sơ Admin Nexus'
+                            }
+                            onClick={() => navigate('admin-profile')}
+                            className="admin-sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
+                        >
                             <img
                                 src={user.avatar}
                                 alt=""
@@ -1115,7 +1122,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                                 </p>
                                 <p className="text-gray-500 text-[11px] truncate">Admin</p>
                             </div>
-                        </div>
+                        </button>
                     )}
                     {/* Chức năng: Cho phép Admin chuyển nhanh sang xem trang mua hàng của Buyer */}
                     <button
@@ -1137,14 +1144,16 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                     </button>
                 </div>
             </aside>
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
                 <div className="h-14 bg-white border-b border-border px-8 flex items-center justify-between shrink-0">
                     <h1 className="text-lg font-bold text-gray-900">{title}</h1>
                     <div className="flex items-center gap-3">
                         <LanguageSwitcher />
                     </div>
                 </div>
-                <main className="flex-1 p-8 overflow-auto">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">
+                    {children}
+                </main>
             </div>
         </div>
     )
