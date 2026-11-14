@@ -33,6 +33,28 @@ class NotificationPostgresTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private ObjectMapper mapper;
 
+    /** Shipping giữ quyền owner, chống trùng và READ qua retry; UUID cũ không được đổi thành trạng thái khác. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"ORDER_SHIPPED", "ORDER_DELIVERED"})
+    void shippingEventsAreOwnerScopedIdempotentAndPreserveRead(String type) throws Exception {
+        UUID buyer = UUID.randomUUID();
+        var body = event(buyer, type);
+        send(body, 204); send(body, 204);
+        String title = "ORDER_SHIPPED".equals(type) ? "Đơn hàng đã bàn giao vận chuyển" : "Đơn hàng đã giao thành công";
+        mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].title").value(title));
+        mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject(UUID.randomUUID().toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(0));
+        mvc.perform(post("/api/v1/notifications/{id}/read", body.get("id")).with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk());
+        send(body, 204);
+        assertEquals("READ", jdbc.queryForObject("SELECT status FROM notifications WHERE id=?", String.class, body.get("id")));
+        body.put("type", "ORDER_SHIPPED".equals(type) ? "ORDER_DELIVERED" : "ORDER_SHIPPED");
+        send(body, 409);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND channel='IN_APP'", Integer.class, buyer));
+    }
+
     /** Refund giữ đúng requestId trong inbox/push, replay sau READ không tạo tin mới; đổi refund trên cùng eventId trả 409. */
     @Test
     void refundContextIsDurableAndCannotBeChangedOnReplay() throws Exception {

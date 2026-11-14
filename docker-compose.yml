@@ -209,6 +209,7 @@ services:
       # REST nội bộ dùng HTTP trực tiếp, WebSocket public vẫn đi qua Gateway.
       FULFILLMENT_SERVICE_URL: http://fulfillment-service:8080
       COMMERCE_SERVICE_URL: http://commerce-service:8080
+      REPUTATION_SERVICE_URL: http://reputation-service:8080
       AUCTION_TOKEN_URL: http://keycloak:8080/realms/nexus-realm/protocol/openid-connect/token
       AUCTION_CLIENT_SECRET: ${AUCTION_CLIENT_SECRET:?Set AUCTION_CLIENT_SECRET in .env}
       # Cho WebSocket từ web Docker cổng 3001 và Vite cổng 3000; chỉ mở các origin local cụ thể.

@@ -23,7 +23,7 @@ public class SecurityConfig {
 
     /**
      * Xác minh JWT stateless trước khi controller chạy; public IPN vẫn được Commerce kiểm tra chữ ký HMAC.
-     * Snapshot giao hàng chỉ nhận Fulfillment + COMMERCE.SHIPPING_READ; các namespace nội bộ khác giữ quyền Auction.
+     * Snapshot/event Shipping chỉ nhận Fulfillment với SHIPPING_READ/SHIPPING_EVENTS riêng; namespace còn lại giữ quyền Auction.
      * Không nhận role Admin/browser thay cho service identity khi đọc thông tin người nhận.
      */
     @Bean
@@ -35,6 +35,10 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
                 // Matcher cụ thể phải đứng trước namespace Auction để không mở quyền đọc PII cho Auction hoặc browser.
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/internal/commerce/shipping-events")
+                    .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-fulfillment-service", "COMMERCE.SHIPPING_EVENTS")))
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/internal/commerce/shipping-orders/*")
                     .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                         com.nexus.common.security.ServiceIdentity.permits(auth.get(),

@@ -19,3 +19,5 @@ Transport hiện là SIMPLE_BROKER_SINGLE_INSTANCE, không phải broker ngoài 
 Consumer/Migration V6 cần triển khai trước producer refund ở Commerce. Thay đổi này chưa phát sự kiện từ worker/manual-resolution, chưa thêm refund email template và chưa tích hợp broker ngoài/multi-instance. Role writer hiện hành được giữ tương thích; chưa chuyển toàn bộ notification ingress sang kiểm tra azp riêng.
 
 Kiểm chứng local: Notification `verify checkstyle:check` pass, 61 test không skip, line coverage 88,70%; PostgreSQL tạm và SMTP/HTTP test fixture, không dùng DB nhóm. Test bảo vệ refund context, validation, replay/READ, rollback/push và lifecycle health. Migration/seed/reset/reseed cả 7 service qua với Notification V6. Chưa xác nhận pipeline GitLab hoặc E2E provider thật.
+
+Phần kiểm chứng transport tiếp theo: [STOMP ký RSA/JWKS thật, quyền kênh, reconnect và broker stop/start](TT_S3_NOTIFICATION_STOMP_SECURITY.md). Lần chạy 13/11/2026 đạt 65 test không skip, coverage LINE 89,02%, clean verify/Checkstyle exit 0 với PostgreSQL tạm. JWKS/issuer là fixture loopback, không phải IAM triển khai; chưa kiểm tra browser/Gateway/HTTPS hoặc resync inbox sau offline.

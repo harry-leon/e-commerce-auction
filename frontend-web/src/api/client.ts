@@ -374,11 +374,23 @@ export function mapUser(user?: ApiUser | { data: ApiUser } | null): User {
     }
 }
 
-/** Catalog bọc kết quả trong data, kèm meta phân trang zero-based; khác với DTO trả trực tiếp của User Service. */
+/** Catalog bọc dữ liệu trong data và thông tin phân trang trong meta. */
 export interface Envelope<T> {
     success: boolean
     data: T
-    meta?: { total: number; page: number; pageSize: number }
+    meta?: {
+        total?: number
+        page?: number
+        pageSize?: number
+        pagination?: {
+            page: number
+            size: number
+            totalElements: number
+            totalPages: number
+            hasNext: boolean
+            hasPrevious: boolean
+        }
+    }
 }
 export interface ApiCategory {
     id: string
