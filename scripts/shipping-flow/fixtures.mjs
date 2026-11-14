@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
 /** IAM fixture riêng cho integration: không đọc realm/.env thật và không cấp quyền merchant/kho cho notifier. */
-export function createIamFixture(realmName) {
+export function createIamFixture(realmName, { dispatch = false } = {}) {
     const password = `Test!${randomBytes(18).toString("hex")}`;
     const secrets = Object.fromEntries(["nexus-fulfillment-service", "nexus-commerce-notifier", "nexus-wrong-service"]
         .map((id) => [id, randomBytes(24).toString("hex")]));
@@ -11,6 +11,13 @@ export function createIamFixture(realmName) {
         "nexus-commerce-notifier": ["NOTIFICATION_WRITER"],
         "nexus-wrong-service": ["COMMERCE.SHIPPING_EVENTS"],
     };
+    // Chế độ dispatch cấp cùng privilege cho client sai để kiểm tra azp độc lập với role;
+    // notifier vẫn chỉ được gửi notification, còn fixture transport mặc định giữ nguyên.
+    if (dispatch) {
+        roles.push("COMMERCE.SHIPPING_DISPATCH");
+        grants["nexus-fulfillment-service"].push("COMMERCE.SHIPPING_DISPATCH");
+        grants["nexus-wrong-service"].push("COMMERCE.SHIPPING_DISPATCH", "COMMERCE.SHIPPING_READ");
+    }
     const users = ["admin", "buyer", "other"].map((username) => ({
         id: randomUUID(), username, enabled: true, emailVerified: true, firstName: "E2E", lastName: "Shipping",
         email: `${username}@example.test`, requiredActions: [], realmRoles: [username === "admin" ? "ADMIN" : "BUYER"],

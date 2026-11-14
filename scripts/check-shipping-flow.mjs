@@ -19,6 +19,8 @@ const { values: args } = parseArgs({ options: {
     "commerce-root": { type: "string", default: process.cwd() }, "fulfillment-root": { type: "string", default: process.cwd() },
     "notification-root": { type: "string", default: process.cwd() }, "keycloak-image": { type: "string", default: "quay.io/keycloak/keycloak:24.0.5" },
     "skip-build": { type: "boolean", default: false },
+    // Kiểm chứng JWT và cờ đóng/mở dispatch trên JVM thật; không bật worker hoặc gọi carrier.
+    "dispatch-security": { type: "boolean", default: false },
 } });
 assert(args["pg-bin"] && args.maven, "Cần --pg-bin và --maven; không đọc cấu hình kết nối thật");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-shipping-flow-"));
@@ -126,7 +128,7 @@ try {
     const endpoint = run("docker", ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"] ).trim();
     assert(/^(npipe:|unix:)/.test(endpoint), "Chỉ cho phép Docker local, không dùng remote context");
     run("docker", ["image", "inspect", args["keycloak-image"]]);
-    const realmName = `shipping-e2e-${randomUUID()}`; const iam = createIamFixture(realmName);
+    const realmName = `shipping-e2e-${randomUUID()}`; const iam = createIamFixture(realmName, { dispatch: args["dispatch-security"] });
     const realmFolder = path.join(directory, "realm"); fs.mkdirSync(realmFolder);
     fs.writeFileSync(path.join(realmFolder, "realm.json"), JSON.stringify(iam.realm));
     const iamPort = await freePort(); const issuer = `http://127.0.0.1:${iamPort}/realms/${realmName}`;
@@ -252,7 +254,37 @@ try {
         const component = service === "commerce" ? "shippingNotificationTransport" : "shippingEventTransport";
         assert.equal((await request(`${urls[service]}/actuator/health/${component}`, { token: admin })).data.details.connectivityVerified, false);
     }
-    pass("real_admin_health_visibility"); report.result = "PASS";
+    pass("real_admin_health_visibility");
+    // Chạy sau transport/restart: kiểm tra boundary bằng JWT do Keycloak ký thật, không seed payment/claim.
+    // Service hợp lệ gặp 503 khi cờ tắt và 404 khi bật nhưng chưa có dữ liệu; client sai luôn bị 403.
+    if (args["dispatch-security"]) {
+        const base = `${urls.commerce}/api/v1/internal/commerce`;
+        const missing = randomUUID();
+        const calls = [
+            [`${base}/shipping-handoffs/${missing}`, {}],
+            [`${base}/shipping-dispatch-claims`, { key: randomUUID(), body: { handoffId: missing, parcelId: randomUUID() } }],
+            [`${base}/shipping-dispatch-claims/${missing}/preflight`, { method: "POST" }],
+        ];
+        for (const [url, options] of calls) {
+            for (const [token, expected] of [[null, 401], [buyer, 403], [admin, 403], [wrong, 403]]) {
+                assert.equal((await request(url, { ...options, token })).status, expected, `dispatch identity ${expected}`);
+            }
+            assert.equal((await request(url, { ...options, token: fulfillmentToken })).status, 503, "dispatch disabled");
+        }
+        pass("real_dispatch_jwt_identity_and_default_disabled");
+        await stop("commerce");
+        configs.commerce["app.shipping.dispatch-claim-enabled"] = true;
+        await start("commerce");
+        for (const index of [0, 2]) {
+            const [url, options] = calls[index];
+            assert.equal((await request(url, { ...options, token: fulfillmentToken })).status, 404, "missing dispatch fixture");
+            assert.equal((await request(url, { ...options, token: wrong })).status, 403, "wrong azp with matching privileges");
+        }
+        assert.equal(sql("e2e_commerce", "SELECT count(*) FROM shipping_dispatch_claims"), "0");
+        assert.equal(sql("e2e_commerce", "SELECT count(*) FROM payments"), "0");
+        pass("real_dispatch_enabled_missing_records_do_not_create_financial_state");
+    }
+    report.result = "PASS";
 } catch (error) {
     report.result = "FAIL"; report.error = error instanceof assert.AssertionError ? "Assertion failed; inspect fixture status and logs" : error.message;
     process.exitCode = 1; console.error(`FAIL ${report.error}`);
