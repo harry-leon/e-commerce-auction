@@ -52,18 +52,250 @@ import org.springframework.transaction.annotation.Transactional;
         "spring.jpa.hibernate.ddl-auto=validate", "spring.cloud.config.enabled=false", "eureka.client.enabled=false",
         "spring.jpa.show-sql=false", "logging.level.org.hibernate.SQL=OFF", "app.payment.vnpay.tmn-code=TESTONLY",
         "app.payment.vnpay.hash-secret=unit-test-only-not-a-credential",
-        "app.payment.vnpay.return-url=https://example.test/payment-result"
+        "app.payment.vnpay.return-url=https://example.test/payment-result", "app.shipping.handoff-enabled=true", "app.shipping.dispatch-claim-enabled=true"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+// Giữ cả receipt và Shipping inbox/replay trong context để kiểm tra hồi quy hai luồng trên cùng schema tích hợp.
+@Import({RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
-        PaymentService.class, PaymentInventoryWorker.class, VnpayGateway.class, CheckoutLock.class,
+        PaymentService.class, PaymentInventoryWorker.class, ShippingHandoffOutbox.class, ShippingDispatchClaimService.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
         com.nexus.commerce.service.impl.OrderServiceImpl.class,
         com.nexus.commerce.dto.mapper.OrderMapper.class, com.nexus.commerce.statemachine.OrderStatusStateMachine.class})
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
+    @Autowired private ShippingDispatchClaimService dispatchClaims;
+
+    /** Claim/replay giữ id và parcel; key khác/đổi kiện không cấp quyền lần hai, refund mới sau claim bị chặn. */
+    @Test
+    void dispatchClaimIsDurableIdempotentAndBlocksNewRefunds() {
+        UUID handoff = confirmedHandoff(); UUID caller = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        var body = new ShippingDispatchClaimService.Command(handoff, UUID.randomUUID());
+        var first = dispatchClaims.claim(caller, key, body);
+        assertEquals(true, first.created());
+        assertEquals(false, dispatchClaims.claim(caller, key, body).created());
+        assertEquals(first.claim(), dispatchClaims.claim(caller, key, body).claim());
+        assertEquals("CLAIMED", jdbc.queryForObject("SELECT state FROM shipping_handoff_tasks WHERE id=?", String.class, handoff));
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> dispatchClaims.claim(caller, key, new ShippingDispatchClaimService.Command(handoff, UUID.randomUUID()))).getHttpStatus().value());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> dispatchClaims.claim(caller, UUID.randomUUID(), body));
+        assertEquals("REFUND_SHIPPING_CLAIMED", assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Fixture sau claim")).getCode());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM shipping_dispatch_claims WHERE order_id=?", Integer.class, orderId));
+    }
+
+    /** Refund được tạo sau handoff phải chặn claim; Order lock buộc claim đọc lại trạng thái tài chính mới nhất. */
+    @Test
+    void pendingRefundOrHoldPreventsDispatchClaim() {
+        UUID handoff = confirmedHandoff();
+        var body = new ShippingDispatchClaimService.Command(handoff, UUID.randomUUID());
+        jdbc.update("INSERT INTO refund_payment_holds(payment_id,reason) VALUES (?,'FIXTURE')", paymentId);
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> dispatchClaims.claim(UUID.randomUUID(), UUID.randomUUID(), body));
+        jdbc.update("DELETE FROM refund_payment_holds WHERE payment_id=?", paymentId);
+        var refund = refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Fixture trước claim");
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> dispatchClaims.claim(UUID.randomUUID(), UUID.randomUUID(), body));
+        assertEquals("REQUESTED", refund.response().status().name());
+        assertEquals("WAITING_PARCEL", jdbc.queryForObject("SELECT state FROM shipping_handoff_tasks WHERE id=?", String.class, handoff));
+    }
+
+    /** Claim và tạo refund chạy hai transaction thật: chỉ một bên thắng, không tồn tại quyền dispatch và refund mới cùng lúc. */
+    @Test
+    void dispatchClaimRacesRefundUnderSameOrderLock() throws Exception {
+        UUID handoff = confirmedHandoff();
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var claim = pool.submit(() -> {
+                gate.await();
+                try { dispatchClaims.claim(UUID.randomUUID(), UUID.randomUUID(), new ShippingDispatchClaimService.Command(handoff, UUID.randomUUID())); return true; }
+                catch (com.nexus.common.exception.ApiException error) { assertEquals(409, error.getHttpStatus().value()); return false; }
+            });
+            var refund = pool.submit(() -> {
+                gate.await();
+                try { refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Fixture race"); return true; }
+                catch (com.nexus.common.exception.ApiException error) { assertEquals(409, error.getHttpStatus().value()); return false; }
+            });
+            gate.countDown();
+            assertEquals(1, (claim.get(20, TimeUnit.SECONDS) ? 1 : 0) + (refund.get(20, TimeUnit.SECONDS) ? 1 : 0));
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT (SELECT count(*) FROM shipping_dispatch_claims WHERE order_id=?)"
+                + "+(SELECT count(*) FROM refund_requests WHERE order_id=?)", Integer.class, orderId, orderId));
+    }
+
+    /** Rollback claim phải trả task về WAITING_PARCEL và không giữ idempotency key/hold giả. */
+    @Test
+    void dispatchClaimAndTaskStateRollbackTogether() {
+        UUID handoff = confirmedHandoff(); UUID caller = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        var body = new ShippingDispatchClaimService.Command(handoff, UUID.randomUUID());
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            dispatchClaims.claim(caller, key, body); tx.setRollbackOnly();
+        });
+        assertEquals("WAITING_PARCEL", jdbc.queryForObject("SELECT state FROM shipping_handoff_tasks WHERE id=?", String.class, handoff));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM shipping_dispatch_claims WHERE order_id=?", Integer.class, orderId));
+        assertEquals(true, dispatchClaims.claim(caller, key, body).created());
+    }
+
+    /** Fixture đi qua IPN/worker thật; không INSERT task/claim giả để bỏ qua điều kiện tiền/kho. */
+    private UUID confirmedHandoff() {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code()); worker.run();
+        return jdbc.queryForObject("SELECT id FROM shipping_handoff_tasks WHERE order_id=?", UUID.class, orderId);
+    }
+
+    // Giữ kiểm thử handoff và receipt trong cùng context, không bỏ luồng cũ khi đồng bộ các MR.
+    @Autowired private ShippingHandoffOutbox handoffs;
+    @Autowired private com.nexus.commerce.repository.OrderRepository handoffOrders;
+    @Autowired private com.nexus.commerce.repository.PaymentRepository handoffPayments;
+
+    /** REGULAR/AUCTION đều chỉ ghi một ý định sau kho; IPN lặp và hai worker không tạo thêm id/snapshot. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void shippingHandoffRequiresInventoryAndIsIdempotent(boolean auction) throws Exception {
+        if (auction) { winner(false); }
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        assertEquals(0, handoffCount());
+        var gate = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> { gate.await(); worker.run(); return true; });
+            var second = pool.submit(() -> { gate.await(); worker.run(); return true; });
+            gate.countDown(); first.get(20, TimeUnit.SECONDS); second.get(20, TimeUnit.SECONDS);
+        }
+        assertEquals(1, handoffCount());
+        var original = jdbc.queryForMap("SELECT * FROM shipping_handoff_tasks WHERE order_id=?", orderId);
+        assertEquals(paymentId, original.get("payment_id"));
+        assertEquals("WAITING_PARCEL", original.get("state"));
+        assertEquals(new BigDecimal("50000.00"), original.get("amount"));
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+        worker.run();
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx ->
+                handoffs.enqueue(handoffOrders.findForPaymentWithItems(orderId).orElseThrow(), handoffPayments.findById(paymentId).orElseThrow()));
+        assertEquals(original, jdbc.queryForMap("SELECT * FROM shipping_handoff_tasks WHERE order_id=?", orderId));
+        assertThrows(org.springframework.transaction.IllegalTransactionStateException.class, () -> handoffs.enqueue(null, null));
+    }
+
+    /** Refund/hold được tạo sau IPN nhưng trước xác nhận kho phải chặn ý định mới; không cản ghi nhận tiền PAID. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void financialReviewPreventsShippingHandoff(boolean hold) {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        if (hold) { jdbc.update("INSERT INTO refund_payment_holds(payment_id,reason) VALUES (?,'FIXTURE')", paymentId); }
+        else { refunds.create(UUID.randomUUID(), paymentId, UUID.randomUUID(), "Fixture đã có refund chờ duyệt"); }
+        worker.run();
+        assertEquals("PAID", orderState());
+        assertEquals(0, handoffCount());
+    }
+
+    /** Lỗi deferred commit ở handoff rollback PAID/CONFIRMED/task.done; retry commit kho cùng ref rồi ghi đúng một ý định. */
+    @Test
+    void shippingHandoffCommitFailureRollsBackInventoryConfirmation() {
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        jdbc.execute("CREATE FUNCTION handoff_reject_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$");
+        jdbc.execute("CREATE CONSTRAINT TRIGGER handoff_reject_fixture AFTER INSERT ON shipping_handoff_tasks "
+                + "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.order_id='" + orderId + "'::uuid) EXECUTE FUNCTION handoff_reject_fixture()");
+        try { assertThrows(RuntimeException.class, () -> worker.run()); }
+        finally {
+            jdbc.execute("DROP TRIGGER handoff_reject_fixture ON shipping_handoff_tasks");
+            jdbc.execute("DROP FUNCTION handoff_reject_fixture()");
+        }
+        assertEquals("PENDING_PAYMENT", orderState());
+        assertEquals("PENDING", jdbc.queryForObject("SELECT inventory_status FROM payments WHERE id=?", String.class, paymentId));
+        assertEquals(0, handoffCount());
+        assertEquals(false, jdbc.queryForObject("SELECT done FROM payment_inventory_tasks WHERE target_id=? AND action='COMMIT'", Boolean.class, paymentId));
+        worker.run();
+        assertEquals("PAID", orderState());
+        assertEquals(1, handoffCount());
+    }
+
+    /** Đếm theo order fixture, không phụ thuộc tác vụ hợp lệ còn lại từ ca đã commit trước đó. */
+    private int handoffCount() {
+        return jdbc.queryForObject("SELECT count(*) FROM shipping_handoff_tasks WHERE order_id=?", Integer.class, orderId);
+    }
+
+    @Autowired private RefundReceiptService refundReceipts;
+
+    /** Worker fixture chốt registry thật: tải lại ổn định, liên kết thu gốc không đổi và không tạo thêm refund. */
+    @Test
+    void providerRefundReceiptLinksOriginalPaymentWithoutMutation() {
+        UUID refund = newRefundRequest();
+        var auth = receiptActor(buyer, "BUYER");
+        var original = receipts.download(paymentId, auth);
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, auth)).getHttpStatus().value());
+        assertEquals(404, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, receiptActor(UUID.randomUUID(), "BUYER"))).getHttpStatus().value());
+        refunds.approve(refund, UUID.randomUUID(), "Fixture kiểm tra điều kiện hoàn");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenReturn(new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", refundProviderRef()));
+        new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager).dispatch(refund);
+        var document = refundReceipts.download(refund, auth);
+        assertEquals(document, refundReceipts.download(refund, receiptActor(UUID.randomUUID(), "ADMIN")));
+        assertEquals(original.receiptId(), document.originalReceiptId());
+        assertEquals(original.prices().total(), document.amount());
+        assertEquals("PROVIDER", document.evidenceSource());
+        assertEquals(original, receipts.download(paymentId, auth));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_provider_receipts WHERE refund_id=?", Integer.class, refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_requests WHERE payment_id=?", Integer.class, paymentId));
+        // Fault injection chỉ trong DB test: registry lệch tiền phải bị chặn, không tự sửa bằng số tiền Payment.
+        jdbc.update("UPDATE refund_provider_receipts SET amount=1 WHERE refund_id=?", refund);
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, auth)).getHttpStatus().value());
+    }
+
+    /** UNKNOWN được Admin đối soát thật trong service; document ghi MANUAL và replay không sinh biên nhận mới. */
+    @Test
+    void manualRefundReceiptRequiresMatchingAuditAndRegistry() {
+        UUID refund = unknownRefundForResolution();
+        var command = manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "RECEIPT-CASE");
+        UUID actor = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        resolutions.resolve(refund, actor, key, command);
+        var auth = receiptActor(buyer, "BUYER");
+        var document = refundReceipts.download(refund, auth);
+        assertEquals("MANUAL", document.evidenceSource());
+        resolutions.resolve(refund, actor, key, command);
+        assertEquals(document, refundReceipts.download(refund, auth));
+        // Xóa bằng chứng chỉ để mô phỏng dữ liệu lỗi: SUCCEEDED đơn lẻ không được xuất biên nhận.
+        jdbc.update("DELETE FROM refund_provider_receipts WHERE refund_id=?", refund);
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, auth)).getHttpStatus().value());
+    }
+
+    /** JWT fixture có subject/role rõ ràng; quyền ownership vẫn do PaymentReceiptService đọc từ Order thật. */
+    private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken receiptActor(UUID actor, String role) {
+        return new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(actor.toString()).build(),
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));
+    }
+
+    @Autowired private PaymentReceiptService receipts;
+
+    /**
+     * IPN fixture đi qua HMAC/transaction thật rồi tải JSONB từ PostgreSQL: replay giữ biên nhận thu gốc,
+     * không thêm Payment/outbox; Buyer khác bị chặn. Không gọi merchant sandbox trong test này.
+     */
+    @Test
+    void receiptUsesCommittedIpnSnapshotWithoutCreatingNewFinancialRecords() throws Exception {
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none")
+                .subject(buyer.toString()).build();
+        var auth = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_BUYER")));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> receipts.download(paymentId, auth));
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        var first = receipts.download(paymentId, auth);
+        var json = new ObjectMapper().findAndRegisterModules().writeValueAsString(first);
+        int paymentCount = jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId);
+        int outboxCount = jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId);
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+        var second = receipts.download(paymentId, auth);
+        assertEquals(json, new ObjectMapper().findAndRegisterModules().writeValueAsString(second));
+        assertEquals(new BigDecimal("50000.00"), second.prices().total());
+        assertEquals(paymentCount, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+        assertEquals(outboxCount, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
+        var other = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(UUID.randomUUID().toString()).build(),
+                auth.getAuthorities());
+        assertEquals(404, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> receipts.download(paymentId, other)).getHttpStatus().value());
+    }
+
     @Autowired private RefundRequestService refunds;
     @Autowired private RefundResolutionService resolutions;
     @Autowired private RefundNotificationReplayService notificationReplays;
@@ -575,6 +807,9 @@ class PaymentPostgresTest {
         dispatcher.dispatch(refund);
         assertEquals("SUCCEEDED", refundState(refund));
         assertEquals(manualReceipt, jdbc.queryForObject("SELECT provider_ref FROM refund_provider_receipts WHERE refund_id=?", String.class, refund));
+        // Mâu thuẫn muộn giữ SUCCEEDED để audit nhưng phải chặn tải xác nhận hoàn tiền cho tới khi đối soát xong.
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, receiptActor(buyer, "BUYER"))).getHttpStatus().value());
         // Cảnh báo xung đột vẫn phát dù quyết định tài chính SUCCEEDED được giữ nguyên.
         assertEquals("REFUND_REQUIRES_REVIEW", jdbc.queryForObject("SELECT payload->>'type' FROM refund_notification_outbox "
                 + "WHERE refund_id=? ORDER BY source_version DESC LIMIT 1", String.class, refund));

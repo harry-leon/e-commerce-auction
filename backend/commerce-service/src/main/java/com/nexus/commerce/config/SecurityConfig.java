@@ -43,6 +43,11 @@ public class SecurityConfig {
                     .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                         com.nexus.common.security.ServiceIdentity.permits(auth.get(),
                             "nexus-fulfillment-service", "COMMERCE.SHIPPING_READ")))
+                // Claim là mutation riêng: SHIPPING_READ/role Admin không được cấp quyền giữ hoặc chặn refund.
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/internal/commerce/shipping-dispatch-claims")
+                    .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-fulfillment-service", "COMMERCE.SHIPPING_DISPATCH")))
                 // Phần còn lại của namespace nội bộ chỉ dành cho contract Auction.
                 .requestMatchers("/api/v1/internal/commerce/**").access((auth, context) ->
                     new org.springframework.security.authorization.AuthorizationDecision(

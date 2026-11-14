@@ -17,8 +17,9 @@ export const VERSIONS = {
     catalog: 7,
     // V12 thêm khai báo kiện Admin; không seed kiện/dispatch hoặc gọi carrier giả cho đơn lịch sử.
     fulfillment: 12,
-    // Giữ Commerce V20 từ dev khi thêm kiện V12, không hạ schema của service khác hoặc seed event giả.
-    commerce: 20,
+    // Tích hợp kiện V12 và claim V22; giữ schema mới nhất của cả hai service, không seed dispatch giả.
+    // V22 thêm quyền dispatch, không seed/backfill claim hoặc tự chặn refund của đơn demo/lịch sử.
+    commerce: 22,
     auction: 3,
     reputation: 3,
     // V6 thêm refund context nullable; fixture demo không giả lập một giao dịch refund thật.

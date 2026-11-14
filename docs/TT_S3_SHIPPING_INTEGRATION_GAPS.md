@@ -15,3 +15,5 @@ Giới hạn: chưa có dispatch attempt bền vững trước HTTP hoặc query
 3. Outbox Commerce sau payment/kho xác nhận, service account đúng quyền; không tạo shipment từ browser return hoặc payment đang REVIEW.
 4. Inbox sự kiện shipment ở Commerce, kiểm tra nguồn/quyền/dedup và chuyển state đúng chiều; phát notification cùng transaction, không tự refund/restock từ callback giao thất bại.
 5. Test hai service với IAM và carrier sandbox, timeout/restart/mất ACK/concurrent; mock pass chưa phải bằng chứng sandbox hoặc UAT.
+
+Phần producer tiếp theo: [ý định bàn giao Commerce sau xác nhận tiền/kho](TT_S3_SHIPPING_HANDOFF_OUTBOX.md), V21 và cổng mặc định tắt. WAITING_PARCEL chỉ là việc chờ đóng gói; chưa có consumer/transport hoặc quyền dispatch tuần tự với refund. Không dùng row này để bỏ qua kiểm tra lại tài chính, kiện thật hoặc guard trước HTTP carrier.
