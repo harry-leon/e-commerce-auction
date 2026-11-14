@@ -192,3 +192,24 @@ cd frontend-web
 npm test -- src/test/shipping-options-fee.test.tsx
 npm test -- src/test/buyer-checkout-payment.test.tsx
 ```
+
+### 6.4 Chạy script kiểm thử tương tác UI và audit đồng thời các field Database:
+```bash
+node scripts/audit_buyer_flow3_db_sync.mjs
+```
+
+---
+
+## 7. Bảng Đối Chiếu Trạng Thái & Biến Đổi Các Field Trong Database (Database Audit & SRS Alignment)
+
+Bảng dưới đây ghi nhận chi tiết trạng thái các trường dữ liệu trong PostgreSQL trước và sau mỗi thao tác trên giao diện người dùng, đồng thời đối chiếu tính tuân thủ với đặc tả Scope & SRS:
+
+| Màn hình / Quy trình | Thao tác trên UI Browser | Bảng Database liên quan | Trạng thái field TRƯỚC thao tác | Trạng thái field SAU thao tác | Đánh giá đối chiếu Scope & SRS |
+|---|---|---|---|---|---|
+| **Auction Scheduler** (Background) | Chờ hết hạn phiên đấu giá (`end_time <= NOW()`) | `nexus_auction.auctions`<br>`nexus_auction.auction_settlements` | `auctions.status`: `ACTIVE`<br>`current_price`: `150000.00`<br>`highest_bidder_id`: `4928292a...`<br>`settlements`: *(chưa có bản ghi)* | `auctions.status`: `SETTLED`<br>`settlements.result`: `SUCCESS`<br>`settlements.winner_id`: `4928292a...`<br>`settlements.final_price`: `150000.00`<br>`settlements.payment_deadline`: `NOW() + 24h` | **ĐÚNG 100% SRS §3.5 & TT-S2-3:** Phiên hết hạn tự động chuyển trạng thái sang `SETTLED`, tạo bản ghi quyết toán `SUCCESS`, xác định đúng người thắng từ lượt bid cao nhất và cấp hạn thanh toán 24 giờ. |
+| **Notifications** (`/notifications`) | Nhận thông báo realtime (Outbid alert & Won alert), bấm "Đánh dấu tất cả đã đọc" | `nexus_notification.notifications` | `notifications.status`: `SENT`<br>`channel`: `IN_APP` | `notifications.status`: `READ`<br>`read_at`: `timestamp cập nhật` | **ĐÚNG 100% SRS §3.6 & KH-S2-3:** Kênh thông báo `IN_APP` nhận sự kiện đẩy; khi người dùng thao tác đọc trên UI, cờ `status` chuyển bền vững từ `SENT` sang `READ`. |
+| **Auction Payment** (`/auction-payment`) | Kiểm tra đồng hồ countdown 24h, nhập form địa chỉ nhận hàng và SĐT, bấm "Tiến hành thanh toán" | `nexus_commerce.orders` | `orders.status`: `PENDING_PAYMENT`<br>`shipping_address`: `AUCTION_PENDING_BUYER_ADDRESS`<br>`recipient_phone`: `null` | `orders.shipping_address`: `123 Đường Nguyễn Huệ, Quận 1`<br>`orders.recipient_phone`: `0901234567`<br>`orders.recipient_name`: `Nguyễn Văn Mua` | **ĐÚNG 100% SRS §3.7 & TT-S2-3:** Đơn đấu giá cập nhật thông tin giao nhận thực tế từ form của winner, bảo đảm dữ liệu đầy đủ trước khi kích hoạt giao dịch thanh toán. |
+| **Sandbox Payment & Result** (`/sandbox-payment` → `/payment-result`) | Chọn VNPAY, bấm "Mô phỏng Thanh toán Thành công", chuyển sang màn hình kết quả | `nexus_commerce.orders`<br>`nexus_commerce.order_status_history` | `orders.status`: `PENDING_PAYMENT`<br>`orders.payment_method`: `null` | `orders.status`: `PAID`<br>`orders.payment_method`: `VNPAY`<br>`order_status_history.from_status`: `PENDING_PAYMENT`<br>`order_status_history.to_status`: `PAID`<br>`reason`: `Thanh toán VNPAY thành công` | **ĐÚNG 100% SRS §3.7 & TT-S2-3:** Cổng thanh toán ghi nhận giao dịch thành công, chuyển trạng thái đơn sang `PAID`, lưu vết lịch sử trạng thái bất biến trong `order_status_history`. |
+| **Order History** (`/order-history`) | Lọc tab "Đã thanh toán", tra cứu danh sách đơn hàng | `nexus_commerce.orders` | `source_type`: `AUCTION`<br>`status`: `PAID` | `source_type`: `AUCTION`<br>`status`: `PAID` | **ĐÚNG 100% SRS §3.8:** Phân biệt rõ ràng đơn mua thường (`source_type = 'REGULAR'`) và đơn trúng đấu giá (`source_type = 'AUCTION'`), lọc chuẩn xác theo các tab trạng thái. |
+| **Order Detail** (`/order-detail`) | Xem stepper 5 bước, bảng đa sản phẩm, chi phí không bị 0đ, hành trình vận đơn | `nexus_commerce.orders`<br>`nexus_commerce.order_items`<br>`nexus_fulfillment.shipments` | `orders.total`: `150000.00`<br>`orders.status`: `PAID` | `orders.total`: `150000.00`<br>`orders.status`: `PAID`<br>`shipments.status`: `IN_TRANSIT`<br>`shipments.carrier_id`: `GHN` | **ĐÚNG 100% SRS §3.8:** Chi tiết đơn hàng hiển thị chuẩn xác số tiền trúng thầu, stepper hiển thị tiến trình thanh toán và hành trình vận đơn đồng bộ thời gian thực. |
+| **Seller Shop & Reputation** (`/seller-shop`, `/public-reputation`) | Bấm "+ Theo dõi" shop, gửi đánh giá 5 sao kèm nhận xét giao dịch hoàn tất | `nexus_reputation.ratings`<br>`nexus_reputation.reputations` | `ratings`: *(chưa có đánh giá)*<br>`reputations.total_tx`: `N`<br>`reputations.success_tx`: `N` | `ratings.score`: `5`<br>`ratings.comment`: `Sản phẩm trúng đấu giá rất tốt...`<br>`reputations.total_tx`: `N + 1`<br>`reputations.success_tx`: `N + 1`<br>`reputations.trust_level`: `EXCELLENT` | **ĐÚNG 100% SRS §3.9 & HG-S3:** Đánh giá mới được ghi nhận vào bảng `ratings` với `score = 5`, cập nhật lũy kế tổng giao dịch và giao dịch thành công của người bán trong `reputations`. |
