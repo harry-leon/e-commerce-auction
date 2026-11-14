@@ -22,6 +22,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     /** Subject Keycloak được tra riêng để hỗ trợ profile có id nghiệp vụ khác sub. */
     Optional<User> findByKeycloakIdAndIsDeletedFalse(UUID keycloakId);
 
+    /** Bao gồm cả hồ sơ đã xóa mềm để đồng bộ không tạo lại identity đã có ràng buộc duy nhất. */
+    Optional<User> findByKeycloakId(UUID keycloakId);
+
     /** Email unique kể cả hồ sơ đã xóa mềm; tránh đụng constraint khi đăng ký lại. */
     boolean existsByEmail(String email);
 

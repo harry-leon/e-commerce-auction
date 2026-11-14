@@ -91,6 +91,47 @@ class UserServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.createUserProfile("invalid-subject", request));
     }
 
+    /** Đồng bộ phải tạo đúng profile thiếu và giữ nguyên role/credential do Keycloak quản lý. */
+    @Test
+    void syncsMissingKeycloakProfileIdempotently() {
+        UUID identity = UUID.randomUUID();
+        when(keycloak.users(0, 100)).thenReturn(List.of(new KeycloakClient.RealmUser(
+                identity.toString(), " New@Example.com ", "New", "Buyer", "newbuyer", true, null)));
+        when(users.findByKeycloakId(identity)).thenReturn(Optional.empty());
+        when(users.existsByEmail("new@example.com")).thenReturn(false);
+        var result = service.syncKeycloakProfiles(0, 100);
+
+        assertEquals(new UserService.ProfileSyncResult(1, 1, 0), result);
+        verify(users).save(org.mockito.ArgumentMatchers.argThat(profile ->
+                identity.equals(profile.getKeycloakId())
+                        && "new@example.com".equals(profile.getEmail())
+                        && "New Buyer".equals(profile.getFullName())
+                        && "ACTIVE".equals(profile.getStatus())));
+    }
+
+    /** Khóa tài khoản đồng bộ IAM trước profile để không báo thành công nếu Keycloak từ chối. */
+    @Test
+    void locksKeycloakAccountAndProfileTogether() {
+        when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
+        when(keycloak.authorities(user.getKeycloakId())).thenReturn(Set.of("ROLE_BUYER"));
+
+        var response = service.setUserLocked(user.getId(), true, UUID.randomUUID());
+
+        assertEquals("INACTIVE", response.getStatus());
+        verify(keycloak).setEnabled(user.getKeycloakId(), false);
+        verify(users).save(user);
+    }
+
+    /** Không cho Admin khóa chính session đang thực hiện thao tác để tránh tự cắt quyền quản trị. */
+    @Test
+    void rejectsSelfLockBeforeCallingKeycloak() {
+        when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
+
+        assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> service.setUserLocked(user.getId(), true, user.getKeycloakId()));
+        org.mockito.Mockito.verifyNoInteractions(keycloak);
+    }
+
     @Test
     void updatesProfileAndPreservesCreationTime() {
         when(users.findByIdAndIsDeletedFalse(user.getId())).thenReturn(Optional.of(user));
