@@ -59,6 +59,13 @@ const en = {
     myBids: 'My Bids',
     reputation: 'Reputation',
     dashboard: 'Dashboard',
+    dashboardGmvAllOrders: 'GMV (all paid orders)',
+    dashboardOrderActivityAll: 'All order activity in the last 7 UTC days',
+    syncKeycloakAccounts: 'Sync Keycloak accounts',
+    keycloakSyncCompleted: 'Keycloak sync complete: {created} profiles created from {scanned} accounts.',
+    lockAccount: 'Lock account',
+    unlockAccount: 'Unlock account',
+    accountStatusUpdated: 'Account status updated.',
     products: 'Products',
     auctions: 'Auctions',
     orders: 'Orders',
@@ -404,6 +411,13 @@ const vi: typeof en = {
     myBids: 'Lượt đấu giá',
     reputation: 'Uy tín',
     dashboard: 'Bảng điều khiển',
+    dashboardGmvAllOrders: 'GMV (toàn bộ đơn đã thanh toán)',
+    dashboardOrderActivityAll: 'Toàn bộ hoạt động đơn trong 7 ngày UTC gần nhất',
+    syncKeycloakAccounts: 'Đồng bộ tài khoản Keycloak',
+    keycloakSyncCompleted: 'Đã đồng bộ Keycloak: tạo {created} hồ sơ từ {scanned} tài khoản.',
+    lockAccount: 'Khóa tài khoản',
+    unlockAccount: 'Mở khóa tài khoản',
+    accountStatusUpdated: 'Đã cập nhật trạng thái tài khoản.',
     products: 'Sản phẩm',
     auctions: 'Đấu giá',
     orders: 'Đơn hàng',
@@ -710,22 +724,83 @@ export function formatDateTime(dateStr: string, lang: Lang): string {
 }
 
 /**
- * Định dạng số tiền theo tiền tệ hiển thị (VND cho 'vi', USD cho 'en').
- * Luồng: Kiểm tra tính hợp lệ của amount (chống lỗi runtime khi undefined/null/NaN) → format toLocaleString.
+ * Chức năng: Định dạng số tiền thành chuỗi tiền tệ theo ngôn ngữ giao diện (chuẩn Việt Nam Đồng ₫).
+ * Đầu vào: amount (số tiền, có thể là number, null hoặc undefined khi đơn hàng chưa chốt giá), lang (vi | en).
+ * Kết quả: Chuỗi tiền tệ được format an toàn, đồng nhất ký hiệu '₫' cho toàn bộ sàn:
+ *   - VI: 1.043.280 ₫ (phân tách hàng nghìn bằng dấu chấm)
+ *   - EN: 1,043,280 ₫ (phân tách hàng nghìn bằng dấu phẩy, không thêm .00 làm vỡ layout)
+ * Luồng: Kiểm tra tính hợp lệ của number → fallback về 0 nếu null/undefined/NaN → toLocaleString kèm ký hiệu ₫.
+ * Quy tắc & lý do: Đơn vị tiền tệ nền tảng là VND. Loại bỏ việc gán ký hiệu '$' và số thập phân .00 làm mâu thuẫn giá trị thực và tràn viền khung giao diện.
  */
-export function formatCurrency(amount: number | undefined | null, lang: Lang): string {
-    const safeAmount = typeof amount === 'number' && !isNaN(amount) ? amount : 0
-    if (lang === 'vi')
-        return safeAmount
-            .toLocaleString('vi-VN', { style: 'currency', currency: 'VND' })
-            .replace('₫', '$')
-            .trim()
-    return (
-        '$' + safeAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    )
+export function formatCurrency(amount: number | null | undefined, lang: Lang): string {
+    const val = typeof amount === 'number' && Number.isFinite(amount) ? amount : (Number(amount) || 0)
+    if (lang === 'vi') {
+        return val.toLocaleString('vi-VN') + ' ₫'
+    }
+    return val.toLocaleString('en-US') + ' ₫'
 }
 
-export function formatNumber(n: number, lang: Lang): string {
-    if (lang === 'vi') return n.toLocaleString('vi-VN')
-    return n.toLocaleString('en-US')
+/**
+ * Chức năng: Định dạng số nguyên/thực có dấu phân tách hàng nghìn an toàn.
+ * Đầu vào: n (số cần format, có thể null/undefined), lang (vi | en).
+ * Kết quả: Chuỗi số đã format hoặc '0' nếu n là null/undefined.
+ */
+export function formatNumber(n: number | null | undefined, lang: Lang): string {
+    const val = typeof n === 'number' && Number.isFinite(n) ? n : (Number(n) || 0)
+    if (lang === 'vi') return val.toLocaleString('vi-VN')
+    return val.toLocaleString('en-US')
+}
+
+/**
+ * Chức năng: Trích xuất tên sản phẩm theo ngôn ngữ hiển thị (VI / EN).
+ * Đầu vào: rawName (chuỗi tên từ backend Catalog), lang ('vi' | 'en').
+ * Kết quả: Tên sản phẩm chính xác theo ngôn ngữ người dùng đang chọn.
+ * Luồng & Quy tắc:
+ *   - Nếu sản phẩm lưu dạng song ngữ "Tên tiếng Việt / English Name" hoặc "Tên tiếng Việt // English Name":
+ *       - lang === 'vi': trả về phần tiếng Việt.
+ *       - lang === 'en': trả về phần tiếng Anh.
+ *   - Nếu tên không có dấu phân cách: trả về nguyên văn chuỗi gốc.
+ */
+export function resolveBilingualName(rawName: string | null | undefined, lang: Lang): string {
+    if (!rawName) return ''
+    const str = rawName.trim()
+    if (str.includes('//')) {
+        const parts = str.split(/\s*\/\/\s*/)
+        const vi = parts[0]?.trim() || ''
+        const en = parts[1]?.trim() || ''
+        if (lang === 'en') return en || vi || str
+        return vi || en || str
+    }
+    if (str.includes(' / ') || str.includes(' /') || str.includes('/ ')) {
+        const parts = str.split(/\s*\/\s*/)
+        const vi = parts[0]?.trim() || ''
+        const en = parts[1]?.trim() || ''
+        if (lang === 'en') return en || vi || str
+        return vi || en || str
+    }
+    return str
+}
+
+/**
+ * Chức năng: Trích xuất mô tả sản phẩm theo ngôn ngữ hiển thị (VI / EN).
+ * Đầu vào: rawDesc (chuỗi mô tả từ backend Catalog), lang ('vi' | 'en').
+ * Kết quả: Đoạn văn mô tả chuẩn xác cho ngôn ngữ đang chọn, loại bỏ triệt để dải phân cách '--- English ---'.
+ * Luồng & Quy tắc:
+ *   - Sử dụng biểu thức chính quy /---\s*English\s*---/i để bóc tách:
+ *       - lang === 'vi': chỉ hiển thị đoạn mô tả tiếng Việt (trước phân cách).
+ *       - lang === 'en': chỉ hiển thị đoạn mô tả tiếng Anh (sau phân cách).
+ *   - Nếu không có phân cách: trả về nguyên văn rawDesc.
+ */
+export function resolveBilingualDescription(rawDesc: string | null | undefined, lang: Lang): string {
+    if (!rawDesc) return ''
+    const str = rawDesc.trim()
+    const regex = /---\s*English\s*---/i
+    if (regex.test(str)) {
+        const parts = str.split(regex)
+        const vi = (parts[0] || '').trim()
+        const en = (parts[1] || '').trim()
+        if (lang === 'en') return en || vi || str
+        return vi || en || str
+    }
+    return str
 }

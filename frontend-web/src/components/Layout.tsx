@@ -705,6 +705,11 @@ export function BuyerLayout({ children, noPad }: { children: ReactNode; noPad?: 
 }
 
 // ─── Seller Layout ─────────────────────────────────────────────────────────────
+/**
+ * Chức năng: Danh sách menu điều hướng cho cổng Người bán (Seller Portal).
+ * Quy tắc & lý do: Đã loại bỏ mục 'seller-profile' khỏi danh sách điều hướng chính,
+ * chuyển lối vào Profile xuống nút tài khoản người dùng 'Seller Nexus' ở chân sidebar (đồng bộ với Admin).
+ */
 const SELLER_NAV = [
     {
         id: 'seller-dashboard',
@@ -729,9 +734,18 @@ const SELLER_NAV = [
         labelVi: 'Thông báo',
         icon: <Bell size={16} />,
     },
-    { id: 'seller-profile', label: 'Profile', labelVi: 'Hồ sơ', icon: <User2 size={16} /> },
 ]
 
+/**
+ * Chức năng: Khung bố cục chuẩn cho Seller Portal đồng bộ 100% với cấu trúc viewport của AdminLayout.
+ * Đầu vào: children (nội dung trang Seller), title (tiêu đề trang).
+ * Luồng & Quy tắc:
+ *   - Khung ngoài h-screen w-screen flex overflow-hidden bám cố định viewport.
+ *   - Sidebar cố định chiều rộng w-56 h-full min-h-0 với nền #0F172A, thanh cuộn độc lập min-h-0 overflow-y-auto.
+ *   - Lối vào Profile được gắn trực tiếp vào khối thẻ thông tin tài khoản 'Seller Nexus' ở chân sidebar.
+ *   - Đã loại bỏ hoàn toàn nút 'Buyer Storefront' (Trang mua hàng) theo yêu cầu.
+ *   - Main container độc lập min-h-0 overflow-y-auto overflow-x-hidden.
+ */
 export function SellerLayout({ children, title }: { children: ReactNode; title: string }) {
     const { lang, page, navigate, user, setUser } = useApp()
     const [notifOpen, setNotifOpen] = useState(false)
@@ -742,14 +756,14 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
         }
     }, [title])
     return (
-        <div className="min-h-screen flex bg-page">
-            {/* Sidebar */}
+        <div className="h-screen w-screen flex overflow-hidden bg-page">
+            {/* Sidebar Seller cố định chiều rộng w-56 đồng bộ AdminLayout */}
             <aside
-                className="w-56 min-h-screen flex flex-col shrink-0"
-                style={{ background: '#1E2A3B' }}
+                className="w-56 h-full min-h-0 flex flex-col shrink-0"
+                style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('home')} className="flex items-center gap-2">
+                    <button onClick={() => navigate('seller-dashboard')} className="flex items-center gap-2">
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Gavel size={14} className="text-white" />
                         </div>
@@ -759,12 +773,12 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         {lang === 'en' ? 'Seller Portal' : 'Cổng người bán'}
                     </p>
                 </div>
-                <nav className="flex-1 p-3 space-y-0.5">
+                <nav className="flex-1 min-h-0 p-3 overflow-y-auto space-y-1">
                     {SELLER_NAV.map((item) => (
                         <button
                             key={item.id}
                             onClick={() => navigate(item.id as any)}
-                            className={`sidebar-link w-full ${page === item.id || (item.id === 'seller-profile' && page === 'profile') ? 'active' : ''}`}
+                            className={`sidebar-link w-full ${page === item.id ? 'active' : ''}`}
                         >
                             {item.icon}
                             <span>{lang === 'vi' ? item.labelVi : item.label}</span>
@@ -773,28 +787,29 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                 </nav>
                 <div className="p-3 border-t border-white/10">
                     {user && (
-                        <div className="flex items-center gap-2 px-3 py-2 mb-2">
+                        // Chức năng: Bấm vào thẻ Seller Nexus để truy cập trang Profile (Hồ sơ người bán)
+                        <button
+                            type="button"
+                            aria-label={lang === 'en' ? 'Open Seller Nexus profile' : 'Mở hồ sơ Seller Nexus'}
+                            onClick={() => navigate('seller-profile')}
+                            className="sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
+                        >
                             <img
                                 src={user.avatar}
                                 alt=""
-                                className="w-8 h-8 rounded-full object-cover"
+                                className="w-7 h-7 rounded-full object-cover"
                             />
                             <div className="flex-1 min-w-0">
-                                <p className="text-white text-xs font-semibold truncate">
-                                    {user.fullName}
+                                <p className="text-gray-200 text-xs font-semibold truncate">
+                                    {user.fullName || 'Seller Nexus'}
                                 </p>
-                                <p className="text-gray-400 text-xs truncate">{user.email}</p>
+                                <p className="text-gray-500 text-[11px] truncate">
+                                    {lang === 'en' ? 'Seller' : 'Người bán'}
+                                </p>
                             </div>
-                        </div>
+                        </button>
                     )}
-                    {/* Chức năng: Cho phép Seller chuyển nhanh sang trang mua hàng của Buyer mà không cần đăng xuất */}
-                    <button
-                        onClick={() => navigate('home')}
-                        className="sidebar-link w-full text-indigo-300 hover:text-white"
-                    >
-                        <ShoppingCart size={16} />
-                        {lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}
-                    </button>
+                    {/* Bỏ mục 'Buyer Storefront', chỉ giữ nút Đăng xuất */}
                     <button
                         onClick={() => {
                             setUser(null)
@@ -802,13 +817,13 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         }}
                         className="sidebar-link w-full text-red-400 hover:text-red-300 hover:bg-red-900/20"
                     >
-                        <LogOut size={16} />
+                        <LogOut size={14} />
                         {lang === 'en' ? 'Log Out' : 'Đăng xuất'}
                     </button>
                 </div>
             </aside>
-            {/* Main */}
-            <div className="flex-1 flex flex-col min-w-0">
+            {/* Main view container bám chuẩn viewport với thanh cuộn dọc riêng */}
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
                 {/* Topbar */}
                 <div className="h-14 bg-white border-b border-border px-8 flex items-center justify-between shrink-0">
                     <h1 className="text-lg font-bold text-gray-900">{title}</h1>
@@ -898,7 +913,7 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         </div>
                     </div>
                 </div>
-                <main className="flex-1 p-8 overflow-auto">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">{children}</main>
             </div>
         </div>
     )
@@ -1124,14 +1139,7 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                             </div>
                         </button>
                     )}
-                    {/* Chức năng: Cho phép Admin chuyển nhanh sang xem trang mua hàng của Buyer */}
-                    <button
-                        onClick={() => navigate('home')}
-                        className="admin-sidebar-link w-full text-indigo-300 hover:text-white hover:bg-white/10 mb-1"
-                    >
-                        <ShoppingCart size={14} />
-                        <span>{lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}</span>
-                    </button>
+                    {/* Bỏ mục chuyển sang Trang mua hàng (Buyer) theo yêu cầu, Admin chỉ giữ nút Đăng xuất */}
                     <button
                         onClick={() => {
                             setUser(null)
