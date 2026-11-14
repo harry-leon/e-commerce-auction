@@ -82,7 +82,9 @@ class BaselineMigrationPostgresTest {
             // V19 chỉ bổ sung delivery state, không tạo notification Shipping cho đơn lịch sử.
             // V20 thêm audit replay Shipping rỗng, không tự reset backlog.
             // V21 không tạo ý định giao hàng cho đơn lịch sử, tránh bật carrier khi nâng schema.
-            assertEquals("21", baseline.info().current().getVersion().getVersion());
+            // V22 không cấp claim/chặn refund khi nâng cấp dữ liệu lịch sử.
+            assertEquals("22", baseline.info().current().getVersion().getVersion());
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_dispatch_claims", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_handoff_tasks", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_notification_replays", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_event_inbox", Integer.class));

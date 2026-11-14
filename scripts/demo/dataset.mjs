@@ -17,8 +17,8 @@ export const VERSIONS = {
     catalog: 7,
     // V9/V10 thêm dispatch và audit recovery; fixture không gửi carrier hoặc chốt kết quả giả.
     fulfillment: 10,
-    // V21 thêm ý định bàn giao WAITING_PARCEL; không seed/backfill tác vụ giao hàng hoặc gọi carrier demo.
-    commerce: 21,
+    // V22 thêm quyền dispatch, không seed/backfill claim hoặc tự chặn refund của đơn demo/lịch sử.
+    commerce: 22,
     auction: 3,
     reputation: 3,
     // V6 thêm refund context nullable; fixture demo không giả lập một giao dịch refund thật.
