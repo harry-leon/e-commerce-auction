@@ -27,8 +27,12 @@ public class NotificationController {
 
     public NotificationController(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
-    /** DTO chỉ có thông tin hiển thị và orderId; không công khai userId, eventId hoặc lỗi giao nhận nội bộ. */
-    public record Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt) { }
+    /** Ngữ cảnh refund chỉ hiển thị cho chủ inbox; không lộ evidence, provider reference hoặc lỗi giao nhận nội bộ. */
+    public record Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt, UUID refundId) {
+        public Item(UUID id, UUID orderId, String type, String title, String content, boolean read, Instant createdAt) {
+            this(id, orderId, type, title, content, read, createdAt, null);
+        }
+    }
     /** Tổng số chưa đọc tính toàn hộp thư, không chỉ riêng trang đang xem. */
     public record Inbox(List<Item> content, long totalElements, long unreadCount) { }
 
@@ -43,11 +47,12 @@ public class NotificationController {
         }
         UUID user = user(jwt);
         String where = " FROM notifications WHERE user_id=? AND channel='IN_APP' AND status IN ('SENT','READ')";
-        List<Item> rows = jdbc.query("SELECT id,order_id,event_type,title,content,status,created_at" + where
+        List<Item> rows = jdbc.query("SELECT id,order_id,event_type,title,content,status,created_at,refund_id" + where
                 + " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?", (rs, row) -> new Item(
                         rs.getObject("id", UUID.class), rs.getObject("order_id", UUID.class), rs.getString("event_type"),
                         rs.getString("title"), rs.getString("content"), "READ".equals(rs.getString("status")),
-                        rs.getTimestamp("created_at").toLocalDateTime().toInstant(java.time.ZoneOffset.UTC)), user, size, (long) page * size);
+                        rs.getTimestamp("created_at").toLocalDateTime().toInstant(java.time.ZoneOffset.UTC),
+                        rs.getObject("refund_id", UUID.class)), user, size, (long) page * size);
         long total = jdbc.queryForObject("SELECT count(*)" + where, Long.class, user);
         long unread = jdbc.queryForObject("SELECT count(*)" + where + " AND status='SENT'", Long.class, user);
         return ApiResponse.ok(new Inbox(rows, total, unread));

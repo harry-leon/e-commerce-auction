@@ -709,14 +709,19 @@ export function formatDateTime(dateStr: string, lang: Lang): string {
     }).format(date)
 }
 
-export function formatCurrency(amount: number, lang: Lang): string {
+/**
+ * Định dạng số tiền theo tiền tệ hiển thị (VND cho 'vi', USD cho 'en').
+ * Luồng: Kiểm tra tính hợp lệ của amount (chống lỗi runtime khi undefined/null/NaN) → format toLocaleString.
+ */
+export function formatCurrency(amount: number | undefined | null, lang: Lang): string {
+    const safeAmount = typeof amount === 'number' && !isNaN(amount) ? amount : 0
     if (lang === 'vi')
-        return amount
+        return safeAmount
             .toLocaleString('vi-VN', { style: 'currency', currency: 'VND' })
             .replace('₫', '$')
             .trim()
     return (
-        '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        '$' + safeAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     )
 }
 

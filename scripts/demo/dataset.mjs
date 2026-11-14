@@ -15,13 +15,14 @@ export const SERVICES = [
 export const VERSIONS = {
     user: 6,
     catalog: 7,
-    // V7/V8 chỉ bổ sung carrier/tracking và mở rộng trạng thái; fixture cũ dùng được với default mới.
-    fulfillment: 8,
-    // V13 thêm bảng refund, không seed refund vì bộ demo không chứng minh tiền thật đã được hoàn.
-    commerce: 13,
+    // V9–V11 thêm dispatch/recovery/replay audit; fixture không gửi carrier hoặc reset backlog giả.
+    fulfillment: 11,
+    // V18–V20 thêm inbox/delivery/replay audit Shipping; không seed refund hoặc sự kiện carrier giả cho dữ liệu lịch sử.
+    commerce: 20,
     auction: 3,
     reputation: 3,
-    notification: 5,
+    // V6 thêm refund context nullable; fixture demo không giả lập một giao dịch refund thật.
+    notification: 6,
 };
 export const DEFAULT_WAREHOUSE = "a0000000-0000-0000-0000-000000000001";
 

@@ -2,6 +2,7 @@ package com.nexus.commerce.controller;
 
 import com.nexus.commerce.dto.response.RefundResponse;
 import com.nexus.commerce.service.RefundRequestService;
+import com.nexus.commerce.service.RefundResolutionService;
 import com.nexus.common.exception.ApiException;
 import com.nexus.common.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,12 +26,48 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** API tiếp nhận refund toàn phần; chỉ lưu REQUESTED, chưa gửi cổng hoặc xác nhận đã hoàn tiền. */
+/** API tạo/đọc và duyệt dispatch refund; không gọi provider trực tiếp, worker xử lý sau với hai feature flag. */
 @RestController
 @RequestMapping("/api/v1/refunds")
 @RequiredArgsConstructor
 public class RefundController {
     private final RefundRequestService requests;
+    private final RefundResolutionService resolutions;
+    private final com.nexus.commerce.service.RefundNotificationReplayService notificationReplays;
+
+    /** Admin yêu cầu giao lại dead letter; actor lấy từ JWT, chỉ trả auditId và không gửi HTTP trong request. */
+    @PostMapping("/deliveries/{id}/retry")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Đưa thông báo refund dead letter về hàng đợi với audit và idempotency")
+    public ApiResponse<ReplayResponse> replayNotification(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader("Idempotency-Key") UUID key, @Valid @RequestBody ReplayRequest body) {
+        return ApiResponse.ok(new ReplayResponse(notificationReplays.replay(id, actor(jwt), key, body.reason())));
+    }
+
+    /** Lý do phục vụ audit nội bộ, không chứa secret hoặc token. */
+    public record ReplayRequest(@NotBlank @Size(max = 500) String reason) { }
+    /** AuditId ổn định khi retry cùng key; không khẳng định Notification đã nhận sự kiện. */
+    public record ReplayResponse(UUID auditId) { }
+
+    /** Admin ghi kết quả đối soát có bằng chứng, không gọi provider; key chống lặp quyết định sau timeout. */
+    @PostMapping("/{id}/manual-resolution")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Chốt UNKNOWN/REQUIRES_REVIEW bằng bằng chứng đối soát thủ công")
+    public ResponseEntity<ApiResponse<RefundResolutionService.Decision>> resolve(@PathVariable UUID id,
+            @AuthenticationPrincipal Jwt jwt, @RequestHeader("Idempotency-Key") UUID key,
+            @RequestBody RefundResolutionService.Command body) {
+        var result = resolutions.resolve(id, actor(jwt), key, body);
+        return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(ApiResponse.ok(result.response()));
+    }
+
+    /** Duyệt thủ công không phải gửi tiền; worker vẫn cần hai feature flag và cấu hình merchant hợp lệ. */
+    @PostMapping("/{id}/dispatch-approval")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Duyệt dispatch refund sau khi kiểm tra hủy/return, chưa xác nhận hoàn tiền")
+    public ApiResponse<RefundResponse> approve(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody Approval body) {
+        return ApiResponse.ok(requests.approve(id, actor(jwt), body.note()));
+    }
 
     /** Admin tạo yêu cầu 201 hoặc replay 200; không nhận amount/status do client khai báo. */
     @PostMapping
@@ -63,4 +100,6 @@ public class RefundController {
 
     /** Lý do chỉ lưu nội bộ cho audit, không trả trong response công khai. */
     public record Request(@NotNull UUID paymentId, @NotBlank @Size(max = 500) String reason) { }
+    /** Tham chiếu kiểm tra nghiệp vụ lưu audit nội bộ; không cho client đặt trạng thái/provider result. */
+    public record Approval(@NotBlank @Size(max = 500) String note) { }
 }

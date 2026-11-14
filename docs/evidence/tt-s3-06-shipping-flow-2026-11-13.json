@@ -1,0 +1,33 @@
+{
+  "verifiedOn": "2026-11-13",
+  "keycloakImage": "quay.io/keycloak/keycloak:24.0.5",
+  "scope": "isolated-real-keycloak-http-no-carrier",
+  "cases": [
+    "real_keycloak_realm_ready",
+    "real_jwt_enforces_client_and_privilege",
+    "real_workers_recover_lost_ack_without_duplicate_notifications",
+    "duplicates_conflicts_and_notification_owner_scope",
+    "real_admin_replay_apis_preserve_audit_and_read_state",
+    "jvm_restart_after_consumer_commit_replays_without_duplicate_or_payment",
+    "real_admin_health_visibility"
+  ],
+  "sources": {
+    "notification": {
+      "sha256": "4d59cdc0569f994a7fb72c2db10b5c7e27d05c3ca0dc010978e7dafddf807910",
+      "checkoutHead": "517e7cc2d2aca3226596415ed4fe1f6e768761b3",
+      "reusedArtifact": true
+    },
+    "commerce": {
+      "sha256": "4d892f6000b0c4b1ca8f8e092fbb904fb5c698212c71beb5e4ce092b8003c6d8",
+      "checkoutHead": "517e7cc2d2aca3226596415ed4fe1f6e768761b3",
+      "reusedArtifact": true
+    },
+    "fulfillment": {
+      "sha256": "6749804f615cf502e357150da5957d9460843623db24e178c22abbe8f5194319",
+      "checkoutHead": "517e7cc2d2aca3226596415ed4fe1f6e768761b3",
+      "reusedArtifact": true
+    }
+  },
+  "cleanup": true,
+  "result": "PASS"
+}

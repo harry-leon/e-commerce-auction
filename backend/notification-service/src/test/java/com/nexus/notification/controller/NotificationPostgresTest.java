@@ -33,6 +33,81 @@ class NotificationPostgresTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private ObjectMapper mapper;
 
+    /** Shipping giữ quyền owner, chống trùng và READ qua retry; UUID cũ không được đổi thành trạng thái khác. */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"ORDER_SHIPPED", "ORDER_DELIVERED"})
+    void shippingEventsAreOwnerScopedIdempotentAndPreserveRead(String type) throws Exception {
+        UUID buyer = UUID.randomUUID();
+        var body = event(buyer, type);
+        send(body, 204); send(body, 204);
+        String title = "ORDER_SHIPPED".equals(type) ? "Đơn hàng đã bàn giao vận chuyển" : "Đơn hàng đã giao thành công";
+        mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].title").value(title));
+        mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject(UUID.randomUUID().toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(0));
+        mvc.perform(post("/api/v1/notifications/{id}/read", body.get("id")).with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk());
+        send(body, 204);
+        assertEquals("READ", jdbc.queryForObject("SELECT status FROM notifications WHERE id=?", String.class, body.get("id")));
+        body.put("type", "ORDER_SHIPPED".equals(type) ? "ORDER_DELIVERED" : "ORDER_SHIPPED");
+        send(body, 409);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND channel='IN_APP'", Integer.class, buyer));
+    }
+
+    /** Refund giữ đúng requestId trong inbox/push, replay sau READ không tạo tin mới; đổi refund trên cùng eventId trả 409. */
+    @Test
+    void refundContextIsDurableAndCannotBeChangedOnReplay() throws Exception {
+        UUID buyer = UUID.randomUUID();
+        UUID refund = UUID.randomUUID();
+        var body = event(buyer, "REFUND_REQUIRES_REVIEW");
+        body.put("refundId", refund);
+        send(body, 204);
+        send(body, 204);
+        mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].refundId").value(refund.toString()))
+                .andExpect(jsonPath("$.data.content[0].title").value("Yêu cầu hoàn tiền cần đối soát"));
+        mvc.perform(post("/api/v1/notifications/{id}/read", body.get("id"))
+                .with(jwt().jwt(j -> j.subject(buyer.toString())))).andExpect(status().isOk());
+        send(body, 204);
+        assertEquals("READ", jdbc.queryForObject("SELECT status FROM notifications WHERE id=?", String.class, body.get("id")));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM notifications WHERE refund_id=?", Integer.class, refund));
+        body.put("refundId", UUID.randomUUID());
+        send(body, 409);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications WHERE event_id=?", Integer.class, body.get("id").toString()));
+    }
+
+    /** Các trạng thái refund có thông điệp riêng, chỉ SUCCEEDED xác nhận hoàn tiền; source phải gửi đủ context hợp lệ. */
+    @Test
+    void validatesAndRendersRefundLifecycle() throws Exception {
+        UUID buyer = UUID.randomUUID();
+        var body = event(buyer, "REFUND_REQUESTED");
+        send(body, 422);
+        body.put("refundId", UUID.randomUUID());
+        body.put("amount", 0);
+        send(body, 422);
+        body.put("amount", 0.5);
+        send(body, 422);
+        body.put("amount", 50000);
+        for (String type : new String[] {"REFUND_REQUESTED", "REFUND_SUCCEEDED", "REFUND_FAILED", "REFUND_REQUIRES_REVIEW"}) {
+            body.put("id", UUID.randomUUID());
+            body.put("type", type);
+            send(body, 204);
+        }
+        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND channel='IN_APP'", Integer.class, buyer));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND channel='IN_APP' "
+                + "AND title='Đã xác nhận hoàn tiền' AND event_type='REFUND_SUCCEEDED'", Integer.class, buyer));
+    }
+
+    /** Health của transport thực trong Spring context phản ánh broker đã start; không chứng minh browser nhận push. */
+    @Test
+    void exposesBrokerHealthAfterStartup() throws Exception {
+        mvc.perform(get("/actuator/health/notificationTransport").with(jwt()
+                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
+    }
+
     private Map<String, Object> event(UUID buyer, String type) {
         return new HashMap<>(Map.of("id", UUID.randomUUID(), "userId", buyer, "orderId", UUID.randomUUID(),
                 "orderNo", "ORD-DEMO", "type", type, "amount", 50000, "occurredAt", "2026-10-29T01:02:03Z"));

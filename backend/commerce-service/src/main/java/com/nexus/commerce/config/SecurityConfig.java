@@ -23,8 +23,8 @@ public class SecurityConfig {
 
     /**
      * Xác minh JWT stateless trước khi controller chạy; public IPN vẫn được Commerce kiểm tra chữ ký HMAC.
-     * Namespace nội bộ bắt buộc token do nexus-auction-service xin cùng COMMERCE.AUCTION, không nhận role admin thay thế.
-     * Đây là hàng rào cho contract nội bộ, chưa tạo endpoint/đơn Auction; các API người dùng giữ policy hiện có.
+     * Snapshot/event Shipping chỉ nhận Fulfillment với SHIPPING_READ/SHIPPING_EVENTS riêng; namespace còn lại giữ quyền Auction.
+     * Không nhận role Admin/browser thay cho service identity khi đọc thông tin người nhận.
      */
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -34,7 +34,16 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/v1/ping").permitAll()
-                // Namespace nội bộ dành cho contract tạo order từ Auction; endpoint nghiệp vụ chưa có tại đây.
+                // Matcher cụ thể phải đứng trước namespace Auction để không mở quyền đọc PII cho Auction hoặc browser.
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/internal/commerce/shipping-events")
+                    .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-fulfillment-service", "COMMERCE.SHIPPING_EVENTS")))
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/internal/commerce/shipping-orders/*")
+                    .access((auth, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                        com.nexus.common.security.ServiceIdentity.permits(auth.get(),
+                            "nexus-fulfillment-service", "COMMERCE.SHIPPING_READ")))
+                // Phần còn lại của namespace nội bộ chỉ dành cho contract Auction.
                 .requestMatchers("/api/v1/internal/commerce/**").access((auth, context) ->
                     new org.springframework.security.authorization.AuthorizationDecision(
                         com.nexus.common.security.ServiceIdentity.permits(auth.get(),

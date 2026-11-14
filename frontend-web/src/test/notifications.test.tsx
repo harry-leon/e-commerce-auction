@@ -10,7 +10,15 @@ vi.mock('../context', () => ({ useApp: () => holder.current }))
 vi.mock('../components/Layout', () => ({
     BuyerLayout: ({ children }: { children: React.ReactNode }) => children,
 }))
-vi.mock('../api/notifications', () => ({ getNotifications: vi.fn(), readNotification: vi.fn() }))
+// Mock toàn bộ API notifications bao gồm lấy danh sách, đánh dấu đọc, push permission và notification preferences
+vi.mock('../api/notifications', () => ({
+    getNotifications: vi.fn(),
+    readNotification: vi.fn(),
+    getPushPermissionStatus: vi.fn(() => 'granted'),
+    requestPushPermission: vi.fn(),
+    getNotificationPreferences: vi.fn(() => Promise.resolve([])),
+    updateNotificationPreferences: vi.fn(),
+}))
 const inbox: Inbox = {
     content: [
         {

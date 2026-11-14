@@ -27,8 +27,11 @@ import {
     CreditCard,
 } from './UI'
 import { NOTIFICATIONS } from '../mockData'
-import { api, type Envelope, type ApiCategory } from '../api/client'
+// Giữ cả phiên đăng nhập cho menu quản trị và tìm kiếm/lọc tồn kho từ nhánh dev.
+import { api, errorMessage, type Envelope, type ApiCategory, type ApiProduct } from '../api/client'
 import { useSessionStore } from '../features/auth/sessionStore'
+import { getBatchStock } from '../api/inventory'
+import { filterInStockProducts } from '../features/catalog/catalog'
 
 // Simple monochrome SVG icons per category
 function IconElectronics(p: SVGProps<SVGSVGElement>) {
@@ -180,15 +183,94 @@ export function PublicHeader() {
             .catch(() => setCategories([]))
         return () => controller.abort()
     }, [])
-    const { lang, navigate, user, setUser, cartCount } = useApp()
+    // Session quyết định menu được phép hiện; pageParams giữ từ khóa tìm kiếm khi điều hướng từ Discovery.
+    const { lang, navigate, user, setUser, cartCount, pageParams } = useApp()
     const sessionReady = useSessionStore((state) => state.sessionReady)
-    const [searchQ, setSearchQ] = useState('')
+    const [searchQ, setSearchQ] = useState(typeof pageParams?.q === 'string' ? pageParams.q : '')
+    const [suggestions, setSuggestions] = useState<ApiProduct[]>([])
+    const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+    const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+    const [suggestionsError, setSuggestionsError] = useState('')
     const [userOpen, setUserOpen] = useState(false)
     const [notifOpen, setNotifOpen] = useState(false)
 
-    const doSearch = () => {
-        if (searchQ.trim()) navigate('search', { q: searchQ })
+    // Đồng bộ từ khóa từ URL để thanh tìm kiếm không bị xóa khi chuyển sang trang kết quả.
+    useEffect(() => {
+        setSearchQ(typeof pageParams?.q === 'string' ? pageParams.q : '')
+    }, [pageParams?.q])
+
+    // Debounce truy vấn, lọc tên/mô tả/SKU theo đúng từ khóa rồi chỉ giữ SKU còn hàng.
+    useEffect(() => {
+        const query = searchQ.trim()
+        if (!query) {
+            setSuggestions([])
+            setSuggestionsLoading(false)
+            setSuggestionsError('')
+            return
+        }
+
+        const controller = new AbortController()
+        const timer = setTimeout(() => {
+            setSuggestionsLoading(true)
+            setSuggestionsError('')
+            api<Envelope<ApiProduct[]>>(
+                `/products?q=${encodeURIComponent(query)}&page=0&size=6&sort=name,asc`,
+                { signal: controller.signal },
+            )
+                .then(async (response) => {
+                    const products = Array.isArray(response?.data) ? response.data : []
+                    const normalizedQuery = query.toLocaleLowerCase()
+                    const matchingProducts = products.filter((product) =>
+                        [
+                            product.name,
+                            product.description,
+                            ...(product.skus || []).map((sku) => sku.skuCode || ''),
+                        ]
+                            .join(' ')
+                            .toLocaleLowerCase()
+                            .includes(normalizedQuery),
+                    )
+                    const skuIds = matchingProducts.flatMap((product) =>
+                        (product.skus || [])
+                            .filter((sku) => sku.status === 'ACTIVE')
+                            .map((sku) => sku.id),
+                    )
+                    if (skuIds.length === 0) return []
+                    const stocks = await getBatchStock({ skuIds }, controller.signal)
+                    return filterInStockProducts(
+                        matchingProducts,
+                        Object.fromEntries(
+                            stocks.map((stock) => [stock.skuId, stock.availableQty]),
+                        ),
+                    )
+                })
+                .then((products) => {
+                    if (!controller.signal.aborted) setSuggestions(products)
+                })
+                .catch((cause) => {
+                    if (!controller.signal.aborted) setSuggestionsError(errorMessage(cause))
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) setSuggestionsLoading(false)
+                })
+        }, 250)
+
+        return () => {
+            clearTimeout(timer)
+            controller.abort()
+        }
+    }, [searchQ])
+
+    const doSearch = (query = searchQ) => {
+        const normalizedQuery = query.trim()
+        if (normalizedQuery) {
+            setSuggestionsOpen(false)
+            setSearchQ(normalizedQuery)
+            navigate('search', { q: normalizedQuery })
+        }
     }
+    const showSuggestions =
+        suggestionsOpen && !suggestionsLoading && !suggestionsError && suggestions.length > 0
 
     return (
         /**
@@ -214,12 +296,29 @@ export function PublicHeader() {
                 </button>
 
                 {/* Search */}
-                <div className="flex-1 max-w-2xl">
+                <div
+                    className="relative flex-1 max-w-2xl"
+                    onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setSuggestionsOpen(false)
+                        }
+                    }}
+                >
                     <div className="flex border border-border rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary">
                         <input
                             value={searchQ}
-                            onChange={(e) => setSearchQ(e.target.value)}
+                            onChange={(e) => {
+                                const value = e.target.value
+                                setSearchQ(value)
+                                setSuggestions([])
+                                setSuggestionsError('')
+                                setSuggestionsLoading(value.trim().length > 0)
+                                setSuggestionsOpen(value.trim().length > 0)
+                            }}
                             onKeyDown={(e) => e.key === 'Enter' && doSearch()}
+                            aria-autocomplete="list"
+                            aria-expanded={showSuggestions}
+                            aria-controls="product-search-suggestions"
                             placeholder={
                                 lang === 'en'
                                     ? 'Search products, auctions...'
@@ -228,12 +327,40 @@ export function PublicHeader() {
                             className="flex-1 px-4 py-2.5 text-sm outline-none text-gray-800 placeholder-gray-400"
                         />
                         <button
-                            onClick={doSearch}
+                            type="button"
+                            onClick={() => doSearch()}
+                            aria-label={lang === 'en' ? 'Search' : 'Tìm kiếm'}
                             className="px-4 bg-primary text-white hover:bg-primary-dark transition-colors"
                         >
                             <Search size={16} />
                         </button>
                     </div>
+                    {showSuggestions && (
+                        <div
+                            id="product-search-suggestions"
+                            role="listbox"
+                            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white py-2 shadow-lg"
+                        >
+                            {suggestions.map((product) => (
+                                <button
+                                    key={product.id}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={false}
+                                    className="block w-full px-4 py-2 text-left text-sm text-gray-800 hover:bg-orange-50"
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => doSearch(product.name)}
+                                >
+                                    {product.name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    {suggestionsOpen && suggestionsError && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                            {suggestionsError}
+                        </p>
+                    )}
                 </div>
 
                 {/* Right controls */}
@@ -941,7 +1068,10 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
             >
                 <div className="p-5 border-b border-white/10">
                     {/* Logo trong Admin luôn đưa quản trị viên về Dashboard, không chuyển sang storefront Buyer. */}
-                    <button onClick={() => navigate('admin-dashboard')} className="flex items-center gap-2">
+                    <button
+                        onClick={() => navigate('admin-dashboard')}
+                        className="flex items-center gap-2"
+                    >
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Shield size={14} className="text-white" />
                         </div>
@@ -975,7 +1105,9 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                         // Đặt lối vào hồ sơ tại khu vực tài khoản để menu quản lý không có mục Profile riêng.
                         <button
                             type="button"
-                            aria-label={lang === 'en' ? 'Open Admin Nexus profile' : 'Mở hồ sơ Admin Nexus'}
+                            aria-label={
+                                lang === 'en' ? 'Open Admin Nexus profile' : 'Mở hồ sơ Admin Nexus'
+                            }
                             onClick={() => navigate('admin-profile')}
                             className="admin-sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
                         >
@@ -1019,7 +1151,9 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                         <LanguageSwitcher />
                     </div>
                 </div>
-                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">
+                    {children}
+                </main>
             </div>
         </div>
     )

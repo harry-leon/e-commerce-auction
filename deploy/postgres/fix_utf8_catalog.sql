@@ -14,3 +14,6 @@ UPDATE products SET description = 'Giày thể thao êm ái phong cách trẻ tr
 UPDATE products SET description = 'Đồng hồ cơ cổ điển tinh xảo Thụy Sĩ.' WHERE id = 'a0000004-0000-0000-0000-000000000004';
 UPDATE products SET description = 'Ghế công thái học bảo vệ cột sống, thoáng khí.' WHERE id = 'a0000005-0000-0000-0000-000000000005';
 UPDATE products SET description = 'Bộ truyện tranh siêu anh hùng hiếm xuất bản thập niên 70.' WHERE id = 'a0000006-0000-0000-0000-000000000006';
+
+-- Cập nhật ảnh áo đấu Messi thay thế ảnh cũ bị 404
+UPDATE product_images SET url = 'https://images.unsplash.com/photo-1671016233853-5db7def7ff76?w=800&auto=format&fit=crop&q=80' WHERE id = 'b7000000-0000-4000-8000-000000000001';

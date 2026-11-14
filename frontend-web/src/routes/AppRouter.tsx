@@ -31,6 +31,7 @@ import {
     PaymentResultPage,
     SandboxPaymentPage,
     SellerShopPage,
+    MyReputationPage,
 } from '../features/buyer/BuyerPages'
 import {
     CreateAuctionPage,
@@ -155,7 +156,7 @@ export function AppRouter() {
             return <SellerShopPage />
         case 'my-reputation':
         case 'public-reputation':
-            return <SellerShopPage />
+            return <MyReputationPage />
         case 'notifications':
             return <NotificationPage />
         case 'auction-list':

@@ -1,13 +1,11 @@
 package com.nexus.fulfillment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.nexus.common.exception.BusinessException;
 import com.nexus.fulfillment.dto.response.ShipmentResponse;
 import com.nexus.fulfillment.entity.Carrier;
 import com.nexus.fulfillment.entity.Inventory;
@@ -16,7 +14,6 @@ import com.nexus.fulfillment.entity.InventoryReservation;
 import com.nexus.fulfillment.entity.Shipment;
 import com.nexus.fulfillment.entity.ShipmentStatusHistory;
 import com.nexus.fulfillment.entity.Warehouse;
-import com.nexus.fulfillment.enums.LedgerMovementType;
 import com.nexus.fulfillment.enums.ReservationRefType;
 import com.nexus.fulfillment.enums.ReservationStatus;
 import com.nexus.fulfillment.enums.ShipmentStatus;

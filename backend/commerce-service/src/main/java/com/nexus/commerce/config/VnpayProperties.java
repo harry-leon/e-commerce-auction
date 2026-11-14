@@ -11,6 +11,12 @@ import org.springframework.context.annotation.Configuration;
 @Getter
 @Setter
 public class VnpayProperties {
+    /** Merchant API mặc định tắt; chỉ bật sau khi quyền refund/query sandbox được xác minh. Không tự bật worker. */
+    private boolean merchantApiEnabled;
+    /** Worker cần bật riêng và từng yêu cầu có duyệt dispatch; không gửi hàng loạt yêu cầu V13 cũ. */
+    private boolean refundWorkerEnabled;
+    /** IP egress merchant đã khai báo với provider; không suy đoán từ header request của người dùng. */
+    private String merchantSourceIp = "";
     private String tmnCode = "";
     private String hashSecret = "";
     private String returnUrl = "";
