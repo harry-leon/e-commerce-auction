@@ -73,6 +73,10 @@ management:
     refresh:
       enabled: true
     health:
+      # Probe công khai chỉ status; Admin mới thấy component/count backlog, không trả payload hoặc credential.
+      show-components: when_authorized
+      show-details: when_authorized
+      roles: ADMIN
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
   tracing:

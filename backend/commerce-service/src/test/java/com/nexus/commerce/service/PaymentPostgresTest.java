@@ -70,6 +70,21 @@ class PaymentPostgresTest {
     @Autowired private ShippingEventInboxService shippingInbox;
     @Autowired private ShippingNotificationReplayService shippingReplays;
 
+    /** Health dùng SQL thật, chỉ đếm pending/dead letter, bỏ qua delivered và nhận biết backlog quá tuổi. */
+    @Test
+    void shippingNotificationHealthCountsActualBacklog() {
+        UUID id = shippingDeadLetter();
+        var remote = org.mockito.Mockito.mock(NotificationDelivery.class); when(remote.configured()).thenReturn(true);
+        var health = new com.nexus.commerce.config.ShippingNotificationTransportHealth(jdbc, remote, true, 300);
+        assertEquals(org.springframework.boot.actuate.health.Status.OUT_OF_SERVICE, health.health().getStatus());
+        assertEquals(true, ((Number) health.health().getDetails().get("deadLetters")).longValue() >= 1);
+        jdbc.update("UPDATE shipping_notification_outbox SET status='PENDING',created_at=now()-interval '1 hour' WHERE id=?", id);
+        assertEquals(true, ((Number) health.health().getDetails().get("overdue")).longValue() >= 1);
+        long pending = ((Number) health.health().getDetails().get("pending")).longValue();
+        jdbc.update("UPDATE shipping_notification_outbox SET status='DELIVERED' WHERE id=?", id);
+        assertEquals(pending - 1, ((Number) health.health().getDetails().get("pending")).longValue());
+    }
+
     /** Replay chỉ DEAD_LETTER, audit/key giữ nguyên sau ACK; payload không đổi và key khác nội dung bị chặn. */
     @Test
     void shippingReplayPreservesSnapshotAndStableAudit() {
