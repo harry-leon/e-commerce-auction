@@ -16,6 +16,9 @@ public class ShippingEventSchedulingConfig {
     /** Mỗi instance một tick event, PostgreSQL chia row giữa instance bằng SKIP LOCKED. */
     @Bean
     public ThreadPoolTaskScheduler shipmentEventScheduler() { return scheduler("shipment-event-"); }
+    /** Dispatch có HTTP riêng, không chiếm tick event/polling; Spring dừng scheduler khi context đóng. */
+    @Bean
+    public ThreadPoolTaskScheduler shipmentDispatchScheduler() { return scheduler("shipment-dispatch-"); }
     private ThreadPoolTaskScheduler scheduler(String prefix) {
         var scheduler = new ThreadPoolTaskScheduler(); scheduler.setPoolSize(1);
         scheduler.setThreadNamePrefix(prefix); scheduler.setRemoveOnCancelPolicy(true); return scheduler;
