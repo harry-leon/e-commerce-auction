@@ -12,10 +12,10 @@ Payload giữ nguyên id/userId/orderId/orderNo/type/amount/occurredAt từ snap
 
 Lỗi delivery tăng attempts và backoff 2–256 giây; lần lỗi thứ tám DEAD_LETTER. Chỉ lưu tên class/INVALID_SNAPSHOT, không message/body/token. Không retry liên tục trong cùng tick hoặc xóa sự kiện. Chưa phân loại HTTP status riêng trong worker này; lỗi consumer/OAuth đều retry hữu hạn rồi giữ để operator đối soát.
 
-Truy vấn chỉ đọc `SELECT id,order_id,event_type,attempts,last_error_type FROM shipping_notification_outbox WHERE status='DEAD_LETTER';`. Chưa có API/UI replay Shipping notification có audit; không reset id/payload hoặc coi SQL UPDATE attempts là quy trình replay hoàn chỉnh. Health/alert HTTP và vận hành dead letter vẫn cần bổ sung.
+Truy vấn chỉ đọc `SELECT id,order_id,event_type,attempts,last_error_type FROM shipping_notification_outbox WHERE status='DEAD_LETTER';`. V20 có [API replay Admin với audit](TT_S3_SHIPPING_NOTIFICATION_REPLAY.md); không reset id/payload bằng SQL để né dedup. UI/list và health/alert HTTP vẫn cần bổ sung.
 
 ## Bằng chứng và giới hạn
 
 Notification !158 có test PostgreSQL cho hai type, owner scoping, READ/dedup và replay đổi nội dung. Commerce có test PostgreSQL cho mất ACK giữ snapshot, ACK-only, concurrent worker, tắt/thiếu OAuth, retry hữu hạn/dead letter và poison. NotificationDelivery HTTP contract đã có test localhost riêng, không gửi email Shipping.
 
-Chưa có test hai service thật với IAM/browser reconnect, chưa bật flags hoặc gọi provider sandbox; chưa có email Shipping, replay có audit, producer tự tạo shipment sau payment hoặc UAT. Delivered thông báo trạng thái Order, không có nghĩa thu COD/refund/COMPLETED. Không cam kết thứ tự giao khi event cũ đang backoff; consumer lưu từng thông báo riêng và không dùng chúng cập nhật trạng thái tài chính.
+V20 bổ sung replay có audit; còn UI/list, test hai service thật với IAM/browser reconnect, email Shipping, producer tự tạo shipment sau payment và UAT. Chưa bật flags hoặc gọi provider sandbox. Delivered thông báo trạng thái Order, không có nghĩa thu COD/refund/COMPLETED. Không cam kết thứ tự giao khi event cũ đang backoff; consumer lưu từng thông báo riêng và không dùng chúng cập nhật trạng thái tài chính.
