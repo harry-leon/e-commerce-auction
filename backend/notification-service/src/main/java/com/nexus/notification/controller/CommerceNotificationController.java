@@ -103,9 +103,11 @@ public class CommerceNotificationController {
         }
     }
 
-    /** Loại sự kiện inbox/push; refund tách yêu cầu đang chờ khỏi kết quả tài chính đã xác nhận ở backend. */
+    /** Inbox/push tách trạng thái giao hàng khỏi thu tiền/refund; ORDER_DELIVERED không có nghĩa hoàn tất thanh toán COD. */
     public enum Type {
         ORDER_CREATED,
+        ORDER_SHIPPED,
+        ORDER_DELIVERED,
         PAYMENT_SUCCESS,
         PAYMENT_FAILED,
         AUCTION_WON,
@@ -228,6 +230,8 @@ public class CommerceNotificationController {
     private String buildTitle(Type type) {
         return switch (type) {
             case ORDER_CREATED -> "Đã tạo đơn hàng";
+            case ORDER_SHIPPED -> "Đơn hàng đã bàn giao vận chuyển";
+            case ORDER_DELIVERED -> "Đơn hàng đã giao thành công";
             case PAYMENT_SUCCESS -> "Thanh toán thành công";
             case PAYMENT_FAILED -> "Thanh toán thất bại, đơn đã hủy";
             case AUCTION_WON -> "Chúc mừng thắng đấu giá";
@@ -245,6 +249,9 @@ public class CommerceNotificationController {
         String base = "Đơn " + event.orderNo() + " • " + amountText + " VND";
         return switch (event.type()) {
             case ORDER_CREATED, PAYMENT_SUCCESS, PAYMENT_FAILED -> base;
+            // Chỉ phản ánh trạng thái Order đã được Commerce xác nhận, không hướng dẫn thanh toán hoặc xác nhận refund.
+            case ORDER_SHIPPED -> base + " • Đã bàn giao vận chuyển";
+            case ORDER_DELIVERED -> base + " • Đã giao thành công";
             // Chỉ SUCCEEDED xác nhận kết quả tài chính; REQUESTED/REVIEW không hướng dẫn người dùng trả tiền lại.
             case REFUND_REQUESTED -> base + " • Yêu cầu " + event.refundId() + " • Chưa xác nhận đã hoàn tiền";
             case REFUND_SUCCEEDED -> base + " • Yêu cầu " + event.refundId() + " • Backend đã xác nhận hoàn tiền";

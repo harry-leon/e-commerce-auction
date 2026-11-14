@@ -11,11 +11,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
-/** Đọc snapshot Commerce bằng client_credentials riêng; không chuyển tiếp JWT nhân viên hoặc fallback dữ liệu giả. */
+/** Đọc snapshot và gửi event Commerce bằng client_credentials riêng; không chuyển tiếp JWT nhân viên hoặc fallback dữ liệu giả. */
 @Component
 public class CommerceShippingClient {
     private final RestClient client;
     private final ClientCredentialsToken tokens;
+    private final boolean configured;
 
     public CommerceShippingClient(@Value("${app.shipping.commerce.url:http://localhost:8083}") String url,
             @Value("${app.shipping.commerce.token-url:}") String tokenUrl,
@@ -26,6 +27,31 @@ public class CommerceShippingClient {
         factory.setReadTimeout(Duration.ofSeconds(5));
         client = RestClient.builder().baseUrl(url).requestFactory(factory).build();
         tokens = new ClientCredentialsToken(tokenUrl, clientId, secret);
+        configured = !tokenUrl.isBlank() && !clientId.isBlank() && !secret.isBlank();
+    }
+
+    /** Thiếu OAuth giữ backlog, không gửi sự kiện anonymous hoặc chuyển tiếp JWT người dùng. */
+    public boolean configured() { return configured; }
+
+    /** Gửi snapshot eventId cố định; chỉ ACK 204 mới hoàn tất. 401 xóa cache cho lần retry sau, không retry HTTP tại client. */
+    public void sendEvent(java.util.Map<String, Object> event) {
+        try {
+            var response = client.post().uri("/api/v1/internal/commerce/shipping-events")
+                    .headers(h -> h.setBearerAuth(tokens.get())).body(event).retrieve().toBodilessEntity();
+            if (response.getStatusCode().value() != 204) { throw new DeliveryFailure(response.getStatusCode().value()); }
+        } catch (RestClientResponseException error) {
+            if (error.getStatusCode().value() == 401) { tokens.invalidate(); }
+            throw new DeliveryFailure(error.getStatusCode().value());
+        } catch (org.springframework.web.client.RestClientException error) {
+            throw new DeliveryFailure(0);
+        }
+    }
+
+    /** Chỉ giữ status để phân loại poison/retry, không mang response body/cause có thể chứa PII. */
+    public static class DeliveryFailure extends RuntimeException {
+        private final int status;
+        public DeliveryFailure(int status) { super("Shipping event chưa được ACK"); this.status = status; }
+        public int status() { return status; }
     }
 
     /** Timeout/401/response sai phải dừng chuẩn bị kiện; chỉ lần gọi sau lấy token mới, không retry HTTP ngầm. */
