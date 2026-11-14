@@ -11,6 +11,7 @@ import { LoginPage, RegisterPage, ForgotPasswordPage } from '../features/auth/Au
 import { CartPage, CheckoutPage, SandboxPaymentPage } from '../features/buyer/BuyerPages'
 import { flatten, price } from '../features/catalog/catalog'
 import { readSession, ApiClientError } from '../api/client'
+import { clearLoadCache } from '../hooks/useLoad'
 import { ordersApi } from '../api/orders'
 import * as paymentsApi from '../api/payments'
 
@@ -53,6 +54,12 @@ const product = {
     createdAt: '',
     skus: [{ id: 'sku-1', skuCode: 'LAPTOP-1', price: 500, status: 'ACTIVE' }],
     images: [{ id: 'img-1', url: '/laptop.png', sortOrder: 0 }],
+}
+const secondProduct = {
+    ...product,
+    id: 'product-2',
+    name: 'Second API Laptop',
+    skus: [{ id: 'sku-2', skuCode: 'LAPTOP-2', price: 600, status: 'ACTIVE' }],
 }
 
 const mockCartItem = {
@@ -138,7 +145,16 @@ beforeEach(() => {
             // Fixture kho đủ hàng cho các ca form; ca hết hàng được kiểm tra riêng trong buyer-checkout-payment.
             else if (path.includes('/inventory/sku/'))
                 payload = { success: true, data: { availableQty: 10 } }
-            else if (path.endsWith('/products/product-1'))
+            else if (path.endsWith('/inventory/stocks/batch')) {
+                const { skuIds = [] } = init.body ? JSON.parse(String(init.body)) : {}
+                payload = {
+                    success: true,
+                    data: skuIds.map((skuId: string) => ({
+                        skuId,
+                        availableQty: ['sku-1', 'sku-2'].includes(skuId) ? 10 : 0,
+                    })),
+                }
+            } else if (path.endsWith('/products/product-1'))
                 payload = { success: true, data: product }
             else if (path.includes('/cart/items') && init.method === 'DELETE') {
                 payload = {
@@ -175,6 +191,24 @@ beforeEach(() => {
                 payload = { success: true, data: mockCart }
             } else if (path.includes('/cart')) {
                 payload = { success: true, data: mockCart }
+            } else if (path.endsWith('/products')) {
+                const requestedPage = Number(
+                    new URL(input, 'http://localhost').searchParams.get('page') || 0,
+                )
+                payload = {
+                    success: true,
+                    data: [requestedPage === 0 ? product : secondProduct],
+                    meta: {
+                        pagination: {
+                            page: requestedPage,
+                            size: 8,
+                            totalElements: 25,
+                            totalPages: 4,
+                            hasNext: requestedPage < 3,
+                            hasPrevious: requestedPage > 0,
+                        },
+                    },
+                }
             } else
                 payload = {
                     success: true,
@@ -189,7 +223,45 @@ beforeEach(() => {
 })
 
 describe('catalog API screens', () => {
-    it('loads products, changes filters and pages, and opens the selected product', async () => {
+    it('hides products with no active SKU stock from search results', async () => {
+        clearLoadCache()
+        const soldOutProduct = {
+            ...product,
+            id: 'product-sold-out',
+            name: 'Out of stock laptop',
+            skus: [{ ...product.skus[0], id: 'sku-sold-out' }],
+        }
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async (input: string) => {
+                const path = input.split('?')[0]
+                const payload = path.endsWith('/products')
+                    ? {
+                          success: true,
+                          data: [product, soldOutProduct],
+                          meta: { total: 2 },
+                      }
+                    : path.endsWith('/inventory/stocks/batch')
+                      ? {
+                            success: true,
+                            data: [
+                                { skuId: 'sku-1', availableQty: 4 },
+                                { skuId: 'sku-sold-out', availableQty: 0 },
+                            ],
+                        }
+                      : { success: true, data: [] }
+                return new Response(JSON.stringify(payload))
+            }),
+        )
+
+        render(<SearchPage />)
+
+        expect(await screen.findByText('API Laptop')).toBeVisible()
+        expect(screen.queryByText('Out of stock laptop')).not.toBeInTheDocument()
+    })
+
+    it('loads products, changes filters, loads more results and opens a product', async () => {
+        clearLoadCache()
         render(<SearchPage />)
         await screen.findByText('API Laptop')
         fireEvent.change(screen.getByLabelText('Tìm kiếm'), { target: { value: 'Laptop' } })
@@ -199,12 +271,18 @@ describe('catalog API screens', () => {
         fireEvent.change(screen.getByLabelText('Loại sản phẩm'), { target: { value: 'false' } })
         fireEvent.change(screen.getByLabelText('Sắp xếp'), { target: { value: 'name,asc' } })
         await waitFor(() => expect(screen.getByText('API Laptop')).toBeVisible())
-        fireEvent.click(screen.getByRole('button', { name: 'Sau' }))
-        await waitFor(() => expect(screen.getByText('Trang 2')).toBeVisible())
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Trước' })).toBeEnabled())
-        fireEvent.click(screen.getByRole('button', { name: 'Trước' }))
-        await screen.findByText('API Laptop')
-        fireEvent.click(screen.getByRole('button', { name: /API Laptop/ }))
+        fireEvent.click(screen.getByRole('button', { name: 'Load more products' }))
+        await waitFor(() =>
+            expect(
+                vi
+                    .mocked(fetch)
+                    .mock.calls.some(
+                        ([url]) => String(url).includes('page=1') && String(url).includes('size=8'),
+                    ),
+            ).toBe(true),
+        )
+        expect(await screen.findByText('Second API Laptop')).toBeVisible()
+        fireEvent.click(screen.getAllByRole('button', { name: /API Laptop/ })[0])
         expect(holder.current.navigate).toHaveBeenCalledWith('product-detail', { id: 'product-1' })
         expect(
             vi
@@ -217,6 +295,7 @@ describe('catalog API screens', () => {
         ).toBe(true)
     })
     it('renders API errors and empty results instead of demo products', async () => {
+        clearLoadCache()
         vi.stubGlobal(
             'fetch',
             vi.fn(
@@ -225,7 +304,7 @@ describe('catalog API screens', () => {
             ),
         )
         const { unmount } = render(<SearchPage />)
-        await screen.findByText('Không có sản phẩm phù hợp.')
+        await screen.findByText('Không có sản phẩm còn hàng phù hợp.')
         unmount()
         vi.stubGlobal(
             'fetch',
