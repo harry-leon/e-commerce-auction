@@ -12,7 +12,7 @@ import org.hibernate.type.SqlTypes;
 
 /**
  * Bản ghi Transactional Outbox của Fulfillment Service (fulfillment_event_outbox).
- * Ghi sự kiện InventoryInboundCompleted / SellerSkuRegistered cùng transaction nhập kho.
+ * Ghi sự kiện kho/SKU/shipment cùng transaction nghiệp vụ; done chỉ xác nhận transport đã nhận ACK.
  */
 @Entity
 @Table(name = "fulfillment_event_outbox")

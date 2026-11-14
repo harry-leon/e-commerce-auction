@@ -22,7 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
  * - Đảm bảo tính nhất quán (Atomicity): các sự kiện miền ShipmentCreated, ShipmentPickedUp, ShipmentInTransit,
  *   ShipmentDelivered, ShipmentFailed, ShipmentReturned và InventoryInboundCompleted được ghi vào bảng outbox
  *   trong cùng transaction với thay đổi dữ liệu chính.
- * - Cho phép background scheduler hoặc Debezium CDC đẩy sự kiện sang Apache Kafka an toàn tuyệt đối.
+ * - Worker Shipping giao event shipment qua HTTP tới Commerce; các loại event khác không do worker đó xử lý.
+ * - Bản ghi outbox không chứng minh đã giao thành công hoặc đã có Kafka/Debezium; transport phải ACK/retry riêng.
  */
 @Service
 public class FulfillmentEventOutboxService {
