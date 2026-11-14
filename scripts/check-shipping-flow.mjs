@@ -8,7 +8,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { createIamFixture, createFlowFixture, literal as q } from "./shipping-flow/fixtures.mjs";
-import { createCarrierFixture, exerciseDispatch } from "./shipping-flow/dispatch.mjs";
+import { createCarrierFixture, exerciseDispatch, exerciseCarrierLifecycle } from "./shipping-flow/dispatch.mjs";
 
 /**
  * Ba JVM + PostgreSQL tạm + Keycloak container riêng: kiểm tra HTTP/JWT/ACK/replay/restart, không đọc .env hoặc dùng provider.
@@ -24,7 +24,10 @@ const { values: args } = parseArgs({ options: {
     "dispatch-security": { type: "boolean", default: false },
     // Bao gồm security, sau đó bật worker với carrier HTTP local; không dùng merchant/provider thật.
     "dispatch": { type: "boolean", default: false },
+    // Chạy thêm scheduler polling thật sau khi đã hoàn thành create/recovery để không ảnh hưởng fixture cũ.
+    "carrier-lifecycle": { type: "boolean", default: false },
 } });
+if (args["carrier-lifecycle"]) { args.dispatch = true; }
 if (args.dispatch) { args["dispatch-security"] = true; }
 assert(args["pg-bin"] && args.maven, "Cần --pg-bin và --maven; không đọc cấu hình kết nối thật");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-shipping-flow-"));
@@ -310,8 +313,16 @@ try {
         pass("real_dispatch_enabled_missing_records_do_not_create_financial_state");
     }
     if (args.dispatch) {
-        await exerciseDispatch({ sql, q, request, pass, waitFor, start, stop, urls, admin, buyer, buyerSubject,
+        const fixture = await exerciseDispatch({ sql, q, request, pass, waitFor, start, stop, urls, admin, buyer, buyerSubject,
             carrier: carrier.state, commerceProxy });
+        if (args["carrier-lifecycle"]) {
+            // Restart để Spring thực sự đăng ký scheduler; không gọi service polling bằng mock hoặc sửa trạng thái DB.
+            await stop("fulfillment");
+            configs.fulfillment["app.fulfillment.shipping-polling-scheduler.enabled"] = true;
+            // Bean validation yêu cầu tối thiểu 1000ms; giữ đúng giới hạn production khi tăng tốc lượt test.
+            configs.fulfillment["app.fulfillment.shipping.polling-interval-ms"] = 1000;
+            await exerciseCarrierLifecycle({ sql, q, request, pass, waitFor, start, stop, urls, buyer, fixture, carrier: carrier.state });
+        }
     }
     report.result = "PASS";
 } catch (error) {
