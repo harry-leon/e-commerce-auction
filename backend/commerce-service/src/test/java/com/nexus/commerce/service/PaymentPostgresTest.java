@@ -55,7 +55,8 @@ import org.springframework.transaction.annotation.Transactional;
         "app.payment.vnpay.return-url=https://example.test/payment-result", "app.shipping.handoff-enabled=true", "app.shipping.dispatch-claim-enabled=true"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+// Giữ cả receipt và Shipping inbox/replay trong context để kiểm tra hồi quy hai luồng trên cùng schema tích hợp.
+@Import({RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, ShippingHandoffOutbox.class, ShippingDispatchClaimService.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -140,6 +141,7 @@ class PaymentPostgresTest {
         return jdbc.queryForObject("SELECT id FROM shipping_handoff_tasks WHERE order_id=?", UUID.class, orderId);
     }
 
+    // Giữ kiểm thử handoff và receipt trong cùng context, không bỏ luồng cũ khi đồng bộ các MR.
     @Autowired private ShippingHandoffOutbox handoffs;
     @Autowired private com.nexus.commerce.repository.OrderRepository handoffOrders;
     @Autowired private com.nexus.commerce.repository.PaymentRepository handoffPayments;
@@ -206,6 +208,92 @@ class PaymentPostgresTest {
     /** Đếm theo order fixture, không phụ thuộc tác vụ hợp lệ còn lại từ ca đã commit trước đó. */
     private int handoffCount() {
         return jdbc.queryForObject("SELECT count(*) FROM shipping_handoff_tasks WHERE order_id=?", Integer.class, orderId);
+    }
+
+    @Autowired private RefundReceiptService refundReceipts;
+
+    /** Worker fixture chốt registry thật: tải lại ổn định, liên kết thu gốc không đổi và không tạo thêm refund. */
+    @Test
+    void providerRefundReceiptLinksOriginalPaymentWithoutMutation() {
+        UUID refund = newRefundRequest();
+        var auth = receiptActor(buyer, "BUYER");
+        var original = receipts.download(paymentId, auth);
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, auth)).getHttpStatus().value());
+        assertEquals(404, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, receiptActor(UUID.randomUUID(), "BUYER"))).getHttpStatus().value());
+        refunds.approve(refund, UUID.randomUUID(), "Fixture kiểm tra điều kiện hoàn");
+        var remote = org.mockito.Mockito.mock(com.nexus.commerce.client.VnpayMerchantClient.class);
+        when(remote.exchange(any(), any())).thenReturn(new com.nexus.commerce.client.VnpayMerchantClient.Outcome("00", "00", "02", refundProviderRef()));
+        new RefundDispatchWorker(jdbc, remote, refundWorkerConfig(), refundTransactionManager).dispatch(refund);
+        var document = refundReceipts.download(refund, auth);
+        assertEquals(document, refundReceipts.download(refund, receiptActor(UUID.randomUUID(), "ADMIN")));
+        assertEquals(original.receiptId(), document.originalReceiptId());
+        assertEquals(original.prices().total(), document.amount());
+        assertEquals("PROVIDER", document.evidenceSource());
+        assertEquals(original, receipts.download(paymentId, auth));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_provider_receipts WHERE refund_id=?", Integer.class, refund));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_requests WHERE payment_id=?", Integer.class, paymentId));
+        // Fault injection chỉ trong DB test: registry lệch tiền phải bị chặn, không tự sửa bằng số tiền Payment.
+        jdbc.update("UPDATE refund_provider_receipts SET amount=1 WHERE refund_id=?", refund);
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, auth)).getHttpStatus().value());
+    }
+
+    /** UNKNOWN được Admin đối soát thật trong service; document ghi MANUAL và replay không sinh biên nhận mới. */
+    @Test
+    void manualRefundReceiptRequiresMatchingAuditAndRegistry() {
+        UUID refund = unknownRefundForResolution();
+        var command = manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "RECEIPT-CASE");
+        UUID actor = UUID.randomUUID(); UUID key = UUID.randomUUID();
+        resolutions.resolve(refund, actor, key, command);
+        var auth = receiptActor(buyer, "BUYER");
+        var document = refundReceipts.download(refund, auth);
+        assertEquals("MANUAL", document.evidenceSource());
+        resolutions.resolve(refund, actor, key, command);
+        assertEquals(document, refundReceipts.download(refund, auth));
+        // Xóa bằng chứng chỉ để mô phỏng dữ liệu lỗi: SUCCEEDED đơn lẻ không được xuất biên nhận.
+        jdbc.update("DELETE FROM refund_provider_receipts WHERE refund_id=?", refund);
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, auth)).getHttpStatus().value());
+    }
+
+    /** JWT fixture có subject/role rõ ràng; quyền ownership vẫn do PaymentReceiptService đọc từ Order thật. */
+    private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken receiptActor(UUID actor, String role) {
+        return new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(actor.toString()).build(),
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));
+    }
+
+    @Autowired private PaymentReceiptService receipts;
+
+    /**
+     * IPN fixture đi qua HMAC/transaction thật rồi tải JSONB từ PostgreSQL: replay giữ biên nhận thu gốc,
+     * không thêm Payment/outbox; Buyer khác bị chặn. Không gọi merchant sandbox trong test này.
+     */
+    @Test
+    void receiptUsesCommittedIpnSnapshotWithoutCreatingNewFinancialRecords() throws Exception {
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none")
+                .subject(buyer.toString()).build();
+        var auth = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_BUYER")));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> receipts.download(paymentId, auth));
+        assertEquals("00", payments.ipn(callback("00", "00", "5000000")).code());
+        var first = receipts.download(paymentId, auth);
+        var json = new ObjectMapper().findAndRegisterModules().writeValueAsString(first);
+        int paymentCount = jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId);
+        int outboxCount = jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId);
+        assertEquals("02", payments.ipn(callback("00", "00", "5000000")).code());
+        var second = receipts.download(paymentId, auth);
+        assertEquals(json, new ObjectMapper().findAndRegisterModules().writeValueAsString(second));
+        assertEquals(new BigDecimal("50000.00"), second.prices().total());
+        assertEquals(paymentCount, jdbc.queryForObject("SELECT count(*) FROM payments WHERE order_id=?", Integer.class, orderId));
+        assertEquals(outboxCount, jdbc.queryForObject("SELECT count(*) FROM commerce_notification_outbox WHERE order_id=?", Integer.class, orderId));
+        var other = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(UUID.randomUUID().toString()).build(),
+                auth.getAuthorities());
+        assertEquals(404, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> receipts.download(paymentId, other)).getHttpStatus().value());
     }
 
     @Autowired private RefundRequestService refunds;
@@ -719,6 +807,9 @@ class PaymentPostgresTest {
         dispatcher.dispatch(refund);
         assertEquals("SUCCEEDED", refundState(refund));
         assertEquals(manualReceipt, jdbc.queryForObject("SELECT provider_ref FROM refund_provider_receipts WHERE refund_id=?", String.class, refund));
+        // Mâu thuẫn muộn giữ SUCCEEDED để audit nhưng phải chặn tải xác nhận hoàn tiền cho tới khi đối soát xong.
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> refundReceipts.download(refund, receiptActor(buyer, "BUYER"))).getHttpStatus().value());
         // Cảnh báo xung đột vẫn phát dù quyết định tài chính SUCCEEDED được giữ nguyên.
         assertEquals("REFUND_REQUIRES_REVIEW", jdbc.queryForObject("SELECT payload->>'type' FROM refund_notification_outbox "
                 + "WHERE refund_id=? ORDER BY source_version DESC LIMIT 1", String.class, refund));
