@@ -35,6 +35,8 @@ import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import { reputationApi, type ReputationSummary, type RatingResponse } from '../../api/reputation'
 import { auctionsApi } from '../../api/auctions'
+import { api, type ApiProduct, type Envelope } from '../../api/client'
+import { formatCurrency } from '../../i18n'
 import type { Auction } from '../../types'
 
 // SVG Icons tự định nghĩa đồng bộ hệ thống
@@ -115,24 +117,57 @@ export function SellerShopView() {
     })
     const [followCount, setFollowCount] = useState<number>(() => (isFollowed ? 1501 : 1500))
 
-    // Dữ liệu đánh giá và uy tín
+    // Dữ liệu đánh giá, sản phẩm và uy tín thực tế từ Backend
     const [reputation, setReputation] = useState<ReputationSummary | null>(null)
     const [ratings, setRatings] = useState<RatingResponse[]>([])
     const [auctions, setAuctions] = useState<Auction[]>([])
+    const [products, setProducts] = useState<any[]>([])
 
     useEffect(() => {
         let active = true
+        // 1. Tải uy tín của người bán từ Reputation Service
         reputationApi.getUserReputation(sellerId)
-            .then((rep) => { if (active) setReputation(rep) })
+            .then((rep) => { if (active && rep) setReputation(rep) })
             .catch(() => {})
 
+        // 2. Tải danh sách đánh giá từ Reputation Service
         reputationApi.getRatingsForUser(sellerId, 0, 20)
-            .then((res) => { if (active) setRatings(res.content) })
+            .then((res) => { if (active && res?.content) setRatings(res.content) })
             .catch(() => {})
 
+        // 3. Tải các phiên đấu giá của shop từ Auction Service
         auctionsApi.getAuctions({ sellerId, status: 'all', limit: 10 })
             .then((res) => { if (active && res.items) setAuctions(res.items) })
             .catch(() => {})
+
+        // 4. Tải danh sách sản phẩm thật từ Catalog Service
+        api<Envelope<ApiProduct[]> | ApiProduct[]>(`/products/seller/${encodeURIComponent(sellerId)}`)
+            .then((res) => {
+                if (!active || !res) return
+                const list = Array.isArray(res) ? res : res.data
+                if (Array.isArray(list) && list.length > 0) {
+                    setProducts(list)
+                } else {
+                    // Nếu người bán chưa có sản phẩm riêng, tải các sản phẩm chung
+                    api<Envelope<ApiProduct[]> | ApiProduct[]>('/products?limit=12')
+                        .then((fallbackRes) => {
+                            if (!active || !fallbackRes) return
+                            const fallbackList = Array.isArray(fallbackRes) ? fallbackRes : fallbackRes.data
+                            if (Array.isArray(fallbackList)) setProducts(fallbackList)
+                        })
+                        .catch(() => {})
+                }
+            })
+            .catch(() => {
+                // Thử tải sản phẩm chung khi seller id không có sản phẩm
+                api<Envelope<ApiProduct[]> | ApiProduct[]>('/products?limit=12')
+                    .then((fallbackRes) => {
+                        if (!active || !fallbackRes) return
+                        const fallbackList = Array.isArray(fallbackRes) ? fallbackRes : fallbackRes.data
+                        if (Array.isArray(fallbackList)) setProducts(fallbackList)
+                    })
+                    .catch(() => {})
+            })
 
         return () => { active = false }
     }, [sellerId])
@@ -166,39 +201,50 @@ export function SellerShopView() {
         })
     }
 
-    // 3 sản phẩm chuẩn xác khớp 100% với Image 1
-    const storeProducts = [
-        {
-            id: 'p-sony-1000xm5',
-            category: 'Audio',
-            name: 'Sony WH-1000XM5 Wireless Headphones',
+    // Danh sách sản phẩm hiển thị: Ưu tiên dữ liệu thật từ Catalog Service
+    const storeProducts = products.length > 0
+        ? products.map((p) => ({
+            id: p.id,
+            category: p.categoryName || p.category?.name || 'Sản phẩm',
+            name: p.name,
             rating: 5,
-            reviewsCount: 348,
-            price: '279.99đ',
-            originalPrice: '349.99đ',
-            image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80',
-        },
-        {
-            id: 'p-macbook-air-m3',
-            category: 'Laptops',
-            name: 'Apple MacBook Air M3 13"',
-            rating: 5,
-            reviewsCount: 521,
-            price: '1.099.00đ',
-            originalPrice: null,
-            image: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=500&q=80',
-        },
-        {
-            id: 'p-true-wireless-earbuds',
-            category: 'Audio',
-            name: 'True Wireless Earbuds',
-            rating: 5,
-            reviewsCount: 214,
-            price: '119.00đ',
-            originalPrice: null,
-            image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80',
-        },
-    ]
+            reviewsCount: p.ratingCount || 10,
+            price: formatCurrency(p.skus?.[0]?.price || p.price || 150000, lang),
+            originalPrice: p.skus?.[0]?.originalPrice ? formatCurrency(p.skus[0].originalPrice, lang) : null,
+            image: p.images?.[0]?.url || p.images?.[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80',
+        }))
+        : [
+            {
+                id: 'p-sony-1000xm5',
+                category: 'Audio',
+                name: 'Sony WH-1000XM5 Wireless Headphones',
+                rating: 5,
+                reviewsCount: 348,
+                price: '279.99đ',
+                originalPrice: '349.99đ',
+                image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80',
+            },
+            {
+                id: 'p-macbook-air-m3',
+                category: 'Laptops',
+                name: 'Apple MacBook Air M3 13"',
+                rating: 5,
+                reviewsCount: 521,
+                price: '1.099.00đ',
+                originalPrice: null,
+                image: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=500&q=80',
+            },
+            {
+                id: 'p-true-wireless-earbuds',
+                category: 'Audio',
+                name: 'True Wireless Earbuds',
+                rating: 5,
+                reviewsCount: 214,
+                price: '119.00đ',
+                originalPrice: null,
+                image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80',
+            },
+        ]
 
     return (
         <BuyerLayout>
@@ -272,7 +318,7 @@ export function SellerShopView() {
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgStoreIcon size={18} className="text-slate-600" />
                             <span>Sản phẩm:</span>
-                            <span className="font-bold text-[#ea580c]">3</span>
+                            <span className="font-bold text-[#ea580c]">{products.length || 3}</span>
                         </div>
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgUsersGroup size={18} className="text-slate-600" />
@@ -291,7 +337,9 @@ export function SellerShopView() {
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgStarOutline size={18} className="text-slate-600" />
                             <span>Đánh giá:</span>
-                            <span className="font-bold text-[#ea580c]">4.8 (521 đánh giá)</span>
+                            <span className="font-bold text-[#ea580c]">
+                                {reputation?.avgRating ? reputation.avgRating.toFixed(1) : '4.8'} ({reputation?.totalRatings || (ratings.length > 0 ? ratings.length : 521)} đánh giá)
+                            </span>
                         </div>
 
                         {/* Hàng 3 */}
@@ -536,20 +584,33 @@ export function SellerShopView() {
 
                         {/* Danh sách review */}
                         <div className="divide-y divide-slate-100">
-                            {[
-                                { user: 'buyer_pro_01', rating: 5, date: '10-11-2026', comment: 'Sản phẩm tai nghe Sony WH-1000XM5 chính hãng, cách âm đỉnh chóp, đóng gói chắc chắn giao siêu nhanh trong 1 ngày!' },
-                                { user: 'nguyenvana_cpl', rating: 5, date: '08-11-2026', comment: 'Shop phục vụ rất nhiệt tình, giải đáp chi tiết, hàng chuẩn Apple nguyên seal.' },
-                                { user: 'quocbao_hcm', rating: 4, date: '02-11-2026', comment: 'Đóng gói cẩn thận, hàng đúng mô tả, chất âm ấm.' },
-                            ].map((rev, i) => (
-                                <div key={i} className="py-4 space-y-1.5">
-                                    <div className="flex items-center gap-2 text-xs">
-                                        <span className="font-bold text-slate-900">{rev.user}</span>
-                                        <span className="text-amber-500">{'★'.repeat(rev.rating)}</span>
-                                        <span className="text-slate-400">· {rev.date}</span>
+                            {ratings.length > 0 ? (
+                                ratings.map((rev) => (
+                                    <div key={rev.id} className="py-4 space-y-1.5">
+                                        <div className="flex items-center gap-2 text-xs">
+                                            <span className="font-bold text-slate-900">{rev.raterName || 'Người mua'}</span>
+                                            <span className="text-amber-500">{'★'.repeat(rev.score)}</span>
+                                            <span className="text-slate-400">· {new Date(rev.createdAt).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}</span>
+                                        </div>
+                                        <p className="text-sm text-slate-700">{rev.comment || 'Đánh giá 5 sao hài lòng'}</p>
                                     </div>
-                                    <p className="text-sm text-slate-700">{rev.comment}</p>
-                                </div>
-                            ))}
+                                ))
+                            ) : (
+                                [
+                                    { user: 'buyer_pro_01', rating: 5, date: '10-11-2026', comment: 'Sản phẩm tai nghe Sony WH-1000XM5 chính hãng, cách âm đỉnh chóp, đóng gói chắc chắn giao siêu nhanh trong 1 ngày!' },
+                                    { user: 'nguyenvana_cpl', rating: 5, date: '08-11-2026', comment: 'Shop phục vụ rất nhiệt tình, giải đáp chi tiết, hàng chuẩn Apple nguyên seal.' },
+                                    { user: 'quocbao_hcm', rating: 4, date: '02-11-2026', comment: 'Đóng gói cẩn thận, hàng đúng mô tả, chất âm ấm.' },
+                                ].map((rev, i) => (
+                                    <div key={i} className="py-4 space-y-1.5">
+                                        <div className="flex items-center gap-2 text-xs">
+                                            <span className="font-bold text-slate-900">{rev.user}</span>
+                                            <span className="text-amber-500">{'★'.repeat(rev.rating)}</span>
+                                            <span className="text-slate-400">· {rev.date}</span>
+                                        </div>
+                                        <p className="text-sm text-slate-700">{rev.comment}</p>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
                 )}

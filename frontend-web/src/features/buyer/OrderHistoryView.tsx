@@ -80,6 +80,13 @@ export function OrderHistoryView() {
     ]
 
     // Nạp danh sách đơn hàng
+    /**
+     * Chức năng: Tải danh sách đơn hàng thực tế của Buyer từ Commerce Service.
+     * Đầu vào: userId, statusFilter, searchQuery.
+     * Kết quả: Cập nhật state orders bằng dữ liệu đơn hàng thật từ Backend; hiển thị rỗng nếu không có đơn.
+     * Quy tắc & lý do: Không tự ý sinh mảng mock khi Backend trả về danh sách rỗng để đảm bảo tính xác thực.
+     * Lỗi & giới hạn: Nếu mất kết nối mạng hoặc server 5xx, set orders = [] và không làm vỡ giao diện.
+     */
     const loadOrders = async () => {
         setLoading(true)
         try {
@@ -89,78 +96,7 @@ export function OrderHistoryView() {
                 status: statusFilter === 'all' ? undefined : statusFilter,
                 search: searchQuery,
             })
-            // Nếu danh sách rỗng, sử dụng danh sách mẫu khớp ảnh để kiểm thử giao diện
-            if (!data || data.length === 0) {
-                const mockList: Order[] = [
-                    {
-                        id: 'ORD-0002',
-                        orderNo: 'ORD-0002',
-                        buyerId: user?.id || 'u1',
-                        buyerName: user?.fullName || 'Nguyễn Văn Buyer',
-                        sellerId: 'seller-1',
-                        sellerName: 'TechZone Store',
-                        status: 'PAID',
-                        paymentMethod: 'VNPAY QR',
-                        paymentStatus: 'held',
-                        shippingAddress: '123 Đường Lê Lợi, P. Bến Nghé, Quận 1, TP. Hồ Chí Minh',
-                                                                        subtotal: 178000,
-                        shipping: 24000,
-                        discount: 0,
-                        tax: 0,
-                        total: 239100,
-                        refundStatus: 'none',
-                        createdAt: '2026-10-31T12:14:00.000Z',
-                        updatedAt: '2026-10-31T12:14:00.000Z',
-                        isAuctionOrder: false,
-                        items: [
-                            {
-                                productId: 'p-demo-1',
-                                productName: 'Áo thun Nam Cổ Tròn Cotton 100% Thoáng Mát Basic Phong Cách Hàn Quốc',
-                                quantity: 2,
-                                unitPrice: 89000,
-                                subtotal: 178000,
-                                image: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=300&q=80',
-                                attribute: 'Màu: Trắng | Size: L',
-                            },
-                        ] as any,
-                    },
-                    {
-                        id: 'ORD-AUC-WINNER',
-                        orderNo: 'ORD-AUC-WINNER',
-                        buyerId: user?.id || 'u1',
-                        buyerName: user?.fullName || 'Nguyễn Văn Buyer',
-                        sellerId: 'seller-1',
-                        sellerName: 'TechZone Store',
-                        status: 'PAID',
-                        paymentMethod: 'VNPAY QR',
-                        paymentStatus: 'held',
-                        shippingAddress: '123 Đường Lê Lợi, P. Bến Nghé, Quận 1, TP. Hồ Chí Minh',
-                                                                        subtotal: 150000,
-                        shipping: 0,
-                        discount: 0,
-                        tax: 0,
-                        total: 150000,
-                        refundStatus: 'none',
-                        createdAt: '2026-10-31T15:30:00.000Z',
-                        updatedAt: '2026-10-31T15:30:00.000Z',
-                        isAuctionOrder: true,
-                        items: [
-                            {
-                                productId: 'p-auc-1',
-                                productName: 'Tai nghe Sony WH-1000XM5 Wireless Noise Cancelling (Đấu giá trúng thầu)',
-                                quantity: 1,
-                                unitPrice: 150000,
-                                subtotal: 150000,
-                                image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=300&q=80',
-                                attribute: 'Phiên trúng đấu giá chính thức',
-                            },
-                        ] as any,
-                    },
-                ]
-                setOrders(mockList)
-            } else {
-                setOrders(data)
-            }
+            setOrders(Array.isArray(data) ? data : [])
         } catch {
             setOrders([])
         } finally {
@@ -293,17 +229,9 @@ export function OrderHistoryView() {
                         {orders.map((order) => {
                             const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
                             const isAuction = order.orderNo?.startsWith('AUC') || (order as any).isAuctionOrder || (order as any).sourceType === 'AUCTION'
-                            const displayItems = order.items && order.items.length > 0 ? order.items : [
-                                {
-                                    productId: 'p-fallback',
-                                    productName: 'Áo thun Nam Cổ Tròn Cotton 100% Thoáng Mát Basic Phong Cách Hàn Quốc',
-                                    attribute: 'Màu: Trắng | Size: L',
-                                    quantity: 2,
-                                    unitPrice: 89000,
-                                    subtotal: 178000,
-                                    image: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=300&q=80',
-                                } as any
-                            ]
+                            const displayItems = Array.isArray(order.items) ? order.items : []
+                            const orderTotal = typeof order.total === 'number' ? order.total : 0
+                            const formattedDate = order.createdAt ? new Date(order.createdAt).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US') : ''
 
                             return (
                                 <div
@@ -322,9 +250,11 @@ export function OrderHistoryView() {
                                                     Đấu giá
                                                 </span>
                                             )}
-                                            <span className="text-gray-400 text-xs">
-                                                12:14 · 31/10/2026
-                                            </span>
+                                            {formattedDate && (
+                                                <span className="text-gray-400 text-xs">
+                                                    {formattedDate}
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {canCancel && (
@@ -354,7 +284,7 @@ export function OrderHistoryView() {
                                                 <SvgStore size={14} />
                                             </span>
                                             <span className="font-bold text-gray-900">
-                                                {order.sellerName || 'TechZone Store'}
+                                                {order.sellerName || 'Cửa hàng đối tác'}
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -366,13 +296,15 @@ export function OrderHistoryView() {
                                                 <SvgMessage size={12} />
                                                 <span>Chat</span>
                                             </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => navigate('seller-shop', { sellerId: order.sellerId })}
-                                                className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#ee4d2d] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors cursor-pointer"
-                                            >
-                                                Xem Shop
-                                            </button>
+                                            {order.sellerId && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => navigate('seller-shop', { sellerId: order.sellerId, id: order.sellerId })}
+                                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#ee4d2d] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors cursor-pointer"
+                                                >
+                                                    Xem Shop
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
 
@@ -381,29 +313,30 @@ export function OrderHistoryView() {
                                         {displayItems.map((item: any, idx: number) => (
                                             <div key={item.productId || idx} className="flex items-center justify-between gap-4">
                                                 <div className="flex items-center gap-3.5 min-w-0">
-                                                    <img
-                                                        src={item.image}
-                                                        alt={item.productName}
-                                                        className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
-                                                    />
+                                                    {item.image && (
+                                                        <img
+                                                            src={item.image}
+                                                            alt={item.productName}
+                                                            className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
+                                                        />
+                                                    )}
                                                     <div className="min-w-0">
                                                         <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
                                                             {item.productName}
                                                         </h4>
-                                                        <p className="text-[11px] text-gray-500 mt-0.5">
-                                                            Phân loại hàng: {item.attribute || 'Màu: Trắng | Size: L'}
-                                                        </p>
+                                                        {item.attribute && (
+                                                            <p className="text-[11px] text-gray-500 mt-0.5">
+                                                                Phân loại: {item.attribute}
+                                                            </p>
+                                                        )}
                                                         <p className="text-[11px] text-gray-400 mt-0.5">
                                                             x{item.quantity}
                                                         </p>
                                                     </div>
                                                 </div>
                                                 <div className="text-right shrink-0">
-                                                    <p className="text-xs text-gray-400 line-through">
-                                                        ₫120.000
-                                                    </p>
                                                     <p className="text-sm font-bold text-gray-900">
-                                                        ₫{Math.round(item.unitPrice || 89000).toLocaleString('vi-VN')}
+                                                        {formatCurrency(item.unitPrice || 0, lang)}
                                                     </p>
                                                 </div>
                                             </div>
@@ -414,8 +347,12 @@ export function OrderHistoryView() {
                                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-100 text-xs">
                                         <div className="text-gray-500 flex flex-wrap items-center gap-1.5">
                                             <span>💬 {displayItems.length} product(s) in this order</span>
-                                            <span>·</span>
-                                            <span>Sold by {order.sellerName || 'TechZone Store'}</span>
+                                            {order.sellerName && (
+                                                <>
+                                                    <span>·</span>
+                                                    <span>Sold by {order.sellerName}</span>
+                                                </>
+                                            )}
                                             {order.shippingAddress && (
                                                 <>
                                                     <span>·</span>
@@ -426,7 +363,7 @@ export function OrderHistoryView() {
                                         <div className="flex items-baseline gap-2">
                                             <span className="text-gray-500 text-xs">Total payable:</span>
                                             <span className="text-lg sm:text-xl font-black text-[#ee4d2d]">
-                                                {formatCurrency(order.total || 239100, lang)}
+                                                {formatCurrency(orderTotal, lang)}
                                             </span>
                                         </div>
                                     </div>

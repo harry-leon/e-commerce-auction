@@ -1363,9 +1363,12 @@ export function AuctionPaymentPage() {
         const trimmedPhone = recipientPhone.trim()
         const trimmedAddress = shippingAddress.trim()
 
-        if (!trimmedName || !trimmedPhone || !trimmedAddress) {
-            setCheckoutError(tr(lang, 'checkoutFormIncomplete'))
-            return
+        // Khi chưa có orderId (cần điền thông tin giao hàng để tạo đơn hoặc xác nhận), kiểm tra các trường bắt buộc
+        if (!orderId) {
+            if (!trimmedName || !trimmedPhone || !trimmedAddress) {
+                setCheckoutError(tr(lang, 'checkoutFormIncomplete'))
+                return
+            }
         }
 
         setCheckoutBusy(true)
@@ -1379,14 +1382,14 @@ export function AuctionPaymentPage() {
                     if (freshSettlement?.orderId) {
                         orderId = freshSettlement.orderId
                         setSettlement(freshSettlement)
+                    } else {
+                        setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
+                        return
                     }
                 } catch {
-                    // Fallback
+                    setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
+                    return
                 }
-            }
-
-            if (!orderId) {
-                orderId = `ORD-AUC-${Date.now().toString().slice(-6)}`
             }
 
             setCheckoutStatus(tr(lang, 'checkoutRedirectingPayment'))
@@ -1432,7 +1435,7 @@ export function AuctionPaymentPage() {
                         isOpen={showCelebrationModal}
                         onClose={() => setShowCelebrationModal(false)}
                         winnerName={recipientName || user?.fullName || 'Nguyễn Văn Buyer'}
-                        productName={effectiveDetails.productName}
+                        productName={`🏆 ${effectiveDetails.productName}`}
                         productImage={effectiveDetails.productImage}
                         finalPrice={effectiveSettlement.finalPrice || 150000}
                         originalPrice={1000000}
@@ -1564,7 +1567,7 @@ export function AuctionPaymentPage() {
                                 <p className="text-sm text-blue-800">
                                     {tr(lang, 'linkedSettlementOrder')}{' '}
                                     <span className="font-mono font-semibold">
-                                        #{effectiveSettlement.orderId.length > 8 ? effectiveSettlement.orderId.slice(0, 8).toUpperCase() : effectiveSettlement.orderId}
+                                        {effectiveSettlement.orderId}
                                     </span>
                                 </p>
                                 <Button

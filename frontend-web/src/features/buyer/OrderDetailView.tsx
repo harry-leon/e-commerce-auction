@@ -154,8 +154,9 @@ export function OrderDetailView() {
     const [reviewOpen, setReviewOpen] = useState(false)
     const [rating, setRating] = useState(5)
     const [comment, setComment] = useState('')
-    const [, setReviewed] = useState(false)
+    const [reviewed, setReviewed] = useState(false)
     const [reviewSubmitting, setReviewSubmitting] = useState(false)
+    const [confirmDeliveryBusy, setConfirmDeliveryBusy] = useState(false)
 
     // Quản lý thông tin vận đơn và hành trình giao hàng thời gian thực (HA-S3-1)
     const [shipment, setShipment] = useState<ShipmentResponse | null>(null)
@@ -214,65 +215,68 @@ export function OrderDetailView() {
         return () => { active = false }
     }, [targetId, loadShipmentInfo])
 
-    // Dữ liệu đơn hàng mẫu fallback chuẩn xác khớp 100% Image 2
-    // Đảm bảo có đầy đủ 3 sản phẩm, không bị giá 0 đồng
-    const effectiveOrder: Order = order && order.total > 0 && order.items && order.items.length > 0
-        ? order
-        : {
-            id: order?.id || targetId || '2610313JCYGVA5',
-            orderNo: order?.orderNo || targetId || '2610313JCYGVA5',
-            buyerId: user?.id || 'u1',
-            buyerName: 'Nguyễn Minh Anh',
-            sellerId: 'seller-demo',
-            sellerName: 'Shop Demo',
-            status: order?.status || 'COMPLETED',
-            paymentMethod: 'Thanh toán qua Ví điện tử / Thẻ ngân hàng',
-            paymentStatus: 'released',
-            shippingAddress: '125/8 Nguyễn Trãi, Phường Bến Thành, Quận 1, TP. Hồ Chí Minh',
-            subtotal: 556000,
-            shipping: 24000,
-            discount: 34000,
-            tax: 0,
-            total: 546000,
-            refundStatus: 'none',
-            createdAt: '2026-10-31T12:14:00.000Z',
-            updatedAt: '2026-11-04T14:30:00.000Z',
-            items: [
-                {
-                    productId: 'p-ao-thun',
-                    productName: 'Áo thun demo basic',
-                    quantity: 2,
-                    unitPrice: 89000,
-                    subtotal: 178000,
-                    image: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=300&q=80',
-                    attribute: 'Màu: Trắng | Size: L',
-                },
-                {
-                    productId: 'p-tai-nghe',
-                    productName: 'Tai nghe Bluetooth mini',
-                    quantity: 1,
-                    unitPrice: 249000,
-                    subtotal: 249000,
-                    image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=300&q=80',
-                    attribute: 'Màu: Trắng',
-                },
-                {
-                    productId: 'p-binh-nuoc',
-                    productName: 'Bình giữ nhiệt inox',
-                    quantity: 1,
-                    unitPrice: 129000,
-                    subtotal: 129000,
-                    image: 'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=300&q=80',
-                    attribute: 'Dung tích: 500ml | Màu: Bạc',
-                },
-            ] as any,
-        }
+    // Dữ liệu đơn hàng hiệu dụng: Ưu tiên dữ liệu đơn hàng thật tải từ Commerce Backend
+    /**
+     * Chức năng: Khởi tạo thông tin đơn hàng hiển thị (effectiveOrder) từ dữ liệu thực tế tải từ Backend.
+     * Đầu vào: order (từ ordersApi.getOrderById).
+     * Kết quả: Order object chuẩn hóa với thông tin sản phẩm, giá, địa chỉ và trạng thái thật.
+     * Quy tắc & lý do: Giữ nguyên toàn bộ items và giá trị từ Backend; chỉ dùng fallback khi offline/lỗi mạng hoặc đơn rỗng.
+     */
+    const effectiveOrder: Order = order || {
+        id: targetId || '2610313JCYGVA5',
+        orderNo: targetId || '2610313JCYGVA5',
+        buyerId: user?.id || 'u1',
+        buyerName: user?.fullName || 'Nguyễn Minh Anh',
+        sellerId: 'seller-demo',
+        sellerName: 'Shop Demo',
+        status: 'COMPLETED',
+        paymentMethod: 'Thanh toán qua Ví điện tử / Thẻ ngân hàng',
+        paymentStatus: 'released',
+        shippingAddress: '125/8 Nguyễn Trãi, Phường Bến Thành, Quận 1, TP. Hồ Chí Minh',
+        subtotal: 556000,
+        shipping: 24000,
+        discount: 34000,
+        tax: 0,
+        total: 546000,
+        refundStatus: 'none',
+        createdAt: '2026-10-31T12:14:00.000Z',
+        updatedAt: '2026-11-04T14:30:00.000Z',
+        items: [
+            {
+                productId: 'p-ao-thun',
+                productName: 'Áo thun demo basic',
+                quantity: 2,
+                unitPrice: 89000,
+                subtotal: 178000,
+                image: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=300&q=80',
+                attribute: 'Màu: Trắng | Size: L',
+            },
+            {
+                productId: 'p-tai-nghe',
+                productName: 'Tai nghe Bluetooth mini',
+                quantity: 1,
+                unitPrice: 249000,
+                subtotal: 249000,
+                image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=300&q=80',
+                attribute: 'Màu: Trắng',
+            },
+            {
+                productId: 'p-binh-nuoc',
+                productName: 'Bình giữ nhiệt inox',
+                quantity: 1,
+                unitPrice: 129000,
+                subtotal: 129000,
+                image: 'https://images.unsplash.com/photo-1602143407151-7111542de6e8?w=300&q=80',
+                attribute: 'Dung tích: 500ml | Màu: Bạc',
+            },
+        ] as any,
+    }
 
-    const effectiveTotal = effectiveOrder.total || 546000
-    const effectiveSubtotal = (effectiveOrder.items || []).reduce((acc: number, it: any) => acc + (it.subtotal || it.unitPrice * it.quantity), 0) || 556000
-    const shippingFee = effectiveOrder.shipping || 24000
-    const shippingDiscount = 14000
-    const shopVoucher = 20000
+    const effectiveTotal = typeof effectiveOrder.total === 'number' ? effectiveOrder.total : 0
+    const calculatedSubtotal = (effectiveOrder.items || []).reduce((acc: number, it: any) => acc + (it.subtotal || it.unitPrice * it.quantity), 0)
+    const effectiveSubtotal = typeof effectiveOrder.subtotal === 'number' && effectiveOrder.subtotal > 0 ? effectiveOrder.subtotal : calculatedSubtotal
+    const shippingFee = typeof effectiveOrder.shipping === 'number' ? effectiveOrder.shipping : 0
+    const discountAmount = typeof effectiveOrder.discount === 'number' ? effectiveOrder.discount : 0
 
     // Xác định thông tin vận đơn hiệu dụng từ API hoặc từ order (HA-S3-1)
     const effectiveShipment = shipment || (order?.shipment ? {
@@ -299,6 +303,28 @@ export function OrderDetailView() {
         }))
 
     const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(effectiveOrder.status)
+    const canConfirmDelivery = ['SHIPPED', 'DELIVERED'].includes(effectiveOrder.status)
+    const canReview = ['DELIVERED', 'COMPLETED'].includes(effectiveOrder.status) && !reviewed
+
+    // Xử lý xác nhận nhận hàng
+    const handleConfirmDelivery = async () => {
+        setConfirmDeliveryBusy(true)
+        try {
+            const updated = await ordersApi.confirmOrderDelivery(effectiveOrder.id)
+            setOrder(updated)
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Order delivery confirmed.' : 'Đã xác nhận nhận hàng thành công.',
+            })
+        } catch {
+            showToast({
+                type: 'error',
+                message: lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
+            })
+        } finally {
+            setConfirmDeliveryBusy(false)
+        }
+    }
 
     // Xử lý hủy đơn
     const handleCancelOrder = async () => {
@@ -381,14 +407,36 @@ export function OrderDetailView() {
 
                     {/* Nút hành động góc phải */}
                     <div className="flex items-center gap-2.5">
-                        <button
-                            type="button"
-                            onClick={() => (canCancel ? setCancelOpen(true) : showToast({ type: 'info', message: lang === 'vi' ? 'Đơn hàng đã hoàn thành, không thể hủy.' : 'Completed order cannot be cancelled.' }))}
-                            className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                        >
-                            <SvgTrash size={14} className="text-slate-500" />
-                            <span>{lang === 'vi' ? 'Hủy đơn hàng' : 'Cancel order'}</span>
-                        </button>
+                        {canCancel && (
+                            <button
+                                type="button"
+                                onClick={() => setCancelOpen(true)}
+                                className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                            >
+                                <SvgTrash size={14} className="text-slate-500" />
+                                <span>{lang === 'vi' ? 'Hủy đơn hàng' : 'Cancel order'}</span>
+                            </button>
+                        )}
+                        {canConfirmDelivery && (
+                            <button
+                                type="button"
+                                onClick={() => void handleConfirmDelivery()}
+                                disabled={confirmDeliveryBusy}
+                                className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                            >
+                                <span>{lang === 'vi' ? 'Đã nhận được hàng' : 'Confirm Delivery'}</span>
+                            </button>
+                        )}
+                        {canReview && (
+                            <button
+                                type="button"
+                                onClick={() => setReviewOpen(true)}
+                                className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                            >
+                                <SvgSolidStar size={14} className="text-amber-600" />
+                                <span>{lang === 'vi' ? 'Đánh giá người bán' : 'Rate Seller'}</span>
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={() => {
@@ -405,10 +453,10 @@ export function OrderDetailView() {
                     </div>
                 </div>
 
-                {/* 2. Stepper 5 bước liên tục kết nối bằng đường line xanh lá */}
+                {/* 2. Stepper 5 bước phản ánh tiến trình xử lý đơn hàng */}
                 <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
                     <div className="relative flex items-center justify-between">
-                        {/* Đường kẻ xanh lá liên tục nối cả 5 bước */}
+                        {/* Đường kẻ xanh lá liên tục nối các bước */}
                         <div className="absolute top-5 left-[8%] right-[8%] h-0.5 bg-emerald-500 -z-0" />
 
                         {/* Bước 1: Đơn hàng đã đặt */}
@@ -419,61 +467,79 @@ export function OrderDetailView() {
                             <span className="text-xs sm:text-sm font-bold text-slate-900 mt-2.5">
                                 {lang === 'vi' ? 'Đơn hàng đã đặt' : 'Order Placed'}
                             </span>
-                            <span className="text-[11px] text-slate-400 mt-0.5">
-                                12:14 31-10-2026
-                            </span>
+                            {effectiveOrder.createdAt && (
+                                <span className="text-[11px] text-slate-400 mt-0.5">
+                                    {new Date(effectiveOrder.createdAt).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                                </span>
+                            )}
                         </div>
 
                         {/* Bước 2: Đơn hàng đã thanh toán */}
                         <div className="flex flex-col items-center text-center relative z-10 flex-1">
-                            <div className="w-11 h-11 rounded-full border-2 border-emerald-500 bg-white text-emerald-600 flex items-center justify-center shadow-sm">
+                            <div className={`w-11 h-11 rounded-full border-2 ${
+                                ['PAID', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'COMPLETED'].includes(effectiveOrder.status)
+                                    ? 'border-emerald-500 bg-white text-emerald-600'
+                                    : 'border-slate-300 bg-white text-slate-400'
+                            } flex items-center justify-center shadow-sm`}>
                                 <SvgMoneyBill size={20} />
                             </div>
                             <span className="text-xs sm:text-sm font-bold text-slate-900 mt-2.5">
                                 {lang === 'vi' ? 'Đơn hàng đã thanh toán' : 'Order Paid'}
-                                <span className="block text-[11px] text-slate-700 font-semibold">(182.480đ)</span>
+                                {effectiveTotal > 0 && (
+                                    <span className="block text-[11px] text-slate-700 font-semibold">({formatCurrency(effectiveTotal, lang)})</span>
+                                )}
                             </span>
-                            <span className="text-[11px] text-slate-400 mt-0.5">
-                                12:14 31-10-2026
-                            </span>
+                            {effectiveOrder.updatedAt && ['PAID', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'COMPLETED'].includes(effectiveOrder.status) && (
+                                <span className="text-[11px] text-slate-400 mt-0.5">
+                                    {new Date(effectiveOrder.updatedAt).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                                </span>
+                            )}
                         </div>
 
                         {/* Bước 3: Đã giao cho ĐVVC */}
                         <div className="flex flex-col items-center text-center relative z-10 flex-1">
-                            <div className="w-11 h-11 rounded-full border-2 border-emerald-500 bg-white text-emerald-600 flex items-center justify-center shadow-sm">
+                            <div className={`w-11 h-11 rounded-full border-2 ${
+                                ['SHIPPED', 'DELIVERED', 'COMPLETED'].includes(effectiveOrder.status)
+                                    ? 'border-emerald-500 bg-white text-emerald-600'
+                                    : 'border-slate-300 bg-white text-slate-400'
+                            } flex items-center justify-center shadow-sm`}>
                                 <SvgTruckIcon size={20} />
                             </div>
                             <span className="text-xs sm:text-sm font-bold text-slate-900 mt-2.5">
                                 {lang === 'vi' ? 'Đã giao cho ĐVVC' : 'Handed to Carrier'}
                             </span>
-                            <span className="text-[11px] text-slate-400 mt-0.5">
-                                17:02 31-10-2026
-                            </span>
+                            {effectiveShipment?.trackingNumber && (
+                                <span className="text-[11px] text-slate-400 mt-0.5">
+                                    {effectiveShipment.carrier || 'Standard'}
+                                </span>
+                            )}
                         </div>
 
                         {/* Bước 4: Đã nhận được hàng */}
                         <div className="flex flex-col items-center text-center relative z-10 flex-1">
-                            <div className="w-11 h-11 rounded-full border-2 border-emerald-500 bg-white text-emerald-600 flex items-center justify-center shadow-sm">
+                            <div className={`w-11 h-11 rounded-full border-2 ${
+                                ['DELIVERED', 'COMPLETED'].includes(effectiveOrder.status)
+                                    ? 'border-emerald-500 bg-white text-emerald-600'
+                                    : 'border-slate-300 bg-white text-slate-400'
+                            } flex items-center justify-center shadow-sm`}>
                                 <SvgPackageCheck size={20} />
                             </div>
                             <span className="text-xs sm:text-sm font-bold text-slate-900 mt-2.5">
                                 {lang === 'vi' ? 'Đã nhận được hàng' : 'Received Goods'}
                             </span>
-                            <span className="text-[11px] text-slate-400 mt-0.5">
-                                14:03 04-11-2026
-                            </span>
                         </div>
 
                         {/* Bước 5: Đánh giá */}
                         <div className="flex flex-col items-center text-center relative z-10 flex-1">
-                            <div className="w-11 h-11 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-sm">
+                            <div className={`w-11 h-11 rounded-full ${
+                                reviewed
+                                    ? 'bg-emerald-500 text-white'
+                                    : 'border-2 border-slate-300 bg-white text-slate-400'
+                            } flex items-center justify-center shadow-sm`}>
                                 <SvgSolidStar size={20} />
                             </div>
                             <span className="text-xs sm:text-sm font-bold text-slate-900 mt-2.5">
                                 {lang === 'vi' ? 'Đánh giá' : 'Rating'}
-                            </span>
-                            <span className="text-[11px] text-slate-400 mt-0.5">
-                                14:30 04-11-2026
                             </span>
                         </div>
                     </div>
@@ -484,7 +550,7 @@ export function OrderDetailView() {
                     {/* Cột trái: Vận đơn & Card Sản phẩm đã mua */}
                     <div className="space-y-6">
                         {/* Theo dõi vận chuyển thời gian thực (Sprint 3 - HA-S3-1) */}
-                        {effectiveShipment ? (
+                        {effectiveShipment || shipmentError ? (
                             <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6">
                                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
                                     <div className="flex items-center gap-2.5">
@@ -494,16 +560,18 @@ export function OrderDetailView() {
                                             {lang === 'en' ? 'Shipment Tracking' : 'Hành trình vận chuyển'}
                                         </h3>
                                     </div>
-                                    <div className="flex items-center gap-2 text-sm">
-                                        <span className="font-semibold text-slate-800">{effectiveShipment.carrier}</span>
-                                        <span className="text-slate-300">·</span>
-                                        <span className="font-mono font-semibold bg-slate-100 px-2 py-0.5 rounded text-slate-900 text-xs">
-                                            {effectiveShipment.trackingNumber}
-                                        </span>
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                                            {effectiveShipment.status}
-                                        </span>
-                                    </div>
+                                    {effectiveShipment && (
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <span className="font-semibold text-slate-800">{effectiveShipment.carrier}</span>
+                                            <span className="text-slate-300">·</span>
+                                            <span className="font-mono font-semibold bg-slate-100 px-2 py-0.5 rounded text-slate-900 text-xs">
+                                                {effectiveShipment.trackingNumber}
+                                            </span>
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                                {effectiveShipment.status}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {shipmentLoading ? (
@@ -546,13 +614,13 @@ export function OrderDetailView() {
                                                     </div>
                                                 ))}
                                             </div>
-                                        ) : (
+                                        ) : effectiveShipment ? (
                                             <div className="p-3 text-xs text-slate-500 italic bg-slate-50 rounded-xl">
                                                 {lang === 'vi'
                                                     ? `Vận đơn ${effectiveShipment.trackingNumber} đã tạo với ${effectiveShipment.carrier}. Đang chờ hãng scan mốc đầu tiên.`
                                                     : `Shipment ${effectiveShipment.trackingNumber} created with ${effectiveShipment.carrier}. Awaiting first scan.`}
                                             </div>
-                                        )}
+                                        ) : null}
                                     </div>
                                 )}
                             </div>
@@ -639,7 +707,7 @@ export function OrderDetailView() {
                             ))}
                         </div>
 
-                        {/* Bảng tổng kết chi phí chuẩn xác khớp Image 2 */}
+                        {/* Bảng tổng kết chi phí chuẩn xác phản ánh đơn hàng */}
                         <div className="pt-6 border-t border-slate-100 flex flex-col items-end">
                             <div className="w-full sm:w-80 space-y-2.5 text-xs sm:text-sm">
                                 <div className="flex justify-between text-slate-600">
@@ -650,14 +718,12 @@ export function OrderDetailView() {
                                     <span>{lang === 'vi' ? 'Phí vận chuyển:' : 'Shipping fee:'}</span>
                                     <span className="font-medium text-slate-900">{formatCurrency(shippingFee, lang)}</span>
                                 </div>
-                                <div className="flex justify-between text-[#dc2626]">
-                                    <span>{lang === 'vi' ? 'Giảm giá vận chuyển:' : 'Shipping discount:'}</span>
-                                    <span className="font-medium">-{formatCurrency(shippingDiscount, lang)}</span>
-                                </div>
-                                <div className="flex justify-between text-[#dc2626]">
-                                    <span>{lang === 'vi' ? 'Voucher shop:' : 'Shop voucher:'}</span>
-                                    <span className="font-medium">-{formatCurrency(shopVoucher, lang)}</span>
-                                </div>
+                                {discountAmount > 0 && (
+                                    <div className="flex justify-between text-[#dc2626]">
+                                        <span>{lang === 'vi' ? 'Giảm giá / Voucher:' : 'Discount / Voucher:'}</span>
+                                        <span className="font-medium">-{formatCurrency(discountAmount, lang)}</span>
+                                    </div>
+                                )}
                                 <div className="flex justify-between text-slate-600">
                                     <span>{lang === 'vi' ? 'Phí thanh toán:' : 'Payment fee:'}</span>
                                     <span className="font-medium text-slate-900">0đ</span>
@@ -684,11 +750,13 @@ export function OrderDetailView() {
                                 <h3>{lang === 'vi' ? 'Địa chỉ nhận hàng' : 'Shipping Address'}</h3>
                             </div>
                             <div className="text-xs sm:text-sm text-slate-700 space-y-1">
-                                <p className="font-bold text-slate-900">
-                                    Nguyễn Minh Anh, 0901 234 567
-                                </p>
+                                {(effectiveOrder.buyerName || user?.fullName) && (
+                                    <p className="font-bold text-slate-900">
+                                        {effectiveOrder.buyerName || user?.fullName}
+                                    </p>
+                                )}
                                 <p className="text-slate-600 leading-relaxed">
-                                    {effectiveOrder.shippingAddress || '125/8 Nguyễn Trãi, Phường Bến Thành, Quận 1, TP. Hồ Chí Minh'}
+                                    {effectiveOrder.shippingAddress || (lang === 'vi' ? 'Chưa cập nhật địa chỉ' : 'No address provided')}
                                 </p>
                             </div>
                         </div>
@@ -703,12 +771,20 @@ export function OrderDetailView() {
                             </div>
                             <div className="space-y-2.5">
                                 <p className="text-xs sm:text-sm text-slate-700">
-                                    Thanh toán qua Ví điện tử / Thẻ ngân hàng
+                                    {effectiveOrder.paymentMethod || 'Thanh toán qua Ví điện tử / Thẻ ngân hàng'}
                                 </p>
                                 <div>
-                                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#dcfce7] text-[#15803d]">
+                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+                                        effectiveOrder.status === 'PAID' || effectiveOrder.status === 'COMPLETED' || effectiveOrder.status === 'DELIVERED'
+                                            ? 'bg-[#dcfce7] text-[#15803d]'
+                                            : 'bg-amber-50 text-amber-700'
+                                    }`}>
                                         <SvgCheckSmall size={14} />
-                                        <span>{lang === 'vi' ? 'Đã thanh toán' : 'Paid'}</span>
+                                        <span>
+                                            {effectiveOrder.status === 'PAID' || effectiveOrder.status === 'COMPLETED' || effectiveOrder.status === 'DELIVERED'
+                                                ? (lang === 'vi' ? 'Đã thanh toán' : 'Paid')
+                                                : (lang === 'vi' ? 'Chờ thanh toán' : 'Pending Payment')}
+                                        </span>
                                     </span>
                                 </div>
                             </div>
@@ -729,20 +805,22 @@ export function OrderDetailView() {
                                     </div>
                                     <div>
                                         <h4 className="font-bold text-sm text-slate-900">
-                                            {effectiveOrder.sellerName || 'Shop Demo'}
+                                            {effectiveOrder.sellerName || 'Cửa hàng đối tác'}
                                         </h4>
                                         <p className="text-xs text-slate-500 mt-0.5">
-                                            {lang === 'vi' ? 'Đã tham gia: 03/2024' : 'Joined: 03/2024'}
+                                            {lang === 'vi' ? 'Đối tác chính thức' : 'Official Partner'}
                                         </p>
                                     </div>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => navigate('seller-shop', { sellerId: effectiveOrder.sellerId })}
-                                    className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#ea580c] bg-white hover:bg-orange-50 border border-[#ea580c] transition-colors cursor-pointer shadow-sm"
-                                >
-                                    {lang === 'vi' ? 'Xem shop' : 'View shop'}
-                                </button>
+                                {effectiveOrder.sellerId && (
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate('seller-shop', { sellerId: effectiveOrder.sellerId, id: effectiveOrder.sellerId })}
+                                        className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#ea580c] bg-white hover:bg-orange-50 border border-[#ea580c] transition-colors cursor-pointer shadow-sm"
+                                    >
+                                        {lang === 'vi' ? 'Xem shop' : 'View shop'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>

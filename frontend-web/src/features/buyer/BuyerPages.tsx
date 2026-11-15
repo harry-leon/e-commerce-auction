@@ -24,7 +24,18 @@ import {
     Spinner,
     Trash2,
     Clock,
+    Breadcrumb,
 } from '../../components/UI'
+import {
+    reputationApi,
+    type ReputationSummary,
+    type RatingResponse,
+    type ReputationEligibility,
+} from '../../api/reputation'
+import {
+    TrustLevelBadge,
+    RatingsList,
+} from '../../components/ReputationRating'
 import { OrderDetailView } from './OrderDetailView'
 import { OrderHistoryView } from './OrderHistoryView'
 import { SellerShopView } from './SellerShopView'
@@ -3571,12 +3582,243 @@ export function SellerShopPage() {
 }
 
 /**
- * Chức năng: Màn hình Hồ sơ uy tín & Đánh giá (MyReputationPage) - Chuẩn Figma & Image 4.
- * Đầu vào: Context người dùng, ID shop.
- * Kết quả: Render SellerShopView chuẩn Image 4 với đầy đủ tabs đánh giá và uy tín người bán.
+ * Chức năng: Màn hình Hồ sơ uy tín & Đánh giá cá nhân của Buyer (MyReputationPage).
+ * Đầu vào: User context hiện tại, gọi reputationApi lấy điểm, cấp độ, điều kiện đấu giá và ratings.
+ * Kết quả: Hiển thị TrustLevelBadge, điểm uy tín, điều kiện tham gia đấu giá, thống kê giao dịch và lịch sử đánh giá từ cộng đồng.
+ * Luồng xử lý:
+ *   1. Kiểm tra session đăng nhập, nếu chưa đăng nhập yêu cầu đăng nhập.
+ *   2. Gọi đồng thời getMyReputation, checkEligibility('BID') và getRatingsForUser.
+ *   3. Hiển thị loading/error state và các card thống kê tương ứng.
  */
 export function MyReputationPage() {
-    return <SellerShopView />
+    const { lang, user, navigate } = useApp()
+    const [reputation, setReputation] = useState<ReputationSummary | null>(null)
+    const [eligibility, setEligibility] = useState<ReputationEligibility | null>(null)
+    const [ratings, setRatings] = useState<RatingResponse[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+
+    const loadData = useCallback(async () => {
+        if (!user) return
+        setLoading(true)
+        setError(null)
+        try {
+            const [rep, elig, rates] = await Promise.all([
+                reputationApi.getMyReputation(),
+                reputationApi.checkEligibility(user.id, 'BID'),
+                reputationApi.getRatingsForUser(user.id, 0, 50),
+            ])
+            setReputation(rep)
+            setEligibility(elig)
+            setRatings(rates?.content || [])
+        } catch (err: any) {
+            setError(
+                err?.message ||
+                    (lang === 'vi'
+                        ? 'Không thể tải thông tin uy tín'
+                        : 'Failed to load reputation profile'),
+            )
+        } finally {
+            setLoading(false)
+        }
+    }, [user, lang])
+
+    useEffect(() => {
+        loadData()
+    }, [loadData])
+
+    if (!user) {
+        return (
+            <BuyerLayout>
+                <div className="py-20 text-center">
+                    <p className="text-gray-500 mb-4">
+                        {lang === 'vi'
+                            ? 'Vui lòng đăng nhập để xem điểm uy tín.'
+                            : 'Please sign in to view reputation.'}
+                    </p>
+                    <Button variant="primary" onClick={() => navigate('login')}>
+                        {lang === 'vi' ? 'Đăng nhập' : 'Sign in'}
+                    </Button>
+                </div>
+            </BuyerLayout>
+        )
+    }
+
+    return (
+        <BuyerLayout>
+            <div className="max-w-4xl mx-auto space-y-6">
+                <Breadcrumb
+                    items={[
+                        { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
+                        {
+                            label:
+                                lang === 'vi'
+                                    ? 'Hồ sơ uy tín & Đánh giá'
+                                    : 'Reputation & Ratings',
+                        },
+                    ]}
+                />
+
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-2xl font-bold text-gray-900">
+                            {lang === 'vi' ? 'Điểm uy tín & Đánh giá' : 'Reputation & Ratings'}
+                        </h1>
+                        <p className="text-sm text-gray-500 mt-1">
+                            {lang === 'vi'
+                                ? 'Hệ thống tính điểm uy tín và phân cấp độ dựa trên lịch sử giao dịch và đánh giá từ cộng đồng.'
+                                : 'Trust level and reputation score calculated based on transaction history and community feedback.'}
+                        </p>
+                    </div>
+                </div>
+
+                {loading ? (
+                    <div className="py-16 text-center text-gray-500" role="status">
+                        <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        <p className="text-sm">
+                            {lang === 'vi'
+                                ? 'Đang tải hồ sơ uy tín...'
+                                : 'Loading reputation profile...'}
+                        </p>
+                    </div>
+                ) : error ? (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex justify-between items-center">
+                        <span>{error}</span>
+                        <Button size="sm" variant="outline" onClick={loadData}>
+                            {lang === 'vi' ? 'Thử lại' : 'Retry'}
+                        </Button>
+                    </div>
+                ) : reputation ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                            {/* Card điểm uy tín & Trust Level */}
+                            <div className="nexus-card p-6 border border-border">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                    {lang === 'vi' ? 'Cấp độ uy tín' : 'Trust Level'}
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <TrustLevelBadge level={reputation.trustLevel} size="lg" />
+                                </div>
+                                <div className="mt-4 pt-3 border-t border-gray-100 flex items-baseline justify-between">
+                                    <span className="text-xs text-gray-500">
+                                        {lang === 'vi' ? 'Điểm số:' : 'Score:'}
+                                    </span>
+                                    <span className="text-2xl font-black text-gray-900">
+                                        {reputation.score}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Card đánh giá cộng đồng */}
+                            <div className="nexus-card p-6 border border-border">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                    {lang === 'vi' ? 'Đánh giá trung bình' : 'Average Rating'}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-3xl font-black text-amber-500">
+                                        ★{' '}
+                                        {reputation.avgRating
+                                            ? reputation.avgRating.toFixed(1)
+                                            : '5.0'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    {lang === 'vi'
+                                        ? `Dựa trên ${reputation.totalRatings || ratings.length} lượt đánh giá hợp lệ`
+                                        : `Based on ${reputation.totalRatings || ratings.length} verified ratings`}
+                                </p>
+                            </div>
+
+                            {/* Card điều kiện đấu giá */}
+                            <div className="nexus-card p-6 border border-border">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                                    {lang === 'vi' ? 'Điều kiện đấu giá' : 'Auction Eligibility'}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <span
+                                        className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full ${eligibility?.eligible ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
+                                    >
+                                        {eligibility?.eligible
+                                            ? lang === 'vi'
+                                                ? '✓ Đủ điều kiện'
+                                                : '✓ Eligible'
+                                            : lang === 'vi'
+                                              ? '✗ Chưa đủ điều kiện'
+                                              : '✗ Ineligible'}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    {lang === 'vi'
+                                        ? `Yêu cầu tối thiểu: ${eligibility?.minRequiredScore ?? 40} điểm`
+                                        : `Minimum required: ${eligibility?.minRequiredScore ?? 40} pts`}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Thống kê giao dịch */}
+                        <div className="nexus-card p-6 border border-border">
+                            <h3 className="font-bold text-base mb-4 text-gray-900">
+                                {lang === 'vi'
+                                    ? 'Thống kê hoạt động giao dịch'
+                                    : 'Transaction Statistics'}
+                            </h3>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                <div className="p-4 bg-gray-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-gray-900">
+                                        {reputation.totalTx}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {lang === 'vi' ? 'Tổng giao dịch' : 'Total Transactions'}
+                                    </p>
+                                </div>
+                                <div className="p-4 bg-emerald-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-emerald-700">
+                                        {reputation.successTx}
+                                    </p>
+                                    <p className="text-xs text-emerald-600 mt-1">
+                                        {lang === 'vi' ? 'Thành công' : 'Successful'}
+                                    </p>
+                                </div>
+                                <div className="p-4 bg-red-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-red-700">
+                                        {reputation.failedTx}
+                                    </p>
+                                    <p className="text-xs text-red-600 mt-1">
+                                        {lang === 'vi' ? 'Thất bại/Bỏ cọc' : 'Failed/Defaults'}
+                                    </p>
+                                </div>
+                                <div className="p-4 bg-blue-50 rounded-xl text-center">
+                                    <p className="text-2xl font-black text-blue-700">
+                                        {reputation.auctionWon}
+                                    </p>
+                                    <p className="text-xs text-blue-600 mt-1">
+                                        {lang === 'vi' ? 'Đấu giá thắng' : 'Auctions Won'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Lịch sử đánh giá nhận được */}
+                        <div className="nexus-card p-6 border border-border">
+                            <h3 className="font-bold text-base mb-4 text-gray-900">
+                                {lang === 'vi'
+                                    ? 'Lịch sử đánh giá từ cộng đồng'
+                                    : 'Received Community Ratings'}
+                            </h3>
+                            <RatingsList
+                                ratings={ratings}
+                                emptyMessage={
+                                    lang === 'vi'
+                                        ? 'Bạn chưa nhận được đánh giá nào.'
+                                        : 'You have not received any ratings yet.'
+                                }
+                            />
+                        </div>
+                    </>
+                ) : null}
+            </div>
+        </BuyerLayout>
+    )
 }
 
 export { NotificationInbox as NotificationPage } from './NotificationInbox'

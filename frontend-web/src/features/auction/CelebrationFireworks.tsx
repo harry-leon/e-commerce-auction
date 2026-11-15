@@ -479,7 +479,7 @@ export function WinnerCelebrationModal({
                         </div>
 
                         {/* Tên sản phẩm */}
-                        <h3 className="text-sm sm:text-base font-bold text-slate-800 line-clamp-2 leading-snug">
+                        <h3 data-testid="celebration-product-name" className="text-sm sm:text-base font-bold text-slate-800 line-clamp-2 leading-snug">
                             {displayProduct}
                         </h3>
 
