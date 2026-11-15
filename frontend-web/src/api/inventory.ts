@@ -393,6 +393,24 @@ export async function getStockBySku(
 }
 
 /**
+ * Chức năng: Tra cứu danh sách phân bổ tồn kho của SKU trên tất cả các kho (GET /api/v1/inventory/sku/{skuId}/all).
+ * Đầu vào: skuId (chuỗi UUID của Catalog SKU), signal (AbortSignal tùy chọn).
+ * Kết quả: Mảng InventoryStockResponse đại diện cho từng kho lưu trữ hàng của SKU đó.
+ * Luồng xử lý: Gửi request GET tới Gateway → giải mã mảng dữ liệu data từ ApiResponse.
+ * Quy tắc & lý do: Tránh lỗi hiển thị tồn kho bằng 0 khi hàng được lưu tại kho khác ngoài kho mặc định WH_001.
+ */
+export async function getAllStockBySku(
+    skuId: string,
+    signal?: AbortSignal,
+): Promise<InventoryStockResponse[]> {
+    const response = await api<ApiResponse<InventoryStockResponse[]>>(
+        `/inventory/sku/${encodeURIComponent(skuId)}/all`,
+        { signal },
+    )
+    return Array.isArray(response.data) ? response.data : []
+}
+
+/**
  * Tra cứu tồn kho của 1 SKU theo mã doanh nghiệp skuCode (GET /api/v1/inventory/sku/code/{skuCode}).
  */
 export async function getStockBySkuCode(

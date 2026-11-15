@@ -90,6 +90,18 @@ public class KeycloakClient {
                 .filter(role -> role.name().startsWith("ROLE_") && !role.name().equals("ROLE_PROFILE_WRITER")).toList();
     }
 
+    /** Danh sách identity từ Keycloak để tạo profile còn thiếu; chỉ đọc qua Admin API, tối đa 100 tài khoản mỗi lượt. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RealmUser(String id, String email, String firstName, String lastName,
+            String username, boolean enabled, Map<String, List<String>> attributes) { }
+
+    /** Đọc một lát cắt user Keycloak; offset/limit được kiểm tra ở controller trước khi gọi IAM. */
+    public List<RealmUser> users(int first, int max) {
+        RealmUser[] values = get("/users?first={first}&max={max}", first, max)
+                .retrieve().body(RealmUser[].class);
+        return values == null ? List.of() : Arrays.asList(values);
+    }
+
     /** Privilege là realm role nguyên tử có mã dạng DOMAIN.ACTION, dùng để xây composite ứng dụng. */
     public List<RealmRole> privilegeRoles() {
         RealmRole[] values = get("/roles?briefRepresentation=false").retrieve().body(RealmRole[].class);
@@ -133,6 +145,12 @@ public class KeycloakClient {
     public void disable(UUID userId) {
         mutate("PUT", "/users/" + userId, Map.of("enabled", false));
         mutate("POST", "/users/" + userId + "/logout", Map.of());
+    }
+
+    /** Đồng bộ enabled state trong IAM; khóa sẽ thu hồi refresh session, mở khóa không thay đổi mật khẩu/role. */
+    public void setEnabled(UUID userId, boolean enabled) {
+        mutate("PUT", "/users/" + userId, Map.of("enabled", enabled));
+        if (!enabled) { mutate("POST", "/users/" + userId + "/logout", Map.of()); }
     }
 
     /** Tạo/cập nhật/xóa IAM qua REST; không dùng transaction DB để giả lập rollback liên service. */
