@@ -53,6 +53,8 @@ app:
   shipping:
     # Mặc định không seed job/call Commerce/carrier; claim/preflight và recovery phải được review trước bật.
     dispatch-worker-enabled: ${SHIPPING_DISPATCH_WORKER_ENABLED:false}
+    # Ép tất cả instance chặn legacy create ngay cả khi chỉ một instance chạy worker; không tự bật worker hoặc gửi carrier.
+    claimed-dispatch-required: ${SHIPPING_CLAIMED_DISPATCH_REQUIRED:false}
     dispatch-worker-delay-ms: ${SHIPPING_DISPATCH_WORKER_DELAY_MS:5000}
   # Cấu hình dự phòng cục bộ cho fulfillment-service khi chưa kết nối Config Server
   fulfillment:

@@ -237,6 +237,8 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: fulfillment-service
+      # Đóng đường legacy trên toàn fleet trong rollout claimed dispatch; worker bật cũng luôn chặn legacy dù flag này false.
+      SHIPPING_CLAIMED_DISPATCH_REQUIRED: ${SHIPPING_CLAIMED_DISPATCH_REQUIRED:-false}
       # Fulfillment tra cứu snapshot SKU qua HTTP Catalog để kiểm tra quyền sở hữu seller, không đọc chéo DB Catalog.
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Dùng Supabase khi cấu hình FULFILLMENT_DB_*; để trống thì dùng PostgreSQL local.
