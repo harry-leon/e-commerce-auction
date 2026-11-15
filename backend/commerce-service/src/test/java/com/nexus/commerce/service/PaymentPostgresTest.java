@@ -668,6 +668,42 @@ class PaymentPostgresTest {
         return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
                 UUID.randomUUID(), order, "GHN", "TRACK-TEST", status);
     }
+    /**
+     * Envelope mới trên PostgreSQL thật: schemaVersion/aggregateId/correlationId hợp lệ vẫn xử lý bình thường,
+     * version lạ hoặc aggregate lệch bị từ chối 422 (poison) và không tạo inbox/không đổi Order.
+     * Event không có envelope (producer cũ) vẫn nhận để giữ tương thích ngược.
+     */
+    @Test
+    void shippingEventEnvelopeIsValidatedWithoutBreakingLegacyProducers() {
+        var legacy = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        shippingInbox.receive(legacy);
+        assertEquals("SHIPPED", orderState(legacy.orderId()));
+
+        var supported = new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.ShipmentDelivered,
+                java.time.Instant.now(), legacy.shipmentId(), legacy.orderId(), legacy.carrier(), legacy.trackingNumber(),
+                "DELIVERED", 1, "SHIPMENT", legacy.shipmentId(), UUID.randomUUID());
+        shippingInbox.receive(supported);
+        assertEquals("DELIVERED", orderState(legacy.orderId()));
+
+        var otherOrder = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        // Ghi nhận số event đã xử lý trước khi thử poison; poison không được tăng thêm.
+        int before = jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE order_id=?",
+                Integer.class, otherOrder.orderId());
+        var futureVersion = new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.ShipmentPickedUp,
+                java.time.Instant.now(), otherOrder.shipmentId(), otherOrder.orderId(), otherOrder.carrier(),
+                otherOrder.trackingNumber(), "PICKED_UP", 2, "SHIPMENT", otherOrder.shipmentId(), UUID.randomUUID());
+        assertEquals(422, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> shippingInbox.receive(futureVersion)).getHttpStatus().value());
+        var wrongAggregate = new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.ShipmentPickedUp,
+                java.time.Instant.now(), otherOrder.shipmentId(), otherOrder.orderId(), otherOrder.carrier(),
+                otherOrder.trackingNumber(), "PICKED_UP", 1, "SHIPMENT", UUID.randomUUID(), UUID.randomUUID());
+        assertEquals(422, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> shippingInbox.receive(wrongAggregate)).getHttpStatus().value());
+        // Poison event không được ghi dấu đã xử lý để vận hành thấy rõ khi replay.
+        assertEquals(before, jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE order_id=?",
+                Integer.class, otherOrder.orderId()));
+    }
+
     private ShippingEventInboxService.Event shippingEvent(ShippingEventInboxService.Event base, String type, String status) {
         return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
                 base.shipmentId(), base.orderId(), base.carrier(), base.trackingNumber(), status);
