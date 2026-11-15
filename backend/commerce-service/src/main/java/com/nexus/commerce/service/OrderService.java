@@ -267,11 +267,11 @@ public interface OrderService {
      *
      * <p>Đầu vào và kết quả:
      * Nhận orderId, ResolveOrderDisputeRequest, ID Admin và danh sách roles.
-     * Trả về OrderDetailResponse sau khi cập nhật.
+     * Trả về OrderDetailResponse sau khi cập nhật; refunded/partial_refund hiện bị từ chối vì thiếu bằng chứng tài chính.
      *
      * <p>Luồng xử lý:
-     * Kiểm tra quyền ADMIN -> khóa dòng order -> kiểm tra đơn đã thanh toán -> cập nhật trạng thái (REFUNDED hoặc COMPLETED) ->
-     * hoàn trả tồn kho nếu refund -> ghi OrderStatusHistory với [ADMIN] [DISPUTE:<RESOLUTION>].
+     * Kiểm tra quyền ADMIN -> khóa Order -> kiểm tra trạng thái -> chặn refund/partial refund ->
+     * ghi COMPLETED/history cho released. Không gửi tiền hoặc hoàn trả tồn kho qua endpoint tranh chấp.
      *
      * <p>Quy tắc và lý do:
      * Chỉ ADMIN mới có quyền can thiệp vào quỹ ký quỹ và phán quyết tranh chấp.

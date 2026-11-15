@@ -163,6 +163,8 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: commerce-service
+      # Chốt Order sau refund là thao tác Admin riêng, mặc định tắt; không bật merchant/worker hoặc hoàn kho.
+      APP_PAYMENT_REFUND_FINALIZATION_ENABLED: ${APP_PAYMENT_REFUND_FINALIZATION_ENABLED:-false}
       # Cart đọc dữ liệu sản phẩm thật; mock chỉ dùng khi bật profile catalog-mock.
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.

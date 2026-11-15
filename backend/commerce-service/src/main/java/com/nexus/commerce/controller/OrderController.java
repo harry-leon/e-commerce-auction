@@ -441,7 +441,7 @@ public class OrderController {
      * Admin giải quyết tranh chấp ký quỹ đơn hàng (Escrow Dispute Resolution).
      *
      * <p>Chức năng: Tiếp nhận phán quyết của Admin đối với đơn hàng đang có khiếu nại hoặc giữ tiền ký quỹ
-     * (hoàn 100% cho người mua, giải ngân cho người bán, hoặc hoàn một phần).
+     * qua lựa chọn released hiện có. refunded/partial_refund bị service chặn vì request không có bằng chứng provider.
      *
      * <p>Đầu vào và kết quả:
      * Nhận orderId từ URL path và request body chứa resolution ('refunded', 'released', 'partial_refund') cùng note (tùy chọn).
@@ -464,7 +464,7 @@ public class OrderController {
      */
     @Operation(
             summary = "Giải quyết tranh chấp ký quỹ đơn hàng",
-            description = "Quản trị viên thực hiện phán quyết tranh chấp: hoàn tiền người mua, giải ngân người bán hoặc hoàn một phần"
+            description = "Ghi nhận released; refunded/partial_refund bị từ chối, cần workflow refund đã xác minh riêng; không gửi tiền hoặc hoàn kho"
     )
     @io.swagger.v3.oas.annotations.responses.ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Giải quyết tranh chấp thành công"),

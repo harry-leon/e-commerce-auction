@@ -21,6 +21,8 @@ import jakarta.validation.constraints.Size;
  *
  * <p>Lỗi và giới hạn:
  * Ném ngoại lệ validation nếu resolution rỗng hoặc không thuộc danh sách cho phép, hoặc note vượt quá 500 ký tự.
+ * Việc parse được refunded/partial_refund không cấp quyền hoàn tiền: service trả lỗi nghiệp vụ cho hai lựa chọn này,
+ * vì request không có bằng chứng provider; dùng workflow refund/đối soát riêng, không tự hoàn kho.
  */
 public record ResolveOrderDisputeRequest(
         @NotBlank(message = "Nghị quyết tranh chấp không được để trống")
