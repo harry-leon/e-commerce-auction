@@ -147,7 +147,7 @@ public class CommerceNotificationController {
         if (inserted == 1) {
             jdbc.update("INSERT INTO notification_attempts(id,notification_id,attempt_no,result) VALUES (?,?,1,'SUCCESS')",
                     UUID.randomUUID(), event.id());
-            if (isPushEnabled()) {
+            if (isPushEnabled() && pushAllowed(event.userId(), event.type())) {
                 recordAndDispatchPush(event, title, content, resolvedLink, createdAtUtc, deadlineTs);
             }
         } else {
@@ -163,6 +163,27 @@ public class CommerceNotificationController {
                 throw new ApiException("NOTIFICATION_EVENT_CONFLICT", HttpStatus.CONFLICT,
                         "UUID sự kiện đã có nội dung khác", null);
             }
+        }
+    }
+
+    /**
+     * Chỉ chặn kênh PUSH khi người dùng đã tắt rõ ràng trong notification_preferences.
+     *
+     * <p>Đầu vào: userId và loại sự kiện của snapshot Commerce. Kết quả: true nếu không có cấu hình
+     * (mặc định bật) hoặc cấu hình đang bật, false khi có dòng enabled=false.
+     *
+     * <p>Lý do: IN_APP vẫn được ghi để giữ nguồn resync; quyết định này chỉ ảnh hưởng bản ghi PUSH và
+     * WebSocket, không thay đổi nội dung inbox hay trạng thái tài chính. Lỗi đọc cấu hình không làm mất
+     * thông báo: trả true để push tiếp tục như hành vi trước khi có preferences.
+     */
+    private boolean pushAllowed(UUID userId, Type type) {
+        try {
+            Boolean enabled = jdbc.queryForObject(
+                    "SELECT enabled FROM notification_preferences WHERE user_id=? AND notification_type=? AND channel='PUSH'",
+                    Boolean.class, userId, type.name());
+            return enabled == null || enabled;
+        } catch (RuntimeException error) {
+            return true;
         }
     }
 

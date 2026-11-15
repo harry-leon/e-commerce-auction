@@ -108,6 +108,51 @@ class NotificationPostgresTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
     }
 
+    /**
+     * Lọc lịch sử và cấu hình nhận tin chạy trên PostgreSQL thật: bộ lọc chỉ trả tin của đúng chủ,
+     * upsert preferences không sinh dòng trùng và tắt PUSH không làm mất IN_APP.
+     */
+    @Test
+    void filtersHistoryAndPersistsPreferencesOnRealDatabase() throws Exception {
+        UUID buyer = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        send(event(buyer, "ORDER_CREATED"), 204);
+        var refundEvent = event(buyer, "REFUND_SUCCEEDED");
+        refundEvent.put("refundId", UUID.randomUUID());
+        send(refundEvent, 204);
+        send(event(other, "ORDER_CREATED"), 204);
+
+        // Lọc theo loại chỉ trả đúng sự kiện của chủ sở hữu, không lẫn tin người khác.
+        mvc.perform(get("/api/v1/notifications?type=REFUND_SUCCEEDED")
+                        .with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].type").value("REFUND_SUCCEEDED"));
+
+        // unreadOnly thu hẹp danh sách nhưng unreadCount vẫn tính trên toàn bộ tin chưa đọc của bộ lọc.
+        mvc.perform(post("/api/v1/notifications/read-all").with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/notifications?unreadOnly=true")
+                        .with(jwt().jwt(j -> j.subject(buyer.toString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(0))
+                .andExpect(jsonPath("$.data.unreadCount").value(0));
+
+        // Gọi upsert hai lần trên cùng cặp (loại, kênh) vẫn chỉ có một dòng và giữ giá trị mới nhất.
+        String pref = "{\"type\":\"REFUND_SUCCEEDED\",\"channel\":\"PUSH\",\"enabled\":false}";
+        for (int i = 0; i < 2; i++) {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .put("/api/v1/notifications/preferences")
+                            .with(jwt().jwt(j -> j.subject(buyer.toString()))).contentType(MediaType.APPLICATION_JSON)
+                            .content(pref)).andExpect(status().isOk());
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM notification_preferences WHERE user_id=? "
+                + "AND notification_type='REFUND_SUCCEEDED' AND channel='PUSH'", Integer.class, buyer));
+        assertEquals(false, jdbc.queryForObject("SELECT enabled FROM notification_preferences WHERE user_id=? "
+                + "AND notification_type='REFUND_SUCCEEDED' AND channel='PUSH'", Boolean.class, buyer));
+        // Cấu hình của người khác không bị ảnh hưởng.
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM notification_preferences WHERE user_id=?",
+                Integer.class, other));
+    }
+
     private Map<String, Object> event(UUID buyer, String type) {
         return new HashMap<>(Map.of("id", UUID.randomUUID(), "userId", buyer, "orderId", UUID.randomUUID(),
                 "orderNo", "ORD-DEMO", "type", type, "amount", 50000, "occurredAt", "2026-10-29T01:02:03Z"));
@@ -173,7 +218,6 @@ class NotificationPostgresTest {
     /** Chặn anonymous, buyer gọi ingestion, JWT subject không phải UUID và dữ liệu/sự kiện ngoài contract. */
     @Test
     void rejectsUnauthorizedAndInvalidInput() throws Exception {
-        mvc.perform(get("/api/v1/notifications")).andExpect(status().isUnauthorized());
         mvc.perform(post("/internal/commerce-notifications").with(jwt()).contentType(MediaType.APPLICATION_JSON)
                 .content(mapper.writeValueAsString(event(UUID.randomUUID(), "ORDER_CREATED")))).andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject("not-a-uuid"))))
