@@ -5721,10 +5721,22 @@ export function AdminWarehousesPage() {
 }
 
 // ─── Admin Shipments ───────────────────────────────────────────────────────────
+/**
+ * Màn hình quản lý vận đơn và ghi đè trạng thái dành cho Admin (/admin-shipments).
+ * Chức năng:
+ *   1. Hiển thị danh sách các vận đơn giao hàng, hãng vận chuyển và trạng thái.
+ *   2. Hỗ trợ ghi đè thủ công (Manual Override) trạng thái vận đơn khi đơn vị giao vận trễ cập nhật hoặc gặp sự cố.
+ * Đầu vào và kết quả:
+ *   - Quản lý danh sách vận đơn trong local state. Khi lưu thay đổi trong modal, cập nhật ngay trạng thái dòng tương ứng và hiển thị thông báo.
+ */
 export function AdminShipmentsPage() {
     const { lang, showToast } = useApp()
     const [overrideOpen, setOverrideOpen] = useState(false)
-    const SHIPMENTS = [
+    const [selectedShipment, setSelectedShipment] = useState<any>(null)
+    const [newStatus, setNewStatus] = useState('in_transit')
+    const [overrideReason, setOverrideReason] = useState('')
+
+    const [shipments, setShipments] = useState([
         {
             id: 'SHP-001',
             orderId: 'ORD-20240215-001',
@@ -5743,7 +5755,17 @@ export function AdminShipmentsPage() {
             buyer: 'Minh Tran',
             date: '2024-02-22',
         },
-    ]
+        {
+            id: 'SHP-003',
+            orderId: 'ORD-2026-001',
+            carrier: 'GHN',
+            tracking: 'GHN-VN-88992211',
+            status: 'in_transit',
+            buyer: 'buyer@nexus.vn',
+            date: '2026-11-15',
+        },
+    ])
+
     const statusLabel = (s: string) =>
         ({
             pending: 'Pending',
@@ -5754,6 +5776,7 @@ export function AdminShipmentsPage() {
             failed: 'Failed',
             returned: 'Returned',
         })[s] || s
+
     return (
         <AdminLayout title={tr(lang, 'shipmentManagement')}>
             <div className="nexus-card mb-5">
@@ -5787,9 +5810,11 @@ export function AdminShipmentsPage() {
                                     status={
                                         r.status === 'delivered'
                                             ? 'delivered'
-                                            : r.status === 'in_transit'
+                                            : r.status === 'in_transit' || r.status === 'picked_up' || r.status === 'out_for_delivery'
                                               ? 'shipped'
-                                              : 'pending'
+                                              : r.status === 'failed' || r.status === 'returned'
+                                                ? 'cancelled'
+                                                : 'pending'
                                     }
                                     label={statusLabel(r.status)}
                                 />
@@ -5799,18 +5824,23 @@ export function AdminShipmentsPage() {
                         {
                             key: 'actions',
                             label: '',
-                            render: () => (
+                            render: (r: any) => (
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => setOverrideOpen(true)}
+                                    onClick={() => {
+                                        setSelectedShipment(r)
+                                        setNewStatus(r.status)
+                                        setOverrideReason('')
+                                        setOverrideOpen(true)
+                                    }}
                                 >
                                     {tr(lang, 'manualOverride')}
                                 </Button>
                             ),
                         },
                     ]}
-                    data={SHIPMENTS}
+                    data={shipments}
                     rowKey={(r) => r.id}
                 />
             </div>
@@ -5827,13 +5857,22 @@ export function AdminShipmentsPage() {
                         <Button
                             variant="primary"
                             onClick={() => {
+                                if (selectedShipment) {
+                                    setShipments((prev) =>
+                                        prev.map((s) =>
+                                            s.id === selectedShipment.id
+                                                ? { ...s, status: newStatus }
+                                                : s
+                                        )
+                                    )
+                                }
                                 setOverrideOpen(false)
                                 showToast({
                                     type: 'success',
                                     message:
                                         lang === 'en'
-                                            ? 'Status overridden.'
-                                            : 'Đã ghi đè trạng thái.',
+                                            ? `Shipment ${selectedShipment?.id || ''} status overridden to ${statusLabel(newStatus)}.`
+                                            : `Đã ghi đè trạng thái vận đơn ${selectedShipment?.id || ''} thành ${statusLabel(newStatus)}.`,
                                 })
                             }}
                         >
@@ -5842,18 +5881,31 @@ export function AdminShipmentsPage() {
                     </>
                 }
             >
+                {selectedShipment && (
+                    <div className="mb-3 rounded-lg bg-gray-50 p-2.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                        <p><span className="font-semibold">Mã vận đơn:</span> {selectedShipment.id} ({selectedShipment.tracking})</p>
+                        <p><span className="font-semibold">Đơn hàng:</span> {selectedShipment.orderId}</p>
+                    </div>
+                )}
                 <Select
                     label={lang === 'en' ? 'New Status' : 'Trạng thái mới'}
-                    value="in_transit"
-                    onChange={() => {}}
+                    value={newStatus}
+                    onChange={(e) => setNewStatus(e.target.value)}
                     options={[
                         { value: 'in_transit', label: 'In Transit' },
                         { value: 'delivered', label: 'Delivered' },
                         { value: 'failed', label: 'Failed' },
+                        { value: 'returned', label: 'Returned' },
                     ]}
                 />
                 <div className="mt-3">
-                    <Textarea label={tr(lang, 'reason')} rows={2} />
+                    <Textarea
+                        label={tr(lang, 'reason')}
+                        rows={2}
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        placeholder={lang === 'en' ? 'Enter override reason...' : 'Nhập lý do ghi đè...'}
+                    />
                 </div>
             </Modal>
         </AdminLayout>
