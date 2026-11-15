@@ -34,6 +34,7 @@ import {
 } from '../../api/auctions'
 import { startPayment } from '../../api/payments'
 import type { Auction } from '../../types'
+import { fireConfetti } from '../../utils/dialogs'
 
 // ─── Auction List Page ─────────────────────────────────────────────────────────
 /**
@@ -483,6 +484,14 @@ export function AuctionDetailPage() {
         return () => window.clearInterval(refreshTimer)
     }, [loadAuctionDetail])
 
+    const isWinner = Boolean(auction && user?.id && auction.winnerId === user.id)
+
+    useEffect(() => {
+        if (isWinner) {
+            fireConfetti({ particleCount: 120, spread: 90 })
+        }
+    }, [isWinner])
+
     // Nếu đang loading, hiển thị skeleton loading state
     if (loading) {
         return (
@@ -551,7 +560,6 @@ export function AuctionDetailPage() {
     const isActive = auction.status === 'active'
     const isScheduled = auction.status === 'scheduled'
     const isEnded = ['ended', 'settled', 'cancelled', 'failed'].includes(auction.status)
-    const isWinner = auction.winnerId === user?.id
     const isHighestBidder = bidPlaced || auction.winnerId === user?.id
     const isSeller = Boolean(user?.id && auction.sellerId === user.id)
 
@@ -843,7 +851,10 @@ export function AuctionDetailPage() {
                                 <p className="text-xs text-amber-800 font-bold uppercase tracking-wider">
                                     {tr(lang, 'currentBid')}
                                 </p>
-                                <p className="text-4xl font-black text-amber-600 tracking-tight mt-0.5">
+                                <p
+                                    key={auction.currentBid}
+                                    className="text-4xl font-black text-amber-600 tracking-tight mt-0.5 price-update-flash transition-all duration-300"
+                                >
                                     {formatCurrency(auction.currentBid, lang)}
                                 </p>
                                 <div className="flex items-center justify-between text-xs text-gray-500 mt-2 pt-2 border-t border-amber-100">

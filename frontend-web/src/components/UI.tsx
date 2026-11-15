@@ -18,7 +18,7 @@ export function Button({
     className = '',
     ...props
 }: ButtonProps) {
-    const cls = `nexus-btn nexus-btn-${variant} ${size === 'sm' ? 'nexus-btn-sm' : size === 'lg' ? 'nexus-btn-lg' : ''} ${className}`
+    const cls = `nexus-btn nexus-btn-${variant} ${size === 'sm' ? 'nexus-btn-sm' : size === 'lg' ? 'nexus-btn-lg' : ''} transition-all duration-200 active:scale-[0.98] select-none ${className}`
     return (
         <button {...props} className={cls} disabled={props.disabled || loading}>
             {loading ? (
@@ -351,32 +351,33 @@ export function Modal({
     const sizeW = { sm: 400, md: 520, lg: 680, xl: 860 }[size]
     if (!open) return null
     return (
-        // Overlay toàn màn hình; click vùng ngoài modal sẽ đóng (onClose)
+        // Overlay toàn màn hình với hiệu ứng làm mờ nền; click vùng ngoài modal sẽ đóng (onClose)
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
             onClick={(e) => e.target === e.currentTarget && onClose()}
         >
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            {/* role="dialog" + aria-modal="true" đảm bảo screen reader nhận ra đây là dialog, hỗ trợ getByRole('dialog') trong test */}
+            <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm transition-opacity" onClick={onClose} />
+            {/* role="dialog" + aria-modal="true" đảm bảo screen reader nhận ra đây là dialog */}
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-label={title}
-                className="relative bg-white rounded-xl shadow-xl flex flex-col max-h-[90vh] fade-in"
+                className="relative bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh] border border-gray-100 overflow-hidden transform transition-all duration-200"
                 style={{ width: '100%', maxWidth: sizeW }}
             >
-                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
                     <h2 className="text-lg font-bold text-gray-900">{title}</h2>
                     <button
                         onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+                        className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-200/60 transition-colors"
+                        aria-label="Close"
                     >
                         <X size={18} />
                     </button>
                 </div>
                 <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
                 {footer && (
-                    <div className="px-6 py-4 border-t border-border flex justify-end gap-3">
+                    <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3">
                         {footer}
                     </div>
                 )}
@@ -424,7 +425,7 @@ export function ConfirmModal({
                 </>
             }
         >
-            <p className="text-gray-600 text-sm">{message}</p>
+            <p className="text-gray-600 text-sm leading-relaxed">{message}</p>
         </Modal>
     )
 }
@@ -582,13 +583,13 @@ export function EmptyState({
     action?: ReactNode
 }) {
     return (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-11 h-11 mb-4 rounded-lg border border-border bg-gray-50 text-gray-500 flex items-center justify-center">
-                {icon ?? <Inbox size={20} />}
+        <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto">
+            <div className="w-16 h-16 mb-4 rounded-2xl bg-gradient-to-b from-gray-50 to-gray-100 border border-gray-200/80 text-gray-400 flex items-center justify-center shadow-inner">
+                {icon ?? <Inbox size={28} className="text-gray-400" />}
             </div>
-            <h3 className="text-lg font-semibold text-gray-700 mb-1">{title}</h3>
-            {subtitle && <p className="text-sm text-gray-500 max-w-xs">{subtitle}</p>}
-            {action && <div className="mt-5">{action}</div>}
+            <h3 className="text-lg font-bold text-gray-800 mb-1.5">{title}</h3>
+            {subtitle && <p className="text-sm text-gray-500 leading-relaxed max-w-sm">{subtitle}</p>}
+            {action && <div className="mt-6">{action}</div>}
         </div>
     )
 }
@@ -596,23 +597,58 @@ export function EmptyState({
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 export function SkeletonCard() {
     return (
-        <div className="nexus-card p-4 space-y-3">
-            <div className="skeleton w-full h-40 rounded-lg" />
-            <div className="skeleton w-3/4 h-4 rounded" />
-            <div className="skeleton w-1/2 h-4 rounded" />
-            <div className="skeleton w-1/4 h-6 rounded" />
+        <div className="nexus-card bg-white rounded-2xl border border-gray-100 p-4 space-y-3 overflow-hidden shadow-sm">
+            <div className="skeleton-shimmer w-full h-44 rounded-xl" />
+            <div className="skeleton-shimmer w-1/3 h-3.5 rounded-md" />
+            <div className="skeleton-shimmer w-3/4 h-4 rounded-md" />
+            <div className="skeleton-shimmer w-1/2 h-3.5 rounded-md" />
+            <div className="flex justify-between items-center pt-2">
+                <div className="skeleton-shimmer w-1/3 h-6 rounded-md" />
+                <div className="skeleton-shimmer w-8 h-8 rounded-xl" />
+            </div>
+        </div>
+    )
+}
+
+export function SkeletonProductCard() {
+    return <SkeletonCard />
+}
+
+export function SkeletonAuctionCard() {
+    return (
+        <div className="nexus-card bg-white rounded-2xl border border-gray-100 p-4 space-y-3 overflow-hidden shadow-sm">
+            <div className="skeleton-shimmer w-full h-44 rounded-xl" />
+            <div className="skeleton-shimmer w-3/4 h-4 rounded-md" />
+            <div className="skeleton-shimmer w-full h-14 rounded-xl" />
+            <div className="flex justify-between items-center pt-1">
+                <div className="skeleton-shimmer w-1/3 h-3 rounded-md" />
+                <div className="skeleton-shimmer w-24 h-7 rounded-xl" />
+            </div>
+        </div>
+    )
+}
+
+export function SkeletonStatCard() {
+    return (
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm space-y-3">
+            <div className="flex justify-between items-center">
+                <div className="skeleton-shimmer w-24 h-4 rounded-md" />
+                <div className="skeleton-shimmer w-10 h-10 rounded-xl" />
+            </div>
+            <div className="skeleton-shimmer w-32 h-8 rounded-lg" />
+            <div className="skeleton-shimmer w-20 h-3 rounded-md" />
         </div>
     )
 }
 
 export function SkeletonRow() {
     return (
-        <tr>
+        <tr className="border-b border-gray-100">
             {Array.from({ length: 5 }).map((_, i) => (
-                <td key={i} className="px-4 py-3">
+                <td key={i} className="px-4 py-3.5">
                     <div
-                        className="skeleton h-4 rounded"
-                        style={{ width: `${60 + Math.random() * 40}%` }}
+                        className="skeleton-shimmer h-4 rounded-md"
+                        style={{ width: `${60 + (i % 3) * 15}%` }}
                     />
                 </td>
             ))}
@@ -772,6 +808,9 @@ export function CountdownTimer({
     const s = remaining % 60
     const pad = (n: number) => String(n).padStart(2, '0')
 
+    const isUrgent = remaining > 0 && remaining <= 3600
+    const isEnded = remaining <= 0
+
     if (large) {
         const units =
             d > 0
@@ -790,19 +829,35 @@ export function CountdownTimer({
             <div className="flex items-center gap-2">
                 {units.map(({ v, l }, i) => (
                     <span key={i} className="flex flex-col items-center">
-                        <span className="countdown-digits text-auction bg-auction-light rounded-lg px-3 py-1 font-mono font-bold text-lg">
+                        <span
+                            className={`countdown-digits rounded-xl px-3.5 py-1.5 font-mono font-bold text-lg shadow-sm border transition-all ${
+                                isEnded
+                                    ? 'text-gray-400 bg-gray-100 border-gray-200'
+                                    : isUrgent
+                                      ? 'text-red-600 bg-red-50 border-red-200 animate-pulse'
+                                      : 'text-auction bg-auction-light border-orange-200/80'
+                            }`}
+                        >
                             {pad(v)}
                         </span>
-                        <span className="text-xs text-gray-500 mt-1">{l}</span>
+                        <span className="text-[11px] font-semibold text-gray-500 mt-1 uppercase tracking-wider">{l}</span>
                     </span>
                 ))}
             </div>
         )
     }
     return (
-        <span className="text-auction font-bold text-sm font-mono">
-            {d > 0 ? `${d}d ` : ''}
-            {pad(h)}:{pad(m)}:{pad(s)}
+        <span
+            className={`font-bold text-sm font-mono inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all ${
+                isEnded
+                    ? 'text-gray-400 bg-gray-100 border-gray-200'
+                    : isUrgent
+                      ? 'text-red-600 bg-red-50 border-red-200 animate-pulse'
+                      : 'text-auction bg-auction-light border-orange-200/60'
+            }`}
+        >
+            <Clock size={12} />
+            {isEnded ? '00:00:00' : `${d > 0 ? `${d}d ` : ''}${pad(h)}:${pad(m)}:${pad(s)}`}
         </span>
     )
 }
@@ -921,22 +976,29 @@ export function OrderTimeline({ status }: { status: string }) {
         <div className="flex flex-col gap-0">
             {ORDER_STEPS.map((step, i) => {
                 const done = i <= cur
+                const isCurrent = i === cur
                 return (
                     <div key={step} className="flex gap-3">
                         <div className="flex flex-col items-center">
                             <div
-                                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-bold ${done ? 'bg-primary border-primary text-white' : 'border-gray-200 text-gray-300'}`}
+                                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all duration-300 ${
+                                    isCurrent
+                                        ? 'bg-primary border-primary text-white shadow-[0_0_0_4px_rgba(238,77,45,0.2)] scale-105'
+                                        : done
+                                          ? 'bg-primary border-primary text-white'
+                                          : 'border-gray-200 text-gray-400 bg-gray-50'
+                                }`}
                             >
-                                {done ? <CheckCircle size={13} /> : i + 1}
+                                {done && !isCurrent ? <CheckCircle size={13} /> : i + 1}
                             </div>
                             {i < ORDER_STEPS.length - 1 && (
                                 <div
-                                    className={`w-0.5 h-8 ${done && i < cur ? 'bg-primary' : 'bg-gray-200'}`}
+                                    className={`w-0.5 h-8 transition-colors duration-300 ${done && i < cur ? 'bg-primary' : 'bg-gray-200'}`}
                                 />
                             )}
                         </div>
-                        <div className={`pb-6 pt-1 ${done ? 'text-gray-800' : 'text-gray-400'}`}>
-                            <p className="font-semibold text-sm">{labels[step]}</p>
+                        <div className={`pb-6 pt-1 ${isCurrent ? 'text-primary font-bold' : done ? 'text-gray-800 font-semibold' : 'text-gray-400'}`}>
+                            <p className="text-sm">{labels[step]}</p>
                         </div>
                     </div>
                 )

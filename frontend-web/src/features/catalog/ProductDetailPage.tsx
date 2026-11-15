@@ -566,6 +566,32 @@ export function ProductDetailPage() {
         { id: 'specifications', label: tr(lang, 'specifications') },
     ]
 
+    // Nếu đang loading sản phẩm, hiển thị skeleton loading state tương tự như trang chi tiết đấu giá (AuctionDetailPage)
+    if (loading && !apiProduct) {
+        return (
+            <BuyerLayout>
+                <div className="space-y-6">
+                    <div className="skeleton w-64 h-6 rounded" />
+                    <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
+                        <div className="space-y-4">
+                            <div className="skeleton w-full h-96 rounded-2xl" />
+                            <div className="flex gap-2">
+                                {Array.from({ length: 4 }).map((_, i) => (
+                                    <div key={i} className="skeleton w-16 h-16 rounded-xl" />
+                                ))}
+                            </div>
+                            <div className="skeleton w-full h-40 rounded-2xl" />
+                        </div>
+                        <div className="space-y-4">
+                            <div className="skeleton w-full h-80 rounded-2xl" />
+                            <div className="skeleton w-full h-32 rounded-2xl" />
+                        </div>
+                    </div>
+                </div>
+            </BuyerLayout>
+        )
+    }
+
     if (!loading && !apiProduct && rawId) {
         return (
             <BuyerLayout>

@@ -3,6 +3,7 @@ import { ordersApi } from '../../api/orders'
 import { useApp } from '../../context'
 import { Button, CheckCircle, Package } from '../../components/UI'
 import type { Order } from '../../types'
+import { fireConfetti } from '../../utils/dialogs'
 
 /**
  * Chỉ công nhận trạng thái đơn từ Commerce; query thành công và đơn local PAID không chứng minh đã thu tiền.
@@ -45,16 +46,24 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
     const isPaid = current && (current.status === 'PAID' || current.status === 'COMPLETED')
     const isUnverified = !orderId || (error && !current)
 
+    useEffect(() => {
+        if (isPaid) {
+            fireConfetti({ particleCount: 100, spread: 80 })
+        }
+    }, [isPaid])
+
     return (
-        <div className="max-w-lg mx-auto text-center py-12 px-4">
+        <div className="max-w-lg mx-auto text-center py-12 px-4 animate-in fade-in zoom-in-95 duration-300">
             {!isUnverified && current && (
-                <div className="flex justify-center mb-4">
+                <div className="flex justify-center mb-5">
                     <div
-                        className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                            isPaid ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+                        className={`w-20 h-20 rounded-3xl shadow-lg flex items-center justify-center transition-transform hover:scale-105 duration-300 ${
+                            isPaid
+                                ? 'bg-gradient-to-tr from-emerald-500 to-green-400 text-white shadow-emerald-500/25 ring-8 ring-emerald-50'
+                                : 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white shadow-blue-500/25 ring-8 ring-blue-50'
                         }`}
                     >
-                        {isPaid ? <CheckCircle size={36} /> : <Package size={36} />}
+                        {isPaid ? <CheckCircle size={40} className="stroke-[2.5]" /> : <Package size={40} className="stroke-[2.5]" />}
                     </div>
                 </div>
             )}
