@@ -42,6 +42,10 @@ public class KeycloakClient {
         factory.setReadTimeout(Duration.ofSeconds(10));
         this.client = RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
                 .defaultStatusHandler(status -> status.isError(), (request, response) -> {
+                    if (response.getStatusCode().value() == 404) {
+                        throw new ApiException("IAM_USER_NOT_FOUND", HttpStatus.NOT_FOUND,
+                                "Không tìm thấy tài khoản trong Keycloak", null);
+                    }
                     throw new ApiException("IAM_PROVIDER_ERROR", HttpStatus.BAD_GATEWAY,
                             "Không thể thực hiện yêu cầu IAM", null);
                 }).build();
@@ -86,6 +90,18 @@ public class KeycloakClient {
                 .filter(role -> role.name().startsWith("ROLE_") && !role.name().equals("ROLE_PROFILE_WRITER")).toList();
     }
 
+    /** Danh sách identity từ Keycloak để tạo profile còn thiếu; chỉ đọc qua Admin API, tối đa 100 tài khoản mỗi lượt. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RealmUser(String id, String email, String firstName, String lastName,
+            String username, boolean enabled, Map<String, List<String>> attributes) { }
+
+    /** Đọc một lát cắt user Keycloak; offset/limit được kiểm tra ở controller trước khi gọi IAM. */
+    public List<RealmUser> users(int first, int max) {
+        RealmUser[] values = get("/users?first={first}&max={max}", first, max)
+                .retrieve().body(RealmUser[].class);
+        return values == null ? List.of() : Arrays.asList(values);
+    }
+
     /** Privilege là realm role nguyên tử có mã dạng DOMAIN.ACTION, dùng để xây composite ứng dụng. */
     public List<RealmRole> privilegeRoles() {
         RealmRole[] values = get("/roles?briefRepresentation=false").retrieve().body(RealmRole[].class);
@@ -101,8 +117,14 @@ public class KeycloakClient {
 
     /** Đọc mappings hiệu lực gồm role và privilege; Keycloak thực hiện mở rộng composite. */
     public Set<String> authorities(UUID userId) {
-        RealmRole[] values = get("/users/{id}/role-mappings/realm/composite", userId).retrieve().body(RealmRole[].class);
-        return values == null ? Set.of() : Arrays.stream(values).map(RealmRole::name).collect(Collectors.toSet());
+        try {
+            RealmRole[] values = get("/users/{id}/role-mappings/realm/composite", userId).retrieve().body(RealmRole[].class);
+            return values == null ? Set.of() : Arrays.stream(values).map(RealmRole::name).collect(Collectors.toSet());
+        } catch (ApiException exception) {
+            // Hồ sơ DB vẫn được liệt kê nếu IAM đã mất user liên kết; chỉ role thiếu, lỗi IAM khác vẫn phải báo.
+            if ("IAM_USER_NOT_FOUND".equals(exception.getCode())) { return Set.of(); }
+            throw exception;
+        }
     }
 
     /** Gán toàn bộ role ứng dụng sau khi xác minh tất cả mã; không đụng role hệ thống. */
@@ -123,6 +145,12 @@ public class KeycloakClient {
     public void disable(UUID userId) {
         mutate("PUT", "/users/" + userId, Map.of("enabled", false));
         mutate("POST", "/users/" + userId + "/logout", Map.of());
+    }
+
+    /** Đồng bộ enabled state trong IAM; khóa sẽ thu hồi refresh session, mở khóa không thay đổi mật khẩu/role. */
+    public void setEnabled(UUID userId, boolean enabled) {
+        mutate("PUT", "/users/" + userId, Map.of("enabled", enabled));
+        if (!enabled) { mutate("POST", "/users/" + userId + "/logout", Map.of()); }
     }
 
     /** Tạo/cập nhật/xóa IAM qua REST; không dùng transaction DB để giả lập rollback liên service. */

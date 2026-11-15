@@ -17,10 +17,13 @@ import type { User } from '../../types'
  */
 export const useSessionStore = create<{
     user: User | null
+    sessionReady: boolean
     setUser: (user: User | null) => Promise<void>
     restoreSession: () => Promise<void>
 }>((set) => ({
     user: readSession()?.user || null,
+    // Cache profile chỉ để dựng app trong lúc probe cookie; header không hiển thị tài khoản trước khi xác minh xong.
+    sessionReady: false,
     setUser: async (user) => {
         if (!user) {
             await api('/auth/logout', { method: 'POST' }, false)
@@ -29,7 +32,7 @@ export const useSessionStore = create<{
             // Lưu cả khi cache tab còn rỗng; profile có thể vừa được lấy từ login hoặc cookie hiện hữu.
             saveSession({ user })
         }
-        set({ user })
+        set({ user, sessionReady: true })
     },
     /**
      * Khôi phục thông tin phiên người dùng khi component mount hoặc trở về từ cổng thanh toán VNPAY.
@@ -38,6 +41,7 @@ export const useSessionStore = create<{
      */
     restoreSession: () => {
         if (restoring) return restoring
+        set({ sessionReady: false })
         // Kích hoạt cờ cho phép probe cookie HttpOnly một lần duy nhất khi khởi động ứng dụng
         setCanAttemptRefresh(true)
         const revision = sessionRevision
@@ -62,10 +66,12 @@ export const useSessionStore = create<{
                     saveSession({ user: mapUser(profile) })
             })
             .catch(() => {
-                // Client đã xử lý refresh/hết phiên; lỗi mạng không xóa profile hoặc gửi logout.
+                // Profile cache không chứng minh được phiên; lỗi probe cũng phải hiển thị như Guest.
+                if (revision === sessionRevision) saveSession(null)
             })
             .finally(() => {
                 restoring = null
+                set({ sessionReady: true })
             })
         return restoring
     },

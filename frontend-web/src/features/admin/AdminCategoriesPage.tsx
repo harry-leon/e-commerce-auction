@@ -61,7 +61,7 @@ export function AdminCategoriesPage() {
     }
     return (
         <AdminLayout title="Quản lý danh mục">
-            <LoadState error={failure || error} loading={loading} />
+            {/* Giữ form tạo/sửa ở đầu nội dung; spinner tải cây danh mục đặt phía dưới để form không nhảy vị trí. */}
             <form
                 key={editing?.id || 'new'}
                 onSubmit={submit}
@@ -116,6 +116,7 @@ export function AdminCategoriesPage() {
                     {editing && <Button onClick={() => setEditing(null)}>Hủy</Button>}
                 </div>
             </form>
+            <LoadState error={failure || error} loading={loading} />
             <div className="nexus-card p-4">
                 {categories.map((item) => (
                     <div

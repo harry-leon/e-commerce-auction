@@ -12,7 +12,6 @@ import com.nexus.common.exception.ApiException;
 import com.nexus.common.exception.ErrorCode;
 import com.nexus.fulfillment.config.FulfillmentProperties;
 import com.nexus.fulfillment.dto.request.CarrierWebhookRequest;
-import com.nexus.fulfillment.dto.request.CreateShipmentRequest;
 import com.nexus.fulfillment.dto.request.ShippingQuoteRequest;
 import com.nexus.fulfillment.dto.response.ShipmentResponse;
 import com.nexus.fulfillment.dto.response.ShippingQuoteResponse;
@@ -37,7 +36,6 @@ import com.nexus.fulfillment.shipping.adapter.resilience.CarrierCircuitBreaker;
 import com.nexus.fulfillment.shipping.adapter.resilience.CarrierCircuitBreakerState;
 import com.nexus.fulfillment.shipping.adapter.resilience.CarrierResilienceManager;
 import com.nexus.fulfillment.shipping.adapter.resilience.CarrierRetryPolicy;
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.SocketTimeoutException;
 import java.time.Instant;
@@ -120,6 +118,11 @@ class CarrierResilienceAndDuplicateCallbackTest {
                 outboxService,
                 resilienceManager
         );
+        // Fixture guard không dùng DB ở test resilience; PostgreSQL test riêng bảo vệ commit/UNKNOWN thực.
+        var guard = org.mockito.Mockito.mock(com.nexus.fulfillment.service.ShipmentDispatchGuard.class);
+        org.mockito.Mockito.when(guard.send(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenAnswer(call -> ((java.util.function.Supplier<?>) call.getArgument(2)).get());
+        shippingService.setDispatchGuard(guard);
     }
 
     @Test

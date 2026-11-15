@@ -28,6 +28,29 @@ public class RefundRequestService {
     private final CheckoutLock locks;
 
     /**
+     * Admin xác nhận đã kiểm tra điều kiện hủy/return bằng ghi chú tham chiếu nghiệp vụ trước dispatch.
+     * Chỉ duyệt REQUESTED, không gọi provider; approval cũ bất biến để không thay actor/bằng chứng âm thầm.
+     * Chưa tự kiểm chứng carrier cancel/return: người duyệt chịu trách nhiệm đối chiếu ngoài API này.
+     */
+    @PreAuthorize("hasRole('ADMIN')")
+    @Transactional
+    public RefundResponse approve(UUID id, UUID actor, String note) {
+        if (actor == null || note == null || note.isBlank() || note.trim().length() > 500) {
+            throw error("REFUND_REQUEST_INVALID", HttpStatus.BAD_REQUEST, "Cần ghi chú duyệt dispatch hợp lệ");
+        }
+        var rows = jdbc.queryForList("SELECT status,dispatch_approved_at FROM refund_requests WHERE id=? FOR UPDATE", id);
+        if (rows.isEmpty()) { throw notFound(); }
+        if (rows.getFirst().get("dispatch_approved_at") == null) {
+            if (!"REQUESTED".equals(rows.getFirst().get("status"))) {
+                throw error("REFUND_REQUIRES_REVIEW", HttpStatus.CONFLICT, "Refund không còn chờ duyệt");
+            }
+            jdbc.update("UPDATE refund_requests SET dispatch_approved_by=?,dispatch_approved_at=CURRENT_TIMESTAMP,"
+                    + "dispatch_note=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", actor, note.trim(), id);
+        }
+        return get(id, actor, true);
+    }
+
+    /**
      * Admin gửi paymentId, key UUID và reason; tiền lấy từ DB, chỉ nhận VNPAY có kết quả thu tiền đã xác minh.
      * Replay cùng key/nội dung trả bản ghi cũ; nội dung khác trả 409. Chưa hỗ trợ COD/partial refund.
      * Khóa DB tự nhả khi commit/rollback; lỗi không giữ hạn mức hoặc tạo yêu cầu nửa chừng.
@@ -56,9 +79,18 @@ public class RefundRequestService {
         if (orderIds.isEmpty()) { throw notFound(); }
         UUID orderId = orderIds.getFirst();
         jdbc.queryForList("SELECT id FROM orders WHERE id=? FOR UPDATE", orderId);
+        // Cùng khóa Order với claim: sau khi giữ quyền gửi hàng, không tạo refund mới cho tới đối soát cancel/return.
+        // Replay yêu cầu refund cũ vẫn trả audit cũ ở phía trên, không tạo thêm giao dịch hoặc giải phóng claim.
+        if (jdbc.queryForObject("SELECT count(*) FROM shipping_dispatch_claims WHERE order_id=?", Integer.class, orderId) > 0) {
+            throw error("REFUND_SHIPPING_CLAIMED", HttpStatus.CONFLICT, "Đơn đã giữ quyền dispatch, cần đối soát hủy/return trước refund");
+        }
         var payments = jdbc.queryForList("SELECT * FROM payments WHERE id=? FOR UPDATE", paymentId);
         if (payments.isEmpty()) { throw notFound(); }
         var payment = payments.getFirst();
+        // Kết quả muộn mâu thuẫn phải được kiểm tra riêng; FAILED cũ không được tự mở lại khả năng gửi tiền.
+        if (jdbc.queryForObject("SELECT count(*) FROM refund_payment_holds WHERE payment_id=?", Integer.class, paymentId) > 0) {
+            throw error("REFUND_REQUIRES_REVIEW", HttpStatus.CONFLICT, "Payment có kết quả refund mâu thuẫn cần đối soát");
+        }
         String reference = (String) payment.get("provider_ref");
         String merchant = (String) payment.get("merchant_code");
         // Không cho dữ liệu DEMO_ONLY hoặc SUCCESS chưa có reference đã xác minh đi vào workflow tài chính thật.

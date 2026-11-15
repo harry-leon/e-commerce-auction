@@ -314,6 +314,10 @@
         "description": "Internal service privilege; require matching azp"
       },
       {
+        "name": "SHIPPING.ORDER_PAID",
+        "description": "Internal Commerce shipping command; require matching azp"
+      },
+      {
         "name": "COMMERCE.AUCTION",
         "description": "Internal service privilege; require matching azp"
       },
@@ -491,6 +495,7 @@
       "serviceAccountClientId": "nexus-commerce-service",
       "realmRoles": [
         "INVENTORY.ORDER",
+        "SHIPPING.ORDER_PAID",
         "REPUTATION.PENALTY",
         "AUCTION.SETTLEMENT_SYNC",
         "USER.INTERNAL_READ"
@@ -517,6 +522,7 @@
       "client": "nexus-commerce-service",
       "roles": [
         "INVENTORY.ORDER",
+        "SHIPPING.ORDER_PAID",
         "REPUTATION.PENALTY",
         "AUCTION.SETTLEMENT_SYNC",
         "USER.INTERNAL_READ"

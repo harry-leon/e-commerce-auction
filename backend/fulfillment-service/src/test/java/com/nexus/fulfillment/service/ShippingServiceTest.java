@@ -85,6 +85,11 @@ class ShippingServiceTest {
                 outboxService
         );
 
+        // Unit test chỉ kiểm tra orchestration; guard PostgreSQL được kiểm tra riêng, fixture gọi đúng supplier carrier.
+        var guard = mock(ShipmentDispatchGuard.class);
+        when(guard.send(any(), any(), any())).thenAnswer(call ->
+                ((java.util.function.Supplier<?>) call.getArgument(2)).get());
+        shippingService.setDispatchGuard(guard);
         defaultWarehouse = new Warehouse(
                 UUID.fromString("a0000000-0000-0000-0000-000000000001"),
                 "WH_001",

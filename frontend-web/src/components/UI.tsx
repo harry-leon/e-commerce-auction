@@ -236,6 +236,15 @@ export function Checkbox({
 }
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────
+/**
+ * Công tắc bật/tắt (Toggle Switch) dùng chung toàn hệ thống.
+ * - Chức năng: Cho phép người dùng bật/tắt các trạng thái nhị phân (ví dụ: Cho phép đấu giá).
+ * - Đầu vào: checked (boolean), onChange (callback), label (nhãn văn bản tùy chọn), disabled (vô hiệu hóa).
+ * - Kết quả: Hiển thị thanh trượt switch chuẩn xác với hoạt ảnh mượt mà, không bị tràn viền hay che chữ nhãn.
+ * - Luồng xử lý: Nhận sự kiện click -> đảo ngược giá trị checked -> gọi onChange(!checked).
+ * - Quy tắc & lý do: Đặt kích thước cố định w-11 h-6 (44x24px) với shrink-0 để nút không bị co cụm khi nằm trong flexbox.
+ *   Khoảng cách cố định gap-3 ngăn núm trượt che khuất chữ của nhãn.
+ */
 export function Toggle({
     checked,
     onChange,
@@ -249,21 +258,23 @@ export function Toggle({
 }) {
     return (
         <label
-            className={`flex items-center gap-2 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} select-none`}
+            className={`inline-flex items-center gap-3 select-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
         >
             <button
                 type="button"
                 disabled={disabled}
-                onClick={() => !disabled && onChange(!checked)}
-                className={`w-10 h-5.5 rounded-full relative transition-colors ${checked ? 'bg-primary' : 'bg-gray-300'}`}
-                style={{ width: 40, height: 22 }}
+                onClick={(e) => {
+                    e.preventDefault()
+                    if (!disabled) onChange(!checked)
+                }}
+                className={`w-11 h-6 rounded-full relative transition-colors duration-200 shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/20 ${checked ? 'bg-primary' : 'bg-gray-300'}`}
+                style={{ width: 44, height: 24 }}
             >
                 <span
-                    className={`absolute top-0.5 w-[18px] h-[18px] bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-[19px]' : 'translate-x-0.5'}`}
-                    style={{ transition: 'transform 150ms' }}
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${checked ? 'translate-x-5' : 'translate-x-0'}`}
                 />
             </button>
-            {label && <span className="text-sm text-gray-700">{label}</span>}
+            {label && <span className="text-sm font-medium text-gray-700">{label}</span>}
         </label>
     )
 }
@@ -496,30 +507,45 @@ export function Tabs({
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
+/** Phân trang danh sách tại client; nhãn nút điều hướng do trang gọi truyền vào để giữ i18n. */
 export function Pagination({
     page,
     total,
     perPage,
     onChange,
+    previousLabel,
+    nextLabel,
 }: {
     page: number
     total: number
     perPage: number
     onChange: (p: number) => void
+    previousLabel?: string
+    nextLabel?: string
 }) {
-    const pages = Math.ceil(total / perPage)
-    if (pages <= 1) return null
+    const pages = Math.max(1, Math.ceil(total / perPage))
+    // Giữ tối đa năm số trang; dấu ba chấm cho biết còn trang trước hoặc sau dãy đang hiển thị.
+    const visiblePages = pages <= 5
+        ? Array.from({ length: pages }, (_, index) => index + 1)
+        : page <= 3
+          ? [1, 2, 3, 4, 5]
+          : page >= pages - 2
+            ? Array.from({ length: 5 }, (_, index) => pages - 4 + index)
+            : Array.from({ length: 5 }, (_, index) => page - 2 + index)
+    const showLeadingEllipsis = pages > 5 && page > 3
+    const showTrailingEllipsis = pages > 5 && page < pages - 2
     return (
         <div className="flex items-center gap-1">
             <button
                 onClick={() => onChange(page - 1)}
                 disabled={page === 1}
+                aria-label={previousLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronLeft size={14} />
             </button>
-            {Array.from({ length: Math.min(pages, 7) }, (_, i) => {
-                const p = i + 1
+            {showLeadingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
+            {visiblePages.map((p) => {
                 return (
                     <button
                         key={p}
@@ -530,9 +556,11 @@ export function Pagination({
                     </button>
                 )
             })}
+            {showTrailingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
             <button
                 onClick={() => onChange(page + 1)}
                 disabled={page === pages}
+                aria-label={nextLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronRight size={14} />
@@ -798,9 +826,44 @@ export function ProgressBar({ value, max, label }: { value: number; max: number;
 }
 
 // ─── Reputation Bar ────────────────────────────────────────────────────────────
-export function ReputationBar({ score }: { score: number }) {
-    const level =
-        score >= 90 ? 'Platinum' : score >= 70 ? 'Gold' : score >= 50 ? 'Silver' : 'Bronze'
+/**
+ * Chức năng: Thanh tiến trình hiển thị điểm uy tín và các mốc xếp hạng người dùng (Bronze, Silver, Gold, Platinum).
+ * Đầu vào: score (điểm uy tín người dùng), lang (tùy chọn mã ngôn ngữ 'vi' | 'en', mặc định lấy từ useApp).
+ * Kết quả: Giao diện thanh tiến trình kèm cấp độ uy tín và các mốc thang đo (0, 50, 70, 90) được bản địa hóa đầy đủ.
+ * Luồng & Quy tắc:
+ *   - >= 90: Bạch kim (Platinum)
+ *   - >= 70: Vàng (Gold)
+ *   - >= 50: Bạc (Silver)
+ *   - < 50: Đồng (Bronze)
+ *   - Khi ở tiếng Việt (VI): hiển thị "Đồng (0)  Bạc (50)  Vàng (70)  Bạch kim (90)" và nhãn điểm "điểm".
+ *   - Khi ở tiếng Anh (EN): hiển thị "Bronze (0)  Silver (50)  Gold (70)  Platinum (90)" và nhãn điểm "pts".
+ */
+export function ReputationBar({ score, lang: langProp }: { score: number; lang?: 'en' | 'vi' }) {
+    const app = useApp()
+    const lang = langProp || app?.lang || 'vi'
+
+    const tierKey =
+        score >= 90 ? 'platinum' : score >= 70 ? 'gold' : score >= 50 ? 'silver' : 'bronze'
+
+    const labels: Record<'en' | 'vi', { bronze: string; silver: string; gold: string; platinum: string; pts: string }> = {
+        en: {
+            bronze: 'Bronze',
+            silver: 'Silver',
+            gold: 'Gold',
+            platinum: 'Platinum',
+            pts: 'pts',
+        },
+        vi: {
+            bronze: 'Đồng',
+            silver: 'Bạc',
+            gold: 'Vàng',
+            platinum: 'Bạch kim',
+            pts: 'điểm',
+        },
+    }
+
+    const currentLabels = labels[lang] || labels.en
+    const level = currentLabels[tierKey]
     const cls =
         score >= 90
             ? 'trust-platinum'
@@ -809,18 +872,19 @@ export function ReputationBar({ score }: { score: number }) {
               : score >= 50
                 ? 'trust-silver'
                 : 'trust-bronze'
+
     return (
         <div className="space-y-2">
             <div className="flex items-center justify-between">
-                <span className={`font-bold text-lg ${cls}`}>{score} pts</span>
+                <span className={`font-bold text-lg ${cls}`}>{score} {currentLabels.pts}</span>
                 <span className={`font-semibold text-sm ${cls}`}>{level}</span>
             </div>
             <ProgressBar value={score} max={100} />
             <div className="flex justify-between text-xs text-gray-400">
-                <span>Bronze (0)</span>
-                <span>Silver (50)</span>
-                <span>Gold (70)</span>
-                <span>Platinum (90)</span>
+                <span>{currentLabels.bronze} (0)</span>
+                <span>{currentLabels.silver} (50)</span>
+                <span>{currentLabels.gold} (70)</span>
+                <span>{currentLabels.platinum} (90)</span>
             </div>
         </div>
     )
@@ -1012,6 +1076,40 @@ export const Eye = ({ size = 16, className = '' }: IconProps) => (
     >
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
         <circle cx="12" cy="12" r="3" />
+    </svg>
+)
+/** Icon ổ khóa đóng biểu thị tài khoản bị khóa hoặc thao tác khóa. */
+export const Lock = ({ size = 16, className = '' }: IconProps) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+)
+/** Icon ổ khóa mở biểu thị tài khoản đang hoạt động hoặc thao tác mở khóa. */
+export const Unlock = ({ size = 16, className = '' }: IconProps) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 9.9-1" />
     </svg>
 )
 export const EyeOff = ({ size = 16, className = '' }: IconProps) => (

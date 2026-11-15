@@ -1,6 +1,13 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useApp } from '../../context'
-import { tr, formatCurrency, formatDate, formatDateTime } from '../../i18n'
+import {
+    tr,
+    formatCurrency,
+    formatDate,
+    formatDateTime,
+    resolveBilingualName,
+    resolveBilingualDescription,
+} from '../../i18n'
 import { SellerLayout } from '../../components/Layout'
 import {
     Button,
@@ -13,7 +20,6 @@ import {
     AlertBanner,
     EmptyState,
     StatusBadge,
-    StarRating,
     ReputationBar,
     DataTable,
     Toggle,
@@ -31,11 +37,24 @@ import {
     Bell,
     Truck,
     Copy,
+    BootstrapSpinner,
+    Pagination,
+    Search,
 } from '../../components/UI'
 import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
+import {
+    reputationApi,
+    type ReputationSummary,
+    type RatingResponse,
+} from '../../api/reputation'
+import {
+    TrustLevelBadge,
+    RatingModal,
+    RatingsList,
+} from '../../components/ReputationRating'
 import {
     shippingApi,
     type ShipmentResponse,
@@ -54,6 +73,7 @@ import {
 import {
     adjustStock,
     createInventoryIdempotencyKey,
+    getAllStockBySku,
     getInventoryLedger,
     getBatchStock,
     getSellerSkuDetail,
@@ -118,7 +138,23 @@ const VIETNAMESE_BANKS = [
     ['kbank', 'Kasikornbank Việt Nam'],
 ].map(([value, label]) => ({ value, label }))
 
-const formatVnd = (amount: number) => `${amount.toLocaleString('vi-VN')} ₫`
+// Định dạng số tiền VND an toàn, phòng ngừa amount là null/undefined khiến trang bị sập
+const formatVnd = (amount: number | null | undefined) =>
+    `${(typeof amount === 'number' && Number.isFinite(amount) ? amount : (Number(amount) || 0)).toLocaleString('vi-VN')} ₫`
+
+/**
+ * Chức năng: Component hiển thị trạng thái loading spinner đồng bộ với Admin portal.
+ * Đầu vào: label (mô tả thao tác đang tải).
+ * Luồng & Quy tắc: Sử dụng BootstrapSpinner size="lg" chuẩn thương hiệu đồng bộ hoàn toàn với Admin portal.
+ */
+function SellerLoading({ label }: { label: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-gray-500" role="status">
+            <BootstrapSpinner size="lg" />
+            <span className="text-sm font-medium">{label}</span>
+        </div>
+    )
+}
 
 // ─── Seller Dashboard ──────────────────────────────────────────────────────────
 export function SellerDashboardPage() {
@@ -282,7 +318,7 @@ export function SellerDashboardPage() {
                                 label: lang === 'en' ? 'Total' : 'Tổng',
                                 render: (r: any) => (
                                     <span className="font-bold text-primary">
-                                        {formatCurrency(r.total, lang)}
+                                        {formatCurrency(r.total ?? r.totalAmount ?? 0, lang)}
                                     </span>
                                 ),
                             },
@@ -321,6 +357,12 @@ export function SellerBalancePage() {
     const [withdrawBank, setWithdrawBank] = useState('')
     const [withdrawAccountNumber, setWithdrawAccountNumber] = useState('')
     const transactions: any[] = []
+    const [transPage, setTransPage] = useState(1)
+    const transPerPage = 10
+    const visibleTrans = transactions.slice(
+        (transPage - 1) * transPerPage,
+        transPage * transPerPage,
+    )
 
     return (
         <SellerLayout title={lang === 'en' ? 'Balance' : 'Số dư'}>
@@ -381,7 +423,7 @@ export function SellerBalancePage() {
                 </div>
                 <div className="p-5">
                     {transactions.length === 0 && <p className="text-sm text-gray-500">{lang === 'en' ? 'Balance API is not available.' : 'Backend chưa cung cấp API số dư.'}</p>}
-                    {transactions.map((transaction) => (
+                    {visibleTrans.map((transaction) => (
                         <div
                             key={transaction.id}
                             className="flex items-center justify-between py-4 border-b border-border last:border-0"
@@ -414,6 +456,20 @@ export function SellerBalancePage() {
                             </div>
                         </div>
                     ))}
+                    {transactions.length > transPerPage && (
+                        <div className="flex justify-center border-t border-border px-4 py-3 mt-4">
+                            <nav aria-label={tr(lang, 'listPagination')}>
+                                <Pagination
+                                    page={transPage}
+                                    total={transactions.length}
+                                    perPage={transPerPage}
+                                    onChange={setTransPage}
+                                    previousLabel={tr(lang, 'previousPage')}
+                                    nextLabel={tr(lang, 'nextPage')}
+                                />
+                            </nav>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -518,6 +574,8 @@ export function SellerProductListPage() {
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [refreshKey, setRefreshKey] = useState(0)
     const [inventoryBySku, setInventoryBySku] = useState<Record<string, number>>({})
+    // State lưu sản phẩm đang xem chi tiết để mở modal Product Details
+    const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
 
     // Kiểm tra xem seller có ID dạng UUID hợp lệ từ backend hay không
     const isUuid = Boolean(
@@ -532,6 +590,22 @@ export function SellerProductListPage() {
         Envelope<ApiProduct[]> | ApiProduct[]
     >(productUrl)
 
+    // Tải danh mục thực tế từ Catalog Service để hiển thị tên danh mục trong modal chi tiết
+    const { data: catEnvelope } = useLoad<Envelope<ApiCategory[]> | ApiCategory[]>('/categories')
+    const rawCats = (catEnvelope as any)?.data ?? catEnvelope
+    const categoriesList: ApiCategory[] = Array.isArray(rawCats) ? rawCats : []
+    const categoryNameById = useMemo(() => {
+        const map = new Map<string, { en: string; vi: string }>()
+        const traverse = (cats: ApiCategory[]) => {
+            cats.forEach((c) => {
+                map.set(c.id, { en: c.name, vi: c.nameVi || c.name })
+                if (c.children?.length) traverse(c.children)
+            })
+        }
+        traverse(categoriesList)
+        return map
+    }, [categoriesList])
+
     /**
      * Chức năng: Dọn sạch hoàn toàn các bản ghi rác/mock lưu tạm từ các phiên bản cũ trong localStorage.
      * Quy tắc & lý do: Đảm bảo người dùng chỉ tương tác với dữ liệu thật trong cơ sở dữ liệu Supabase.
@@ -541,6 +615,28 @@ export function SellerProductListPage() {
             localStorage.removeItem('nexus_seller_created_products')
         } catch {}
     }, [])
+
+    /**
+     * Chức năng: Đồng bộ thông tin tồn kho thời gian thực trên toàn bộ hệ thống kho khi mở modal Chi tiết sản phẩm.
+     * Đầu vào: selectedProduct.skuId.
+     * Kết quả: Cập nhật selectedProduct.stock với số lượng thực tế từ Fulfillment Service.
+     */
+    useEffect(() => {
+        if (!selectedProduct?.skuId) return
+        let active = true
+        getAllStockBySku(selectedProduct.skuId)
+            .then((stocks) => {
+                if (!active || !Array.isArray(stocks) || stocks.length === 0) return
+                const totalAvail = stocks.reduce((sum, s) => sum + (s.availableQty ?? 0), 0)
+                setSelectedProduct((curr: any) =>
+                    curr && curr.id === selectedProduct.id ? { ...curr, stock: totalAvail } : curr,
+                )
+            })
+            .catch(() => {})
+        return () => {
+            active = false
+        }
+    }, [selectedProduct?.id, selectedProduct?.skuId])
 
     /**
      * Chức năng: Ánh xạ danh sách sản phẩm thật 100% của người bán từ Catalog backend.
@@ -559,30 +655,67 @@ export function SellerProductListPage() {
         }
         getBatchStock({ skuIds })
             .then((stocks) => {
-                if (active) setInventoryBySku(Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty])))
+                if (active) {
+                    const map = Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty]))
+                    setInventoryBySku((prev) => ({ ...prev, ...map }))
+                }
             })
-            .catch(() => {
-                if (active) setInventoryBySku({})
+            .catch(() => {})
+
+        // Đồng thời đọc tồn kho tổng hợp từ seller_skus trên toàn bộ kho hàng (kể cả kho demo Đà Nẵng)
+        listSellerSkus({ size: 100 })
+            .then((res) => {
+                if (!active || !Array.isArray(res?.items)) return
+                const map: Record<string, number> = {}
+                res.items.forEach((item) => {
+                    if (item.skuId) map[item.skuId] = item.availableQty ?? item.totalQty ?? 0
+                })
+                setInventoryBySku((prev) => ({ ...prev, ...map }))
             })
+            .catch(() => {})
         return () => { active = false }
     }, [prodEnvelope])
+    /**
+     * Chức năng: Ánh xạ danh sách sản phẩm thật của người bán từ Catalog backend kèm giải quyết song ngữ VI / EN.
+     * Đầu vào: rawList (mảng sản phẩm từ Catalog Service).
+     * Kết quả: Danh sách sản phẩm có trường name, nameVi, description, descriptionVi tách biệt theo ngôn ngữ.
+     * Luồng: Gọi resolveBilingualName và resolveBilingualDescription để bóc tách song ngữ, lưu trữ cả chuỗi thô rawName/rawDescription.
+     */
     const apiProducts = Array.isArray(rawList)
-        ? rawList.map((p: ApiProduct) => ({
-              id: p.id,
-              name: p.name,
-              nameVi: p.name,
-              price: p.skus?.[0]?.price ?? p.minPrice ?? 0,
-              originalPrice: p.skus?.[0]?.originalPrice ?? null,
-              sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
-              hasFulfillmentCode: Boolean(p.skus?.[0]?.skuCode),
-              // Inventory API là nguồn tồn duy nhất; SKU chưa có số liệu trả về 0.
-              stock: inventoryBySku[p.skus?.[0]?.id || ''] ?? 0,
-              images:
-                  p.images && p.images.length > 0
-                      ? p.images.map((img) => img.url)
-                      : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
-              status: (p.status ? p.status.toLowerCase() : 'draft') as ProductStatus,
-          }))
+        ? rawList.map((p: ApiProduct) => {
+              const cat = p.categoryId ? categoryNameById.get(p.categoryId) : null
+              const categoryLabel = cat
+                  ? (lang === 'vi' ? cat.vi : cat.en)
+                  : (lang === 'vi' ? 'Thiết bị điện tử' : 'Electronics')
+              const prodNameEn = resolveBilingualName(p.name, 'en')
+              const prodNameVi = resolveBilingualName(p.name, 'vi')
+              const prodDescEn = resolveBilingualDescription(p.description, 'en')
+              const prodDescVi = resolveBilingualDescription(p.description, 'vi')
+              return {
+                  id: p.id,
+                  rawName: p.name,
+                  name: prodNameEn,
+                  nameVi: prodNameVi,
+                  price: p.skus?.[0]?.price ?? p.minPrice ?? 0,
+                  originalPrice: p.skus?.[0]?.originalPrice ?? null,
+                  sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
+                  skuId: p.skus?.[0]?.id || null,
+                  category: categoryLabel,
+                  categoryId: p.categoryId,
+                  rawDescription: p.description,
+                  description: prodDescEn,
+                  descriptionVi: prodDescVi,
+                  hasFulfillmentCode: Boolean(p.skus?.[0]?.skuCode),
+                  skus: p.skus || [],
+                  // Inventory API là nguồn tồn duy nhất; SKU chưa có số liệu trả về 0.
+                  stock: inventoryBySku[p.skus?.[0]?.id || ''] ?? 0,
+                  images:
+                      p.images && p.images.length > 0
+                          ? p.images.map((img) => img.url)
+                          : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+                  status: (p.status ? p.status.toLowerCase() : 'draft') as ProductStatus,
+              }
+          })
         : []
 
     // Sử dụng trực tiếp danh sách sản phẩm thật từ Catalog Service
@@ -596,6 +729,15 @@ export function SellerProductListPage() {
         (p) =>
             (statusFilter === 'all' || p.status === statusFilter) &&
             (!search || p.name.toLowerCase().includes(search.toLowerCase())),
+    )
+
+    // Phân trang sản phẩm đồng bộ với Admin: mỗi trang tối đa 10 sản phẩm
+    const [productsPage, setProductsPage] = useState(1)
+    const productsPerPage = 10
+    useEffect(() => setProductsPage(1), [search, statusFilter])
+    const visibleProducts = filtered.slice(
+        (productsPage - 1) * productsPerPage,
+        productsPage * productsPerPage,
     )
 
     return (
@@ -645,20 +787,13 @@ export function SellerProductListPage() {
 
             <div className="nexus-card">
                 {loadingProducts ? (
-                    <div className="py-12 text-center text-gray-400">
-                        <div
-                            className="spinner-border text-primary mb-2"
-                            style={{ color: '#ee4d2d' }}
-                            role="status"
-                        >
-                            <span className="visually-hidden">Loading...</span>
-                        </div>
-                        <p>
-                            {lang === 'en'
+                    <SellerLoading
+                        label={
+                            lang === 'en'
                                 ? 'Loading products...'
-                                : 'Đang tải danh sách sản phẩm...'}
-                        </p>
-                    </div>
+                                : 'Đang tải danh sách sản phẩm...'
+                        }
+                    />
                 ) : filtered.length === 0 ? (
                     <div className="p-8">
                         <EmptyState
@@ -675,116 +810,138 @@ export function SellerProductListPage() {
                         />
                     </div>
                 ) : (
-                    <DataTable
-                        columns={[
-                            {
-                                key: 'image',
-                                label: '',
-                                width: '60px',
-                                render: (r: any) => (
-                                    <img
-                                        src={r.images[0]}
-                                        alt=""
-                                        className="w-10 h-10 object-cover rounded-lg"
-                                    />
-                                ),
-                            },
-                            {
-                                key: 'name',
-                                label: lang === 'en' ? 'Product' : 'Sản phẩm',
-                                render: (r: any) => (
-                                    <div>
-                                        <p className="font-semibold text-sm line-clamp-1">
-                                            {lang === 'vi' ? r.nameVi : r.name}
-                                        </p>
-                                        <p className="text-xs text-gray-400">{r.sku}</p>
-                                    </div>
-                                ),
-                            },
-                            {
-                                key: 'price',
-                                label: tr(lang, 'price'),
-                                render: (r: any) => (
-                                    <div>
-                                        <div className="font-bold text-primary">
-                                            {formatCurrency(r.price, lang)}
+                    <>
+                        <DataTable
+                            columns={[
+                                {
+                                    key: 'image',
+                                    label: '',
+                                    width: '60px',
+                                    render: (r: any) => (
+                                        <img
+                                            src={r.images[0]}
+                                            alt=""
+                                            className="w-10 h-10 object-cover rounded-lg"
+                                        />
+                                    ),
+                                },
+                                {
+                                    key: 'name',
+                                    label: lang === 'en' ? 'Product' : 'Sản phẩm',
+                                    render: (r: any) => (
+                                        <div>
+                                            <p className="font-semibold text-sm line-clamp-1">
+                                                {lang === 'vi' ? r.nameVi : r.name}
+                                            </p>
+                                            <p className="text-xs text-gray-400">{r.sku}</p>
                                         </div>
-                                        {r.originalPrice && r.originalPrice > r.price && (
-                                            <div className="flex items-center gap-1 text-[11px] text-gray-400">
-                                                <span className="line-through">
+                                    ),
+                                },
+                                {
+                                    key: 'price',
+                                    label: tr(lang, 'price'),
+                                    render: (r: any) => (
+                                        <div>
+                                            <div className="font-bold text-primary">
+                                                {formatCurrency(r.price, lang)}
+                                            </div>
+                                            {r.originalPrice && r.originalPrice > r.price && (
+                                                <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                                                    <span className="line-through">
+                                                        {formatCurrency(r.originalPrice, lang)}
+                                                    </span>
+                                                    <span className="text-amber-600 font-medium">
+                                                        -
+                                                        {Math.round(
+                                                            ((r.originalPrice - r.price) /
+                                                                r.originalPrice) *
+                                                                100,
+                                                        )}
+                                                        %
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {r.originalPrice && r.originalPrice < r.price && (
+                                                <div className="text-[10px] text-gray-400">
+                                                    {lang === 'en' ? 'Cost' : 'Vốn'}:{' '}
                                                     {formatCurrency(r.originalPrice, lang)}
-                                                </span>
-                                                <span className="text-amber-600 font-medium">
-                                                    -
-                                                    {Math.round(
-                                                        ((r.originalPrice - r.price) /
-                                                            r.originalPrice) *
-                                                            100,
-                                                    )}
-                                                    %
-                                                </span>
-                                            </div>
-                                        )}
-                                        {r.originalPrice && r.originalPrice < r.price && (
-                                            <div className="text-[10px] text-gray-400">
-                                                {lang === 'en' ? 'Cost' : 'Vốn'}:{' '}
-                                                {formatCurrency(r.originalPrice, lang)}
-                                            </div>
-                                        )}
-                                    </div>
-                                ),
-                            },
-                            {
-                                key: 'stock',
-                                label: tr(lang, 'stock'),
-                                render: (r: any) => (
-                                    <span
-                                        className={
-                                            r.stock <= 3 ? 'text-danger font-bold' : 'text-gray-700'
-                                        }
-                                    >
-                                        {r.stock}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'status',
-                                label: tr(lang, 'status'),
-                                render: (r: any) => (
-                                    <StatusBadge status={r.status} label={statusLabel(r.status)} />
-                                ),
-                            },
-                            {
-                                key: 'actions',
-                                label: tr(lang, 'actions'),
-                                render: (r: any) => (
-                                    <div className="flex gap-1">
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                navigate('seller-edit-product', { id: r.id })
-                                            }}
-                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-500"
+                                                </div>
+                                            )}
+                                        </div>
+                                    ),
+                                },
+                                {
+                                    key: 'stock',
+                                    label: tr(lang, 'stock'),
+                                    render: (r: any) => (
+                                        <span
+                                            className={
+                                                r.stock <= 3 ? 'text-danger font-bold' : 'text-gray-700'
+                                            }
                                         >
-                                            <Pencil size={14} />
-                                        </button>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                setDeleteId(r.id)
-                                            }}
-                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                ),
-                            },
-                        ]}
-                        data={filtered}
-                        rowKey={(r) => r.id}
-                        onRowClick={(r) => navigate('seller-edit-product', { id: r.id })}
-                    />
+                                            {r.stock}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'status',
+                                    label: tr(lang, 'status'),
+                                    render: (r: any) => (
+                                        <StatusBadge status={r.status} label={statusLabel(r.status)} />
+                                    ),
+                                },
+                                {
+                                    key: 'actions',
+                                    label: tr(lang, 'actions'),
+                                    render: (r: any) => (
+                                        <div className="flex gap-1">
+                                            {/* Nút chỉnh sửa sản phẩm riêng biệt (bấm vào hàng đã mở xem chi tiết nên bỏ icon eye) */}
+                                            <button
+                                                type="button"
+                                                title={lang === 'en' ? 'Edit product' : 'Chỉnh sửa sản phẩm'}
+                                                aria-label={lang === 'en' ? 'Edit product' : 'Chỉnh sửa sản phẩm'}
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    navigate('seller-edit-product', { id: r.id })
+                                                }}
+                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:text-primary-dark"
+                                            >
+                                                <Pencil size={14} />
+                                            </button>
+                                            {/* Nút xóa sản phẩm */}
+                                            <button
+                                                type="button"
+                                                title={lang === 'en' ? 'Delete product' : 'Xóa sản phẩm'}
+                                                aria-label={lang === 'en' ? 'Delete product' : 'Xóa sản phẩm'}
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    setDeleteId(r.id)
+                                                }}
+                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:text-red-700"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ),
+                                },
+                            ]}
+                            data={visibleProducts}
+                            rowKey={(r) => r.id}
+                            onRowClick={(r) => setSelectedProduct(r)}
+                        />
+                        <div className="flex justify-center border-t border-border px-4 py-3">
+                            <nav aria-label={tr(lang, 'listPagination')}>
+                                <Pagination
+                                    page={productsPage}
+                                    total={filtered.length}
+                                    perPage={productsPerPage}
+                                    onChange={setProductsPage}
+                                    previousLabel={tr(lang, 'previousPage')}
+                                    nextLabel={tr(lang, 'nextPage')}
+                                />
+                            </nav>
+                        </div>
+                    </>
                 )}
             </div>
 
@@ -818,6 +975,232 @@ export function SellerProductListPage() {
                 message={tr(lang, 'confirmDeleteMsg')}
                 danger
             />
+
+            {/* Modal hiển thị chi tiết sản phẩm dành cho Người bán (Seller) */}
+            <Modal
+                open={!!selectedProduct}
+                onClose={() => setSelectedProduct(null)}
+                title={lang === 'en' ? 'Product Details' : 'Chi tiết sản phẩm'}
+                size="lg"
+                footer={
+                    <div className="flex justify-between items-center w-full">
+                        <Button
+                            variant="outline"
+                            onClick={() => setSelectedProduct(null)}
+                        >
+                            {lang === 'en' ? 'Close' : 'Đóng'}
+                        </Button>
+                        <Button
+                            variant="primary"
+                            onClick={() => {
+                                const id = selectedProduct?.id
+                                setSelectedProduct(null)
+                                if (id) navigate('seller-edit-product', { id })
+                            }}
+                        >
+                            <Pencil size={14} className="mr-1.5 inline" />
+                            {lang === 'en' ? 'Edit Product' : 'Chỉnh sửa sản phẩm'}
+                        </Button>
+                    </div>
+                }
+            >
+                {selectedProduct && (
+                    <div className="space-y-4">
+                        {/* Header thông tin chính */}
+                        <div className="flex gap-4 items-start p-3 bg-gray-50 rounded-xl">
+                            <img
+                                src={selectedProduct.images?.[0]}
+                                alt=""
+                                className="w-20 h-20 object-cover rounded-lg border flex-shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                                <h4 className="font-bold text-base text-gray-900 leading-snug">
+                                    {resolveBilingualName(selectedProduct.rawName || (lang === 'vi' ? selectedProduct.nameVi : selectedProduct.name), lang)}
+                                </h4>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    SKU:{' '}
+                                    <span className="font-mono text-gray-700">
+                                        {selectedProduct.sku || 'N/A'}
+                                    </span>
+                                </p>
+                                <div className="mt-2">
+                                    <StatusBadge
+                                        status={selectedProduct.status}
+                                        label={statusLabel(selectedProduct.status)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Thống kê 4 ô chỉ số */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                            <div className="p-3 bg-gray-50 rounded-lg min-w-0">
+                                <span className="text-gray-500 text-xs block mb-1">
+                                    {lang === 'en' ? 'Selling Price' : 'Giá bán trên sàn'}
+                                </span>
+                                <span className="font-bold text-primary text-xs sm:text-sm md:text-base whitespace-nowrap block">
+                                    {formatCurrency(selectedProduct.price, lang)}
+                                </span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg min-w-0">
+                                <span className="text-gray-500 text-xs block mb-1">
+                                    {lang === 'en' ? 'Cost / Min Price' : 'Giá gốc / Giá tối thiểu'}
+                                </span>
+                                <span className="font-semibold text-gray-800 text-xs sm:text-sm md:text-base whitespace-nowrap block">
+                                    {selectedProduct.originalPrice
+                                        ? formatCurrency(selectedProduct.originalPrice, lang)
+                                        : formatCurrency(selectedProduct.price, lang)}
+                                </span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg min-w-0">
+                                <span className="text-gray-500 text-xs block mb-1">
+                                    {lang === 'en' ? 'Inventory (SKU)' : 'Tồn kho (SKU)'}
+                                </span>
+                                <span className="font-semibold text-gray-800 text-xs sm:text-sm md:text-base block">
+                                    {selectedProduct.stock !== null && selectedProduct.stock !== undefined
+                                        ? selectedProduct.stock
+                                        : 0}
+                                </span>
+                            </div>
+                            <div className="p-3 bg-gray-50 rounded-lg min-w-0">
+                                <span className="text-gray-500 text-xs block mb-1">
+                                    {lang === 'en' ? 'Category' : 'Danh mục'}
+                                </span>
+                                <span className="font-semibold text-gray-800 truncate block text-xs sm:text-sm md:text-base">
+                                    {selectedProduct.category}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Phân tích chính sách giá động của sàn */}
+                        {selectedProduct.originalPrice &&
+                            selectedProduct.originalPrice !== selectedProduct.price && (
+                                <div className="p-2.5 bg-blue-50/60 border border-blue-100 rounded-lg flex items-center justify-between text-xs text-blue-900">
+                                    <span>
+                                        {lang === 'en'
+                                            ? 'Platform Pricing Policy:'
+                                            : 'Chính sách giá bán sàn:'}
+                                    </span>
+                                    {selectedProduct.price >= selectedProduct.originalPrice ? (
+                                        <span className="font-semibold text-emerald-700">
+                                            {lang === 'en' ? 'Gross Markup' : 'Biên lợi nhuận sàn'}: +
+                                            {formatCurrency(
+                                                selectedProduct.price - selectedProduct.originalPrice,
+                                                lang,
+                                            )}{' '}
+                                            (+
+                                            {(
+                                                ((selectedProduct.price - selectedProduct.originalPrice) /
+                                                    selectedProduct.originalPrice) *
+                                                100
+                                            ).toFixed(1)}
+                                            %)
+                                        </span>
+                                    ) : (
+                                        <span className="font-semibold text-amber-700">
+                                            {lang === 'en' ? 'Discount' : 'Chiết khấu'}: -
+                                            {formatCurrency(
+                                                selectedProduct.originalPrice - selectedProduct.price,
+                                                lang,
+                                            )}{' '}
+                                            (-
+                                            {(
+                                                ((selectedProduct.originalPrice - selectedProduct.price) /
+                                                    selectedProduct.originalPrice) *
+                                                100
+                                            ).toFixed(1)}
+                                            %)
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+
+                        {/* Danh sách biến thể SKU */}
+                        {Array.isArray(selectedProduct.skus) && selectedProduct.skus.length > 0 && (
+                            <div className="p-3 bg-gray-50 rounded-lg text-sm">
+                                <span className="text-gray-500 text-xs block mb-2 font-medium">
+                                    {lang === 'en' ? 'Product Variants (SKUs)' : 'Biến thể SKU của sản phẩm'}
+                                </span>
+                                <div className="space-y-1.5">
+                                    {selectedProduct.skus.map((sku: any, idx: number) => {
+                                        let attrs = sku.attributes
+                                        if (typeof attrs === 'string') {
+                                            try {
+                                                const parsed = JSON.parse(attrs)
+                                                if (typeof parsed === 'object') {
+                                                    attrs = Object.entries(parsed)
+                                                        .map(([k, v]) => `${k}: ${v}`)
+                                                        .join(', ')
+                                                }
+                                            } catch {}
+                                        }
+                                        attrs = resolveBilingualName(attrs, lang)
+                                        return (
+                                            <div
+                                                key={sku.id || idx}
+                                                className="flex items-center justify-between text-xs p-2 bg-white rounded border border-gray-100"
+                                            >
+                                                <div>
+                                                    <span className="font-medium text-gray-800">
+                                                        {attrs || `Biến thể #${idx + 1}`}
+                                                    </span>
+                                                    <span className="text-gray-400 font-mono ml-2">
+                                                        {formatSkuDisplay(sku.id, sku.skuCode)}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-semibold text-primary">
+                                                        {formatCurrency(sku.price || selectedProduct.price, lang)}
+                                                    </span>
+                                                    {sku.originalPrice && (
+                                                        <span className="text-gray-400 line-through text-[11px]">
+                                                            {formatCurrency(sku.originalPrice, lang)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Mô tả chi tiết sản phẩm tách bạch theo ngôn ngữ giao diện VI / EN */}
+                        {(selectedProduct.rawDescription || selectedProduct.description) && (
+                            <div className="p-3 bg-gray-50 rounded-lg text-sm">
+                                <span className="text-gray-500 text-xs block mb-1">
+                                    {tr(lang, 'productDescription')}
+                                </span>
+                                <p className="text-gray-700 text-xs leading-relaxed whitespace-pre-line">
+                                    {resolveBilingualDescription(
+                                        selectedProduct.rawDescription || (lang === 'vi' ? selectedProduct.descriptionVi : selectedProduct.description),
+                                        lang,
+                                    )}
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Tất cả hình ảnh của sản phẩm */}
+                        {selectedProduct.images && selectedProduct.images.length > 1 && (
+                            <div>
+                                <span className="text-gray-500 text-xs block mb-2">
+                                    {lang === 'en' ? 'All Images' : 'Tất cả hình ảnh'}
+                                </span>
+                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                    {selectedProduct.images.map((img: string, idx: number) => (
+                                        <img
+                                            key={idx}
+                                            src={img}
+                                            alt=""
+                                            className="w-14 h-14 object-cover rounded-lg border flex-shrink-0"
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </Modal>
         </SellerLayout>
     )
 }
@@ -825,7 +1208,8 @@ export function SellerProductListPage() {
 // ─── Create / Edit Product ─────────────────────────────────────────────────────
 interface ProductSkuFormRow {
     id?: string
-    attributes: string
+    attributesVi: string
+    attributesEn: string
     originalPrice: string
     status: 'ACTIVE' | 'DRAFT' | 'INACTIVE'
 }
@@ -837,7 +1221,7 @@ const DEFAULT_PRODUCT_IMAGE =
  * Tạo mới hoặc chỉnh sửa sản phẩm Catalog (HG-S2-6 & dynamic pricing V6/V7).
  * Luồng:
  * 1. Nếu có pageParams.id, tải chi tiết sản phẩm hiện tại (bao gồm sku.id) để giữ nguyên liên kết với Fulfillment seller_skus.
- * 2. Không cho nhập skuCode thủ công tại Catalog; người bán nhập thuộc tính biến thể + giá nhập tối thiểu (originalPrice).
+ * 2. Không cho nhập skuCode thủ công tại Catalog; người bán nhập thuộc tính biến thể (song ngữ VI / EN) + giá nhập tối thiểu (originalPrice).
  * 3. Gọi GET /api/v1/pricing-rules/preview để xem trước giá bán dự kiến trên sàn.
  * 4. Gửi POST /products hoặc PUT /products/{id} kèm sku.id (nếu sửa) và originalPrice; lưu cục bộ chỉ khi chạy Demo offline.
  */
@@ -850,15 +1234,18 @@ export function CreateProductPage() {
         Boolean(editProductId) || page === 'seller-edit-product' || page === 'seller-update-product'
     const [saving, setSaving] = useState(false)
     const [loadingProduct, setLoadingProduct] = useState(false)
-    const [name, setName] = useState('')
-    const [description, setDescription] = useState('')
+    const [nameVi, setNameVi] = useState('')
+    const [nameEn, setNameEn] = useState('')
+    const [descriptionVi, setDescriptionVi] = useState('')
+    const [descriptionEn, setDescriptionEn] = useState('')
+    const [inputLang, setInputLang] = useState<'vi' | 'en'>(lang === 'en' ? 'en' : 'vi')
     const [enableAuction, setEnableAuction] = useState(false)
     const [nameError, setNameError] = useState('')
     const [priceError, setPriceError] = useState('')
     const [categoryId, setCategoryId] = useState('')
     const [imageUrl, setImageUrl] = useState(DEFAULT_PRODUCT_IMAGE)
     const [skus, setSkus] = useState<ProductSkuFormRow[]>([
-        { attributes: '', originalPrice: '', status: 'ACTIVE' },
+        { attributesVi: '', attributesEn: '', originalPrice: '', status: 'ACTIVE' },
     ])
     const [pricePreview, setPricePreview] = useState<ApiPricePreview | null>(null)
     // Tải danh mục thực tế từ Catalog Service (/api/v1/categories)
@@ -866,12 +1253,50 @@ export function CreateProductPage() {
     const rawCats = (catEnvelope as any)?.data ?? catEnvelope
     const categoriesList: ApiCategory[] = Array.isArray(rawCats) ? rawCats : []
 
+    /**
+     * Đệ quy làm phẳng cây danh mục từ Catalog Service để hiển thị đầy đủ cả danh mục cha và các danh mục con.
+     * - Chức năng: Cho phép người bán chọn đúng phân mục chi tiết (ví dụ: Điện tử -> Thiết bị cá nhân).
+     * - Đầu vào: Danh sách ApiCategory[] có cấu trúc cha con (children).
+     * - Kết quả: Mảng phẳng các tùy chọn { value, label } với tiền tố thụt lề trực quan.
+     */
+    const flattenCategories = (
+        cats: ApiCategory[],
+        prefix = '',
+    ): { value: string; label: string }[] => {
+        const result: { value: string; label: string }[] = []
+        for (const cat of cats) {
+            const catName = lang === 'en' ? cat.name || cat.nameVi : cat.nameVi || cat.name
+            result.push({
+                value: cat.id,
+                label: prefix ? `${prefix} ${catName}` : catName,
+            })
+            if (Array.isArray(cat.children) && cat.children.length > 0) {
+                result.push(...flattenCategories(cat.children, `${prefix}└─ `))
+            }
+        }
+        return result
+    }
+
+    const categoryOptions =
+        categoriesList.length > 0
+            ? flattenCategories(categoriesList)
+            : [
+                  {
+                      value: '11111111-1111-1111-1111-111111111111',
+                      label: lang === 'en' ? 'Electronics' : 'Thiết bị điện tử',
+                  },
+                  {
+                      value: '22222222-2222-2222-2222-222222222222',
+                      label: lang === 'en' ? 'Fashion' : 'Thời trang',
+                  },
+              ]
+
     // Đồng bộ categoryId mặc định sang danh mục thật đầu tiên khi tạo mới để tránh gửi ID giả
     useEffect(() => {
-        if (!categoryId && categoriesList.length > 0) {
-            setCategoryId(categoriesList[0].id)
+        if (!categoryId && categoryOptions.length > 0) {
+            setCategoryId(categoryOptions[0].value)
         }
-    }, [categoriesList, categoryId])
+    }, [categoryOptions, categoryId])
 
     // Khi sửa sản phẩm, nạp dữ liệu thật từ Catalog để giữ nguyên từng sku.id khi PUT.
     useEffect(() => {
@@ -884,8 +1309,20 @@ export function CreateProductPage() {
             .then((res) => {
                 const p = (res as any)?.data ?? res
                 if (!p?.id) return
-                setName(p.name || '')
-                setDescription(p.description || '')
+                const pName = p.name || ''
+                const pDesc = p.description || ''
+                if (pDesc.includes('--- English ---')) {
+                    const parts = pDesc.split('--- English ---')
+                    setDescriptionVi(parts[0].trim())
+                    setDescriptionEn((parts[1] || '').trim())
+                } else {
+                    setDescriptionVi(pDesc)
+                    setDescriptionEn(pDesc)
+                }
+                const resolvedViName = resolveBilingualName(pName, 'vi')
+                const resolvedEnName = resolveBilingualName(pName, 'en')
+                setNameVi(p.nameVi || resolvedViName)
+                setNameEn(resolvedEnName)
                 if (p.categoryId) setCategoryId(p.categoryId)
                 setEnableAuction(Boolean(p.auctionEnabled))
                 if (Array.isArray(p.images) && p.images[0]?.url) {
@@ -893,15 +1330,21 @@ export function CreateProductPage() {
                 }
                 if (Array.isArray(p.skus) && p.skus.length > 0) {
                     setSkus(
-                        p.skus.map((s: ApiProduct['skus'][number]) => ({
-                            id: s.id,
-                            attributes: s.attributes ?? '',
-                            originalPrice: String(s.originalPrice ?? s.price ?? 0),
-                            status:
-                                s.status === 'DRAFT' || s.status === 'INACTIVE'
-                                    ? s.status
-                                    : 'ACTIVE',
-                        })),
+                        p.skus.map((s: ApiProduct['skus'][number]) => {
+                            const rawAttr = s.attributes ?? ''
+                            const attrVi = resolveBilingualName(rawAttr, 'vi')
+                            const attrEn = resolveBilingualName(rawAttr, 'en')
+                            return {
+                                id: s.id,
+                                attributesVi: attrVi,
+                                attributesEn: attrEn,
+                                originalPrice: String(s.originalPrice ?? s.price ?? 0),
+                                status:
+                                    s.status === 'DRAFT' || s.status === 'INACTIVE'
+                                        ? s.status
+                                        : 'ACTIVE',
+                            }
+                        }),
                     )
                 }
             })
@@ -950,7 +1393,10 @@ export function CreateProductPage() {
     }
 
     const addSkuRow = () => {
-        setSkus((prev) => [...prev, { attributes: '', originalPrice: '', status: 'ACTIVE' }])
+        setSkus((prev) => [
+            ...prev,
+            { attributesVi: '', attributesEn: '', originalPrice: '', status: 'ACTIVE' },
+        ])
     }
 
     const removeSkuRow = (index: number) => {
@@ -959,7 +1405,17 @@ export function CreateProductPage() {
 
     // Lưu sản phẩm lên Catalog Service (POST tạo mới hoặc PUT giữ nguyên sku.id).
     const save = async () => {
-        if (!name.trim()) {
+        // Lưu tên sản phẩm dạng song ngữ "Tên tiếng Việt / English Name" nếu cả 2 thứ tiếng đều được nhập,
+        // giúp bảo toàn cả 2 ngôn ngữ trong cột name của Catalog DB mà không làm mất tiếng còn lại khi chuyển tab.
+        const trimmedVi = nameVi.trim()
+        const trimmedEn = nameEn.trim()
+        let resolvedName = ''
+        if (trimmedVi && trimmedEn && trimmedVi.toLowerCase() !== trimmedEn.toLowerCase()) {
+            resolvedName = `${trimmedVi} / ${trimmedEn}`
+        } else {
+            resolvedName = trimmedVi || trimmedEn
+        }
+        if (!resolvedName) {
             setNameError(tr(lang, 'required'))
             return
         }
@@ -982,18 +1438,40 @@ export function CreateProductPage() {
 
         const normalizedImage = imageUrl.trim() || DEFAULT_PRODUCT_IMAGE
         const selectedCatId =
-            categoryId || categoriesList[0]?.id || '11111111-1111-1111-1111-111111111111'
+            categoryId || categoryOptions[0]?.value || '11111111-1111-1111-1111-111111111111'
+
+        let resolvedDescription = ''
+        if (
+            descriptionVi.trim() &&
+            descriptionEn.trim() &&
+            descriptionVi.trim() !== descriptionEn.trim()
+        ) {
+            resolvedDescription = `${descriptionVi.trim()}\n\n--- English ---\n${descriptionEn.trim()}`
+        } else {
+            resolvedDescription = (descriptionVi || descriptionEn || resolvedName).trim()
+        }
+
         const payload = {
-            name: name.trim(),
-            description: description.trim() || name.trim(),
+            name: resolvedName,
+            description: resolvedDescription,
             categoryId: selectedCatId,
             auctionEnabled: enableAuction,
-            skus: skus.map((row) => ({
-                ...(row.id ? { id: row.id } : {}),
-                ...(row.attributes.trim() ? { attributes: row.attributes.trim() } : {}),
-                originalPrice: Number(row.originalPrice),
-                status: row.status,
-            })),
+            skus: skus.map((row) => {
+                const vi = (row.attributesVi || '').trim()
+                const en = (row.attributesEn || '').trim()
+                let resolvedAttrs = ''
+                if (vi && en && vi.toLowerCase() !== en.toLowerCase()) {
+                    resolvedAttrs = `${vi} // ${en}`
+                } else {
+                    resolvedAttrs = vi || en || 'Standard'
+                }
+                return {
+                    ...(row.id ? { id: row.id } : {}),
+                    attributes: resolvedAttrs,
+                    originalPrice: Number(row.originalPrice),
+                    status: row.status || 'ACTIVE',
+                }
+            }),
             images: [{ url: normalizedImage, sortOrder: 0 }],
         }
 
@@ -1032,11 +1510,11 @@ export function CreateProductPage() {
             type: 'success',
             message: isEdit
                 ? lang === 'en'
-                    ? 'Product updated successfully (SKU IDs preserved).'
-                    : 'Đã cập nhật sản phẩm thành công (giữ nguyên SKU ID).'
+                    ? 'Product updated successfully.'
+                    : 'Đã cập nhật sản phẩm thành công.'
                 : lang === 'en'
-                  ? 'Product saved! Open Inventory to inbound stock and generate warehouse SKU code.'
-                  : 'Đã tạo sản phẩm! Vào Kho hàng để nhập hàng và cấp mã SKU kho.',
+                  ? 'Product created successfully.'
+                  : 'Đã tạo sản phẩm thành công.',
         })
         navigate('seller-products')
         setSaving(false)
@@ -1063,42 +1541,104 @@ export function CreateProductPage() {
             ) : (
                 <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
                     <div className="space-y-5">
+                        {/* Thông tin cơ bản & chuyển đổi ngôn ngữ nhập liệu VI / EN */}
                         <div className="nexus-card p-5">
-                            <h3 className="font-bold mb-4">
-                                {lang === 'en' ? 'Basic Information' : 'Thông tin cơ bản'}
-                            </h3>
-                            <div className="space-y-4">
-                                <Input
-                                    label={tr(lang, 'productName')}
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    error={nameError}
-                                    placeholder={
-                                        lang === 'en'
-                                            ? 'e.g. Nexus Wireless Headphones'
-                                            : 'Ví dụ: Tai nghe không dây Nexus'
-                                    }
-                                />
-                                <Textarea
-                                    label={tr(lang, 'productDescription')}
-                                    rows={4}
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    placeholder={
-                                        lang === 'en'
-                                            ? 'Describe product features, warranty, specs...'
-                                            : 'Mô tả thông số, chất liệu, bảo hành...'
-                                    }
-                                />
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <h3 className="font-bold">
+                                    {lang === 'en' ? 'Basic Information' : 'Thông tin cơ bản'}
+                                </h3>
+                                <div className="inline-flex rounded-lg border border-border p-0.5 bg-gray-50 text-xs font-semibold">
+                                    <button
+                                        type="button"
+                                        onClick={() => setInputLang('vi')}
+                                        className={`px-3 py-1 rounded-md transition-colors ${
+                                            inputLang === 'vi'
+                                                ? 'bg-white text-primary shadow-sm'
+                                                : 'text-gray-500 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        🇻🇳 {lang === 'en' ? 'Vietnamese' : 'Tiếng Việt'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setInputLang('en')}
+                                        className={`px-3 py-1 rounded-md transition-colors ${
+                                            inputLang === 'en'
+                                                ? 'bg-white text-primary shadow-sm'
+                                                : 'text-gray-500 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        🇬🇧 {lang === 'en' ? 'English' : 'Tiếng Anh'}
+                                    </button>
+                                </div>
                             </div>
+
+                            {inputLang === 'vi' ? (
+                                <div className="space-y-4">
+                                    <Input
+                                        label={
+                                            lang === 'en'
+                                                ? 'Product Name (Vietnamese)'
+                                                : 'Tên sản phẩm (Tiếng Việt)'
+                                        }
+                                        value={nameVi}
+                                        onChange={(e) => {
+                                            setNameVi(e.target.value)
+                                            if (nameError) setNameError('')
+                                        }}
+                                        error={nameError}
+                                        placeholder="Ví dụ: Tai nghe không dây Nexus"
+                                    />
+                                    <Textarea
+                                        label={
+                                            lang === 'en'
+                                                ? 'Product Description (Vietnamese)'
+                                                : 'Mô tả sản phẩm (Tiếng Việt)'
+                                        }
+                                        rows={4}
+                                        value={descriptionVi}
+                                        onChange={(e) => setDescriptionVi(e.target.value)}
+                                        placeholder="Mô tả thông số, chất liệu, bảo hành bằng tiếng Việt..."
+                                    />
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <Input
+                                        label={
+                                            lang === 'en'
+                                                ? 'Product Name (English)'
+                                                : 'Tên sản phẩm (English)'
+                                        }
+                                        value={nameEn}
+                                        onChange={(e) => {
+                                            setNameEn(e.target.value)
+                                            if (nameError) setNameError('')
+                                        }}
+                                        error={nameError}
+                                        placeholder="e.g. Nexus Wireless Headphones"
+                                    />
+                                    <Textarea
+                                        label={
+                                            lang === 'en'
+                                                ? 'Product Description (English)'
+                                                : 'Mô tả sản phẩm (English)'
+                                        }
+                                        rows={4}
+                                        value={descriptionEn}
+                                        onChange={(e) => setDescriptionEn(e.target.value)}
+                                        placeholder="Describe product features, warranty, specs in English..."
+                                    />
+                                </div>
+                            )}
                         </div>
 
+                        {/* Biến thể SKU & Giá bán */}
                         <div className="nexus-card p-5">
-                            <div className="flex items-center justify-between gap-3 mb-3">
+                            <div className="flex items-center justify-between gap-3 mb-4">
                                 <h3 className="font-bold">
                                     {lang === 'en'
-                                        ? 'SKU Variants & Minimum Price'
-                                        : 'Biến thể SKU & Giá nhập tối thiểu'}
+                                        ? 'Product Variants & Minimum Price'
+                                        : 'Biến thể sản phẩm & Giá nhập tối thiểu'}
                                 </h3>
                                 <Button
                                     type="button"
@@ -1111,17 +1651,6 @@ export function CreateProductPage() {
                                 </Button>
                             </div>
 
-                            <div className="mb-4">
-                                <AlertBanner
-                                    type="info"
-                                    message={
-                                        lang === 'en'
-                                            ? 'Catalog stores variant attributes & minimum price only. Warehouse SKU codes (FSKU-...) are auto-generated by Fulfillment on first stock inbound.'
-                                            : 'Catalog chỉ lưu thuộc tính biến thể & giá nhập tối thiểu (Min Price). Mã SKU kho (FSKU-...) được Fulfillment Service tự cấp khi bạn nhập hàng lần đầu.'
-                                    }
-                                />
-                            </div>
-
                             <div className="space-y-3">
                                 {skus.map((row, idx) => (
                                     <div
@@ -1129,18 +1658,11 @@ export function CreateProductPage() {
                                         className="border border-border rounded-xl p-3.5 bg-gray-50/50 space-y-3"
                                     >
                                         <div className="flex items-center justify-between gap-2">
-                                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                                                <span>
-                                                    {lang === 'en'
-                                                        ? `Variant #${idx + 1}`
-                                                        : `Biến thể #${idx + 1}`}
-                                                </span>
-                                                {row.id && (
-                                                    <span className="font-mono bg-white border border-border px-2 py-0.5 rounded text-[11px] text-primary">
-                                                        Catalog ID: {row.id.slice(0, 8)}...
-                                                    </span>
-                                                )}
-                                            </div>
+                                            <span className="text-xs font-semibold text-gray-700">
+                                                {lang === 'en'
+                                                    ? `Variant #${idx + 1}`
+                                                    : `Biến thể #${idx + 1}`}
+                                            </span>
                                             {skus.length > 1 && (
                                                 <button
                                                     type="button"
@@ -1152,30 +1674,47 @@ export function CreateProductPage() {
                                                 </button>
                                             )}
                                         </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <div className={`grid grid-cols-1 ${isEdit ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
+                                            <div>
+                                                <Input
+                                                    label={
+                                                        inputLang === 'vi'
+                                                            ? (lang === 'en'
+                                                                  ? 'Attributes (Color / Size - Vietnamese)'
+                                                                  : 'Thuộc tính (Màu / Size - Tiếng Việt)')
+                                                            : (lang === 'en'
+                                                                  ? 'Attributes (Color / Size - English)'
+                                                                  : 'Thuộc tính (Màu / Size - English)')
+                                                    }
+                                                    value={inputLang === 'vi' ? row.attributesVi : row.attributesEn}
+                                                    onChange={(e) =>
+                                                        updateSkuRow(idx, {
+                                                            [inputLang === 'vi' ? 'attributesVi' : 'attributesEn']:
+                                                                e.target.value,
+                                                        })
+                                                    }
+                                                    placeholder={
+                                                        inputLang === 'vi'
+                                                            ? (lang === 'en' ? 'e.g. Black / Size L' : 'Ví dụ: Đen / Size L')
+                                                            : 'e.g. Black / Size L'
+                                                    }
+                                                />
+                                                {inputLang === 'vi' && row.attributesEn && (
+                                                    <span className="text-[11px] text-gray-400 block mt-1">
+                                                        🇬🇧 EN: <span className="text-gray-600 font-medium">{row.attributesEn}</span>
+                                                    </span>
+                                                )}
+                                                {inputLang === 'en' && row.attributesVi && (
+                                                    <span className="text-[11px] text-gray-400 block mt-1">
+                                                        🇻🇳 VI: <span className="text-gray-600 font-medium">{row.attributesVi}</span>
+                                                    </span>
+                                                )}
+                                            </div>
                                             <Input
                                                 label={
                                                     lang === 'en'
-                                                        ? 'Attributes (Color / Size)'
-                                                        : 'Thuộc tính (Màu / Size)'
-                                                }
-                                                value={row.attributes}
-                                                onChange={(e) =>
-                                                    updateSkuRow(idx, {
-                                                        attributes: e.target.value,
-                                                    })
-                                                }
-                                                placeholder={
-                                                    lang === 'en'
-                                                        ? 'Black / Size M'
-                                                        : 'Đen / Size L'
-                                                }
-                                            />
-                                            <Input
-                                                label={
-                                                    lang === 'en'
-                                                        ? 'Min Price / Original Price'
-                                                        : 'Giá nhập tối thiểu (Min Price)'
+                                                        ? 'Minimum Price'
+                                                        : 'Giá nhập tối thiểu'
                                                 }
                                                 type="number"
                                                 min={0}
@@ -1187,21 +1726,39 @@ export function CreateProductPage() {
                                                 }
                                                 placeholder="150000"
                                             />
-                                            <Select
-                                                label={tr(lang, 'status')}
-                                                value={row.status}
-                                                onChange={(e) =>
-                                                    updateSkuRow(idx, {
-                                                        status: e.target
-                                                            .value as ProductSkuFormRow['status'],
-                                                    })
-                                                }
-                                                options={[
-                                                    { value: 'ACTIVE', label: 'ACTIVE' },
-                                                    { value: 'DRAFT', label: 'DRAFT' },
-                                                    { value: 'INACTIVE', label: 'INACTIVE' },
-                                                ]}
-                                            />
+                                            {isEdit && (
+                                                <Select
+                                                    label={tr(lang, 'status')}
+                                                    value={row.status}
+                                                    onChange={(e) =>
+                                                        updateSkuRow(idx, {
+                                                            status: e.target
+                                                                .value as ProductSkuFormRow['status'],
+                                                        })
+                                                    }
+                                                    options={[
+                                                        {
+                                                            value: 'ACTIVE',
+                                                            label:
+                                                                lang === 'en'
+                                                                    ? 'Active'
+                                                                    : 'Đang hoạt động',
+                                                        },
+                                                        {
+                                                            value: 'DRAFT',
+                                                            label:
+                                                                lang === 'en' ? 'Draft' : 'Bản nháp',
+                                                        },
+                                                        {
+                                                            value: 'INACTIVE',
+                                                            label:
+                                                                lang === 'en'
+                                                                    ? 'Inactive'
+                                                                    : 'Ngừng bán',
+                                                        },
+                                                    ]}
+                                                />
+                                            )}
                                         </div>
                                     </div>
                                 ))}
@@ -1224,11 +1781,11 @@ export function CreateProductPage() {
                                         </strong>
                                         {pricePreview.appliedRuleName && (
                                             <span className="ml-2 text-gray-500">
-                                                ({pricePreview.appliedRuleName} · +
+                                                ({lang === 'en' ? 'Platform margin' : 'Biên lợi nhuận sàn'} +
                                                 {Math.round(
                                                     ((pricePreview.effectiveRate ??
                                                         pricePreview.marginRate ??
-                                                        0.1) -
+                                                        0.15) -
                                                         0) *
                                                         100,
                                                 )}
@@ -1238,8 +1795,8 @@ export function CreateProductPage() {
                                     </div>
                                     <span className="text-[11px] text-gray-500">
                                         {lang === 'en'
-                                            ? 'Auto-computed via Catalog Dynamic Pricing'
-                                            : 'Tự động tính từ Dynamic Pricing của Catalog'}
+                                            ? 'Auto-calculated based on platform pricing policy'
+                                            : 'Tự động tính theo chính sách giá của sàn'}
                                     </span>
                                 </div>
                             )}
@@ -1253,23 +1810,7 @@ export function CreateProductPage() {
                                 label=""
                                 value={categoryId}
                                 onChange={(e) => setCategoryId(e.target.value)}
-                                options={
-                                    categoriesList.length > 0
-                                        ? categoriesList.map((cat) => ({
-                                              value: cat.id,
-                                              label: cat.nameVi || cat.name,
-                                          }))
-                                        : [
-                                              {
-                                                  value: '11111111-1111-1111-1111-111111111111',
-                                                  label: 'Electronics / Thiết bị điện tử',
-                                              },
-                                              {
-                                                  value: '22222222-2222-2222-2222-222222222222',
-                                                  label: 'Fashion / Thời trang',
-                                              },
-                                          ]
-                                }
+                                options={categoryOptions}
                             />
                         </div>
 
@@ -1356,7 +1897,8 @@ export const SellerEditProductPage = CreateProductPage
  */
 export function SellerAuctionListPage() {
     const { lang, navigate, showToast, auctionReviews, createdAuctions, user } = useApp()
-    const [tab, setTab] = useState('all')
+    const [statusFilter, setStatusFilter] = useState('all')
+    const [search, setSearch] = useState('')
     const [cancelOpen, setCancelOpen] = useState(false)
     const [cancellingAuctionId, setCancellingAuctionId] = useState<string | null>(null)
     const [cancelReason, setCancelReason] = useState('')
@@ -1367,6 +1909,12 @@ export function SellerAuctionListPage() {
     const [detailLoading, setDetailLoading] = useState(false)
     const detailRequestId = useRef(0)
     const [liveAuctions, setLiveAuctions] = useState<Auction[]>([])
+    const [auctionsLoading, setAuctionsLoading] = useState(true)
+
+    // Phân trang danh sách đấu giá Seller đồng bộ với Admin: mỗi trang tối đa 10 phiên
+    const [auctionsPage, setAuctionsPage] = useState(1)
+    const auctionsPerPage = 10
+    useEffect(() => setAuctionsPage(1), [statusFilter, search])
 
     // Tải danh sách phiên đấu giá từ API Adapter (có tự động fallback sang localStorage/mock)
     const currentSellerId = user?.id || 'u2'
@@ -1391,16 +1939,20 @@ export function SellerAuctionListPage() {
         if (!Array.isArray(rawProducts)) return
         rawProducts.forEach((p) => {
             if (!p?.id || !p?.name) return
+            const imgs = p.images
+                ?.map((img: any) => (typeof img === 'string' ? img : img.url))
+                .filter(Boolean)
             cacheAuctionProduct(p.id, {
-                name: p.name,
-                nameVi: p.name,
+                name: resolveBilingualName(p.name, 'en'),
+                nameVi: resolveBilingualName(p.name, 'vi'),
                 sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || undefined,
-                images: p.images?.map((img) => img.url),
+                images: imgs && imgs.length > 0 ? imgs : undefined,
             })
         })
     }, [sellerProductsEnvRaw])
 
-    const refreshAuctions = async () => {
+    const refreshAuctions = async (isInitial = false) => {
+        if (isInitial) setAuctionsLoading(true)
         try {
             const res = await auctionsApi.getAuctions({
                 sellerId: currentSellerId,
@@ -1420,28 +1972,201 @@ export function SellerAuctionListPage() {
                     status: (auctionReviews[a.id]?.status as any) || a.status,
                 }))
             setLiveAuctions(fallback)
+        } finally {
+            if (isInitial) setAuctionsLoading(false)
         }
     }
 
     useEffect(() => {
-        refreshAuctions()
+        void refreshAuctions(true)
         // Đồng bộ lại status với Auction Service để phiên quá giờ không bị giữ nhãn Scheduled trên trang đang mở.
-        const refreshTimer = window.setInterval(refreshAuctions, 5000)
+        const refreshTimer = window.setInterval(() => void refreshAuctions(false), 5000)
         return () => window.clearInterval(refreshTimer)
     }, [currentSellerId, createdAuctions, auctionReviews])
+
+    // Đồng bộ chi tiết sản phẩm thật (ảnh, SKU, tên đầy đủ) từ Catalog Service (/products)
+    // để danh sách đấu giá và modal kiểm toán hiển thị đúng ảnh thực tế thay vì placeholder mặc định.
+    const productIdsNeedingSync = [
+        ...new Set(
+            liveAuctions
+                .filter((a) => {
+                    const img = a.product?.images?.[0]
+                    return Boolean(a.productId) && (!img || img.includes('photo-1523275335684'))
+                })
+                .map((a) => a.productId),
+        ),
+    ].sort()
+    const productIdsNeedingSyncKey = productIdsNeedingSync.join('|')
+
+    useEffect(() => {
+        if (!productIdsNeedingSyncKey) return
+        let active = true
+        const pids = productIdsNeedingSyncKey.split('|')
+
+        Promise.all(
+            pids.map(async (pid) => {
+                try {
+                    const res = await api<Envelope<ApiProduct> | ApiProduct>(
+                        `/products/${encodeURIComponent(pid)}`,
+                    )
+                    const p = (res as any)?.data ?? res
+                    if (p?.id && p?.name) {
+                        const imgs = p.images
+                            ?.map((img: any) => (typeof img === 'string' ? img : img.url))
+                            .filter(Boolean)
+                        const sku =
+                            formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || p.sku
+                        const pNameEn = resolveBilingualName(p.name, 'en')
+                        const pNameVi = resolveBilingualName(p.name, 'vi')
+                        cacheAuctionProduct(p.id, {
+                            name: pNameEn,
+                            nameVi: pNameVi,
+                            sku,
+                            images: imgs?.length ? imgs : undefined,
+                        })
+                        return { id: p.id, name: pNameEn, nameVi: pNameVi, sku, images: imgs }
+                    }
+                } catch {
+                    return null
+                }
+                return null
+            }),
+        ).then((fetched) => {
+            if (!active) return
+            const map = new Map<string, any>()
+            fetched.forEach((p) => {
+                if (p) map.set(p.id, p)
+            })
+            if (map.size > 0) {
+                setLiveAuctions((prev) =>
+                    prev.map((a) => {
+                        const prod = map.get(a.productId)
+                        if (!prod) return a
+                        return {
+                            ...a,
+                            product: {
+                                ...a.product,
+                                name: prod.name,
+                                nameVi: prod.nameVi || prod.name,
+                                sku: prod.sku || a.product?.sku,
+                                images: prod.images?.length ? prod.images : a.product?.images,
+                            },
+                        }
+                    }),
+                )
+                setDetailAuction((current) => {
+                    if (!current) return null
+                    const prod = map.get(current.productId)
+                    if (!prod) return current
+                    return {
+                        ...current,
+                        product: {
+                            ...current.product,
+                            name: prod.name,
+                            nameVi: prod.nameVi || prod.name,
+                            sku: prod.sku || current.product?.sku,
+                            images: prod.images?.length ? prod.images : current.product?.images,
+                        },
+                    }
+                })
+            }
+        })
+
+        return () => {
+            active = false
+        }
+    }, [productIdsNeedingSyncKey])
 
     const sellerAuctions = liveAuctions.map((auction) => ({
         ...auction,
         status: (auctionReviews[auction.id]?.status as any) || auction.status,
     }))
 
-    const filtered = tab === 'all' ? sellerAuctions : sellerAuctions.filter((a) => a.status === tab)
+    /**
+     * Chức năng: Lọc danh sách đấu giá theo trạng thái (statusFilter) và từ khóa tìm kiếm (search).
+     * Đầu vào: sellerAuctions từ liveAuctions, statusFilter, search query.
+     * Kết quả: Mảng filtered chứa các phiên phù hợp, hỗ trợ status 'settled' ("Đã thanh toán").
+     * Luồng xử lý:
+     *   1. Lọc theo trạng thái: Nếu statusFilter khác 'all', so khớp chính xác với trạng thái (active, pending_approval, scheduled, ended, settled, cancelled).
+     *   2. Lọc theo từ khóa: Tìm kiếm không phân biệt hoa thường trong tên sản phẩm (VI/EN), mã SKU, hoặc ID phiên.
+     * Quy tắc & lý do: Giúp người bán thao tác nhanh, có ô tìm kiếm và dropdown chọn trạng thái tinh gọn, không bị dàn trải quá nhiều tab dày cộm.
+     */
+    const filtered = sellerAuctions.filter((a) => {
+        if (statusFilter !== 'all') {
+            if (statusFilter === 'ended') {
+                if (a.status !== 'ended') return false
+            } else if (statusFilter === 'settled') {
+                if (a.status !== 'settled') return false
+            } else if (statusFilter === 'cancelled') {
+                if (!['cancelled', 'rejected', 'failed'].includes(a.status)) return false
+            } else if (a.status !== statusFilter) {
+                return false
+            }
+        }
+        if (search.trim()) {
+            const q = search.toLowerCase().trim()
+            const name = (a.product?.name || '').toLowerCase()
+            const nameVi = (a.product?.nameVi || '').toLowerCase()
+            const sku = (a.product?.sku || '').toLowerCase()
+            const id = (a.id || '').toLowerCase()
+            return name.includes(q) || nameVi.includes(q) || sku.includes(q) || id.includes(q)
+        }
+        return true
+    })
+    const visibleAuctions = filtered.slice(
+        (auctionsPage - 1) * auctionsPerPage,
+        auctionsPage * auctionsPerPage,
+    )
 
     /** Tải snapshot mới nhất để Seller xem thông số và lịch sử bid nếu Auction Service có trả dữ liệu đó. */
     const openAuctionDetails = async (auction: Auction) => {
         const requestId = ++detailRequestId.current
         setDetailAuction(auction)
         setDetailLoading(true)
+
+        // Chủ động nạp ảnh và thông tin sản phẩm thật nếu phiên đấu giá đang dùng ảnh placeholder
+        if (
+            auction.productId &&
+            (!auction.product?.images?.[0] ||
+                auction.product.images[0].includes('photo-1523275335684'))
+        ) {
+            api<Envelope<ApiProduct> | ApiProduct>(
+                `/products/${encodeURIComponent(auction.productId)}`,
+            )
+                .then((res) => {
+                    const p = (res as any)?.data ?? res
+                    if (p?.id && p?.name && requestId === detailRequestId.current) {
+                        const imgs = p.images
+                            ?.map((img: any) => (typeof img === 'string' ? img : img.url))
+                            .filter(Boolean)
+                        const sku =
+                            formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || p.sku
+                        const pNameEn = resolveBilingualName(p.name, 'en')
+                        const pNameVi = resolveBilingualName(p.name, 'vi')
+                        cacheAuctionProduct(p.id, {
+                            name: pNameEn,
+                            nameVi: pNameVi,
+                            sku,
+                            images: imgs?.length ? imgs : undefined,
+                        })
+                        setDetailAuction((curr) =>
+                            curr && curr.id === auction.id
+                                ? {
+                                      ...curr,
+                                      product: {
+                                          ...curr.product,
+                                          name: pNameEn,
+                                          nameVi: pNameVi,
+                                          sku: sku || curr.product?.sku,
+                                          images: imgs?.length ? imgs : curr.product?.images,
+                                      },
+                                  }
+                                : curr,
+                        )
+                    }
+                })
+                .catch(() => {})
+        }
         try {
             const details = await auctionsApi.getAuctionById(
                 auction.id,
@@ -1509,32 +2234,49 @@ export function SellerAuctionListPage() {
 
     return (
         <SellerLayout title={tr(lang, 'auctions')}>
-            <div className="flex items-center justify-between mb-5">
-                <Tabs
-                    tabs={[
-                        { id: 'all', label: tr(lang, 'all') },
-                        {
-                            id: 'pending_approval',
-                            label: lang === 'en' ? 'Pending approval' : 'Chờ duyệt',
-                            count: sellerAuctions.filter((a) => a.status === 'pending_approval')
-                                .length,
-                        },
-                        {
-                            id: 'scheduled',
-                            label: tr(lang, 'statusScheduled'),
-                            count: sellerAuctions.filter((a) => a.status === 'scheduled').length,
-                        },
-                        {
-                            id: 'active',
-                            label: tr(lang, 'statusActive'),
-                            count: sellerAuctions.filter((a) => a.status === 'active').length,
-                        },
-                        { id: 'ended', label: tr(lang, 'statusEnded') },
-                        { id: 'cancelled', label: tr(lang, 'statusCancelled') },
-                    ]}
-                    active={tab}
-                    onChange={setTab}
-                />
+            {/* Thanh công cụ tìm kiếm, bộ lọc trạng thái tích hợp 'settled' (Đã thanh toán) và nút Tạo phiên */}
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <Input
+                        placeholder={
+                            lang === 'en'
+                                ? 'Search by product name, SKU...'
+                                : 'Tìm theo tên sản phẩm, SKU...'
+                        }
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className="w-64 sm:w-72"
+                        icon={<Search size={14} />}
+                    />
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                        className="nexus-input py-2 text-sm"
+                        aria-label={lang === 'en' ? 'Filter by status' : 'Lọc theo trạng thái'}
+                    >
+                        <option value="all">
+                            {tr(lang, 'all')} ({sellerAuctions.length})
+                        </option>
+                        <option value="active">
+                            {tr(lang, 'statusActive')} ({sellerAuctions.filter((a) => a.status === 'active').length})
+                        </option>
+                        <option value="pending_approval">
+                            {lang === 'en' ? 'Pending approval' : 'Chờ duyệt'} ({sellerAuctions.filter((a) => a.status === 'pending_approval').length})
+                        </option>
+                        <option value="scheduled">
+                            {tr(lang, 'statusScheduled')} ({sellerAuctions.filter((a) => a.status === 'scheduled').length})
+                        </option>
+                        <option value="ended">
+                            {tr(lang, 'statusEnded')} ({sellerAuctions.filter((a) => a.status === 'ended').length})
+                        </option>
+                        <option value="settled">
+                            {tr(lang, 'statusSettled')} ({sellerAuctions.filter((a) => a.status === 'settled').length})
+                        </option>
+                        <option value="cancelled">
+                            {tr(lang, 'statusCancelled')} ({sellerAuctions.filter((a) => ['cancelled', 'rejected', 'failed'].includes(a.status)).length})
+                        </option>
+                    </select>
+                </div>
                 <Button
                     variant="primary"
                     icon={<Plus size={14} />}
@@ -1544,163 +2286,203 @@ export function SellerAuctionListPage() {
                 </Button>
             </div>
             <div className="nexus-card">
-                <DataTable
-                    columns={[
-                        {
-                            key: 'product',
-                            label: lang === 'en' ? 'Product' : 'Sản phẩm',
-                            render: (r: any) => (
-                                <div className="flex items-center gap-3">
-                                    <img
-                                        src={
-                                            r.product?.images?.[0] ||
-                                            'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
-                                        }
-                                        alt=""
-                                        className="w-10 h-10 object-cover rounded-lg"
-                                    />
-                                    <div>
-                                        <p className="text-sm font-semibold line-clamp-1">
-                                            {lang === 'vi'
-                                                ? r.product?.nameVi || r.product?.name
-                                                : r.product?.name}
-                                        </p>
-                                        <p className="text-xs text-gray-400">
-                                            SKU: {r.product?.sku || 'N/A'}
-                                        </p>
-                                    </div>
-                                </div>
-                            ),
-                        },
-                        {
-                            key: 'startingPrice',
-                            label: tr(lang, 'startingPrice'),
-                            render: (r: any) => (
-                                <span className="text-sm font-medium text-gray-700">
-                                    {formatCurrency(r.startingPrice, lang)}
-                                </span>
-                            ),
-                        },
-                        {
-                            key: 'currentBid',
-                            label: tr(lang, 'currentBid'),
-                            render: (r: any) => (
-                                <span className="font-bold text-auction">
-                                    {formatCurrency(r.currentBid, lang)}
-                                </span>
-                            ),
-                        },
-                        {
-                            key: 'bidCount',
-                            label: lang === 'en' ? 'Bids' : 'Lượt đặt',
-                            render: (r: any) => <span className="font-semibold">{r.bidCount}</span>,
-                        },
-                        {
-                            key: 'startTime',
-                            label: tr(lang, 'startTime'),
-                            render: (r: any) => (
-                                <span className="text-xs text-gray-500">
-                                    {formatDateTime(r.startTime, lang)}
-                                </span>
-                            ),
-                        },
-                        {
-                            key: 'endTime',
-                            label: tr(lang, 'endTime'),
-                            render: (r: any) => (
-                                <span className="text-xs text-gray-500">
-                                    {formatDateTime(r.endTime, lang)}
-                                </span>
-                            ),
-                        },
-                        {
-                            key: 'status',
-                            label: tr(lang, 'status'),
-                            render: (r: any) => (
-                                <StatusBadge status={r.status} label={statusLabel(r.status)} />
-                            ),
-                        },
-                        {
-                            key: 'actions',
-                            label: tr(lang, 'actions'),
-                            render: (r: any) => {
-                                const isBeforeStart = new Date(r.startTime).getTime() > Date.now()
-                                const isEditable =
-                                    ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
-                                    isBeforeStart
-                                const isCancellable =
-                                    ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
-                                    isBeforeStart
+                {auctionsLoading ? (
+                    <SellerLoading
+                        label={
+                            lang === 'en'
+                                ? 'Loading auctions...'
+                                : 'Đang tải danh sách đấu giá...'
+                        }
+                    />
+                ) : filtered.length === 0 ? (
+                    <div className="p-8">
+                        <EmptyState
+                            icon={<Gavel size={20} />}
+                            title={tr(lang, 'noData')}
+                            action={
+                                <Button
+                                    variant="primary"
+                                    onClick={() => navigate('seller-create-auction')}
+                                >
+                                    {tr(lang, 'createAuction')}
+                                </Button>
+                            }
+                        />
+                    </div>
+                ) : (
+                    <>
+                        <DataTable
+                            columns={[
+                                {
+                                    key: 'product',
+                                    label: lang === 'en' ? 'Product' : 'Sản phẩm',
+                                    render: (r: any) => (
+                                        <div className="flex items-center gap-3">
+                                            <img
+                                                src={
+                                                    r.product?.images?.[0] ||
+                                                    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100'
+                                                }
+                                                alt=""
+                                                className="w-10 h-10 object-cover rounded-lg"
+                                            />
+                                            <div>
+                                                <p className="text-sm font-semibold line-clamp-1">
+                                                    {lang === 'vi'
+                                                        ? r.product?.nameVi || r.product?.name
+                                                        : r.product?.name}
+                                                </p>
+                                                <p className="text-xs text-gray-400">
+                                                    SKU: {r.product?.sku || 'N/A'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ),
+                                },
+                                {
+                                    key: 'startingPrice',
+                                    label: tr(lang, 'startingPrice'),
+                                    render: (r: any) => (
+                                        <span className="text-sm font-medium text-gray-700">
+                                            {formatCurrency(r.startingPrice, lang)}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'currentBid',
+                                    label: tr(lang, 'currentBid'),
+                                    render: (r: any) => (
+                                        <span className="font-bold text-auction">
+                                            {formatCurrency(r.currentBid, lang)}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'bidCount',
+                                    label: lang === 'en' ? 'Bids' : 'Lượt đặt',
+                                    render: (r: any) => <span className="font-semibold">{r.bidCount}</span>,
+                                },
+                                {
+                                    key: 'startTime',
+                                    label: tr(lang, 'startTime'),
+                                    render: (r: any) => (
+                                        <span className="text-xs text-gray-500">
+                                            {formatDateTime(r.startTime, lang)}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'endTime',
+                                    label: tr(lang, 'endTime'),
+                                    render: (r: any) => (
+                                        <span className="text-xs text-gray-500">
+                                            {formatDateTime(r.endTime, lang)}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'status',
+                                    label: tr(lang, 'status'),
+                                    render: (r: any) => (
+                                        <StatusBadge status={r.status} label={statusLabel(r.status)} />
+                                    ),
+                                },
+                                {
+                                    key: 'actions',
+                                    label: tr(lang, 'actions'),
+                                    render: (r: any) => {
+                                        const isBeforeStart = new Date(r.startTime).getTime() > Date.now()
+                                        const isEditable =
+                                            ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
+                                            isBeforeStart
+                                        const isCancellable =
+                                            ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
+                                            isBeforeStart
 
-                                return (
-                                    <div className="flex gap-1 items-center">
-                                        <button
-                                            type="button"
-                                            title={tr(lang, 'viewAuctionDetails')}
-                                            aria-label={tr(lang, 'viewAuctionDetails')}
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                void openAuctionDetails(r)
-                                            }}
-                                            className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-600 hover:bg-gray-100 rounded"
-                                        >
-                                            <Eye size={14} />
-                                        </button>
-                                        {isEditable && (
-                                            <button
-                                                title={
-                                                    lang === 'en'
-                                                        ? 'Edit auction'
-                                                        : 'Chỉnh sửa phiên'
-                                                }
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    navigate('seller-create-auction', { id: r.id })
-                                                }}
-                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:bg-primary/10 rounded"
-                                            >
-                                                <Pencil size={14} />
-                                            </button>
-                                        )}
-                                        {isCancellable && (
-                                            <button
-                                                title={
-                                                    lang === 'en'
-                                                        ? 'Cancel auction'
-                                                        : 'Hủy phiên đấu giá'
-                                                }
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setCancellingAuctionId(r.id)
-                                                    setCancelReason('')
-                                                    setCancelReasonError('')
-                                                    setCancelOpen(true)
-                                                }}
-                                                className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:bg-red-50 rounded"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        )}
-                                        {auctionReviews[r.id] && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setReviewedAuction(r)
-                                                }}
-                                            >
-                                                {lang === 'en' ? 'View Result' : 'Xem kết quả'}
-                                            </Button>
-                                        )}
-                                    </div>
-                                )
-                            },
-                        },
-                    ]}
-                    data={filtered}
-                    rowKey={(r) => r.id}
-                />
+                                        return (
+                                            <div className="flex gap-1 items-center">
+                                                <button
+                                                    type="button"
+                                                    title={tr(lang, 'viewAuctionDetails')}
+                                                    aria-label={tr(lang, 'viewAuctionDetails')}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        void openAuctionDetails(r)
+                                                    }}
+                                                    className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-gray-600 hover:bg-gray-100 rounded"
+                                                >
+                                                    <Eye size={14} />
+                                                </button>
+                                                {isEditable && (
+                                                    <button
+                                                        title={
+                                                            lang === 'en'
+                                                                ? 'Edit auction'
+                                                                : 'Chỉnh sửa phiên'
+                                                        }
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            navigate('seller-create-auction', { id: r.id })
+                                                        }}
+                                                        className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:bg-primary/10 rounded"
+                                                    >
+                                                        <Pencil size={14} />
+                                                    </button>
+                                                )}
+                                                {isCancellable && (
+                                                    <button
+                                                        title={
+                                                            lang === 'en'
+                                                                ? 'Cancel auction'
+                                                                : 'Hủy phiên đấu giá'
+                                                        }
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setCancellingAuctionId(r.id)
+                                                            setCancelReason('')
+                                                            setCancelReasonError('')
+                                                            setCancelOpen(true)
+                                                        }}
+                                                        className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-danger hover:bg-red-50 rounded"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                )}
+                                                {auctionReviews[r.id] && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setReviewedAuction(r)
+                                                        }}
+                                                    >
+                                                        {lang === 'en' ? 'View Result' : 'Xem kết quả'}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        )
+                                    },
+                                },
+                            ]}
+                            data={visibleAuctions}
+                            rowKey={(r) => r.id}
+                            onRowClick={(r) => void openAuctionDetails(r)}
+                        />
+                        <div className="flex justify-center border-t border-border px-4 py-3">
+                            <nav aria-label={tr(lang, 'listPagination')}>
+                                <Pagination
+                                    page={auctionsPage}
+                                    total={filtered.length}
+                                    perPage={auctionsPerPage}
+                                    onChange={setAuctionsPage}
+                                    previousLabel={tr(lang, 'previousPage')}
+                                    nextLabel={tr(lang, 'nextPage')}
+                                />
+                            </nav>
+                        </div>
+                    </>
+                )}
             </div>
 
             {/* Modal Seller xem thông số và các mức giá đã nhận; lịch sử phụ thuộc dữ liệu do API chi tiết trả về. */}
@@ -2078,8 +2860,8 @@ export function CreateAuctionPage() {
               .filter((p: any) => p.auctionEnabled !== false && Boolean(p.skus?.[0]?.id))
               .map((product) => ({
                   id: product.id,
-                  name: product.name,
-                  nameVi: product.name,
+                  name: resolveBilingualName(product.name, 'en'),
+                  nameVi: resolveBilingualName(product.name, 'vi'),
                   sku: product.skus?.[0]?.skuCode || '',
                   skuId: product.skus?.[0]?.id || undefined,
               }))
@@ -2317,13 +3099,17 @@ export function CreateAuctionPage() {
                     ? (selectedProd as any).skuId
                     : undefined
 
-                // Lưu metadata sản phẩm vào cache trước khi tạo phiên,
-                // để auction list có thể hiển thị đúng tên/SKU thay vì fallback "Auction Product".
+                // Lưu metadata sản phẩm (bao gồm cả ảnh, tên, SKU) vào cache trước khi tạo phiên,
+                // để auction list và audit modal có thể hiển thị đúng hình ảnh sản phẩm thật thay vì ảnh placeholder.
                 if (selectedProd && productId) {
+                    const prodImages = (selectedProd as any).images
+                        ?.map((img: any) => (typeof img === 'string' ? img : img.url))
+                        .filter(Boolean)
                     cacheAuctionProduct(productId, {
                         name: selectedProd.name,
                         nameVi: selectedProd.nameVi || selectedProd.name,
                         sku: selectedProd.sku,
+                        images: prodImages && prodImages.length > 0 ? prodImages : undefined,
                     })
                 }
 
@@ -2599,10 +3385,56 @@ export function SellerOrdersPage() {
     const [statusFilter, setStatusFilter] = useState<string>('all')
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
+    // Quản lý thông tin điểm uy tín người mua và đánh giá (Sprint 3 - HA-S3-2)
+    const [buyerReputation, setBuyerReputation] = useState<ReputationSummary | null>(null)
+    const [orderRating, setOrderRating] = useState<RatingResponse | null>(null)
+    const [ratingModalOpen, setRatingModalOpen] = useState(false)
+
+    // Quản lý thông tin vận đơn và hành trình giao hàng (Sprint 3 - HA-S3-1)
     const [modalShipment, setModalShipment] = useState<ShipmentResponse | null>(null)
     const [modalTracking, setModalTracking] = useState<ShipmentTrackingResponse | null>(null)
     const [modalShipmentLoading, setModalShipmentLoading] = useState<boolean>(false)
     const [modalShipmentError, setModalShipmentError] = useState<string | null>(null)
+
+    // Phân trang danh sách đơn hàng Seller đồng bộ với Admin: mỗi trang tối đa 10 đơn
+    const [ordersPage, setOrdersPage] = useState(1)
+    const ordersPerPage = 10
+    useEffect(() => setOrdersPage(1), [statusFilter, search])
+    const visibleOrders = orders.slice((ordersPage - 1) * ordersPerPage, ordersPage * ordersPerPage)
+
+    /**
+     * Nạp thông tin uy tín người mua và đánh giá khi Seller xem chi tiết đơn hàng (Sprint 3 - HA-S3-2).
+     */
+    useEffect(() => {
+        if (!selectedOrder) {
+            setBuyerReputation(null)
+            setOrderRating(null)
+            return
+        }
+        let active = true
+        reputationApi
+            .getUserReputation(selectedOrder.buyerId)
+            .then((rep) => {
+                if (active) setBuyerReputation(rep)
+            })
+            .catch(() => {})
+
+        reputationApi
+            .getRatingsForOrder(selectedOrder.id)
+            .then((ratings) => {
+                if (active) {
+                    const existing = ratings.find(
+                        (r) => r.rateeId === selectedOrder.buyerId || (user && r.raterId === user.id),
+                    )
+                    setOrderRating(existing || null)
+                }
+            })
+            .catch(() => {})
+
+        return () => {
+            active = false
+        }
+    }, [selectedOrder, user])
 
     /**
      * Nạp thông tin vận đơn và hành trình thời gian thực khi Seller mở modal đơn hàng (Sprint 3 - HA-S3-1).
@@ -2794,20 +3626,14 @@ export function SellerOrdersPage() {
                 </div>
 
                 {loading ? (
-                    <div className="py-12 text-center text-gray-400">
-                        <div
-                            className="spinner-border text-primary mb-2"
-                            style={{ color: '#ee4d2d' }}
-                            role="status"
-                        >
-                            <span className="visually-hidden">Loading...</span>
-                        </div>
-                        <p>
-                            {lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'}
-                        </p>
-                    </div>
+                    <SellerLoading
+                        label={
+                            lang === 'en' ? 'Loading orders...' : 'Đang tải danh sách đơn hàng...'
+                        }
+                    />
                 ) : (
-                    <DataTable
+                    <>
+                        <DataTable
                         columns={[
                             {
                                 key: 'id',
@@ -2845,7 +3671,7 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Items' : 'Sản phẩm',
                                 render: (r: Order) => (
                                     <div className="flex items-center gap-2">
-                                        {r.items[0]?.image && (
+                                        {Boolean(r.items[0]?.image) && (
                                             <img
                                                 src={r.items[0].image}
                                                 alt=""
@@ -2871,7 +3697,7 @@ export function SellerOrdersPage() {
                                 label: lang === 'en' ? 'Total' : 'Tổng',
                                 render: (r: Order) => (
                                     <span className="font-bold text-primary">
-                                        {formatCurrency(r.total, lang)}
+                                        {formatCurrency(r.total ?? (r as any).totalAmount ?? 0, lang)}
                                     </span>
                                 ),
                             },
@@ -3006,10 +3832,23 @@ export function SellerOrdersPage() {
                                 ),
                             },
                         ]}
-                        data={orders}
+                        data={visibleOrders}
                         rowKey={(r) => r.id}
                         onRowClick={(r) => setSelectedOrder(r)}
                     />
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}>
+                            <Pagination
+                                page={ordersPage}
+                                total={orders.length}
+                                perPage={ordersPerPage}
+                                onChange={setOrdersPage}
+                                previousLabel={tr(lang, 'previousPage')}
+                                nextLabel={tr(lang, 'nextPage')}
+                            />
+                        </nav>
+                    </div>
+                    </>
                 )}
             </div>
 
@@ -3061,6 +3900,84 @@ export function SellerOrdersPage() {
                             </div>
                         </div>
 
+                        {/* Hồ sơ uy tín Người mua & Đánh giá (Sprint 3 - HA-S3-2) */}
+                        <div className="p-4 bg-gray-50/80 border border-border/80 rounded-xl space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs text-gray-500">
+                                        {lang === 'en' ? 'Buyer Profile & Reputation' : 'Hồ sơ uy tín người mua'}
+                                    </p>
+                                    <p className="font-semibold text-gray-900 mt-0.5">
+                                        {selectedOrder.buyerName}
+                                    </p>
+                                    <p className="text-xs text-gray-400">ID: {selectedOrder.buyerId}</p>
+                                </div>
+                                {buyerReputation && (
+                                    <div className="text-right">
+                                        <TrustLevelBadge
+                                            level={buyerReputation.trustLevel}
+                                            score={buyerReputation.score}
+                                            size="sm"
+                                        />
+                                        <p className="text-xs text-amber-600 font-semibold mt-1">
+                                            ★ {buyerReputation.avgRating.toFixed(1)} (
+                                            {buyerReputation.totalRatings}{' '}
+                                            {lang === 'vi' ? 'đánh giá' : 'reviews'})
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {['DELIVERED', 'COMPLETED'].includes(selectedOrder.status) && (
+                                <div className="pt-2 border-t border-gray-200">
+                                    {orderRating ? (
+                                        <div className="flex items-center justify-between bg-green-50 p-2.5 rounded-lg border border-green-200 text-xs text-green-800">
+                                            <div className="flex items-center gap-1.5">
+                                                <CheckCircle size={14} className="text-green-600" />
+                                                <span className="font-semibold">
+                                                    {lang === 'vi'
+                                                        ? `Bạn đã đánh giá người mua (${orderRating.score}/5 sao)`
+                                                        : `You rated buyer (${orderRating.score}/5 stars)`}
+                                                </span>
+                                            </div>
+                                            {orderRating.comment && (
+                                                <span className="italic text-gray-600 truncate max-w-xs">
+                                                    "{orderRating.comment}"
+                                                </span>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center justify-between bg-amber-50 p-2.5 rounded-lg border border-amber-200 text-xs text-amber-800">
+                                            <span>
+                                                {lang === 'vi'
+                                                    ? 'Giao dịch đã hoàn tất. Hãy đánh giá người mua.'
+                                                    : 'Transaction completed. Rate the buyer.'}
+                                            </span>
+                                            <Button
+                                                size="sm"
+                                                variant="primary"
+                                                onClick={() => {
+                                                    if (user && user.id === selectedOrder.buyerId) {
+                                                        showToast({
+                                                            type: 'error',
+                                                            message:
+                                                                lang === 'vi'
+                                                                    ? 'Bạn không thể tự đánh giá chính mình'
+                                                                    : 'You cannot rate yourself',
+                                                        })
+                                                        return
+                                                    }
+                                                    setRatingModalOpen(true)
+                                                }}
+                                            >
+                                                {lang === 'vi' ? 'Đánh giá người mua' : 'Rate Buyer'}
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
                         <div>
                             <p className="text-xs text-gray-500 mb-1">
                                 {tr(lang, 'shippingAddress')}
@@ -3083,11 +4000,17 @@ export function SellerOrdersPage() {
                                         className="flex items-center justify-between p-3 gap-3"
                                     >
                                         <div className="flex items-center gap-3">
-                                            <img
-                                                src={item.image}
-                                                alt=""
-                                                className="w-12 h-12 object-cover rounded-lg border border-border"
-                                            />
+                                            {item.image ? (
+                                                <img
+                                                    src={item.image}
+                                                    alt=""
+                                                    className="w-12 h-12 object-cover rounded-lg border border-border"
+                                                />
+                                            ) : (
+                                                <div className="w-12 h-12 rounded-lg border border-border bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
+                                                    <Package size={20} />
+                                                </div>
+                                            )}
                                             <div>
                                                 <p className="text-sm font-medium text-gray-900">
                                                     {item.productName}
@@ -3246,6 +4169,18 @@ export function SellerOrdersPage() {
                     </div>
                 )}
             </Modal>
+
+            {selectedOrder && (
+                <RatingModal
+                    isOpen={ratingModalOpen}
+                    onClose={() => setRatingModalOpen(false)}
+                    orderId={selectedOrder.id}
+                    rateeId={selectedOrder.buyerId}
+                    rateeName={selectedOrder.buyerName}
+                    role="seller"
+                    onSubmitSuccess={(newRating) => setOrderRating(newRating)}
+                />
+            )}
         </SellerLayout>
     )
 }
@@ -3300,6 +4235,22 @@ export function SellerInventoryPage() {
     const [loadError, setLoadError] = useState<string | null>(null)
     const [reconciling, setReconciling] = useState(false)
     const [reloadTick, setReloadTick] = useState(0)
+
+    // Phân trang các bảng tồn kho và sổ cái Seller đồng bộ với Admin: mỗi trang tối đa 10 dòng
+    const [skuPage, setSkuPage] = useState(1)
+    const skuPerPage = 10
+    useEffect(() => setSkuPage(1), [keyword, statusFilter, selectedWarehouseId])
+    const visibleSkuRows = skuRows.slice((skuPage - 1) * skuPerPage, skuPage * skuPerPage)
+
+    const [stockPage, setStockPage] = useState(1)
+    const stockPerPage = 10
+    useEffect(() => setStockPage(1), [keyword, selectedWarehouseId])
+    const visibleStocks = stocks.slice((stockPage - 1) * stockPerPage, stockPage * stockPerPage)
+
+    const [ledgerPage, setLedgerPage] = useState(1)
+    const ledgerPerPage = 10
+    useEffect(() => setLedgerPage(1), [keyword, movementFilter, selectedWarehouseId])
+    const visibleLedger = ledger.slice((ledgerPage - 1) * ledgerPerPage, ledgerPage * ledgerPerPage)
 
     // Trạng thái modal Nhập kho (Inbound) giữ Idempotency-Key ổn định trong suốt lần mở modal để retry an toàn
     const [inboundOpen, setInboundOpen] = useState(false)
@@ -3732,11 +4683,12 @@ export function SellerInventoryPage() {
         ...catalogSkus.map((c) => {
             const existing = existingByCatalogId.get(c.skuId)
             const codeHint = existing?.skuCode || c.skuCode
+            const resolvedProdName = resolveBilingualName(c.productName, lang)
             return {
                 value: c.skuId,
                 label: codeHint
-                    ? `${codeHint} — ${c.productName} (${c.attributes})`
-                    : `${c.productName} — ${c.attributes}`,
+                    ? `${codeHint} — ${resolvedProdName} (${c.attributes})`
+                    : `${resolvedProdName} — ${c.attributes}`,
             }
         }),
     ]
@@ -3936,7 +4888,15 @@ export function SellerInventoryPage() {
                     </Button>
                 </div>
 
-                {!loading && skuRows.length === 0 ? (
+                {loading ? (
+                    <SellerLoading
+                        label={
+                            lang === 'en'
+                                ? 'Loading inventory...'
+                                : 'Đang tải thông tin kho hàng...'
+                        }
+                    />
+                ) : skuRows.length === 0 ? (
                     <EmptyState
                         icon={<Package size={22} />}
                         title={
@@ -3951,9 +4911,9 @@ export function SellerInventoryPage() {
                         }
                     />
                 ) : (
-                    <DataTable
-                        loading={loading}
-                        columns={[
+                    <>
+                        <DataTable
+                            columns={[
                             {
                                 key: 'skuCode',
                                 label: lang === 'en' ? 'Fulfillment SKU' : 'Mã SKU Kho',
@@ -4066,9 +5026,22 @@ export function SellerInventoryPage() {
                                 ),
                             },
                         ]}
-                        data={skuRows}
+                        data={visibleSkuRows}
                         rowKey={(r) => r.sellerSkuId || r.id || r.skuId}
                     />
+                    <div className="flex justify-center border-t border-border px-4 py-3">
+                        <nav aria-label={tr(lang, 'listPagination')}>
+                            <Pagination
+                                page={skuPage}
+                                total={skuRows.length}
+                                perPage={skuPerPage}
+                                onChange={setSkuPage}
+                                previousLabel={tr(lang, 'previousPage')}
+                                nextLabel={tr(lang, 'nextPage')}
+                            />
+                        </nav>
+                    </div>
+                    </>
                 )}
             </div>
 
@@ -4195,9 +5168,23 @@ export function SellerInventoryPage() {
                                 ),
                             },
                         ]}
-                        data={stocks}
+                        data={visibleStocks}
                         rowKey={(r) => `${r.skuId}-${r.warehouseId}`}
                     />
+                    {stocks.length > stockPerPage && (
+                        <div className="flex justify-center border-t border-border px-4 py-3">
+                            <nav aria-label={tr(lang, 'listPagination')}>
+                                <Pagination
+                                    page={stockPage}
+                                    total={stocks.length}
+                                    perPage={stockPerPage}
+                                    onChange={setStockPage}
+                                    previousLabel={tr(lang, 'previousPage')}
+                                    nextLabel={tr(lang, 'nextPage')}
+                                />
+                            </nav>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -4244,60 +5231,76 @@ export function SellerInventoryPage() {
                             }
                         />
                     ) : (
-                        ledger.map((entry) => {
-                            const isDecrease =
-                                entry.movementType === 'OUTBOUND' ||
-                                entry.movementType === 'RESERVE' ||
-                                entry.quantity < 0
-                            const displayQty =
-                                entry.movementType === 'OUTBOUND' ||
-                                entry.movementType === 'RESERVE'
-                                    ? -Math.abs(entry.quantity)
-                                    : entry.quantity
-                            return (
-                                <div
-                                    key={entry.id}
-                                    className="flex flex-wrap items-center justify-between gap-2 py-3 border-b border-border last:border-0 text-sm"
-                                >
-                                    <div className="flex flex-wrap items-center gap-3">
-                                        <span className="text-gray-400 text-xs">
-                                            {formatDateTime(entry.createdAt, lang)}
-                                        </span>
-                                        <span className="badge badge-gray text-xs">
-                                            {entry.warehouseCode || entry.warehouseId.slice(0, 8)}
-                                        </span>
-                                        <span className="font-mono text-xs text-gray-700">
-                                            {formatSkuDisplay(
-                                                entry.skuId,
-                                                resolveSkuCodeDisplay(entry.skuId),
-                                            )}
-                                        </span>
-                                        <StatusBadge
-                                            status={
-                                                entry.movementType === 'INBOUND' ||
-                                                entry.movementType === 'RELEASE'
-                                                    ? 'active'
-                                                    : entry.movementType === 'RESERVE'
-                                                      ? 'pending'
-                                                      : 'info'
-                                            }
-                                            label={entry.movementType}
+                        <>
+                            {visibleLedger.map((entry) => {
+                                const isDecrease =
+                                    entry.movementType === 'OUTBOUND' ||
+                                    entry.movementType === 'RESERVE' ||
+                                    entry.quantity < 0
+                                const displayQty =
+                                    entry.movementType === 'OUTBOUND' ||
+                                    entry.movementType === 'RESERVE'
+                                        ? -Math.abs(entry.quantity)
+                                        : entry.quantity
+                                return (
+                                    <div
+                                        key={entry.id}
+                                        className="flex flex-wrap items-center justify-between gap-2 py-3 border-b border-border last:border-0 text-sm"
+                                    >
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            <span className="text-gray-400 text-xs">
+                                                {formatDateTime(entry.createdAt, lang)}
+                                            </span>
+                                            <span className="badge badge-gray text-xs">
+                                                {entry.warehouseCode || entry.warehouseId.slice(0, 8)}
+                                            </span>
+                                            <span className="font-mono text-xs text-gray-700">
+                                                {formatSkuDisplay(
+                                                    entry.skuId,
+                                                    resolveSkuCodeDisplay(entry.skuId),
+                                                )}
+                                            </span>
+                                            <StatusBadge
+                                                status={
+                                                    entry.movementType === 'INBOUND' ||
+                                                    entry.movementType === 'RELEASE'
+                                                        ? 'active'
+                                                        : entry.movementType === 'RESERVE'
+                                                          ? 'pending'
+                                                          : 'info'
+                                                }
+                                                label={entry.movementType}
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <span className="text-xs text-gray-500">
+                                                {entry.reason || entry.refType || '—'}
+                                                {entry.refId ? ` · #${entry.refId.slice(0, 8)}` : ''}
+                                            </span>
+                                            <span
+                                                className={`font-bold ${isDecrease ? 'text-danger' : 'text-success'}`}
+                                            >
+                                                {displayQty > 0 ? `+${displayQty}` : displayQty}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                            {ledger.length > ledgerPerPage && (
+                                <div className="flex justify-center border-t border-border px-4 py-3 mt-3">
+                                    <nav aria-label={tr(lang, 'listPagination')}>
+                                        <Pagination
+                                            page={ledgerPage}
+                                            total={ledger.length}
+                                            perPage={ledgerPerPage}
+                                            onChange={setLedgerPage}
+                                            previousLabel={tr(lang, 'previousPage')}
+                                            nextLabel={tr(lang, 'nextPage')}
                                         />
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        <span className="text-xs text-gray-500">
-                                            {entry.reason || entry.refType || '—'}
-                                            {entry.refId ? ` · #${entry.refId.slice(0, 8)}` : ''}
-                                        </span>
-                                        <span
-                                            className={`font-bold ${isDecrease ? 'text-danger' : 'text-success'}`}
-                                        >
-                                            {displayQty > 0 ? `+${displayQty}` : displayQty}
-                                        </span>
-                                    </div>
+                                    </nav>
                                 </div>
-                            )
-                        })
+                            )}
+                        </>
                     )}
                 </div>
             </div>
@@ -4714,75 +5717,145 @@ export function SellerInventoryPage() {
     )
 }
 
-// ─── Seller Reputation ─────────────────────────────────────────────────────────
+// ─── Seller Reputation & Ratings (Sprint 3 - HA-S3-2) ─────────────────────────
 export function SellerReputationPage() {
     const { lang, user } = useApp()
+    const [reputation, setReputation] = useState<ReputationSummary | null>(null)
+    const [ratings, setRatings] = useState<RatingResponse[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+
+    const loadData = async () => {
+        if (!user) return
+        setLoading(true)
+        setError(null)
+        try {
+            const [rep, rates] = await Promise.all([
+                reputationApi.getMyReputation(),
+                reputationApi.getRatingsForUser(user.id, 0, 50),
+            ])
+            setReputation(rep)
+            setRatings(rates.content)
+        } catch (err: any) {
+            setError(
+                err?.message ||
+                    (lang === 'vi'
+                        ? 'Không thể tải điểm uy tín'
+                        : 'Failed to load reputation'),
+            )
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        loadData()
+    }, [user])
+
     if (!user) return null
 
+    const successRate =
+        reputation && reputation.totalTx > 0
+            ? Math.round((reputation.successTx / reputation.totalTx) * 100)
+            : 100
+
     return (
-        <SellerLayout title={lang === 'en' ? 'Reputation' : 'Uy tín'}>
-            <div className="max-w-4xl">
-                <div className="grid grid-cols-2 gap-5 mb-6">
-                    <div className="nexus-card p-6">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Seller reputation score' : 'Điểm uy tín người bán'}
-                        </h3>
-                        <ReputationBar score={user.reputationScore} />
+        <SellerLayout title={lang === 'en' ? 'Reputation & Ratings' : 'Uy tín & Đánh giá'}>
+            <div className="max-w-4xl space-y-6">
+                {loading ? (
+                    <div className="py-16 text-center text-gray-500" role="status">
+                        <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        <p className="text-sm">
+                            {lang === 'vi' ? 'Đang tải điểm uy tín...' : 'Loading reputation...'}
+                        </p>
                     </div>
-                    <div className="nexus-card p-6">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Performance' : 'Hiệu suất'}
-                        </h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="p-4 bg-gray-50 rounded-xl">
-                                <p className="text-2xl font-black">98%</p>
-                                <p className="text-xs text-gray-500 mt-1">
-                                    {lang === 'en' ? 'Successful orders' : 'Đơn thành công'}
-                                </p>
+                ) : error ? (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex justify-between items-center">
+                        <span>{error}</span>
+                        <Button size="sm" variant="outline" onClick={loadData}>
+                            {lang === 'vi' ? 'Thử lại' : 'Retry'}
+                        </Button>
+                    </div>
+                ) : reputation ? (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div className="nexus-card p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-bold text-gray-900">
+                                        {lang === 'en'
+                                            ? 'Seller reputation score'
+                                            : 'Điểm uy tín người bán'}
+                                    </h3>
+                                    <TrustLevelBadge level={reputation.trustLevel} size="md" />
+                                </div>
+                                <ReputationBar score={reputation.score} lang={lang} />
+                                <div className="mt-3 flex justify-between text-xs text-gray-500">
+                                    <span>
+                                        {lang === 'vi' ? 'Điểm hiện tại' : 'Current score'}:{' '}
+                                        <strong className="text-gray-900">
+                                            {reputation.score}
+                                        </strong>
+                                    </span>
+                                    <span>
+                                        {lang === 'vi' ? 'Cấp độ' : 'Tier'}:{' '}
+                                        <strong className="text-gray-900">
+                                            {reputation.trustLevel}
+                                        </strong>
+                                    </span>
+                                </div>
                             </div>
-                            <div className="p-4 bg-gray-50 rounded-xl">
-                                <p className="text-2xl font-black">4.8</p>
-                                <p className="text-xs text-gray-500 mt-1">
-                                    {lang === 'en' ? 'Buyer rating' : 'Đánh giá Buyer'}
-                                </p>
+
+                            <div className="nexus-card p-6">
+                                <h3 className="font-bold mb-4 text-gray-900">
+                                    {lang === 'en' ? 'Performance Metrics' : 'Chỉ số hiệu suất'}
+                                </h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-4 bg-gray-50 rounded-xl text-center">
+                                        <p className="text-2xl font-black text-gray-900">
+                                            {successRate}%
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {lang === 'en'
+                                                ? 'Order Success Rate'
+                                                : 'Tỉ lệ đơn thành công'}
+                                        </p>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-xl text-center">
+                                        <p className="text-2xl font-black text-amber-500">
+                                            ★{' '}
+                                            {reputation.avgRating
+                                                ? reputation.avgRating.toFixed(1)
+                                                : '5.0'}
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {reputation.totalRatings || ratings.length}{' '}
+                                            {lang === 'en'
+                                                ? 'Buyer reviews'
+                                                : 'Đánh giá từ Buyer'}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-                <div className="nexus-card p-5">
-                    <h3 className="font-bold mb-4">
-                        {lang === 'en' ? 'Recent buyer feedback' : 'Phản hồi gần đây từ Buyer'}
-                    </h3>
-                    {[
-                        {
-                            buyer: 'Minh Tran',
-                            rating: 5,
-                            comment:
-                                lang === 'en'
-                                    ? 'Product matched the description and shipped quickly.'
-                                    : 'Sản phẩm đúng mô tả và giao hàng nhanh.',
-                        },
-                        {
-                            buyer: 'Lan Nguyen',
-                            rating: 4,
-                            comment:
-                                lang === 'en'
-                                    ? 'Good communication throughout the order.'
-                                    : 'Trao đổi tốt trong suốt quá trình đặt hàng.',
-                        },
-                    ].map((feedback) => (
-                        <div
-                            key={feedback.buyer}
-                            className="py-4 border-b border-border last:border-0"
-                        >
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="font-semibold text-sm">{feedback.buyer}</span>
-                                <StarRating rating={feedback.rating} size={14} />
-                            </div>
-                            <p className="text-sm text-gray-600">{feedback.comment}</p>
+
+                        {/* Danh sách phản hồi và đánh giá từ Buyer */}
+                        <div className="nexus-card p-6">
+                            <h3 className="font-bold text-base mb-4 text-gray-900">
+                                {lang === 'en'
+                                    ? 'Buyer Feedback History'
+                                    : 'Lịch sử đánh giá từ người mua'}
+                            </h3>
+                            <RatingsList
+                                ratings={ratings}
+                                emptyMessage={
+                                    lang === 'vi'
+                                        ? 'Shop chưa nhận được đánh giá nào.'
+                                        : 'No buyer feedback yet.'
+                                }
+                            />
                         </div>
-                    ))}
-                </div>
+                    </>
+                ) : null}
             </div>
         </SellerLayout>
     )
@@ -4793,15 +5866,38 @@ export function SellerNotificationPage() {
     const { lang } = useApp()
     const [activeTab, setActiveTab] = useState('history')
     const [notifications, setNotifications] = useState<any[]>([])
+    const [loading, setLoading] = useState(true)
+    const [notifPage, setNotifPage] = useState(1)
+    const notifPerPage = 10
+
     useEffect(() => {
         const controller = new AbortController()
+        setLoading(true)
         getNotifications(0, controller.signal)
-            .then((inbox) => setNotifications(inbox.content.map((item) => ({
-                ...item, titleVi: item.title, body: item.content, bodyVi: item.content, timestamp: item.createdAt,
-            }))))
-            .catch(() => { if (!controller.signal.aborted) setNotifications([]) })
+            .then((inbox) =>
+                setNotifications(
+                    inbox.content.map((item) => ({
+                        ...item,
+                        titleVi: item.title,
+                        body: item.content,
+                        bodyVi: item.content,
+                        timestamp: item.createdAt,
+                    })),
+                ),
+            )
+            .catch(() => {
+                if (!controller.signal.aborted) setNotifications([])
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setLoading(false)
+            })
         return () => controller.abort()
     }, [])
+
+    const visibleNotifs = notifications.slice(
+        (notifPage - 1) * notifPerPage,
+        notifPage * notifPerPage,
+    )
 
     return (
         <SellerLayout title={lang === 'en' ? 'Notifications' : 'Thông báo'}>
@@ -4840,43 +5936,71 @@ export function SellerNotificationPage() {
                     />
 
                     {activeTab === 'history' ? (
-                        <div>
-                            {notifications.map((notification) => (
-                                <button
-                                    key={notification.id}
-                                    onClick={async () => {
-                                        if (notification.read) return
-                                        await readNotification(notification.id)
-                                        setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item))
-                                    }}
-                                    className={`w-full flex items-start gap-4 p-4 text-left border-b border-border last:border-0 transition-colors ${notification.read ? 'hover:bg-gray-50' : 'bg-gray-50'}`}
-                                >
-                                    <span className="w-9 h-9 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
-                                        <Bell size={17} />
-                                    </span>
-                                    <span className="flex-1 min-w-0">
-                                        <span className="flex items-center gap-2">
-                                            <span className="text-sm font-semibold text-gray-900">
-                                                {lang === 'vi'
-                                                    ? notification.titleVi
-                                                    : notification.title}
+                        loading ? (
+                            <SellerLoading
+                                label={
+                                    lang === 'en'
+                                        ? 'Loading notifications...'
+                                        : 'Đang tải danh sách thông báo...'
+                                }
+                            />
+                        ) : notifications.length === 0 ? (
+                            <div className="p-8 text-center text-sm text-gray-400">
+                                {lang === 'en' ? 'No notifications' : 'Không có thông báo nào'}
+                            </div>
+                        ) : (
+                            <div>
+                                {visibleNotifs.map((notification) => (
+                                    <button
+                                        key={notification.id}
+                                        onClick={async () => {
+                                            if (notification.read) return
+                                            await readNotification(notification.id)
+                                            setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item))
+                                        }}
+                                        className={`w-full flex items-start gap-4 p-4 text-left border-b border-border last:border-0 transition-colors ${notification.read ? 'hover:bg-gray-50' : 'bg-gray-50'}`}
+                                    >
+                                        <span className="w-9 h-9 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
+                                            <Bell size={17} />
+                                        </span>
+                                        <span className="flex-1 min-w-0">
+                                            <span className="flex items-center gap-2">
+                                                <span className="text-sm font-semibold text-gray-900">
+                                                    {lang === 'vi'
+                                                        ? notification.titleVi
+                                                        : notification.title}
+                                                </span>
+                                                {!notification.read && (
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+                                                )}
                                             </span>
-                                            {!notification.read && (
-                                                <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
-                                            )}
+                                            <span className="block text-sm text-gray-500 mt-1">
+                                                {lang === 'vi'
+                                                    ? notification.bodyVi
+                                                    : notification.body}
+                                            </span>
+                                            <span className="block text-xs text-gray-400 mt-1">
+                                                {new Date(notification.timestamp).toLocaleString()}
+                                            </span>
                                         </span>
-                                        <span className="block text-sm text-gray-500 mt-1">
-                                            {lang === 'vi'
-                                                ? notification.bodyVi
-                                                : notification.body}
-                                        </span>
-                                        <span className="block text-xs text-gray-400 mt-1">
-                                            {new Date(notification.timestamp).toLocaleString()}
-                                        </span>
-                                    </span>
-                                </button>
-                            ))}
-                        </div>
+                                    </button>
+                                ))}
+                                {notifications.length > notifPerPage && (
+                                    <div className="flex justify-center border-t border-border px-4 py-3">
+                                        <nav aria-label={tr(lang, 'listPagination')}>
+                                            <Pagination
+                                                page={notifPage}
+                                                total={notifications.length}
+                                                perPage={notifPerPage}
+                                                onChange={setNotifPage}
+                                                previousLabel={tr(lang, 'previousPage')}
+                                                nextLabel={tr(lang, 'nextPage')}
+                                            />
+                                        </nav>
+                                    </div>
+                                )}
+                            </div>
+                        )
                     ) : (
                         <div className="p-5 text-sm text-gray-500">{lang === 'en' ? 'Notification preferences API is not available.' : 'Backend chưa cung cấp API tùy chọn thông báo.'}</div>
                     )}

@@ -29,6 +29,11 @@ server:
 # Credential merchant và service account chỉ lấy từ môi trường; COD không cần VNPAY nhưng vẫn cần identity gọi kho.
 # Return URL là trang hiển thị; IPN URL /api/v1/payments/vnpay/ipn phải đăng ký riêng trên merchant VNPAY.
 app:
+  shipping:
+    # Chỉ ghi WAITING_PARCEL sau tiền/kho; chưa có worker dispatch, không backfill khi bật và không gọi carrier.
+    handoff-enabled: ${SHIPPING_HANDOFF_ENABLED:false}
+    # Claim giữ chặn refund không tự hết hạn; chỉ bật sau IAM/consumer/recovery được review, chưa gọi carrier tại Commerce.
+    dispatch-claim-enabled: ${SHIPPING_DISPATCH_CLAIM_ENABLED:false}
   frontend-url: ${FRONTEND_URL:http://localhost:3000}
   user:
     url: ${USER_SERVICE_URL:http://localhost:8081}
@@ -50,6 +55,11 @@ app:
       timeout-poll-ms: ${AUCTION_TIMEOUT_POLL_MS:5000}
       timeout-penalty-score: ${PAYMENT_TIMEOUT_PENALTY_SCORE:10}
     vnpay:
+      # Chỉ mở transport Merchant API khi đã xác minh quyền; không tự khởi động refund worker.
+      merchant-api-enabled: ${VNPAY_MERCHANT_API_ENABLED:false}
+      # Hai cổng độc lập, kèm approval theo từng refund; mặc định không có mutation provider.
+      refund-worker-enabled: ${VNPAY_REFUND_WORKER_ENABLED:false}
+      merchant-source-ip: ${VNPAY_MERCHANT_SOURCE_IP:}
       tmn-code: ${VNPAY_TMN_CODE:}
       hash-secret: ${VNPAY_HASH_SECRET:}
       return-url: ${VNPAY_RETURN_URL:}
@@ -68,6 +78,10 @@ management:
     refresh:
       enabled: true
     health:
+      # Probe công khai chỉ status; Admin mới thấy component/count backlog, không trả payload hoặc credential.
+      show-components: when_authorized
+      show-details: when_authorized
+      roles: ADMIN
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
   tracing:
