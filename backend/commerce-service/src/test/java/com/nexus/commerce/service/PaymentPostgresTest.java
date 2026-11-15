@@ -56,7 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 // Giữ cả receipt và Shipping inbox/replay trong context để kiểm tra hồi quy hai luồng trên cùng schema tích hợp.
-@Import({RefundedOrderFinalizationService.class, RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({RefundedOrderFinalizationService.class, RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundCreditNoteService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, ShippingHandoffOutbox.class, ShippingDispatchClaimService.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -395,6 +395,46 @@ class PaymentPostgresTest {
     }
 
     /** JWT fixture có subject/role rõ ràng; quyền ownership vẫn do PaymentReceiptService đọc từ Order thật. */
+    /**
+     * V23 credit note chạy trên PostgreSQL thật: chỉ phát hành khi biên nhận refund hợp lệ, giữ nguyên biên nhận gốc,
+     * chặn bản ghi thứ hai cho cùng refund và không cho refund chưa hoàn tất xuất chứng từ.
+     */
+    @Test
+    void creditNoteBindsVerifiedRefundAndCannotBeDuplicated() {
+        UUID refund = unknownRefundForResolution();
+        UUID admin = UUID.randomUUID();
+        // Chưa có kết quả provider: credit note phải bị từ chối, không tạo dòng trong bảng.
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> creditNotes.issue(refund, admin, UUID.randomUUID(), "Đối soát CASE-1",
+                        receiptActor(admin, "ADMIN"))).getHttpStatus().value());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_credit_notes WHERE refund_id=?",
+                Integer.class, refund));
+
+        resolutions.resolve(refund, admin, UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "CREDIT-CASE"));
+        UUID key = UUID.randomUUID();
+        var created = creditNotes.issue(refund, admin, key, "Đối soát CASE-1", receiptActor(admin, "ADMIN"));
+        assertEquals(true, created.created());
+        assertEquals("CN-" + refund, created.note().documentNo());
+        assertEquals("PAY-" + paymentId, created.note().originalReceiptId());
+        assertEquals("REFUND-" + refund, created.note().refundReceiptId());
+        assertEquals("MANUAL", created.note().evidenceSource());
+
+        // Replay cùng key trả bản ghi cũ; key mới cho cùng refund vẫn bị chặn bởi UNIQUE(refund_id).
+        assertEquals(false, creditNotes.issue(refund, admin, key, "Đối soát CASE-1",
+                receiptActor(admin, "ADMIN")).created());
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> creditNotes.issue(refund, admin, UUID.randomUUID(), "Lần hai",
+                        receiptActor(admin, "ADMIN"))).getHttpStatus().value());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_credit_notes WHERE refund_id=?",
+                Integer.class, refund));
+        // Biên nhận thu gốc không bị credit note sửa.
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments WHERE id=? AND status='SUCCESS'",
+                Integer.class, paymentId));
+    }
+
+    /** Bổ sung service credit note vào context kiểm thử để dùng chung đường kiểm tra biên nhận. */
+    @Autowired private RefundCreditNoteService creditNotes;
     private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken receiptActor(UUID actor, String role) {
         return new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
                 org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(actor.toString()).build(),

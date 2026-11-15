@@ -84,10 +84,12 @@ class BaselineMigrationPostgresTest {
             // V21 không tạo ý định giao hàng cho đơn lịch sử, tránh bật carrier khi nâng schema.
             // V22 không cấp claim/chặn refund khi nâng cấp dữ liệu lịch sử.
             // V23 không tự chốt Order/refund lịch sử khi nâng cấp schema.
-            assertEquals("23", baseline.info().current().getVersion().getVersion());
+            // V24 thêm bảng credit note rỗng, không backfill refund lịch sử.
+            assertEquals("24", baseline.info().current().getVersion().getVersion());
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refunded_order_finalizations", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_dispatch_claims", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_handoff_tasks", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_credit_notes", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_notification_replays", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".shipping_event_inbox", Integer.class));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM " + schema + ".refund_notification_replays", Integer.class));
