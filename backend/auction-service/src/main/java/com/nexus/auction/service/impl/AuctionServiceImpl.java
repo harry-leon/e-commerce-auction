@@ -1,5 +1,6 @@
 package com.nexus.auction.service.impl;
 
+import com.nexus.auction.client.FulfillmentInventoryClient;
 import com.nexus.auction.client.ReputationEligibilityClient;
 import com.nexus.auction.config.AuctionProperties;
 import com.nexus.auction.dto.mapper.AuctionMapper;
@@ -59,21 +60,29 @@ public class AuctionServiceImpl implements AuctionService {
     private final AuctionRepository auctionRepository;
     private final AuctionProperties auctionProperties;
     private final ReputationEligibilityClient reputationEligibilityClient;
+    private final FulfillmentInventoryClient fulfillmentInventoryClient;
 
     public AuctionServiceImpl(AuctionRepository auctionRepository, AuctionProperties auctionProperties) {
-        this.auctionRepository = auctionRepository;
-        this.auctionProperties = auctionProperties;
-        this.reputationEligibilityClient = null;
+        this(auctionRepository, auctionProperties, null, null);
+    }
+
+    public AuctionServiceImpl(
+            AuctionRepository auctionRepository,
+            AuctionProperties auctionProperties,
+            ReputationEligibilityClient reputationEligibilityClient) {
+        this(auctionRepository, auctionProperties, reputationEligibilityClient, null);
     }
 
     @Autowired
     public AuctionServiceImpl(
             AuctionRepository auctionRepository,
             AuctionProperties auctionProperties,
-            @Autowired(required = false) ReputationEligibilityClient reputationEligibilityClient) {
+            @Autowired(required = false) ReputationEligibilityClient reputationEligibilityClient,
+            @Autowired(required = false) FulfillmentInventoryClient fulfillmentInventoryClient) {
         this.auctionRepository = auctionRepository;
         this.auctionProperties = auctionProperties;
         this.reputationEligibilityClient = reputationEligibilityClient;
+        this.fulfillmentInventoryClient = fulfillmentInventoryClient;
     }
 
     /**
@@ -143,6 +152,16 @@ public class AuctionServiceImpl implements AuctionService {
         Auction saved = auctionRepository.save(auction);
         log.info("Người bán [{}] đã tạo phiên đấu giá [{}] cho sản phẩm [{}] thành công",
                 sellerId, saved.getId(), saved.getProductId());
+
+        // Khóa giữ 1 đơn vị tồn kho khả dụng cho phiên đấu giá (SRS §3.6.1)
+        if (saved.getSkuId() != null && fulfillmentInventoryClient != null) {
+            fulfillmentInventoryClient.reserveAuctionStock(
+                    saved.getId(),
+                    saved.getSkuId(),
+                    saved.getStartTime(),
+                    saved.getEndTime()
+            );
+        }
 
         return AuctionMapper.toResponse(saved);
     }
@@ -305,6 +324,11 @@ public class AuctionServiceImpl implements AuctionService {
         String reason = (request != null && request.getReason() != null) ? request.getReason().trim() : "Người dùng yêu cầu hủy";
         auction.setStatus(AuctionStatus.CANCELLED);
         Auction cancelled = auctionRepository.save(auction);
+
+        // Giải phóng tồn kho phiên đấu giá về lại số lượng khả dụng (SRS §3.6.1)
+        if (cancelled.getSkuId() != null && fulfillmentInventoryClient != null) {
+            fulfillmentInventoryClient.releaseAuctionStock(cancelled.getId(), reason);
+        }
 
         log.info("Phiên đấu giá [{}] đã bị hủy bởi user [{}], lý do: {}", auctionId, currentUserId, reason);
         return AuctionMapper.toResponse(cancelled);

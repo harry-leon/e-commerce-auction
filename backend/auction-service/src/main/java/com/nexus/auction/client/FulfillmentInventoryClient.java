@@ -23,4 +23,22 @@ public interface FulfillmentInventoryClient {
      * @return Danh sách mã phiếu giữ kho (reservationId) thuộc đơn hàng
      */
     List<UUID> transitionAuctionToOrder(UUID auctionId, UUID orderId, Instant paymentDeadline);
+
+    /**
+     * Khóa giữ 1 đơn vị tồn kho khả dụng cho phiên đấu giá (SRS §3.6.1).
+     *
+     * @param auctionId Mã phiên đấu giá
+     * @param skuId     Mã SKU biến thể sản phẩm
+     * @param startTime Thời gian bắt đầu phiên
+     * @param endTime   Thời gian kết thúc phiên
+     */
+    void reserveAuctionStock(UUID auctionId, UUID skuId, Instant startTime, Instant endTime);
+
+    /**
+     * Giải phóng hàng giữ kho khi phiên đấu giá bị hủy (SRS §3.6.1).
+     *
+     * @param auctionId Mã phiên đấu giá
+     * @param reason    Lý do giải phóng kho
+     */
+    void releaseAuctionStock(UUID auctionId, String reason);
 }
