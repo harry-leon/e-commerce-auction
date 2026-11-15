@@ -236,14 +236,14 @@ export function SellerDashboardPage() {
     return (
         <SellerLayout title={tr(lang, 'sellerDashboard')}>
             {/* KPIs */}
-            <div className="grid grid-cols-4 gap-5 mb-7">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-7">
                 {KPIs.map((k) => (
-                    <div key={k.label} className="nexus-card p-5">
+                    <div key={k.label} className="nexus-card p-5 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
                         <div className="flex items-center gap-3 mb-3">
-                            <span className="text-gray-500">{k.icon}</span>
-                            <span className="text-sm text-gray-500">{k.label}</span>
+                            <span className="w-10 h-10 rounded-xl bg-orange-50 text-primary flex items-center justify-center">{k.icon}</span>
+                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{k.label}</span>
                         </div>
-                        <p className="text-2xl font-black text-gray-900">{k.value}</p>
+                        <p className="text-2xl font-black text-gray-900 tracking-tight">{k.value}</p>
                         {k.change && (
                             <p
                                 className={`text-xs font-semibold mt-1 ${k.positive ? 'text-success' : 'text-danger'}`}

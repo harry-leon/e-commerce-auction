@@ -1,8 +1,8 @@
 import { Component, useState, useEffect, useRef, type ReactNode, type ErrorInfo } from 'react'
 import { AppProvider, useApp } from './context'
-import { ToastContainer } from './components/UI'
 import { AppRouter } from './routes/AppRouter'
 import { connectNotificationStream, NOTIFICATIONS_CHANGED } from './api/notificationStream'
+import { Toaster } from 'sonner'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
     state = { error: null }
@@ -90,7 +90,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
  * Đổi tài khoản/logout dọn socket và request cũ; spinner không trì hoãn mount trang con.
  */
 function AppInner() {
-    const { toasts, dismissToast, user, showToast, page } = useApp()
+    const { user, showToast, page } = useApp()
     const [pageTransitioning, setPageTransitioning] = useState(false)
     const prevPageRef = useRef(page)
     // Một socket theo phiên UI; đổi tài khoản/logout dọn socket cũ, không dùng token/profile demo làm xác thực.
@@ -147,8 +147,21 @@ function AppInner() {
                     </span>
                 </div>
             )}
-            <AppRouter />
-            <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+            <div key={page} className="page-transition-enter w-full">
+                <AppRouter />
+            </div>
+            <Toaster
+                richColors
+                position="top-right"
+                closeButton
+                duration={3500}
+                toastOptions={{
+                    className: 'font-sans text-sm rounded-xl shadow-xl border border-gray-100',
+                    style: {
+                        fontFamily: "'Inter', system-ui, sans-serif",
+                    },
+                }}
+            />
         </>
     )
 }
