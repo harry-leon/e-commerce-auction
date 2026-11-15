@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import type { AppState, Auction, AuctionReview, Lang, Page, Toast } from './types'
 import { useSessionStore } from './features/auth/sessionStore'
 import { readRoute, writeRoute } from './routes/routing'
+import { toast } from 'sonner'
 
 const AppContext = createContext<AppState>({
     lang: 'en',
@@ -76,9 +77,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const showToast = useCallback((t: Omit<Toast, 'id'>) => {
         const id = Math.random().toString(36).slice(2)
-        const toast: Toast = { ...t, id }
-        setToasts((prev) => [...prev, toast])
+        const toastItem: Toast = { ...t, id }
+        setToasts((prev) => [...prev, toastItem])
         setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== id)), t.duration ?? 3500)
+
+        const duration = t.duration ?? 3500
+        if (t.type === 'success') {
+            toast.success(t.message, { duration })
+        } else if (t.type === 'error') {
+            toast.error(t.message, { duration })
+        } else if (t.type === 'warning') {
+            toast.warning(t.message, { duration })
+        } else {
+            toast.info(t.message, { duration })
+        }
     }, [])
 
     const dismissToast = useCallback((id: string) => {

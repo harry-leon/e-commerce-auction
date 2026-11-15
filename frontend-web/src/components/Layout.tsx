@@ -451,11 +451,15 @@ export function PublicHeader() {
                     {/* Cart */}
                     <button
                         onClick={() => navigate('cart')}
-                        className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                        className="relative p-2 rounded-xl text-gray-600 hover:bg-gray-100 hover:text-primary transition-all duration-200 active:scale-95"
+                        aria-label="Shopping Cart"
                     >
                         <ShoppingCart size={20} />
                         {cartCount > 0 && (
-                            <span className="absolute top-1 right-1 w-4 h-4 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                            <span
+                                key={cartCount}
+                                className="cart-count-bounce absolute -top-1 -right-1 min-w-[20px] h-5 px-1 bg-primary text-white text-[11px] font-bold rounded-full flex items-center justify-center shadow-md ring-2 ring-white"
+                            >
                                 {cartCount}
                             </span>
                         )}
@@ -473,7 +477,7 @@ export function PublicHeader() {
                                 <img
                                     src={user.avatar}
                                     alt={user.fullName}
-                                    className="w-8 h-8 rounded-full object-cover"
+                                    className="w-8 h-8 rounded-full object-cover ring-1 ring-gray-200"
                                 />
                                 <span className="text-sm font-semibold text-gray-700 max-w-[100px] truncate">
                                     {user.fullName}
@@ -481,10 +485,10 @@ export function PublicHeader() {
                                 <ChevronDown size={14} className="text-gray-400" />
                             </button>
                             {userOpen && (
-                                <div className="absolute right-0 top-full mt-2 bg-white border border-border rounded-xl shadow-md py-2 w-52 z-50">
-                                    <div className="px-4 py-2 border-b border-border mb-1">
-                                        <p className="font-semibold text-sm">{user.fullName}</p>
-                                        <p className="text-xs text-gray-500">{user.email}</p>
+                                <div className="absolute right-0 top-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-56 z-50 animate-in fade-in zoom-in-95 duration-150">
+                                    <div className="px-4 py-2 border-b border-gray-100 mb-1">
+                                        <p className="font-semibold text-sm text-gray-900">{user.fullName}</p>
+                                        <p className="text-xs text-gray-500 truncate">{user.email}</p>
                                     </div>
                                     {[
                                         {
@@ -526,7 +530,7 @@ export function PublicHeader() {
                                             {item.label}
                                         </button>
                                     ))}
-                                    <div className="border-t border-border mt-1 pt-1">
+                                    <div className="border-t border-gray-100 mt-1 pt-1">
                                         <button
                                             onClick={async () => {
                                                 // Chỉ rời trang sau khi server xóa cookie; lỗi cho phép thử lại.
@@ -573,14 +577,14 @@ export function PublicHeader() {
 
             {/* Category nav */}
             <div className="border-t border-gray-100">
-                <div className="max-w-[1440px] mx-auto px-8 flex items-center gap-1 py-1">
+                <div className="max-w-[1440px] mx-auto px-8 flex items-center gap-1 py-1.5 overflow-x-auto">
                     {(categories || []).map((cat) => {
                         const Icon = CATEGORY_ICONS[cat.id]
                         return (
                             <button
                                 key={cat.id}
                                 onClick={() => navigate('search', { category: cat.id })}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:text-primary hover:bg-primary-light transition-colors whitespace-nowrap"
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-gray-600 hover:text-primary hover:bg-primary-light transition-all duration-200 active:scale-95 whitespace-nowrap"
                             >
                                 {Icon && <Icon className="text-gray-500" />}
                                 {lang === 'vi' ? cat.nameVi : cat.name}
@@ -589,10 +593,11 @@ export function PublicHeader() {
                     })}
                     <button
                         onClick={() => navigate('auction-list')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-700 font-semibold hover:bg-gray-100 transition-colors whitespace-nowrap ml-auto"
+                        className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm text-auction font-bold bg-orange-50 hover:bg-orange-100/80 border border-orange-200/60 shadow-xs transition-all duration-200 active:scale-95 whitespace-nowrap ml-auto"
                     >
+                        <span className="live-indicator" />
                         <Gavel size={14} />
-                        {lang === 'en' ? 'Live Auctions' : 'Đấu giá'}
+                        {lang === 'en' ? 'Live Auctions' : 'Đấu giá trực tiếp'}
                     </button>
                 </div>
             </div>

@@ -35,6 +35,8 @@ import {
     Trash2,
     Clock,
     Copy,
+    SkeletonProductCard,
+    SkeletonAuctionCard,
 } from '../../components/UI'
 import {
     reputationApi,
@@ -538,20 +540,10 @@ export function HomePage() {
                         </Button>
                     </div>
                     {loadingAuctions ? (
-                        <div
-                            className="nexus-card py-10 text-center text-sm text-gray-500"
-                            role="status"
-                        >
-                            <div className="flex justify-center mb-2">
-                                <div
-                                    className="spinner-border text-primary"
-                                    style={{ width: '2rem', height: '2rem', color: '#ee4d2d' }}
-                                    role="status"
-                                >
-                                    <span className="visually-hidden">Loading...</span>
-                                </div>
-                            </div>
-                            {tr(lang, 'loadingAuctions')}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                            {[1, 2, 3, 4].map((i) => (
+                                <SkeletonAuctionCard key={i} />
+                            ))}
                         </div>
                     ) : displayHomeAuctions.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -580,16 +572,8 @@ export function HomePage() {
                         <p className="nexus-card px-5 py-8 text-center text-red-600">{prodError}</p>
                     ) : prodLoading || loadingProductStock ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                            {[1, 2, 3, 4].map((i) => (
-                                <div
-                                    key={i}
-                                    className="nexus-card p-4 flex flex-col gap-3 animate-pulse"
-                                >
-                                    <div className="w-full h-48 bg-gray-100 rounded-xl" />
-                                    <div className="h-4 w-3/4 bg-gray-200 rounded" />
-                                    <div className="h-4 w-1/2 bg-gray-100 rounded" />
-                                    <div className="h-6 w-1/3 bg-gray-200 rounded mt-2" />
-                                </div>
+                            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                                <SkeletonProductCard key={i} />
                             ))}
                         </div>
                     ) : productStockError ? (

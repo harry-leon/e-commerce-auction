@@ -42,23 +42,28 @@ public class ShipmentController {
 
     private final ShippingService shippingService;
     private final WarehouseFulfillmentService warehouseFulfillmentService;
+    private final com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy ingress;
 
     public ShipmentController(
             ShippingService shippingService,
-            WarehouseFulfillmentService warehouseFulfillmentService) {
+            WarehouseFulfillmentService warehouseFulfillmentService,
+            com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy ingress) {
         this.shippingService = shippingService;
         this.warehouseFulfillmentService = warehouseFulfillmentService;
+        this.ingress = ingress;
     }
 
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SELLER', 'SUPPORT') or hasAuthority('SHIPPING.CREATE_SHIPMENT')")
     @Operation(
             summary = "Tạo vận đơn mới",
-            description = "Tạo vận đơn qua Carrier Adapter, lưu mã tracking và phát sự kiện ShipmentCreated")
+            description = "Legacy tạo qua carrier; 409 CLAIMED_DISPATCH_REQUIRED khi worker/controlled mode bật, dùng parcel + claim/preflight")
     public ResponseEntity<ApiResponse<ShipmentResponse>> createShipment(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateShipmentRequest request
     ) {
+        // Không cho Admin/Seller tự chọn key/body để đi vòng kiểm tra tài chính khi đã chuyển sang claimed dispatch.
+        ingress.requireLegacyAllowed();
         ShipmentResponse response = shippingService.createShipment(request, idempotencyKey);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(response));
     }
@@ -68,8 +73,10 @@ public class ShipmentController {
     @PreAuthorize("T(com.nexus.common.security.ServiceIdentity).permits(authentication, 'nexus-commerce-service', 'SHIPPING.ORDER_PAID')")
     @Operation(
             summary = "Tạo vận đơn tự động từ sự kiện OrderPaid",
-            description = "Tiếp nhận OrderPaid để tạo vận đơn idempotent theo DEFAULT_CARRIER hoặc quy tắc hãng")
+            description = "Legacy OrderPaid; controlled mode trả 409, worker lấy handoff/kiện và claim/preflight thay thế")
     public ApiResponse<ShipmentResponse> handleOrderPaid(@Valid @RequestBody OrderPaidEventRequest request) {
+        // Service identity đúng vẫn không thay thế claim; chặn trước cả gọi service để không suy diễn 500g/người nhận.
+        ingress.requireLegacyAllowed();
         return ApiResponse.ok(shippingService.createShipmentForPaidOrder(request.orderId()));
     }
 

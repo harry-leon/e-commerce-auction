@@ -56,7 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 // Giữ cả receipt và Shipping inbox/replay trong context để kiểm tra hồi quy hai luồng trên cùng schema tích hợp.
-@Import({RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({RefundedOrderFinalizationService.class, RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, ShippingHandoffOutbox.class, ShippingDispatchClaimService.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -65,6 +65,120 @@ import org.springframework.transaction.annotation.Transactional;
 @EnabledIfEnvironmentVariable(named = "NEXUS_TEST_DB_URL", matches = ".+")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentPostgresTest {
+    @Autowired private RefundedOrderFinalizationService disabledFinalization;
+
+    /** Chốt refund đã đối soát không sửa receipt thu, không enqueue kho và chỉ ghi một audit/history dù replay. */
+    @Test
+    void verifiedFullRefundFinalizesOrderAtomicallyAndReplaysAudit() {
+        UUID refund = finalizableRefund(); UUID key = UUID.randomUUID(); var auth = receiptActor(UUID.randomUUID(), "ADMIN");
+        var original = receipts.download(paymentId, auth);
+        int inventoryBefore = jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId);
+        var result = finalizeRefund(refund, key, "Verified cancellation", auth);
+        assertEquals(true, result.created()); assertEquals("REFUNDED", orderState());
+        var replay = finalizeRefund(refund, key, "Verified cancellation", auth);
+        assertEquals(false, replay.created()); assertEquals(result.decision(), replay.decision());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, key, "Changed", auth));
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Another", auth));
+        assertEquals(original, receipts.download(paymentId, auth));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refunded_order_finalizations WHERE order_id=?", Integer.class, orderId));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM order_status_history WHERE order_id=? AND to_status='REFUNDED'", Integer.class, orderId));
+        assertEquals(inventoryBefore, jdbc.queryForObject("SELECT count(*) FROM payment_inventory_tasks WHERE order_id=?", Integer.class, orderId));
+    }
+
+    /** Mặc định tắt, sai quyền hoặc refund chưa có registry đều không được biến Order thành REFUNDED. */
+    @Test
+    void finalizationFailsClosedWithoutPrivilegeFlagOrEvidence() {
+        UUID refund = newRefundRequest(); var auth = receiptActor(UUID.randomUUID(), "ADMIN");
+        assertEquals(503, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> disabledFinalization.finalizeRefund(refund, UUID.randomUUID(), "Verified", auth)).getHttpStatus().value());
+        assertEquals(403, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", receiptActor(buyer, "BUYER"))).getHttpStatus().value());
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth)).getHttpStatus().value());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refunded_order_finalizations WHERE order_id=?", Integer.class, orderId));
+        org.junit.jupiter.api.Assertions.assertNotEquals("REFUNDED", orderState());
+    }
+
+    /** Hold, binding hoặc claim phải chặn dù refund đã có bằng chứng SUCCEEDED. */
+    @Test
+    void finalizationRejectsFinancialHoldShipmentAndClaim() {
+        UUID refund = finalizableRefund(); var auth = receiptActor(UUID.randomUUID(), "ADMIN");
+        // Kho chưa chốt có thể còn worker xử lý; không đóng Order giữa workflow đang xác nhận tiền/kho.
+        jdbc.update("UPDATE payments SET inventory_status='PENDING' WHERE id=?", paymentId);
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        jdbc.update("UPDATE payments SET inventory_status='CONFIRMED' WHERE id=?", paymentId);
+        // Snapshot refund phải đúng payment đã thu; SUCCEEDED/registry không hợp thức hóa reference bị sửa.
+        jdbc.update("UPDATE refund_requests SET provider_payment_ref='0' WHERE id=?", refund);
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        jdbc.update("UPDATE refund_requests SET provider_payment_ref=(SELECT provider_ref FROM payments WHERE id=?) WHERE id=?", paymentId, refund);
+        jdbc.update("INSERT INTO refund_payment_holds(payment_id,reason) VALUES (?,'TEST')", paymentId);
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        jdbc.update("DELETE FROM refund_payment_holds WHERE payment_id=?", paymentId);
+        jdbc.update("INSERT INTO shipping_order_bindings(order_id,shipment_id,carrier,tracking_number) VALUES (?,?,'GHN','TEST')", orderId, UUID.randomUUID());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        jdbc.update("DELETE FROM shipping_order_bindings WHERE order_id=?", orderId);
+        UUID handoff = UUID.randomUUID();
+        jdbc.update("INSERT INTO shipping_handoff_tasks(id,order_id,payment_id,amount) VALUES (?,?,?,50000) ON CONFLICT DO NOTHING", handoff, orderId, paymentId);
+        handoff = jdbc.queryForObject("SELECT id FROM shipping_handoff_tasks WHERE order_id=?", UUID.class, orderId);
+        jdbc.update("INSERT INTO shipping_dispatch_claims(id,order_id,handoff_id,parcel_id,requested_by,idempotency_key) VALUES (?,?,?,?,?,?)",
+                UUID.randomUUID(), orderId, handoff, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refunded_order_finalizations WHERE order_id=?", Integer.class, orderId));
+    }
+
+    /** Không áp dụng policy này cho đơn đã giao/hủy hoặc refund một phần dù registry và nguồn audit khớp. */
+    @Test
+    void finalizationRejectsTerminalOrdersAndPartialRefund() {
+        UUID refund = finalizableRefund(); var auth = receiptActor(UUID.randomUUID(), "ADMIN");
+        for (String state : new String[]{"SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED"}) {
+            jdbc.update("UPDATE orders SET status=? WHERE id=?", state, orderId);
+            assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        }
+        jdbc.update("UPDATE orders SET status='PAID' WHERE id=?", orderId);
+        // Fault injection đồng bộ bằng chứng chỉ trong fixture để chứng minh check toàn phần độc lập với check registry.
+        jdbc.update("UPDATE refund_requests SET amount=1 WHERE id=?", refund);
+        jdbc.update("UPDATE refund_provider_receipts SET amount=1 WHERE refund_id=?", refund);
+        jdbc.update("UPDATE refund_manual_resolutions SET amount=1 WHERE refund_id=?", refund);
+        assertEquals(new BigDecimal("1.00"), refundReceipts.download(refund, auth).amount());
+        assertThrows(com.nexus.common.exception.ApiException.class, () -> finalizeRefund(refund, UUID.randomUUID(), "Verified", auth));
+        assertEquals("PAID", orderState());
+    }
+
+    /** Transaction ngoài rollback phải thu hồi cả Order, audit và history; không được có nửa quyết định. */
+    @Test
+    void finalizationRollbackAndConcurrentReplayKeepSingleDecision() throws Exception {
+        UUID refund = finalizableRefund(); UUID key = UUID.randomUUID(); var auth = receiptActor(UUID.randomUUID(), "ADMIN");
+        String before = orderState();
+        new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).executeWithoutResult(tx -> {
+            finalizeRefund(refund, key, "Verified", auth); tx.setRollbackOnly();
+        });
+        assertEquals(before, orderState());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refunded_order_finalizations WHERE order_id=?", Integer.class, orderId));
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var one = pool.submit(() -> finalizeRefund(refund, key, "Verified", auth));
+            var two = pool.submit(() -> finalizeRefund(refund, key, "Verified", auth));
+            assertEquals(one.get(10, TimeUnit.SECONDS).decision(), two.get(10, TimeUnit.SECONDS).decision());
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refunded_order_finalizations WHERE order_id=?", Integer.class, orderId));
+    }
+
+    /** Fixture dùng đối soát hiện có để tạo registry MANUAL thật, không chỉ gán SUCCEEDED lên refund. */
+    private UUID finalizableRefund() {
+        UUID refund = unknownRefundForResolution();
+        resolutions.resolve(refund, UUID.randomUUID(), UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "FINALIZE-FIXTURE"));
+        jdbc.update("UPDATE orders SET status='PAID',fulfillment_status=NULL WHERE id=?", orderId);
+        jdbc.update("UPDATE payments SET inventory_status='CONFIRMED' WHERE id=?", paymentId);
+        return refund;
+    }
+
+    /** Chạy service với flag bật trong transaction thật; không thay cấu hình mặc định của context hoặc gọi provider. */
+    private RefundedOrderFinalizationService.Result finalizeRefund(UUID refund, UUID key, String note,
+            org.springframework.security.core.Authentication auth) {
+        return new org.springframework.transaction.support.TransactionTemplate(refundTransactionManager).execute(tx ->
+                new RefundedOrderFinalizationService(jdbc, new CheckoutLock(jdbc), refundReceipts, true).finalizeRefund(refund, key, note, auth));
+    }
+
     @Autowired private ShippingDispatchClaimService dispatchClaims;
 
     /** Preflight đọc lại hold sau claim; replay claim vẫn là kết quả cũ, không được dùng nó để vượt review mới. */

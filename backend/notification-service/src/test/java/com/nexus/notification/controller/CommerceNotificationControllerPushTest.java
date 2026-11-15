@@ -198,4 +198,38 @@ class CommerceNotificationControllerPushTest {
         assertTrue(content.contains("Đang xử lý hoàn kho"));
         assertFalse(content.contains("Đã hoàn kho"));
     }
+
+    /**
+     * Người dùng tắt PUSH cho một loại sự kiện thì không phát WebSocket và không ghi bản ghi PUSH,
+     * nhưng IN_APP vẫn được ghi để không mất nguồn resync. Cấu hình thiếu dòng = mặc định bật.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void respectsDisabledPushPreferenceButKeepsInbox() throws Exception {
+        properties.setPushEnabled(true);
+        UUID winnerId = UUID.randomUUID();
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        // Truy vấn cấu hình PUSH bị tắt; các truy vấn khác không cần giá trị.
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(false);
+        String body = """
+                {
+                  "id": "%s",
+                  "userId": "%s",
+                  "orderId": "%s",
+                  "orderNo": "ORD-AUC-04",
+                  "type": "AUCTION_WON",
+                  "amount": 2500000,
+                  "occurredAt": "2026-11-11T10:00:00Z"
+                }
+                """.formatted(UUID.randomUUID(), winnerId, UUID.randomUUID());
+
+        mvc.perform(post("/internal/commerce-notifications")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_NOTIFICATION_WRITER")))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isNoContent());
+
+        verifyNoInteractions(messagingTemplate);
+        // Chỉ có INSERT IN_APP và INSERT attempt của IN_APP; không phát sinh INSERT cho kênh PUSH.
+        verify(jdbc, org.mockito.Mockito.times(2)).update(anyString(), any(Object[].class));
+    }
 }

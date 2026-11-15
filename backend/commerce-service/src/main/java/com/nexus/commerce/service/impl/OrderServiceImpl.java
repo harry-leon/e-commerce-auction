@@ -50,7 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>Kiểm tra phân quyền truy cập đa người dùng (Multi-tenant Ownership Isolation) cho API xem chi tiết.</li>
  *   <li>Điều phối chuyển trạng thái đơn hàng an toàn qua máy trạng thái OrderStatusStateMachine.</li>
  *   <li>Ghi vết kiểm toán bất biến (Immutable Audit Trail) vào bảng order_status_history.</li>
- *   <li>Hỗ trợ tính lũy kế và hủy đơn chưa thu tiền; chưa có provider hoàn tiền nên không ghi REFUNDED mới.</li>
+ *   <li>Hỗ trợ tính lũy kế và hủy đơn chưa thu tiền; REFUNDED cần workflow xác minh/audit riêng, không ghi từ API trạng thái tổng quát.</li>
  * </ul>
  *
  * <p>Quy tắc và lý do:
@@ -339,7 +339,7 @@ public class OrderServiceImpl implements OrderService {
             return orderMapper.toDetailResponse(order);
         }
 
-        // Chưa có provider refund: không cho API đánh dấu đã hoàn tiền khi chưa hoàn tiền thật.
+        // API trạng thái tổng quát không xác minh registry refund; chỉ luồng finalization riêng được ghi REFUNDED mới.
         if (targetStatus == OrderStatus.REFUNDED) { throw refundUnavailable(); }
         // VNPAY/đơn winner chỉ được PAID qua IPN và worker kho, kể cả trước khi marker AUCTION chuyển sang provider VNPAY.
         if (targetStatus == OrderStatus.PAID && ("VNPAY".equals(order.getPaymentMethod())
@@ -387,7 +387,7 @@ public class OrderServiceImpl implements OrderService {
      * <ul>
      *   <li>Chỉ người mua là chủ đơn hàng hoặc Admin hệ thống mới có quyền hủy đơn.</li>
      *   <li>Xử lý idempotent an toàn nếu đơn hàng đã ở trạng thái CANCELLED.</li>
-     *   <li>Chỉ hủy đơn chưa thu tiền và không có VNPAY đang chờ; đơn PAID bị từ chối khi chưa có refund provider.</li>
+     *   <li>Chỉ hủy đơn chưa thu tiền và không có VNPAY đang chờ; đơn PAID cần workflow refund/đối soát riêng.</li>
      *   <li>Lưu lý do hủy và tác vụ release kho cùng transaction; worker retry sau commit bằng service account.</li>
      * </ul>
      */
@@ -428,7 +428,7 @@ public class OrderServiceImpl implements OrderService {
         if (currentStatus == OrderStatus.PENDING_PAYMENT) {
             targetStatus = OrderStatus.CANCELLED;
         } else if (currentStatus == OrderStatus.PAID) {
-            // Giữ PAID khi chưa có refund provider; không ghi nhận hoàn tiền giả.
+            // Giữ PAID qua route hủy trực tiếp; chỉ workflow có bằng chứng refund mới được chốt trạng thái.
             throw refundUnavailable();
         } else {
             log.warn("Không thể hủy đơn hàng {} khi đang ở trạng thái {}", orderId, currentStatus);
@@ -478,7 +478,7 @@ public class OrderServiceImpl implements OrderService {
     /**
      * Tra cứu thực thể đơn hàng theo ID hoặc ném ngoại lệ ORDER_NOT_FOUND (HTTP 404).
      */
-    /** COD đã thu tiền/chờ kho và VNPAY có thể thu tiền không được hủy như đơn chưa trả; chưa có refund provider. */
+    /** COD đã thu tiền/chờ kho và VNPAY có thể thu tiền cần workflow đối soát riêng, không hủy như đơn chưa trả. */
     private void rejectActiveVnpayCancellation(Order order, OrderStatus target) {
         if (target == OrderStatus.CANCELLED && order.isPriceFinalized() && order.getFulfillmentStatus() != null) {
             throw refundUnavailable();
@@ -522,7 +522,7 @@ public class OrderServiceImpl implements OrderService {
                 UUID.randomUUID(), order.getId(), order.getId());
     }
 
-    /** Chưa có provider refund nên từ chối thay vì ghi trạng thái REFUNDED giả. */
+    /** Từ chối legacy route thiếu bằng chứng/audit, không dùng phán quyết hoặc trạng thái client để giả đã refund. */
     private BusinessException refundUnavailable() {
         return new BusinessException(ErrorCode.ORDER_CANNOT_CANCEL, "Chưa hỗ trợ hoàn tiền tự động; đơn đã thanh toán cần đối soát trước khi hoàn tiền");
     }
@@ -901,8 +901,8 @@ public class OrderServiceImpl implements OrderService {
     /**
      * Quản trị viên xử lý tranh chấp ký quỹ của đơn hàng (Dispute Resolution).
      *
-     * <p>Chức năng: Ghi nhận quyết định xử lý tranh chấp của Admin ('refunded', 'released', 'partial_refund')
-     * và cập nhật trạng thái đơn hàng cùng lịch sử kiểm toán bất biến.
+     * <p>Chức năng: Ghi nhận quyết định 'released' của Admin và cập nhật Order/history.
+     * Refund toàn phần/một phần bị chặn tại đây: request không có bằng chứng provider nên không được giả hoàn tiền.
      *
      * <p>Đầu vào và kết quả:
      * - Đầu vào: orderId (UUID), request chứa resolution ('refunded', 'released', 'partial_refund') và note tùy chọn,
@@ -912,11 +912,11 @@ public class OrderServiceImpl implements OrderService {
      * <p>Luồng xử lý:
      * 1. Xác thực quyền ADMIN: Người dùng phải có quyền ADMIN, nếu không ném AUTH_FORBIDDEN.
      * 2. Khóa và nạp bản ghi đơn hàng qua findOrderForUpdate(orderId).
-     * 3. Kiểm tra điều kiện nghiệp vụ: Đơn hàng ở trạng thái PENDING_PAYMENT hoặc CANCELLED
+     * 3. Kiểm tra điều kiện nghiệp vụ: Đơn hàng ở trạng thái PENDING_PAYMENT, CANCELLED hoặc REFUNDED
      *    không thể xử lý tranh chấp ký quỹ -> ném ORDER_STATUS_INVALID.
      * 4. Xác định trạng thái đích:
-     *    - 'refunded': Hoàn tiền 100% cho người mua -> Order chuyển sang REFUNDED; gọi enqueueRelease hoàn trả tồn kho nếu là đơn thường.
-     *    - 'released' hoặc 'partial_refund': Giải ngân tiền ký quỹ cho người bán -> Order chuyển sang COMPLETED.
+     *    - 'refunded' hoặc 'partial_refund': từ chối; cần workflow refund/đối soát riêng, không gọi kho.
+     *    - 'released': chỉ ghi nhận Order COMPLETED theo hành vi hiện có, không thực hiện chuyển tiền provider.
      * 5. Cập nhật Order.status nếu có thay đổi và lưu vào orderRepository.
      * 6. Ghi nhận vết kiểm toán bất biến vào order_status_history với định dạng "[ADMIN] [DISPUTE:<RESOLUTION>] note".
      * 7. Trả về OrderDetailResponse đầy đủ.
@@ -953,7 +953,8 @@ public class OrderServiceImpl implements OrderService {
         Order order = findOrderForUpdate(orderId);
         OrderStatus currentStatus = order.getStatus();
 
-        if (currentStatus == OrderStatus.PENDING_PAYMENT || currentStatus == OrderStatus.CANCELLED) {
+        // REFUNDED là kết quả tài chính đã chốt; phán quyết khác không được mở lại thành COMPLETED.
+        if (currentStatus == OrderStatus.PENDING_PAYMENT || currentStatus == OrderStatus.CANCELLED || currentStatus == OrderStatus.REFUNDED) {
             throw new BusinessException(
                     ErrorCode.ORDER_STATUS_INVALID,
                     "Không thể giải quyết tranh chấp cho đơn hàng chưa thanh toán hoặc đã bị hủy"
@@ -963,8 +964,9 @@ public class OrderServiceImpl implements OrderService {
         String resolution = request.resolution().trim().toLowerCase(Locale.ROOT);
         OrderStatus targetStatus;
         switch (resolution) {
-            case "refunded" -> targetStatus = OrderStatus.REFUNDED;
-            case "released", "partial_refund" -> targetStatus = OrderStatus.COMPLETED;
+            // Phán quyết không phải bằng chứng thu/hoàn tiền; không cho đường Admin đi vòng receipt/claim/hold.
+            case "refunded", "partial_refund" -> throw refundUnavailable();
+            case "released" -> targetStatus = OrderStatus.COMPLETED;
             default -> throw new BusinessException(
                     ErrorCode.INVALID_PARAM_VALUE,
                     "Nghị quyết tranh chấp không hợp lệ: " + request.resolution()
@@ -974,9 +976,6 @@ public class OrderServiceImpl implements OrderService {
         if (currentStatus != targetStatus) {
             order.setStatus(targetStatus);
             order = orderRepository.save(order);
-            if (targetStatus == OrderStatus.REFUNDED) {
-                enqueueRelease(order);
-            }
         }
 
         String cleanNote = (request.note() != null && !request.note().isBlank()) ? request.note().trim() : "";

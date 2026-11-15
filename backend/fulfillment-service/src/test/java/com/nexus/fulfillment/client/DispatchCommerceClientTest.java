@@ -19,7 +19,10 @@ import org.junit.jupiter.api.Test;
 
 /** HTTP/OAuth fixture loopback kiểm tra wire contract, binding và không retry/redirect; không gọi Commerce/IAM thật. */
 class DispatchCommerceClientTest {
-    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    // Commerce Spring Boot trả Instant dạng ISO-8601; không serialize thành số giây rồi đọc qua Double,
+    // vì readTree có thể làm lệch 100ns và khiến so sánh claim phụ thuộc đồng hồ máy chạy test.
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules()
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final AtomicInteger calls = new AtomicInteger();
     private final AtomicInteger oauth = new AtomicInteger();
     private final AtomicInteger status = new AtomicInteger(200);
@@ -63,7 +66,7 @@ class DispatchCommerceClientTest {
         UUID order = UUID.randomUUID(); UUID handoff = UUID.randomUUID(); UUID parcel = UUID.randomUUID(); UUID key = UUID.randomUUID();
         response(new DispatchCommerceClient.Handoff(handoff, order, "WAITING_PARCEL"));
         assertEquals(handoff, client.handoff(order).id());
-        var claim = new DispatchCommerceClient.Claim(UUID.randomUUID(), order, handoff, parcel, Instant.now());
+        var claim = new DispatchCommerceClient.Claim(UUID.randomUUID(), order, handoff, parcel, Instant.parse("2026-11-15T07:00:00.123456789Z"));
         status.set(201); response(claim);
         assertEquals(claim, client.claim(order, handoff, parcel, key)); assertEquals(key.toString(), lastKey.get());
         status.set(200); response(new DispatchCommerceClient.Authorization(claim,

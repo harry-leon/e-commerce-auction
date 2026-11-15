@@ -44,7 +44,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * - Cấu trúc envelope ApiResponse chuẩn cho các API quote, create, tracking và carriers.
  */
 @WebMvcTest({ShippingController.class, ShipmentController.class})
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+// Policy thật mặc định tắt giữ hành vi legacy; ca worker bật được bảo vệ ở ClaimedDispatchIngressControllerTest.
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy.class})
 @ActiveProfiles("test")
 class ShippingControllerTest {
 

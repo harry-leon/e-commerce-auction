@@ -17,9 +17,8 @@ export const VERSIONS = {
     catalog: 7,
     // V14 thêm audit đóng job đã xác nhận, không seed/backfill quyết định hoặc phát lại carrier.
     fulfillment: 14,
-    // Tích hợp kiện V12 và claim V22; giữ schema mới nhất của cả hai service, không seed dispatch giả.
-    // V22 thêm quyền dispatch, không seed/backfill claim hoặc tự chặn refund của đơn demo/lịch sử.
-    commerce: 22,
+    // V23 thêm audit chốt Order sau refund đã xác minh; demo không seed quyết định hoặc sửa Order lịch sử.
+    commerce: 23,
     auction: 3,
     reputation: 3,
     // V6 thêm refund context nullable; fixture demo không giả lập một giao dịch refund thật.
