@@ -37,6 +37,7 @@ import { reputationApi, type ReputationSummary, type RatingResponse } from '../.
 import { auctionsApi } from '../../api/auctions'
 import { api, type ApiProduct, type Envelope } from '../../api/client'
 import { formatCurrency } from '../../i18n'
+import { resolveSellerName } from '../../utils/sellerHelper'
 import type { Auction } from '../../types'
 
 // SVG Icons tự định nghĩa đồng bộ hệ thống
@@ -103,8 +104,12 @@ const SvgCalendarIcon = ({ size = 16, className = '' }: { size?: number; classNa
 
 export function SellerShopView() {
     const { lang, pageParams, showToast, navigate } = useApp()
-    const sellerId = typeof pageParams?.id === 'string' && pageParams.id ? pageParams.id : 'seller-1'
-    const sellerName = typeof pageParams?.sellerName === 'string' && pageParams.sellerName ? pageParams.sellerName : 'TechZone Store'
+    const sellerId = typeof pageParams?.sellerId === 'string' && pageParams.sellerId
+        ? pageParams.sellerId
+        : typeof pageParams?.id === 'string' && pageParams.id
+          ? pageParams.id
+          : 'b1fb6fd5-936c-439e-994c-f0c5c529b406'
+    const sellerName = resolveSellerName(sellerId, typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null)
     const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions' | 'reviews'>('all')
     const [savedVouchers, setSavedVouchers] = useState<string[]>([])
     const [isFollowed, setIsFollowed] = useState<boolean>(() => {
@@ -144,29 +149,13 @@ export function SellerShopView() {
         api<Envelope<ApiProduct[]> | ApiProduct[]>(`/products/seller/${encodeURIComponent(sellerId)}`)
             .then((res) => {
                 if (!active || !res) return
-                const list = Array.isArray(res) ? res : res.data
-                if (Array.isArray(list) && list.length > 0) {
+                const list = Array.isArray(res) ? res : (res as any)?.data
+                if (Array.isArray(list)) {
                     setProducts(list)
-                } else {
-                    // Nếu người bán chưa có sản phẩm riêng, tải các sản phẩm chung
-                    api<Envelope<ApiProduct[]> | ApiProduct[]>('/products?limit=12')
-                        .then((fallbackRes) => {
-                            if (!active || !fallbackRes) return
-                            const fallbackList = Array.isArray(fallbackRes) ? fallbackRes : fallbackRes.data
-                            if (Array.isArray(fallbackList)) setProducts(fallbackList)
-                        })
-                        .catch(() => {})
                 }
             })
             .catch(() => {
-                // Thử tải sản phẩm chung khi seller id không có sản phẩm
-                api<Envelope<ApiProduct[]> | ApiProduct[]>('/products?limit=12')
-                    .then((fallbackRes) => {
-                        if (!active || !fallbackRes) return
-                        const fallbackList = Array.isArray(fallbackRes) ? fallbackRes : fallbackRes.data
-                        if (Array.isArray(fallbackList)) setProducts(fallbackList)
-                    })
-                    .catch(() => {})
+                if (active) setProducts([])
             })
 
         return () => { active = false }
@@ -202,49 +191,16 @@ export function SellerShopView() {
     }
 
     // Danh sách sản phẩm hiển thị: Ưu tiên dữ liệu thật từ Catalog Service
-    const storeProducts = products.length > 0
-        ? products.map((p) => ({
-            id: p.id,
-            category: p.categoryName || p.category?.name || 'Sản phẩm',
-            name: p.name,
-            rating: 5,
-            reviewsCount: p.ratingCount || 10,
-            price: formatCurrency(p.skus?.[0]?.price || p.price || 150000, lang),
-            originalPrice: p.skus?.[0]?.originalPrice ? formatCurrency(p.skus[0].originalPrice, lang) : null,
-            image: p.images?.[0]?.url || p.images?.[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80',
-        }))
-        : [
-            {
-                id: 'p-sony-1000xm5',
-                category: 'Audio',
-                name: 'Sony WH-1000XM5 Wireless Headphones',
-                rating: 5,
-                reviewsCount: 348,
-                price: '279.99đ',
-                originalPrice: '349.99đ',
-                image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80',
-            },
-            {
-                id: 'p-macbook-air-m3',
-                category: 'Laptops',
-                name: 'Apple MacBook Air M3 13"',
-                rating: 5,
-                reviewsCount: 521,
-                price: '1.099.00đ',
-                originalPrice: null,
-                image: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=500&q=80',
-            },
-            {
-                id: 'p-true-wireless-earbuds',
-                category: 'Audio',
-                name: 'True Wireless Earbuds',
-                rating: 5,
-                reviewsCount: 214,
-                price: '119.00đ',
-                originalPrice: null,
-                image: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80',
-            },
-        ]
+    const storeProducts = products.map((p) => ({
+        id: p.id,
+        category: p.categoryName || p.category?.name || 'Sản phẩm',
+        name: p.name,
+        rating: 5,
+        reviewsCount: p.ratingCount || 1,
+        price: formatCurrency(p.skus?.[0]?.price || p.minPrice || p.price || 150000, lang),
+        originalPrice: p.skus?.[0]?.originalPrice ? formatCurrency(p.skus[0].originalPrice, lang) : null,
+        image: p.images?.[0]?.url || p.images?.[0] || 'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542345/Nexus/fashion/ao-thun-cotton-thuong-ngay/ao-thun-cotton-thuong-ngay-main.jpg',
+    }))
 
     return (
         <BuyerLayout>
@@ -303,7 +259,7 @@ export function SellerShopView() {
                             </button>
                             <button
                                 type="button"
-                                onClick={() => showToast({ type: 'info', message: lang === 'vi' ? 'Đang kết nối chat với TechZone Store...' : 'Connecting chat...' })}
+                                onClick={() => showToast({ type: 'info', message: lang === 'vi' ? `Đang kết nối chat với ${sellerName}...` : 'Connecting chat...' })}
                                 className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-black/30 hover:bg-black/40 border border-white/30 backdrop-blur-sm transition-all cursor-pointer flex items-center gap-1.5"
                             >
                                 <SvgChatBubble size={14} />
@@ -318,7 +274,7 @@ export function SellerShopView() {
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgStoreIcon size={18} className="text-slate-600" />
                             <span>Sản phẩm:</span>
-                            <span className="font-bold text-[#ea580c]">{products.length || 3}</span>
+                            <span className="font-bold text-[#ea580c]">{products.length}</span>
                         </div>
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgUsersGroup size={18} className="text-slate-600" />
@@ -331,27 +287,27 @@ export function SellerShopView() {
                         {/* Hàng 2 */}
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgUserFollowing size={18} className="text-slate-600" />
-                            <span>Đang theo:</span>
-                            <span className="font-bold text-[#ea580c]">3</span>
+                            <span>Giao dịch thành công:</span>
+                            <span className="font-bold text-[#ea580c]">{reputation?.successTx ?? 0}</span>
                         </div>
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgStarOutline size={18} className="text-slate-600" />
                             <span>Đánh giá:</span>
                             <span className="font-bold text-[#ea580c]">
-                                {reputation?.avgRating ? reputation.avgRating.toFixed(1) : '4.8'} ({reputation?.totalRatings || (ratings.length > 0 ? ratings.length : 521)} đánh giá)
+                                {(reputation?.avgRating || (ratings.length > 0 ? ratings.reduce((s, r) => s + r.score, 0) / ratings.length : 5.0)).toFixed(1)} ({reputation?.totalRatings || ratings.length} đánh giá)
                             </span>
                         </div>
 
                         {/* Hàng 3 */}
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgChatBubble size={18} className="text-slate-600" />
-                            <span>Tỉ lệ phản hồi chat:</span>
-                            <span className="font-bold text-[#ea580c]">98%</span>
+                            <span>Điểm uy tín:</span>
+                            <span className="font-bold text-[#ea580c]">{reputation?.score ?? 100} ({reputation?.trustLevel || 'STANDARD'})</span>
                         </div>
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgCalendarIcon size={18} className="text-slate-600" />
-                            <span>Tham gia:</span>
-                            <span className="font-bold text-[#ea580c]">11 tháng trước</span>
+                            <span>Đấu giá thắng:</span>
+                            <span className="font-bold text-[#ea580c]">{reputation?.auctionWon ?? 0}</span>
                         </div>
                     </div>
                 </div>
@@ -476,7 +432,13 @@ export function SellerShopView() {
                             </button>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {storeProducts.length === 0 ? (
+                            <div className="py-12 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
+                                <p className="font-semibold text-sm">Gian hàng hiện chưa có sản phẩm nào đang bán.</p>
+                                <p className="text-xs text-slate-400 mt-1">Vui lòng quay lại sau hoặc theo dõi gian hàng để nhận cập nhật.</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             {storeProducts.map((p) => (
                                 <div
                                     key={p.id}
@@ -532,6 +494,7 @@ export function SellerShopView() {
                                 </div>
                             ))}
                         </div>
+                        )}
                     </div>
                 )}
 

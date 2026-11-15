@@ -26,6 +26,7 @@ import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import { formatCurrency, tr } from '../../i18n'
 import { ordersApi } from '../../api/orders'
+import { resolveSellerName } from '../../utils/sellerHelper'
 import type { Order } from '../../types'
 import { Modal, Textarea, Button } from '../../components/UI'
 
@@ -184,7 +185,7 @@ export function OrderHistoryView() {
                         </span>
                         <input
                             type="text"
-                            placeholder="Search order ID or item..."
+                            placeholder={lang === 'vi' ? 'Tìm mã đơn hoặc tên sản phẩm...' : 'Search order ID or item...'}
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm outline-none transition-all bg-white"
@@ -230,6 +231,7 @@ export function OrderHistoryView() {
                             const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
                             const isAuction = order.orderNo?.startsWith('AUC') || (order as any).isAuctionOrder || (order as any).sourceType === 'AUCTION'
                             const displayItems = Array.isArray(order.items) ? order.items : []
+                            const sellerDisplayName = resolveSellerName(order.sellerId, order.sellerName)
                             const orderTotal = typeof order.total === 'number' ? order.total : 0
                             const formattedDate = order.createdAt ? new Date(order.createdAt).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US') : ''
 
@@ -243,7 +245,8 @@ export function OrderHistoryView() {
                                         <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 text-xs sm:text-sm">
                                             {renderStatusBadge(order.status)}
                                             <span className="font-mono font-bold text-gray-900">
-                                                #{order.orderNo || order.id}
+                                                <span className="text-gray-400">#</span>
+                                                <span>{order.orderNo || order.id}</span>
                                             </span>
                                             {isAuction && (
                                                 <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border border-purple-200">
@@ -284,7 +287,7 @@ export function OrderHistoryView() {
                                                 <SvgStore size={14} />
                                             </span>
                                             <span className="font-bold text-gray-900">
-                                                {order.sellerName || 'Cửa hàng đối tác'}
+                                                {sellerDisplayName}
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -299,7 +302,7 @@ export function OrderHistoryView() {
                                             {order.sellerId && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => navigate('seller-shop', { sellerId: order.sellerId, id: order.sellerId })}
+                                                    onClick={() => navigate('seller-shop', { sellerId: order.sellerId, id: order.sellerId, sellerName: sellerDisplayName })}
                                                     className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#ee4d2d] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors cursor-pointer"
                                                 >
                                                     Xem Shop
@@ -310,7 +313,12 @@ export function OrderHistoryView() {
 
                                     {/* Danh sách mặt hàng */}
                                     <div className="space-y-3 pt-1">
-                                        {displayItems.map((item: any, idx: number) => (
+                                        {displayItems.length === 0 ? (
+                                            <p className="text-xs text-gray-400 italic py-2">
+                                                Mở chi tiết đơn để xem sản phẩm.
+                                            </p>
+                                        ) : (
+                                            displayItems.map((item: any, idx: number) => (
                                             <div key={item.productId || idx} className="flex items-center justify-between gap-4">
                                                 <div className="flex items-center gap-3.5 min-w-0">
                                                     {item.image && (
@@ -340,17 +348,18 @@ export function OrderHistoryView() {
                                                     </p>
                                                 </div>
                                             </div>
-                                        ))}
+                                        ))
+                                        )}
                                     </div>
 
                                     {/* Dòng Footer của Card */}
                                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-100 text-xs">
                                         <div className="text-gray-500 flex flex-wrap items-center gap-1.5">
                                             <span>💬 {displayItems.length} product(s) in this order</span>
-                                            {order.sellerName && (
+                                            {sellerDisplayName && (
                                                 <>
                                                     <span>·</span>
-                                                    <span>Sold by {order.sellerName}</span>
+                                                    <span>Sold by {sellerDisplayName}</span>
                                                 </>
                                             )}
                                             {order.shippingAddress && (

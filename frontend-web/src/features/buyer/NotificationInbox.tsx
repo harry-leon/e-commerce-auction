@@ -24,6 +24,8 @@ import {
     readNotification,
     getNotificationPreferences,
     updateNotificationPreferences,
+    requestPushPermission,
+    getPushPermissionStatus,
     type Inbox,
     type NotificationPreference,
     type NotificationItem,
@@ -171,10 +173,36 @@ function formatNotificationTag(type?: string): { label: string; color: string } 
 }
 
 export function NotificationInbox() {
-    const { user, navigate } = useApp()
+    const { user, navigate, lang } = useApp()
+    const currentLang = lang || 'vi'
+    if (!user) {
+        return (
+            <BuyerLayout>
+                <div className="max-w-5xl mx-auto py-12 px-4 text-center">
+                    <div className="bg-white rounded-3xl p-12 text-center border border-gray-200 shadow-sm max-w-md mx-auto">
+                        <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                            <BellOutlineIcon size={32} />
+                        </div>
+                        <p className="text-gray-600 font-medium mb-6">
+                            {currentLang === 'vi'
+                                ? 'Vui lòng đăng nhập để xem thông báo cá nhân của bạn.'
+                                : 'Please log in to view your notifications.'}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => navigate('login')}
+                            className="px-6 py-2.5 bg-[#ee4d2d] hover:bg-[#d03e20] text-white text-sm font-semibold rounded-2xl transition-colors shadow-sm cursor-pointer"
+                        >
+                            {currentLang === 'vi' ? 'Đăng nhập để xem thông báo' : 'Log in to view notifications'}
+                        </button>
+                    </div>
+                </div>
+            </BuyerLayout>
+        )
+    }
     return (
         <BuyerLayout>
-            <InboxContent key={user?.id || 'guest'} userId={user?.id} navigate={navigate} />
+            <InboxContent key={user.id} userId={user.id} navigate={navigate} />
         </BuyerLayout>
     )
 }
@@ -188,13 +216,27 @@ function InboxContent({
 }) {
     const { lang: appLang, showToast } = useApp()
     const lang = appLang || 'vi'
-    const [page] = useState(0)
+    const [page, setPage] = useState(0)
     const [revision, setRevision] = useState(0)
     const [inbox, setInbox] = useState<Inbox | null>(null)
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
     const [filterTab, setFilterTab] = useState<'all' | 'unread' | 'read'>('all')
+
+    // Quyền Web Push Notification (AC 12, 13)
+    const [pushStatus, setPushStatus] = useState<NotificationPermission>(() => getPushPermissionStatus())
+
+    async function handleRequestPush() {
+        const result = await requestPushPermission()
+        setPushStatus(result)
+        if (result === 'granted') {
+            showToast({
+                type: 'success',
+                message: lang === 'vi' ? 'Đã bật thông báo đẩy thành công!' : 'Push notifications enabled!',
+            })
+        }
+    }
 
     // State Tùy chọn thông báo
     const [prefOpen, setPrefOpen] = useState(false)
@@ -317,43 +359,9 @@ function InboxContent({
         }
     }
 
-    // Dữ liệu mẫu chuẩn đối chiếu chính xác với mockup khi server chưa có dữ liệu phong phú
+        // Lấy thông báo thật từ API Backend - không mock data ảo
     const rawItems: NotificationItem[] = useMemo(() => {
-        const dbItems = inbox?.content || []
-        if (dbItems.length > 0) return dbItems
-
-        // Dữ liệu fallback bám sát mockup Image 1
-        return [
-            {
-                id: 'notif-demo-1',
-                type: 'AUCTION_OUTBID',
-                title: 'Lượt đặt giá của bạn đã bị vượt qua',
-                content: 'Một người mua khác vừa đặt giá cao hơn tại phiên đấu giá #02994692. Hãy đặt giá mới để tiếp tục dẫn đầu!',
-                read: false,
-                createdAt: new Date().toISOString(),
-                auctionId: '02994692-0000-0000-0000-000000000000',
-                orderId: null,
-            },
-            {
-                id: 'notif-demo-2',
-                type: 'AUCTION_WON',
-                title: 'Chúc mừng! Bạn đã trúng đấu giá áo thun demo',
-                content: 'Bạn là người trả giá cao nhất với mức giá 150.000 đ. Vui lòng thanh toán trước thời hạn.',
-                read: false,
-                createdAt: new Date().toISOString(),
-                auctionId: '99999999-9999-9999-9999-999999999999',
-                orderId: null,
-            },
-            {
-                id: 'notif-demo-3',
-                type: 'SYSTEM',
-                title: 'Nhận đơn đặt hàng & thông báo đấu giá',
-                content: 'Bật thông báo đẩy để không bỏ lỡ các cập nhật quan trọng về đơn hàng và đấu giá.',
-                read: true,
-                createdAt: new Date(Date.now() - 86400000).toISOString(),
-                orderId: null,
-            },
-        ]
+        return inbox?.content || []
     }, [inbox])
 
     const totalCount = rawItems.length
@@ -409,6 +417,40 @@ function InboxContent({
 
     return (
         <section className="max-w-5xl mx-auto space-y-6 py-4">
+            {/* Banner xin cấp quyền Web Push Notification (AC 12, AC 13) */}
+            {pushStatus !== 'granted' && (
+                <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                    <div className="flex items-start gap-3">
+                        <BellOutlineIcon className="text-[#ee4d2d] shrink-0 mt-0.5" size={20} />
+                        <div>
+                            <p className="font-semibold text-gray-900">
+                                {lang === 'vi'
+                                    ? 'Nhận thông báo đơn hàng & đấu giá tức thì'
+                                    : 'Receive Instant Order & Auction Push Alerts'}
+                            </p>
+                            <p className="text-xs text-gray-600 mt-0.5">
+                                {pushStatus === 'denied'
+                                    ? lang === 'vi'
+                                        ? 'Quyền thông báo đang bị chặn trong trình duyệt. Bạn có thể mở lại trong cài đặt trang web.'
+                                        : 'Push notifications are currently blocked in your browser settings.'
+                                    : lang === 'vi'
+                                      ? 'Bật thông báo đẩy để không bỏ lỡ khi có người trả giá cao hơn hoặc đơn hàng được giao.'
+                                      : 'Enable push alerts to never miss an outbid or delivery update.'}
+                            </p>
+                        </div>
+                    </div>
+                    {pushStatus !== 'denied' && (
+                        <button
+                            type="button"
+                            onClick={() => void handleRequestPush()}
+                            className="px-4 py-2 bg-[#ee4d2d] hover:bg-[#d03e20] text-white text-xs sm:text-sm font-semibold rounded-xl transition-colors shrink-0 shadow-sm cursor-pointer"
+                        >
+                            {lang === 'vi' ? 'Bật thông báo' : 'Enable Notifications'}
+                        </button>
+                    )}
+                </div>
+            )}
+
             {/* Card Tiêu đề chính theo mockup Image 1 */}
             <div className="bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-orange-100 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
                 <div className="flex items-center gap-4">
@@ -444,7 +486,7 @@ function InboxContent({
                         className="px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 text-xs sm:text-sm font-semibold rounded-2xl border border-gray-200 transition-colors flex items-center gap-2 shadow-sm cursor-pointer"
                     >
                         <SettingsCogIcon size={16} className="text-gray-600" />
-                        <span>{lang === 'vi' ? 'Tùy chọn' : 'Preferences'}</span>
+                        <span>{lang === 'vi' ? 'Cài đặt thông báo' : 'Preferences'}</span>
                     </button>
 
                     <button
@@ -454,7 +496,7 @@ function InboxContent({
                         className="px-4 py-2.5 bg-[#ee4d2d] hover:bg-[#d03e20] disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs sm:text-sm font-semibold rounded-2xl transition-colors flex items-center gap-2 shadow-sm shadow-orange-500/20 cursor-pointer disabled:cursor-not-allowed"
                     >
                         <CheckmarkIcon size={16} />
-                        <span>{lang === 'vi' ? 'Đánh dấu đã đọc tất cả' : 'Mark all read'}</span>
+                        <span>{lang === 'vi' ? 'Đánh dấu tất cả đã đọc' : 'Mark all read'}</span>
                     </button>
                 </div>
             </div>
@@ -473,8 +515,7 @@ function InboxContent({
                         }`}
                     >
                         <LayersIcon size={15} />
-                        <span>{lang === 'vi' ? 'Tất cả' : 'All'}</span>
-                        <span className="text-xs">({totalCount})</span>
+                        <span>{lang === 'vi' ? `Tất cả (${totalCount})` : `All (${totalCount})`}</span>
                     </button>
 
                     {/* Tab Chưa đọc */}
@@ -488,8 +529,7 @@ function InboxContent({
                         }`}
                     >
                         <MailIcon size={15} />
-                        <span>{lang === 'vi' ? 'Chưa đọc' : 'Unread'}</span>
-                        <span className="text-xs">({unreadCount})</span>
+                        <span>{lang === 'vi' ? `Chưa đọc (${unreadCount})` : `Unread (${unreadCount})`}</span>
                     </button>
 
                     {/* Tab Đã đọc */}
@@ -503,8 +543,7 @@ function InboxContent({
                         }`}
                     >
                         <CheckSquareIcon size={15} />
-                        <span>{lang === 'vi' ? 'Đã đọc' : 'Read'}</span>
-                        <span className="text-xs">({readCount})</span>
+                        <span>{lang === 'vi' ? `Đã đọc (${readCount})` : `Read (${readCount})`}</span>
                     </button>
                 </div>
 
@@ -543,7 +582,9 @@ function InboxContent({
                 <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-sm">
                     <BellOutlineIcon size={40} className="mx-auto text-gray-300 mb-3" />
                     <p className="text-sm font-medium text-gray-500">
-                        {lang === 'vi' ? 'Không có thông báo nào trong mục này.' : 'No notifications in this tab.'}
+                        {page > 0
+                            ? (lang === 'vi' ? 'Chưa có thông báo trên trang này.' : 'No notifications on this page.')
+                            : (lang === 'vi' ? 'Không có thông báo nào trong mục này.' : 'No notifications in this tab.')}
                     </p>
                 </div>
             )}
@@ -674,6 +715,32 @@ function InboxContent({
                     </div>
                 </div>
             ))}
+
+            {/* Phân trang */}
+            {inbox && inbox.totalElements > 20 && (
+                <div className="flex items-center justify-between pt-4 border-t border-gray-200 text-xs sm:text-sm text-gray-600">
+                    <button
+                        type="button"
+                        disabled={page === 0 || loading || saving}
+                        onClick={() => setPage((v) => v - 1)}
+                        className="px-3.5 py-1.5 border border-gray-300 rounded-xl hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                        {lang === 'vi' ? 'Trang trước' : 'Previous'}
+                    </button>
+                    <span>
+                        {lang === 'vi' ? 'Trang' : 'Page'} {page + 1} /{' '}
+                        {Math.ceil(inbox.totalElements / 20)}
+                    </span>
+                    <button
+                        type="button"
+                        disabled={(page + 1) * 20 >= inbox.totalElements || loading || saving}
+                        onClick={() => setPage((v) => v + 1)}
+                        className="px-3.5 py-1.5 border border-gray-300 rounded-xl hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                        {lang === 'vi' ? 'Trang sau' : 'Next'}
+                    </button>
+                </div>
+            )}
 
             {/* Modal Quản lý Tùy chọn Nhận thông báo */}
             <Modal

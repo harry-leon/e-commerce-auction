@@ -165,7 +165,7 @@ function AppInner() {
                     setTimeout(() => setCelebrationActive(false), 5000)
                 }
             }
-        }, refreshInbox)
+        }, refreshInbox, user?.id)
     }, [user?.id, user?.fullName, showToast])
 
     // Lắng nghe sự kiện custom event 'nexus:show-winner-celebration' và tham số URL ?winnerCelebration=true

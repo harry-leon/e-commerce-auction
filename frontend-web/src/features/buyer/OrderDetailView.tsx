@@ -41,6 +41,7 @@ import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
 import { formatCurrency, tr } from '../../i18n'
 import { ordersApi } from '../../api/orders'
+import { resolveSellerName } from '../../utils/sellerHelper'
 import { reputationApi } from '../../api/reputation'
 import { shippingApi, type ShipmentResponse, type ShipmentTrackingResponse } from '../../api/shipping'
 import type { Order } from '../../types'
@@ -222,6 +223,9 @@ export function OrderDetailView() {
      * Kết quả: Order object chuẩn hóa với thông tin sản phẩm, giá, địa chỉ và trạng thái thật.
      * Quy tắc & lý do: Giữ nguyên toàn bộ items và giá trị từ Backend; chỉ dùng fallback khi offline/lỗi mạng hoặc đơn rỗng.
      */
+    // Chuẩn hóa tên người bán từ DB
+    const sellerDisplayName = resolveSellerName(order?.sellerId, order?.sellerName)
+
     const effectiveOrder: Order = order || {
         id: targetId || '2610313JCYGVA5',
         orderNo: targetId || '2610313JCYGVA5',
@@ -424,7 +428,7 @@ export function OrderDetailView() {
                                 disabled={confirmDeliveryBusy}
                                 className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                             >
-                                <span>{lang === 'vi' ? 'Đã nhận được hàng' : 'Confirm Delivery'}</span>
+                                <span>{lang === 'vi' ? 'Xác nhận đã nhận hàng' : 'Confirm Delivery'}</span>
                             </button>
                         )}
                         {canReview && (
@@ -654,7 +658,7 @@ export function OrderDetailView() {
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => navigate('seller-shop', { sellerId: effectiveOrder.sellerId })}
+                                    onClick={() => navigate('seller-shop', { sellerId: effectiveOrder.sellerId, id: effectiveOrder.sellerId, sellerName: sellerDisplayName })}
                                     className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                                 >
                                     <SvgStore size={14} className="text-slate-500" />
@@ -662,7 +666,7 @@ export function OrderDetailView() {
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => showToast({ type: 'info', message: lang === 'vi' ? 'Đang kết nối chat với Shop Demo...' : 'Connecting chat...' })}
+                                    onClick={() => showToast({ type: 'info', message: lang === 'vi' ? `Đang kết nối chat với ${sellerDisplayName}...` : 'Connecting chat...' })}
                                     className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#ea580c] bg-white hover:bg-orange-50 border border-[#ea580c] flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                                 >
                                     <SvgMessage size={14} className="text-[#ea580c]" />
@@ -805,7 +809,7 @@ export function OrderDetailView() {
                                     </div>
                                     <div>
                                         <h4 className="font-bold text-sm text-slate-900">
-                                            {effectiveOrder.sellerName || 'Cửa hàng đối tác'}
+                                            {sellerDisplayName}
                                         </h4>
                                         <p className="text-xs text-slate-500 mt-0.5">
                                             {lang === 'vi' ? 'Đối tác chính thức' : 'Official Partner'}
@@ -815,7 +819,7 @@ export function OrderDetailView() {
                                 {effectiveOrder.sellerId && (
                                     <button
                                         type="button"
-                                        onClick={() => navigate('seller-shop', { sellerId: effectiveOrder.sellerId, id: effectiveOrder.sellerId })}
+                                        onClick={() => navigate('seller-shop', { sellerId: effectiveOrder.sellerId, id: effectiveOrder.sellerId, sellerName: sellerDisplayName })}
                                         className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#ea580c] bg-white hover:bg-orange-50 border border-[#ea580c] transition-colors cursor-pointer shadow-sm"
                                     >
                                         {lang === 'vi' ? 'Xem shop' : 'View shop'}
@@ -879,7 +883,7 @@ export function OrderDetailView() {
                         label={lang === 'vi' ? 'Nhận xét chi tiết' : 'Review comments'}
                         value={comment}
                         onChange={(e) => setComment(e.target.value)}
-                        placeholder={lang === 'vi' ? 'Hãy chia sẻ nhận xét của bạn về chất lượng sản phẩm và thái độ phục vụ...' : 'Write your feedback here...'}
+                        placeholder={lang === 'vi' ? 'Chia sẻ trải nghiệm của bạn về chất lượng sản phẩm và thái độ phục vụ...' : 'Write your feedback here...'}
                         rows={4}
                     />
                 </div>

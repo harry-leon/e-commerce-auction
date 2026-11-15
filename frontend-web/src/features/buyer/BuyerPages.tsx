@@ -40,6 +40,7 @@ import { OrderDetailView } from './OrderDetailView'
 import { OrderHistoryView } from './OrderHistoryView'
 import { SellerShopView } from './SellerShopView'
 import { CATEGORY_ICONS } from '../../components/Layout'
+import { resolveSellerName } from '../../utils/sellerHelper'
 import { calculateEstimatedPricing } from '../../utils/pricingEngine'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
@@ -3591,7 +3592,12 @@ export function SellerShopPage() {
  *   3. Hiển thị loading/error state và các card thống kê tương ứng.
  */
 export function MyReputationPage() {
-    const { lang, user, navigate } = useApp()
+    const { lang, user, navigate, pageParams, page } = useApp()
+    const isPublic = page === 'public-reputation' || Boolean(pageParams?.id || pageParams?.userId || pageParams?.sellerId)
+    const targetUserId = String(
+        pageParams?.id || pageParams?.userId || pageParams?.sellerId || user?.id || 'b1fb6fd5-936c-439e-994c-f0c5c529b406'
+    )
+    const targetName = resolveSellerName(targetUserId, typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null)
     const [reputation, setReputation] = useState<ReputationSummary | null>(null)
     const [eligibility, setEligibility] = useState<ReputationEligibility | null>(null)
     const [ratings, setRatings] = useState<RatingResponse[]>([])
@@ -3599,18 +3605,29 @@ export function MyReputationPage() {
     const [error, setError] = useState<string | null>(null)
 
     const loadData = useCallback(async () => {
-        if (!user) return
         setLoading(true)
         setError(null)
         try {
-            const [rep, elig, rates] = await Promise.all([
-                reputationApi.getMyReputation(),
-                reputationApi.checkEligibility(user.id, 'BID'),
-                reputationApi.getRatingsForUser(user.id, 0, 50),
-            ])
-            setReputation(rep)
-            setEligibility(elig)
-            setRatings(rates?.content || [])
+            if (isPublic) {
+                const [rep, elig, rates] = await Promise.all([
+                    reputationApi.getUserReputation(targetUserId),
+                    reputationApi.checkEligibility(targetUserId, 'BID'),
+                    reputationApi.getRatingsForUser(targetUserId, 0, 50),
+                ])
+                setReputation(rep)
+                setEligibility(elig)
+                setRatings(rates?.content || [])
+            } else {
+                if (!user) return
+                const [rep, elig, rates] = await Promise.all([
+                    reputationApi.getMyReputation(),
+                    reputationApi.checkEligibility(user.id, 'BID'),
+                    reputationApi.getRatingsForUser(user.id, 0, 50),
+                ])
+                setReputation(rep)
+                setEligibility(elig)
+                setRatings(rates?.content || [])
+            }
         } catch (err: any) {
             setError(
                 err?.message ||
@@ -3621,13 +3638,13 @@ export function MyReputationPage() {
         } finally {
             setLoading(false)
         }
-    }, [user, lang])
+    }, [user, targetUserId, isPublic, lang])
 
     useEffect(() => {
         loadData()
     }, [loadData])
 
-    if (!user) {
+    if (!isPublic && !user) {
         return (
             <BuyerLayout>
                 <div className="py-20 text-center">
@@ -3650,19 +3667,40 @@ export function MyReputationPage() {
                 <Breadcrumb
                     items={[
                         { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
-                        {
-                            label:
-                                lang === 'vi'
-                                    ? 'Hồ sơ uy tín & Đánh giá'
-                                    : 'Reputation & Ratings',
-                        },
+                        ...(isPublic && targetName
+                            ? [
+                                  {
+                                      label: targetName,
+                                      page: 'seller-shop',
+                                  },
+                                  {
+                                      label:
+                                          lang === 'vi'
+                                              ? 'Hồ sơ uy tín công khai'
+                                              : 'Public Reputation',
+                                  },
+                              ]
+                            : [
+                                  {
+                                      label:
+                                          lang === 'vi'
+                                              ? 'Hồ sơ uy tín & Đánh giá'
+                                              : 'Reputation & Ratings',
+                                  },
+                              ]),
                     ]}
                 />
 
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">
-                            {lang === 'vi' ? 'Điểm uy tín & Đánh giá' : 'Reputation & Ratings'}
+                            {isPublic
+                                ? lang === 'vi'
+                                    ? `Hồ sơ uy tín: ${targetName}`
+                                    : `Reputation Profile: ${targetName}`
+                                : lang === 'vi'
+                                  ? 'Điểm uy tín & Đánh giá của tôi'
+                                  : 'My Reputation & Ratings'}
                         </h1>
                         <p className="text-sm text-gray-500 mt-1">
                             {lang === 'vi'
