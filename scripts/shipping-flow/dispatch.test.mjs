@@ -24,6 +24,15 @@ test("carrier fixture records acceptance before failed or held acknowledgement",
             assert.equal(response.status, mode === "lose-ack" ? 503 : 200);
             assert.equal(entry.accepted, true); assert.equal(entry.calls, 1);
             if (response.status === 200) { assert.equal((await response.json()).data.order_code, entry.tracking); }
+            // Detail là HTTP riêng: trả trạng thái carrier hiện tại hoặc lỗi mạng giả lập, không tăng số create.
+            const detail = () => fetch(`${state.url}/shiip/public-api/v2/shipping-order/detail`, {
+                method: "POST", headers: { Token: state.token, "Content-Type": "application/json" },
+                body: JSON.stringify({ order_code: entry.tracking }), signal: AbortSignal.timeout(5000),
+            });
+            entry.status = "picked";
+            assert.equal((await (await detail()).json()).data.status, "picked");
+            entry.unavailable = true; assert.equal((await detail()).status, 503);
+            assert.equal(entry.calls, 1); assert.equal(entry.reads, 2);
         }
     } finally {
         state.release(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));

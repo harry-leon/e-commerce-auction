@@ -12,11 +12,21 @@ export async function createCarrierFixture() {
     const server = http.createServer(async (incoming, outgoing) => {
         try {
             if (incoming.method !== "POST" || incoming.headers.token !== state.token
-                || incoming.url !== "/shiip/public-api/v2/shipping-order/create") {
+                || !["/shiip/public-api/v2/shipping-order/create", "/shiip/public-api/v2/shipping-order/detail"].includes(incoming.url)) {
                 outgoing.writeHead(400); outgoing.end(); return;
             }
             const chunks = []; for await (const chunk of incoming) { chunks.push(chunk); }
             const body = JSON.parse(Buffer.concat(chunks).toString());
+            // Tracking chỉ phản ánh state do scenario điều khiển; lỗi đọc không được tạo thêm vận đơn hoặc thay DB trực tiếp.
+            if (incoming.url.endsWith("/detail")) {
+                const tracked = [...state.orders.values()].find((order) => order.accepted && order.tracking === body.order_code);
+                if (!tracked) { outgoing.writeHead(404); outgoing.end(); return; }
+                tracked.reads = (tracked.reads ?? 0) + 1;
+                if (tracked.unavailable) { outgoing.writeHead(503); outgoing.end(); return; }
+                outgoing.writeHead(200, { "Content-Type": "application/json" });
+                outgoing.end(JSON.stringify({ code: 200, data: { order_code: tracked.tracking,
+                    status: tracked.status ?? "ready_to_pick", log: [] } })); return;
+            }
             const order = state.orders.get(body.client_order_code);
             if (!order) { outgoing.writeHead(404); outgoing.end(); return; }
             order.calls++; order.payload = body; order.accepted = true;
@@ -133,4 +143,44 @@ export async function exerciseDispatch({ sql, q, request, pass, waitFor, start, 
     await waitFor("recovered shipment event delivered", () => sql(fulfillment,
         `SELECT done FROM fulfillment_event_outbox WHERE event_type='ShipmentCreated' AND payload->>'orderId'=${q(crash.order)}`) === "t");
     pass("real_admin_manual_recovery_and_job_reconcile_are_audited_idempotent");
+    return happy;
+}
+
+/** Scheduler thật đọc carrier HTTP → Shipment/outbox → Commerce/notification outbox → inbox Notification.
+ * Chỉ đổi trạng thái fixture bên carrier, không seed event/Shipment/Order để ép kết quả; restart phải giữ idempotency.
+ */
+export async function exerciseCarrierLifecycle({ sql, q, request, pass, waitFor, start, stop, urls, buyer, fixture, carrier }) {
+    const order = fixture.order; const entry = carrier.orders.get(order); entry.unavailable = true;
+    const shipmentStatus = () => sql("e2e_fulfillment", `SELECT status FROM shipments WHERE order_id=${q(order)}`);
+    const orderStatus = () => sql("e2e_commerce", `SELECT status FROM orders WHERE id=${q(order)}`);
+    const notifications = () => sql("e2e_notification", `SELECT count(*) FROM notifications WHERE order_id=${q(order)} AND channel='IN_APP'`);
+    await start("fulfillment");
+    await waitFor("carrier read failures reached over HTTP", () => (entry.reads ?? 0) >= 2);
+    assert.equal(shipmentStatus(), "PENDING"); assert.equal(orderStatus(), "PROCESSING"); assert.equal(notifications(), "0");
+    pass("real_polling_network_failure_preserves_order_and_shipment");
+
+    entry.unavailable = false; entry.status = "picked";
+    await waitFor("polling pickup propagated to Commerce and Notification", () => shipmentStatus() === "PICKED_UP"
+        && orderStatus() === "SHIPPED" && notifications() === "1");
+    const reads = entry.reads;
+    await waitFor("same carrier status polled repeatedly", () => entry.reads >= reads + 3);
+    assert.equal(notifications(), "1");
+    assert.equal(sql("e2e_fulfillment", `SELECT count(*) FROM fulfillment_event_outbox WHERE payload->>'orderId'=${q(order)} AND event_type='ShipmentPickedUp'`), "1");
+    pass("real_polling_pickup_sends_one_notification_across_repeated_reads");
+
+    entry.status = "delivered";
+    await waitFor("polling delivered propagated to Commerce and Notification", () => shipmentStatus() === "DELIVERED"
+        && orderStatus() === "DELIVERED" && notifications() === "2");
+    const id = sql("e2e_notification", `SELECT id FROM notifications WHERE order_id=${q(order)} AND event_type='ORDER_DELIVERED' AND channel='IN_APP'`);
+    assert.equal((await request(`${urls.notification}/api/v1/notifications/${id}/read`, { token: buyer, method: "POST" })).status, 200);
+    await stop("fulfillment"); await start("fulfillment");
+    // Chờ scheduler vẫn hoạt động trên shipment recovery còn PENDING, thay vì sleep rồi suy ra không trùng.
+    const other = [...carrier.orders.values()].find((value) => value !== entry && value.mode === "hold-ack");
+    const before = other.reads ?? 0;
+    await waitFor("poller active after restart", () => (other.reads ?? 0) >= before + 2);
+    assert.equal(shipmentStatus(), "DELIVERED"); assert.equal(orderStatus(), "DELIVERED"); assert.equal(notifications(), "2");
+    assert.equal(sql("e2e_notification", `SELECT status FROM notifications WHERE id=${q(id)}`), "READ");
+    assert.equal(sql("e2e_fulfillment", `SELECT count(*) FROM fulfillment_event_outbox WHERE payload->>'orderId'=${q(order)} AND event_type='ShipmentDelivered'`), "1");
+    assert.equal(entry.calls, 1);
+    pass("real_polling_delivery_and_restart_preserve_single_event_and_read_state");
 }
