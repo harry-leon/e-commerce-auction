@@ -67,6 +67,8 @@ public class GatewaySecurityConfig {
                 .pathMatchers(HttpMethod.GET, "/api/v1/auth/session").permitAll()
                 // Public Key cho Frontend mã hóa mật khẩu trước khi gửi qua mạng.
                 .pathMatchers(HttpMethod.GET, "/api/v1/auth/public-key").permitAll()
+                // Endpoint kiểm tra email khả dụng ở Bước 1 form đăng ký.
+                .pathMatchers(HttpMethod.GET, "/api/v1/auth/check-email").permitAll()
                 .pathMatchers("/api/v1/auth/login",
                     "/api/v1/auth/logout",
                     "/api/v1/auth/refresh-token", "/api/v1/auth/refresh")

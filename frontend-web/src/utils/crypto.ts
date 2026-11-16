@@ -98,6 +98,15 @@ export async function getOrFetchPublicKey(): Promise<CryptoKey | null> {
 }
 
 /**
+ * Xóa cache Public Key trong bộ nhớ client để buộc tải lại khóa mới từ Gateway.
+ * Gọi khi nhận được lỗi liên quan đến giải mã mật khẩu hoặc phiên bảo mật hết hạn.
+ */
+export function clearCryptoKeyCache(): void {
+    cachedCryptoKey = null
+    keyFetchPromise = null
+}
+
+/**
  * Mã hóa mật khẩu plain-text sang chuỗi Base64 bằng RSA-OAEP trước khi gửi qua API.
  *
  * @param password mật khẩu người dùng vừa nhập trên form
