@@ -437,10 +437,10 @@ export const ordersApi = {
                                     items: detail.items,
                                     sellerId: detail.sellerId || o.sellerId,
                                     sellerName: detail.sellerName || o.sellerName,
-                                    subtotal: detail.subtotal || o.subtotal,
-                                    shipping: detail.shipping || o.shipping,
-                                    discount: detail.discount || o.discount,
-                                    total: detail.total || o.total,
+                                    subtotal: (detail.subtotal && detail.subtotal > 0) ? detail.subtotal : (o.subtotal || Number((detail as any).estimatedSubtotal) || 0),
+                                    shipping: detail.shipping ?? o.shipping ?? 0,
+                                    discount: detail.discount ?? o.discount ?? 0,
+                                    total: (detail.total && detail.total > 0) ? detail.total : (o.total || Number((detail as any).estimatedTotal) || Number((o as any).estimatedTotal) || 0),
                                     shippingAddress: detail.shippingAddress || o.shippingAddress,
                                 }
                             }

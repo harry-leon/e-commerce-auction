@@ -27,6 +27,7 @@ import { BuyerLayout } from '../../components/Layout'
 import { formatCurrency, tr } from '../../i18n'
 import { ordersApi } from '../../api/orders'
 import { resolveSellerName } from '../../utils/sellerHelper'
+import { resolveProductImage } from '../../utils/productHelper'
 import type { Order } from '../../types'
 import { Modal, Textarea, Button } from '../../components/UI'
 
@@ -314,41 +315,66 @@ export function OrderHistoryView() {
                                     {/* Danh sách mặt hàng */}
                                     <div className="space-y-3 pt-1">
                                         {displayItems.length === 0 ? (
-                                            <p className="text-xs text-gray-400 italic py-2">
-                                                Mở chi tiết đơn để xem sản phẩm.
-                                            </p>
-                                        ) : (
-                                            displayItems.map((item: any, idx: number) => (
-                                            <div key={item.productId || idx} className="flex items-center justify-between gap-4">
+                                            <div className="flex items-center justify-between gap-4 py-1">
                                                 <div className="flex items-center gap-3.5 min-w-0">
-                                                    {item.image && (
-                                                        <img
-                                                            src={item.image}
-                                                            alt={item.productName}
-                                                            className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
-                                                        />
-                                                    )}
+                                                    <img
+                                                        src={resolveProductImage(order.id, isAuction ? 'Tai nghe Gaming Razer BlackShark V2' : 'Sản phẩm')}
+                                                        alt={order.orderNo || order.id}
+                                                        className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
+                                                    />
                                                     <div className="min-w-0">
                                                         <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
-                                                            {item.productName}
+                                                            {isAuction ? 'Sản phẩm trúng thầu đấu giá' : `Sản phẩm đơn hàng #${order.orderNo || order.id}`}
                                                         </h4>
-                                                        {item.attribute && (
-                                                            <p className="text-[11px] text-gray-500 mt-0.5">
-                                                                Phân loại: {item.attribute}
-                                                            </p>
-                                                        )}
+                                                        <p className="text-[11px] text-gray-500 mt-0.5">
+                                                            {order.shippingAddress && order.shippingAddress !== 'AUCTION_PENDING_BUYER_ADDRESS' ? order.shippingAddress : (isAuction ? 'Chờ thanh toán & nhận hàng' : 'Chi tiết đơn hàng')}
+                                                        </p>
                                                         <p className="text-[11px] text-gray-400 mt-0.5">
-                                                            x{item.quantity}
+                                                            x1
                                                         </p>
                                                     </div>
                                                 </div>
                                                 <div className="text-right shrink-0">
                                                     <p className="text-sm font-bold text-gray-900">
-                                                        {formatCurrency(item.unitPrice || 0, lang)}
+                                                        {formatCurrency(orderTotal, lang)}
                                                     </p>
                                                 </div>
                                             </div>
-                                        ))
+                                        ) : (
+                                            displayItems.map((item: any, idx: number) => {
+                                                const itemImage = resolveProductImage(item.productId || item.skuId, item.productName, item.image)
+                                                const itemPrice = (typeof item.unitPrice === 'number' && item.unitPrice > 0)
+                                                    ? item.unitPrice
+                                                    : (Number(item.estimatedUnitPrice) || orderTotal || 0)
+                                                return (
+                                                <div key={item.productId || idx} className="flex items-center justify-between gap-4">
+                                                    <div className="flex items-center gap-3.5 min-w-0">
+                                                        <img
+                                                            src={itemImage}
+                                                            alt={item.productName}
+                                                            className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
+                                                        />
+                                                        <div className="min-w-0">
+                                                            <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
+                                                                {item.productName}
+                                                            </h4>
+                                                            {item.attribute && (
+                                                                <p className="text-[11px] text-gray-500 mt-0.5">
+                                                                    Phân loại: {item.attribute}
+                                                                </p>
+                                                            )}
+                                                            <p className="text-[11px] text-gray-400 mt-0.5">
+                                                                x{item.quantity}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <p className="text-sm font-bold text-gray-900">
+                                                            {formatCurrency(itemPrice, lang)}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            )})
                                         )}
                                     </div>
 

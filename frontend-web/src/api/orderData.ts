@@ -1,4 +1,5 @@
 import type { Order, OrderItem } from '../types'
+import { resolveProductImage } from '../utils/productHelper'
 
 /**
  * Kiểu dữ liệu nhận về từ Commerce API hoặc dữ liệu Mock.
@@ -62,7 +63,11 @@ export function normalizeOrder(raw: OrderPayload): Order {
                   return {
                       productId: item.productId ?? item.skuId ?? '',
                       productName: item.productName ?? '',
-                      image: item.image ?? item.thumbnailUrl ?? '',
+                      image: resolveProductImage(
+                          item.skuId || item.productId,
+                          item.productName,
+                          item.image ?? item.thumbnailUrl,
+                      ),
                       quantity,
                       unitPrice,
                       subtotal,
