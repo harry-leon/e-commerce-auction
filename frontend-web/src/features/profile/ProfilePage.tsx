@@ -58,6 +58,9 @@ export function ProfilePage() {
     const [confirmPassword, setConfirmPassword] = useState('')
     const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>({})
 
+    // State lưu lỗi theo từng trường của form cập nhật hồ sơ cá nhân
+    const [profileErrors, setProfileErrors] = useState<Record<string, string>>({})
+
     /**
      * Chức năng: Trích xuất và hợp nhất dữ liệu người dùng để điền sẵn vào form hồ sơ.
      * Đầu vào: Dữ liệu tải từ BE (/users/me), dữ liệu vừa lưu thành công (savedProfile), và user hiện tại trong session context.
@@ -107,15 +110,98 @@ export function ProfilePage() {
     /**
      * Cập nhật thông tin cá nhân qua PUT /api/v1/users/me:
      * 1. Chức năng: Lưu thay đổi thông tin cá nhân của người dùng vào hệ thống.
-     * 2. Đầu vào và kết quả: Nhận form data; gửi PUT /users/me; cập nhật session store và cache tải dữ liệu.
-     * 3. Luồng xử lý: Gửi request -> bóc envelope ApiResponse nếu có -> lưu vào savedProfile & session store -> xóa cache load -> báo toast thành công.
-     * 4. Lỗi: Hiển thị thông báo lỗi vào state failure nếu request thất bại.
+     * 2. Đầu vào và kết quả: Nhận form data (fullName, phone, identifyNumber, dateOfBirth, gender, address);
+     *    gửi PUT /users/me; cập nhật session store và cache tải dữ liệu.
+     * 3. Luồng xử lý:
+     *    - Validate client-side: Họ tên (chữ cái/khoảng trắng, >= 2 từ), CCCD (12 số), Ngày sinh (trong quá khứ, <= 120 tuổi).
+     *    - Nếu lỗi client-side: Gán vào profileErrors để hiển thị đỏ dưới từng trường tương ứng, không gửi request.
+     *    - Gửi API -> nếu thành công: lưu vào savedProfile & session store, thông báo toast thành công.
+     *    - Nếu lỗi từ server (422): trích xuất extractFieldErrors(err) và gán vào profileErrors để khoanh vùng chính xác trường bị sai.
+     * 4. Quy tắc và lý do:
+     *    - Ngăn chặn người dùng nhập ngày sinh ở tương lai hoặc ký tự đặc biệt ở họ tên.
+     *    - Tránh tình trạng thông báo lỗi chung chung mập mờ; người dùng biết ngay ô nào cần sửa.
      */
     const submitProfile = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
         const form = new FormData(event.currentTarget)
+        const fullName = ((form.get('fullName') as string) || '').trim()
+        const phone = ((form.get('phone') as string) || '').trim()
+        const identifyNumber = ((form.get('identifyNumber') as string) || '').trim()
+        const dateOfBirth = ((form.get('dateOfBirth') as string) || '').trim()
+
         setSaving(true)
         setFailure('')
+        setProfileErrors({})
+
+        // 1. Client-side validation:
+        const clientErrors: Record<string, string> = {}
+
+        // Kiểm tra Họ và tên: Bắt buộc, chỉ chứa chữ cái Unicode (có dấu) và khoảng trắng, ít nhất 2 từ
+        if (!fullName) {
+            clientErrors.fullName =
+                lang === 'en' ? 'Full name is required' : 'Họ và tên không được để trống'
+        } else if (!/^[\p{L}\s']{2,100}$/u.test(fullName)) {
+            clientErrors.fullName =
+                lang === 'en'
+                    ? 'Full name must contain only letters and spaces (2–100 characters)'
+                    : 'Họ và tên chỉ được chứa chữ cái và khoảng trắng (2–100 ký tự)'
+        } else if (fullName.split(/\s+/).filter(Boolean).length < 2) {
+            clientErrors.fullName =
+                lang === 'en'
+                    ? 'Full name must include both first and last name (at least 2 words)'
+                    : 'Họ và tên phải bao gồm cả họ và tên (ít nhất 2 từ)'
+        }
+
+        // Kiểm tra CCCD: Đúng 12 chữ số
+        if (!identifyNumber) {
+            clientErrors.identifyNumber =
+                lang === 'en' ? 'National ID is required' : 'Số CCCD không được để trống'
+        } else if (!/^\d{12}$/.test(identifyNumber)) {
+            clientErrors.identifyNumber =
+                lang === 'en'
+                    ? 'National ID must be exactly 12 digits'
+                    : 'Số CCCD phải gồm đúng 12 chữ số'
+        }
+
+        // Kiểm tra SĐT (nếu có nhập)
+        if (phone && !/^(0|\+84)(3|5|7|8|9)[0-9]{8}$/.test(phone)) {
+            clientErrors.phone =
+                lang === 'en'
+                    ? 'Invalid Vietnam phone number format'
+                    : 'Số điện thoại không đúng định dạng di động Việt Nam'
+        }
+
+        // Kiểm tra Ngày sinh: Phải ở quá khứ và không quá 120 năm trước
+        if (dateOfBirth) {
+            const dob = new Date(dateOfBirth + 'T00:00:00')
+            const today = new Date()
+            today.setHours(0, 0, 0, 0)
+            const minDate = new Date()
+            minDate.setFullYear(minDate.getFullYear() - 120)
+            minDate.setHours(0, 0, 0, 0)
+
+            if (isNaN(dob.getTime())) {
+                clientErrors.dateOfBirth =
+                    lang === 'en' ? 'Invalid date' : 'Ngày sinh không tồn tại trong lịch'
+            } else if (dob >= today) {
+                clientErrors.dateOfBirth =
+                    lang === 'en'
+                        ? 'Date of birth must be in the past'
+                        : 'Ngày sinh phải ở trong quá khứ'
+            } else if (dob < minDate) {
+                clientErrors.dateOfBirth =
+                    lang === 'en'
+                        ? 'Age cannot exceed 120 years'
+                        : 'Ngày sinh không hợp lệ (tuổi tối đa 120)'
+            }
+        }
+
+        if (Object.keys(clientErrors).length > 0) {
+            setProfileErrors(clientErrors)
+            setSaving(false)
+            return
+        }
+
         try {
             const updated = await api<ApiResponse<ApiUser> | ApiUser>('/users/me', {
                 method: 'PUT',
@@ -130,9 +216,17 @@ export function ProfilePage() {
             setRevision((r) => r + 1)
             setUser(mapUser(raw))
             clearLoadCache()
-            showToast({ type: 'success', message: 'Đã lưu thay đổi' })
+            showToast({
+                type: 'success',
+                message: lang === 'en' ? 'Profile updated successfully' : 'Đã lưu thay đổi hồ sơ',
+            })
         } catch (err) {
-            setFailure(errorMessage(err))
+            const fieldErrors = extractFieldErrors(err)
+            if (Object.keys(fieldErrors).length > 0) {
+                setProfileErrors(fieldErrors)
+            } else {
+                setFailure(errorMessage(err))
+            }
         } finally {
             setSaving(false)
         }
@@ -191,7 +285,10 @@ export function ProfilePage() {
             })
             showToast({
                 type: 'success',
-                message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.',
+                message:
+                    lang === 'en'
+                        ? 'Password changed successfully! For security reasons, your current session has ended. Please log in again.'
+                        : 'Đổi mật khẩu thành công! Vì lý do bảo mật, phiên làm việc hiện tại đã kết thúc. Vui lòng đăng nhập lại bằng mật khẩu mới.',
             })
             setUser(null)
             navigate('login')
@@ -234,20 +331,29 @@ export function ProfilePage() {
                         label="Họ tên"
                         name="fullName"
                         defaultValue={activeUser.fullName}
+                        error={profileErrors.fullName}
                         required
                     />
                     <Input label="Email" value={activeUser.email} disabled />
-                    <Input label="Số điện thoại" name="phone" defaultValue={activeUser.phone} />
+                    <Input
+                        label="Số điện thoại"
+                        name="phone"
+                        defaultValue={activeUser.phone}
+                        error={profileErrors.phone}
+                    />
                     <Input
                         label="Số giấy tờ"
                         name="identifyNumber"
                         defaultValue={activeUser.identifyNumber}
+                        error={profileErrors.identifyNumber}
                     />
                     <Input
                         label="Ngày sinh"
                         type="date"
                         name="dateOfBirth"
+                        max={new Date().toISOString().split('T')[0]}
                         defaultValue={activeUser.dateOfBirth}
+                        error={profileErrors.dateOfBirth}
                     />
                     <label>
                         Giới tính
@@ -261,7 +367,12 @@ export function ProfilePage() {
                             <option>OTHER</option>
                         </select>
                     </label>
-                    <Input label="Địa chỉ" name="address" defaultValue={activeUser.address} />
+                    <Input
+                        label="Địa chỉ"
+                        name="address"
+                        defaultValue={activeUser.address}
+                        error={profileErrors.address}
+                    />
                     <Button type="submit" loading={saving}>
                         Lưu thông tin
                     </Button>

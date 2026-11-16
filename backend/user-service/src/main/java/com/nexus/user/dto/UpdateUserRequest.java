@@ -3,6 +3,7 @@ package com.nexus.user.dto;
 import com.nexus.user.validation.ValidGender;
 import com.nexus.user.validation.ValidPhoneNumber;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
@@ -15,8 +16,17 @@ import java.time.LocalDate;
  */
 public class UpdateUserRequest {
 
+    /**
+     * Chức năng: Họ và tên người dùng khi cập nhật hồ sơ cá nhân.
+     * Quy tắc và lý do: Bắt buộc không để trống, chỉ chứa chữ cái Unicode (có dấu tiếng Việt)
+     * và khoảng trắng (từ 2 đến 100 ký tự). Chặn số và ký tự đặc biệt để đảm bảo tính xác thực
+     * và đồng bộ chính xác với định danh Keycloak IAM (firstName/lastName).
+     */
     @NotBlank(message = "Họ và tên không được để trống")
-    @Size(max = 255, message = "Họ và tên tối đa 255 ký tự")
+    @Pattern(
+        regexp = "^[\\p{L}\\s']{2,100}$",
+        message = "Họ và tên chỉ được chứa chữ cái và khoảng trắng (2–100 ký tự)"
+    )
     private String fullName;
 
     @ValidPhoneNumber
@@ -30,6 +40,8 @@ public class UpdateUserRequest {
     @ValidGender
     private String gender;
 
+    // Ngày sinh không bắt buộc; nếu có bắt buộc phải ở trong quá khứ.
+    @Past(message = "Ngày sinh phải ở trong quá khứ")
     private LocalDate dateOfBirth;
 
     @Size(max = 500, message = "Địa chỉ tối đa 500 ký tự")

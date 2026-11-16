@@ -188,11 +188,68 @@ describe('Đọc lỗi 422 từ BE (error.details[] và extractFieldErrors)', ()
 
 describe('Form Đăng ký (RegisterPage)', () => {
     beforeEach(() => {
-        vi.stubGlobal('fetch', vi.fn())
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockImplementation(async (url: string) => {
+                if (typeof url === 'string' && url.includes('/auth/check-email')) {
+                    return new Response(
+                        JSON.stringify({ success: true, data: { available: true } }),
+                    )
+                }
+                return new Response(JSON.stringify({ success: true, data: {} }))
+            }),
+        )
         mockNavigate.mockClear()
         mockShowToast.mockClear()
     })
     afterEach(() => vi.unstubAllGlobals())
+
+    it('chặn email đã tồn tại ngay tại Bước 1 và không cho sang Bước 2', async () => {
+        const ui = userEvent.setup()
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockImplementation(async (url: string) => {
+                if (typeof url === 'string' && url.includes('/auth/check-email')) {
+                    return new Response(
+                        JSON.stringify({ success: true, data: { available: false } }),
+                    )
+                }
+                return new Response(JSON.stringify({ success: true, data: {} }))
+            }),
+        )
+        render(<RegisterPage />)
+
+        await ui.type(screen.getByLabelText(/Email/i), 'existing@test.vn')
+        await ui.type(screen.getByLabelText(/Phone|Số điện thoại/i), '0901234567')
+        await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
+
+        await waitFor(() => {
+            expect(
+                screen.getByText(
+                    /Email is already registered|Email đã được đăng ký trong hệ thống/i,
+                ),
+            ).toBeInTheDocument()
+        })
+        // Không chuyển sang bước 2 (ô Họ và tên không xuất hiện)
+        expect(screen.queryByLabelText(/Full Name|Họ và tên/i)).not.toBeInTheDocument()
+    })
+
+    it('chặn họ và tên không hợp lệ (ít hơn 2 từ hoặc chứa ký tự đặc biệt/số) tại Bước 2', async () => {
+        const ui = userEvent.setup()
+        render(<RegisterPage />)
+
+        await ui.type(screen.getByLabelText(/Email/i), 'valid@test.vn')
+        await ui.type(screen.getByLabelText(/Phone|Số điện thoại/i), '0901234567')
+        await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
+
+        // Thử nhập tên 1 từ
+        await ui.type(screen.getByLabelText(/Full Name|Họ và tên/i), 'Single')
+        await ui.type(screen.getByLabelText(/Citizen ID|Số CCCD/i), '079203001234')
+        await ui.type(screen.getByLabelText(/Date of Birth|Ngày sinh/i), '2000-01-01')
+        await ui.click(screen.getByRole('button', { name: /Next|Tiếp theo/i }))
+
+        expect(screen.getByText(/bao gồm cả họ và tên|at least 2 words/i)).toBeInTheDocument()
+    })
 
     it('chặn CCCD không đủ 12 chữ số ngay tại bước thông tin cá nhân', async () => {
         const ui = userEvent.setup()
@@ -209,7 +266,10 @@ describe('Form Đăng ký (RegisterPage)', () => {
 
         // Bảo vệ số CCCD 11 chữ số không đi tới bước mật khẩu hoặc gọi API đăng ký.
         expect(screen.getByText(/exactly 12 digits|đúng 12 chữ số/i)).toBeInTheDocument()
-        expect(fetch).not.toHaveBeenCalled()
+        expect(fetch).not.toHaveBeenCalledWith(
+            expect.stringContaining('/auth/register'),
+            expect.anything(),
+        )
     })
 
     it('chặn submit bước 3 nếu mật khẩu không đạt policy và hiển thị lỗi', async () => {
@@ -239,17 +299,28 @@ describe('Form Đăng ký (RegisterPage)', () => {
         expect(
             screen.getByText(/Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa/i),
         ).toBeInTheDocument()
-        expect(fetch).not.toHaveBeenCalled()
+        expect(fetch).not.toHaveBeenCalledWith(
+            expect.stringContaining('/auth/register'),
+            expect.anything(),
+        )
     })
 
     it('hiển thị lỗi từng field khi BE trả lỗi 422 kèm error.details[]', async () => {
         const ui = userEvent.setup()
 
-        // Mock BE trả 422 Unprocessable Entity kèm error.details
+        // Mock BE trả 422 Unprocessable Entity kèm error.details cho register, cho phép check-email và public-key pass
         vi.stubGlobal(
             'fetch',
-            vi.fn().mockResolvedValue(
-                new Response(
+            vi.fn().mockImplementation(async (url: string) => {
+                if (typeof url === 'string' && url.includes('/auth/check-email')) {
+                    return new Response(
+                        JSON.stringify({ success: true, data: { available: true } }),
+                    )
+                }
+                if (typeof url === 'string' && url.includes('/auth/public-key')) {
+                    return new Response(JSON.stringify({ success: true, data: { publicKey: '' } }))
+                }
+                return new Response(
                     JSON.stringify({
                         success: false,
                         error: {
@@ -266,8 +337,8 @@ describe('Form Đăng ký (RegisterPage)', () => {
                         },
                     }),
                     { status: 422 },
-                ),
-            ),
+                )
+            }),
         )
 
         render(<RegisterPage />)
