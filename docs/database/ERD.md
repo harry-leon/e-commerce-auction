@@ -221,14 +221,6 @@ erDiagram
     jsonb price_snapshot
     uuid inventory_ref_id
   }
-  refunds {
-    uuid id
-    uuid payment_id
-    numeric amount
-    varchar status
-    varchar reason
-    timestamp created_at
-  }
   invoices {
     uuid id
     uuid order_id
@@ -279,12 +271,172 @@ erDiagram
     boolean done
     integer attempts
   }
+  refund_requests {
+    uuid id
+    uuid payment_id
+    uuid order_id
+    uuid requested_by
+    uuid idempotency_key
+    varchar reason
+    numeric amount
+    varchar currency
+    varchar status
+    varchar provider
+    varchar merchant_code
+    varchar provider_payment_ref
+    uuid dispatch_approved_by
+    timestamptz dispatch_approved_at
+    varchar dispatch_note
+    varchar review_reason
+    timestamptz reconcile_after
+    integer reconcile_count
+    bigint notification_version
+  }
+  refund_attempts {
+    uuid id
+    uuid refund_id
+    varchar request_id
+    jsonb request_payload
+    varchar status
+    varchar response_code
+    varchar transaction_status
+    varchar provider_ref
+    varchar error_type
+  }
+  refund_reconciliation_checks {
+    uuid id
+    uuid refund_id
+    varchar request_id
+    varchar response_code
+    varchar transaction_status
+    varchar transaction_type
+    varchar error_type
+  }
+  refund_manual_resolutions {
+    uuid id
+    uuid refund_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar previous_status
+    varchar decision
+    numeric amount
+    varchar currency
+    varchar provider_payment_ref
+    varchar provider_ref
+    varchar evidence_reference
+    varchar note
+  }
+  refund_provider_receipts {
+    uuid refund_id
+    varchar provider
+    varchar merchant_code
+    varchar provider_ref
+    numeric amount
+    varchar currency
+    varchar source
+    uuid source_id
+  }
+  refund_payment_holds {
+    uuid payment_id
+    varchar reason
+  }
+  refund_result_conflicts {
+    uuid id
+    uuid refund_id
+    uuid attempt_id
+    varchar response_code
+    varchar transaction_status
+    varchar transaction_type
+    varchar provider_ref
+    varchar reason
+  }
+  refund_notification_outbox {
+    uuid id
+    uuid refund_id
+    bigint source_version
+    jsonb payload
+    varchar status
+    integer attempts
+    varchar last_error_type
+  }
+  refund_notification_replays {
+    uuid id
+    uuid event_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar reason
+  }
+  shipping_order_bindings {
+    uuid order_id
+    uuid shipment_id
+    varchar carrier
+    varchar tracking_number
+    varchar review_event_type
+  }
+  shipping_event_inbox {
+    uuid event_id
+    uuid order_id
+    jsonb payload
+  }
+  shipping_notification_outbox {
+    uuid id
+    uuid order_id
+    varchar event_type
+    jsonb payload
+    varchar status
+  }
+  shipping_notification_replays {
+    uuid id
+    uuid event_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar reason
+  }
+  shipping_handoff_tasks {
+    uuid id
+    uuid order_id
+    uuid payment_id
+    numeric amount
+    varchar currency
+    varchar state
+  }
+  shipping_dispatch_claims {
+    uuid id
+    uuid order_id
+    uuid handoff_id
+    uuid parcel_id
+    uuid requested_by
+    uuid idempotency_key
+  }
+  refunded_order_finalizations {
+    uuid id
+    uuid order_id
+    uuid refund_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar previous_status
+    varchar note
+  }
+  refund_credit_notes {
+    uuid id
+    uuid refund_id
+    uuid payment_id
+    uuid order_id
+    varchar document_no
+    varchar original_receipt_id
+    varchar refund_receipt_id
+    numeric amount
+    varchar currency
+    varchar evidence_source
+    uuid issued_by
+    uuid idempotency_key
+    varchar note
+  }
   carts ||--o{ cart_items : cart_id
   vouchers ||--o{ orders : voucher_id
   orders ||--o{ order_items : order_id
   orders ||--o{ order_status_history : order_id
   orders ||--o{ payments : order_id
-  payments ||--o{ refunds : payment_id
   orders ||--o{ invoices : order_id
   vouchers ||--o{ voucher_usages : voucher_id
   orders ||--o{ voucher_usages : order_id
@@ -397,6 +549,7 @@ erDiagram
     varchar tracking_no
     varchar status
     timestamp created_at
+    varchar carrier_code
   }
   shipment_status_history {
     uuid id
@@ -404,6 +557,7 @@ erDiagram
     varchar carrier_status
     varchar internal_status
     timestamp occurred_at
+    varchar event_id
   }
   seller_skus {
     uuid id
@@ -426,6 +580,73 @@ erDiagram
     timestamp published_at
     timestamp created_at
     text last_error
+  }
+  shipment_dispatch_attempts {
+    uuid id
+    uuid order_id
+    varchar carrier_code
+    text request_payload
+    varchar status
+    varchar tracking_number
+    varchar last_error_type
+    timestamp created_at
+    timestamp updated_at
+  }
+  shipment_dispatch_locks {
+    uuid order_id
+  }
+  shipment_dispatch_resolutions {
+    uuid id
+    uuid attempt_id
+    uuid shipment_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar tracking_number
+    numeric shipping_fee
+    varchar evidence_reference
+    varchar note
+    timestamp created_at
+  }
+  shipping_event_replays {
+    uuid id
+    uuid event_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar reason
+    integer previous_attempts
+  }
+  shipment_parcels {
+    uuid id
+    uuid order_id
+    uuid warehouse_id
+    varchar carrier_code
+    varchar service_type
+    integer weight_grams
+    integer to_district_id
+    varchar to_ward_code
+    uuid registered_by
+    uuid idempotency_key
+  }
+  shipment_dispatch_jobs {
+    uuid id
+    uuid parcel_id
+    uuid order_id
+    uuid claim_id
+    varchar state
+    integer attempts
+    uuid lease_token
+    uuid shipment_id
+    varchar last_error_type
+  }
+  shipment_dispatch_job_reconciliations {
+    uuid id
+    uuid job_id
+    uuid attempt_id
+    uuid shipment_id
+    uuid actor_id
+    uuid idempotency_key
+    varchar evidence_reference
+    varchar note
   }
   warehouses ||--o{ inventories : warehouse_id
   inventories ||--o{ inventory_reservations : inventory_id
@@ -458,6 +679,7 @@ erDiagram
     uuid auction_id
     varchar payment_link
     timestamp payment_deadline
+    uuid refund_id
   }
   notification_attempts {
     uuid id
