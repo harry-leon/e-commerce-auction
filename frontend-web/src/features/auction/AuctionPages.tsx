@@ -40,6 +40,7 @@ import {
 } from '../../api/auctions'
 import { startPayment } from '../../api/payments'
 import type { Auction } from '../../types'
+import { fireConfetti } from '../../utils/dialogs'
 
 // ─── Auction List Page ─────────────────────────────────────────────────────────
 /**
@@ -435,7 +436,7 @@ export function AuctionListPage() {
 export function AuctionDetailPage() {
     const { lang, navigate, pageParams, user, showToast, createdAuctions, auctionReviews } =
         useApp()
-    const auctionId = String(pageParams?.id || '')
+    const auctionId = String(pageParams?.id || pageParams?.auctionId || '')
     const [auction, setAuction] = useState<Auction | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -488,6 +489,14 @@ export function AuctionDetailPage() {
         const refreshTimer = window.setInterval(() => loadAuctionDetail(true), 5000)
         return () => window.clearInterval(refreshTimer)
     }, [loadAuctionDetail])
+
+    const isWinner = Boolean(auction && user?.id && auction.winnerId === user.id)
+
+    useEffect(() => {
+        if (isWinner) {
+            fireConfetti({ particleCount: 120, spread: 90 })
+        }
+    }, [isWinner])
 
     // Nếu đang loading, hiển thị skeleton loading state
     if (loading) {
@@ -557,7 +566,6 @@ export function AuctionDetailPage() {
     const isActive = auction.status === 'active'
     const isScheduled = auction.status === 'scheduled'
     const isEnded = ['ended', 'settled', 'cancelled', 'failed'].includes(auction.status)
-    const isWinner = auction.winnerId === user?.id
     const isHighestBidder = bidPlaced || auction.winnerId === user?.id
     const isSeller = Boolean(user?.id && auction.sellerId === user.id)
 
@@ -831,49 +839,83 @@ export function AuctionDetailPage() {
                 <div className="space-y-4">
                     {/* Trạng thái phiên LIVE */}
                     {isActive && (
-                        <div className="nexus-card p-6 border-orange-200 bg-white shadow-sm">
-                            <div className="flex items-center justify-between gap-2 mb-4">
-                                <div className="flex items-center gap-2">
-                                    <span className="badge badge-orange auction-live">LIVE</span>
-                                    <span className="text-sm font-semibold text-gray-700">
-                                        {lang === 'en'
-                                            ? 'Auction in progress'
-                                            : 'Phiên đang diễn ra'}
+                        <div className="nexus-card p-6 border-2 border-amber-400 bg-gradient-to-br from-white via-orange-50/40 to-amber-50/30 shadow-xl shadow-amber-500/10 rounded-2xl relative overflow-hidden">
+                            <div className="absolute -top-10 -right-10 w-32 h-32 bg-amber-400/20 rounded-full blur-2xl pointer-events-none" />
+                            <div className="flex items-center justify-between gap-2 mb-4 relative z-10">
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-600 text-white font-black text-xs tracking-wider uppercase shadow-md animate-pulse">
+                                    <span className="w-2 h-2 rounded-full bg-white"></span>
+                                    <span>
+                                        {lang === 'en' ? 'LIVE AUCTION' : 'ĐANG ĐẤU GIÁ TRỰC TIẾP'}
                                     </span>
                                 </div>
-                                <span className="text-xs text-gray-400">
-                                    {auction.bidCount} {lang === 'en' ? 'bids' : 'lượt'}
+                                <span className="text-xs font-bold text-amber-900 bg-amber-100/90 px-3 py-1 rounded-full border border-amber-300">
+                                    🔥 {auction.bidCount} {lang === 'en' ? 'bids placed' : 'lượt đã đặt'}
                                 </span>
                             </div>
 
-                            <div className="mb-4 bg-orange-50/60 p-4 rounded-xl border border-orange-100">
-                                <p className="text-xs text-gray-500 font-medium">
+                            <div className="mb-4 bg-white/90 backdrop-blur-md p-4 rounded-xl border border-amber-200/80 shadow-sm relative z-10">
+                                <p className="text-xs text-amber-800 font-bold uppercase tracking-wider">
                                     {tr(lang, 'currentBid')}
                                 </p>
-                                <p className="text-3xl font-black text-auction tracking-tight mt-0.5">
+                                <p
+                                    key={auction.currentBid}
+                                    className="text-4xl font-black text-amber-600 tracking-tight mt-0.5 price-update-flash transition-all duration-300"
+                                >
                                     {formatCurrency(auction.currentBid, lang)}
                                 </p>
-                                <p className="text-xs text-gray-400 mt-1">
-                                    {lang === 'en'
-                                        ? `Starting bid: ${formatCurrency(auction.startingPrice, lang)}`
-                                        : `Giá khởi điểm: ${formatCurrency(auction.startingPrice, lang)}`}
-                                </p>
+                                <div className="flex items-center justify-between text-xs text-gray-500 mt-2 pt-2 border-t border-amber-100">
+                                    <span>
+                                        {lang === 'en'
+                                            ? `Starting bid: ${formatCurrency(auction.startingPrice, lang)}`
+                                            : `Giá khởi điểm: ${formatCurrency(auction.startingPrice, lang)}`}
+                                    </span>
+                                    <span>
+                                        {lang === 'en' ? 'Step: ' : 'Bước giá: '}
+                                        <b className="text-amber-700">
+                                            +{formatCurrency(auction.minIncrement, lang)}
+                                        </b>
+                                    </span>
+                                </div>
                             </div>
 
-                            <div className="mb-5">
-                                <p className="text-xs text-gray-500 mb-1.5 font-medium">
-                                    {tr(lang, 'timeLeft')}
+                            <div className="mb-4 relative z-10">
+                                <p className="text-xs text-gray-600 mb-1.5 font-bold flex items-center gap-1.5">
+                                    <Clock size={14} className="text-amber-600" />
+                                    <span>{tr(lang, 'timeLeft')}</span>
                                 </p>
                                 <CountdownTimer endTime={auction.endTime} large />
                             </div>
+
+                            {/* Dẫn đầu phiên / Báo cáo vị thế */}
+                            {auction.bids && auction.bids.length > 0 && (
+                                <div className="flex items-center gap-2.5 p-3 bg-amber-500/10 rounded-xl border border-amber-300/60 text-xs text-amber-900 font-medium mb-3 relative z-10">
+                                    <Trophy size={18} className="text-amber-600 shrink-0" />
+                                    <div className="flex-1">
+                                        <span className="font-semibold">
+                                            {lang === 'en' ? 'Top Bidder:' : 'Dẫn đầu hiện tại:'}{' '}
+                                        </span>
+                                        <span className="font-bold text-amber-800">
+                                            {isHighestBidder
+                                                ? lang === 'en'
+                                                    ? 'You'
+                                                    : 'Bạn'
+                                                : auction.bids[0].bidderName ||
+                                                  (lang === 'en' ? 'Top Collector' : 'Nhà sưu tầm')}
+                                        </span>
+                                        <span className="ml-1.5 text-amber-700 font-bold">
+                                            ({formatCurrency(auction.bids[0].amount, lang)})
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
 
                             {isHighestBidder && (
                                 <AlertBanner
                                     type="success"
                                     message={
                                         lang === 'en'
-                                            ? 'You are currently the highest bidder!'
-                                            : 'Bạn đang dẫn đầu phiên đấu giá này!'
+                                            ? '🏆 You are currently the highest bidder!'
+                                            : '🏆 Bạn đang dẫn đầu phiên đấu giá này!'
                                     }
                                 />
                             )}
@@ -975,10 +1017,16 @@ export function AuctionDetailPage() {
 
                     {/* Bảng nhập đặt giá thầu (Chỉ hiện khi ACTIVE) */}
                     {isActive && (
-                        <div className="nexus-card p-6 shadow-sm space-y-4">
-                            <h3 className="font-bold text-gray-900 text-base">
-                                {tr(lang, 'placeBid')}
-                            </h3>
+                        <div className="nexus-card p-6 shadow-md rounded-2xl border border-orange-200/80 bg-white space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-extrabold text-gray-900 text-base flex items-center gap-2">
+                                    <Gavel size={18} className="text-auction" />
+                                    <span>{tr(lang, 'placeBid')}</span>
+                                </h3>
+                                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                                    ✓ {lang === 'en' ? 'Instant Bid' : 'Đặt giá ngay'}
+                                </span>
+                            </div>
 
                             {bidError && (
                                 <AlertBanner
@@ -989,12 +1037,12 @@ export function AuctionDetailPage() {
                             )}
 
                             <div>
-                                <p className="text-xs text-gray-500 mb-2 font-medium">
-                                    {tr(lang, 'bidIncrement')}:{' '}
-                                    <span className="font-bold text-gray-800">
-                                        {formatCurrency(auction.minIncrement, lang)}
+                                <div className="flex items-center justify-between text-xs text-gray-500 mb-2 font-medium">
+                                    <span>{tr(lang, 'bidIncrement')}:</span>
+                                    <span className="font-bold text-amber-800">
+                                        +{formatCurrency(auction.minIncrement, lang)}
                                     </span>
-                                </p>
+                                </div>
 
                                 {/* Các nút cộng nhanh bước giá */}
                                 <div className="grid grid-cols-3 gap-2 mb-3">
@@ -1010,9 +1058,14 @@ export function AuctionDetailPage() {
                                                     ),
                                                 )
                                             }
-                                            className="py-2 rounded-xl border border-auction/30 bg-orange-50/50 text-auction text-xs font-bold hover:bg-orange-100/70 transition-colors"
+                                            className="py-2.5 px-2 rounded-xl border-2 border-amber-300 bg-gradient-to-b from-amber-50 to-orange-50 text-amber-900 text-xs font-black hover:border-amber-400 hover:from-amber-100 hover:to-orange-100 transition-all shadow-sm active:scale-95 cursor-pointer flex flex-col items-center"
                                         >
-                                            +{formatCurrency(auction.minIncrement * mult, lang)}
+                                            <span className="text-[10px] uppercase font-bold text-amber-700">
+                                                +{mult}x bước
+                                            </span>
+                                            <span>
+                                                +{formatCurrency(auction.minIncrement * mult, lang)}
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
@@ -1033,18 +1086,20 @@ export function AuctionDetailPage() {
                             <Button
                                 variant="auction"
                                 size="lg"
-                                className="w-full font-bold shadow-md"
+                                className="w-full py-4 text-base font-black bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 hover:from-amber-600 hover:via-orange-600 hover:to-red-600 text-white rounded-xl shadow-lg shadow-orange-500/30 transform active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
                                 loading={placing}
                                 disabled={isSeller}
                                 onClick={() => placeBid(Number(customBid))}
                             >
-                                <Gavel size={16} />
-                                {tr(lang, 'placeBid')} –{' '}
-                                {formatCurrency(Number(customBid) || minBid, lang)}
+                                <Gavel size={18} />
+                                <span>
+                                    {tr(lang, 'placeBid')} –{' '}
+                                    {formatCurrency(Number(customBid) || minBid, lang)}
+                                </span>
                             </Button>
 
                             {isSeller && (
-                                <p className="text-xs text-red-500 text-center">
+                                <p className="text-xs text-red-500 text-center font-medium">
                                     {lang === 'en'
                                         ? 'You own this auction and cannot place bids.'
                                         : 'Bạn là chủ phiên đấu giá này nên không thể tự đặt giá.'}
@@ -1052,19 +1107,19 @@ export function AuctionDetailPage() {
                             )}
 
                             {/* Thông báo Anti-sniping */}
-                            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200/60 text-xs text-amber-800 space-y-1">
-                                <div className="font-bold flex items-center gap-1.5">
-                                    <Clock size={13} />
+                            <div className="p-3.5 bg-amber-50/80 rounded-xl border border-amber-200/80 text-xs text-amber-900 space-y-1.5">
+                                <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                                    <Clock size={14} className="text-amber-600" />
                                     <span>
                                         {lang === 'en'
-                                            ? 'Anti-Sniping Protection'
-                                            : 'Cơ chế bảo vệ giờ chót'}
+                                            ? 'Anti-Sniping Protection Active'
+                                            : 'Cơ chế bảo vệ giờ chót (Anti-Sniping)'}
                                     </span>
                                 </div>
                                 <p className="text-[11px] text-amber-700 leading-relaxed">
                                     {lang === 'en'
-                                        ? 'Bids placed in the last 2 minutes will automatically extend the auction by 2 minutes.'
-                                        : 'Lượt trả giá trong 2 phút cuối sẽ tự động gia hạn thêm 2 phút để đảm bảo công bằng.'}
+                                        ? 'Bids placed in the last 2 minutes will automatically extend the auction by 2 minutes to ensure fairness for all bidders.'
+                                        : 'Lượt trả giá trong 2 phút cuối sẽ tự động gia hạn thêm 2 phút để đảm bảo công bằng cho tất cả người tham gia.'}
                                 </p>
                             </div>
                         </div>

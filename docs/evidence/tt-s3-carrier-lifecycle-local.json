@@ -1,0 +1,40 @@
+{
+  "scope": "isolated-real-keycloak-http-fixture-carrier",
+  "cases": [
+    "real_keycloak_realm_ready",
+    "real_jwt_enforces_client_and_privilege",
+    "real_workers_recover_lost_ack_without_duplicate_notifications",
+    "duplicates_conflicts_and_notification_owner_scope",
+    "real_admin_replay_apis_preserve_audit_and_read_state",
+    "jvm_restart_after_consumer_commit_replays_without_duplicate_or_payment",
+    "real_admin_health_visibility",
+    "real_dispatch_jwt_identity_and_default_disabled",
+    "real_dispatch_enabled_missing_records_do_not_create_financial_state",
+    "real_dispatch_lost_claim_ack_single_carrier_create_and_refund_fence",
+    "real_refund_before_claim_prevents_carrier_mutation",
+    "real_carrier_lost_ack_and_jvm_crash_never_auto_resend",
+    "real_admin_manual_recovery_and_job_reconcile_are_audited_idempotent",
+    "real_polling_network_failure_preserves_order_and_shipment",
+    "real_polling_pickup_sends_one_notification_across_repeated_reads",
+    "real_polling_delivery_and_restart_preserve_single_event_and_read_state"
+  ],
+  "sources": {
+    "notification": {
+      "sha256": "f0c793a1f58c416e8b4cf226a63b726f80fb7ac43523d72933376337a6b5458f",
+      "checkoutHead": "6d8159a2bb6c7ce0b65ccb159f921e07e386f34a",
+      "reusedArtifact": true
+    },
+    "commerce": {
+      "sha256": "a128919e71e946fd13fbc906a504096378885636d7c2fac2489e92faca02564e",
+      "checkoutHead": "6d8159a2bb6c7ce0b65ccb159f921e07e386f34a",
+      "reusedArtifact": true
+    },
+    "fulfillment": {
+      "sha256": "9fda6b19508bc5a31b17e9e5f171defda0d98c94b0a653109faf8623bcc536c7",
+      "checkoutHead": "6d8159a2bb6c7ce0b65ccb159f921e07e386f34a",
+      "reusedArtifact": true
+    }
+  },
+  "cleanup": true,
+  "result": "PASS"
+}

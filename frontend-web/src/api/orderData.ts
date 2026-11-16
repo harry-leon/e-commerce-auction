@@ -43,18 +43,31 @@ export type OrderPayload = Partial<Omit<Order, 'items'>> & {
  * Lỗi & giới hạn:
  * - Ném lỗi 'Dữ liệu đơn hàng không hợp lệ' nếu raw rỗng hoặc thiếu ID/status.
  */
+ */
 export function normalizeOrder(raw: OrderPayload): Order {
     if (!raw || typeof raw.id !== 'string' || !raw.status) {
         throw new Error('Dữ liệu đơn hàng không hợp lệ')
     }
+    const resolvedTotal = Number(raw.total ?? raw.estimatedTotal ?? 0)
+    const buyerName = raw.buyerName || (raw.buyerId ? `User ***${raw.buyerId.slice(-4)}` : '')
+    const sellerName = raw.sellerName || (raw.sellerId ? `Seller ***${raw.sellerId.slice(-4)}` : '')
+    const defaultPaymentStatus =
+        raw.status === 'PAID'
+            ? 'released'
+            : raw.status === 'CANCELLED'
+              ? 'refunded'
+              : raw.status === 'PENDING_PAYMENT'
+                ? 'on_hold'
+                : 'unknown'
+
     return {
         ...raw,
         id: raw.id,
         status: raw.status,
         buyerId: raw.buyerId ?? '',
-        buyerName: raw.buyerName ?? '',
+        buyerName,
         sellerId: raw.sellerId ?? '',
-        sellerName: raw.sellerName ?? '',
+        sellerName,
         items: Array.isArray(raw.items)
             ? raw.items.map((item) => {
                   const unitPrice = Number(item.unitPrice ?? item.estimatedUnitPrice ?? 0)
@@ -78,8 +91,8 @@ export function normalizeOrder(raw: OrderPayload): Order {
         tax: Number(raw.tax ?? 0),
         discount: Number(raw.discount ?? raw.estimatedDiscount ?? 0),
         shipping: Number(raw.shippingFee ?? raw.shipping ?? raw.estimatedShippingFee ?? 0),
-        total: Number(raw.total ?? raw.estimatedTotal ?? 0),
-        paymentStatus: raw.paymentStatus ?? 'unknown',
+        total: resolvedTotal,
+        paymentStatus: (raw.paymentStatus && raw.paymentStatus !== 'unknown') ? raw.paymentStatus : defaultPaymentStatus,
         refundStatus: raw.refundStatus ?? 'none',
         paymentMethod: raw.paymentMethod ?? '',
         shippingAddress: raw.shippingAddress ?? '',

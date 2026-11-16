@@ -1,10 +1,11 @@
 import { Component, useState, useEffect, useRef, type ReactNode, type ErrorInfo } from 'react'
 import { AppProvider, useApp } from './context'
-import { ToastContainer } from './components/UI'
 import { AppRouter } from './routes/AppRouter'
 import { connectNotificationStream, NOTIFICATIONS_CHANGED } from './api/notificationStream'
 import { CelebrationCanvas, WinnerCelebrationModal } from './features/auction/CelebrationFireworks'
 import { getNotifications, type Inbox, type NotificationItem } from './api/notifications'
+import { ToastContainer } from './components/UI'
+import { Toaster } from 'sonner'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
     state = { error: null }
@@ -294,8 +295,22 @@ function AppInner() {
                     </span>
                 </div>
             )}
-            <AppRouter />
+            <div key={page} className="page-transition-enter w-full">
+                <AppRouter />
+            </div>
             <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+            <Toaster
+                richColors
+                position="top-right"
+                closeButton
+                duration={3500}
+                toastOptions={{
+                    className: 'font-sans text-sm rounded-xl shadow-xl border border-gray-100',
+                    style: {
+                        fontFamily: "'Inter', system-ui, sans-serif",
+                    },
+                }}
+            />
 
             {/* Cửa sổ Popup Vinh danh Toàn cục cho Người Thắng Đấu Giá */}
             {winnerModalData?.isOpen && (

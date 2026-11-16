@@ -92,6 +92,12 @@ public class ShippingServiceImpl implements ShippingService {
     private final FulfillmentEventOutboxService outboxService;
     private final CarrierResilienceManager resilienceManager;
     private com.nexus.fulfillment.service.ShipmentDispatchGuard dispatchGuard;
+    // Constructor unit test cũ không có Spring; production bắt buộc tiêm policy qua setter bên dưới.
+    private com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy ingress = new com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy(false, false);
+
+    /** Chặn cả OrderPaid gọi từ event listener nội bộ, không chỉ HTTP; worker gọi createShipment trực tiếp không qua legacy helper. */
+    @Autowired
+    public void setIngressPolicy(com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy policy) { this.ingress = policy; }
 
     /** Spring bắt buộc tiêm guard DB; constructor unit test phải gắn fixture riêng, không cho production bỏ qua dấu gửi. */
     @Autowired
@@ -298,6 +304,8 @@ public class ShippingServiceImpl implements ShippingService {
     @Override
     @Transactional
     public ShipmentResponse createShipmentForPaidOrder(UUID orderId) {
+        // Không đọc shipment cũ hoặc phát request carrier từ OrderPaid khi controlled mode đã bật; dùng GET để tra cứu.
+        ingress.requireLegacyAllowed();
         if (orderId == null) {
             throw new BusinessException(ErrorCode.INVALID_PARAM_VALUE, "orderId không được để trống");
         }

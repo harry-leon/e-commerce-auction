@@ -16,6 +16,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.commerce.config.SecurityConfig;
 import com.nexus.commerce.dto.request.CancelOrderRequest;
+import com.nexus.commerce.dto.request.ResolveOrderDisputeRequest;
+import com.nexus.commerce.dto.request.SubmitOrderDisputeRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
 import com.nexus.commerce.dto.response.OrderItemResponse;
@@ -1110,6 +1112,165 @@ class OrderControllerTest {
             CancelOrderRequest request = new CancelOrderRequest(longReason);
 
             mockMvc.perform(post("/api/v1/orders/{orderId}/cancel", orderId)
+                            .with(buyerJwt(buyerId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+    }
+
+    /**
+     * Nhóm kiểm thử giải quyết tranh chấp ký quỹ đơn hàng (POST /api/v1/orders/{orderId}/resolve-dispute và /dispute).
+     *
+     * <p>Mục đích: Bảo vệ quy tắc bảo mật chỉ Admin được phán quyết tranh chấp và kiểm soát luồng khiếu nại của Buyer.
+     */
+    @Nested
+    @DisplayName("POST /api/v1/orders/{orderId}/resolve-dispute & /dispute - Xử lý tranh chấp ký quỹ")
+    class DisputeResolutionTests {
+
+        /**
+         * Mục đích: Admin phán quyết hoàn tiền (refunded) thành công, cập nhật trạng thái REFUNDED.
+         * Đầu vào: orderId, resolution = 'refunded', note giải trình.
+         * Kết quả: Trả về 200 OK với thông tin đơn hàng đã hoàn tiền.
+         */
+        @Test
+        @DisplayName("Admin phán quyết hoàn tiền cho người mua (refunded) -> Trả về 200 OK")
+        void resolveDispute_adminRefund_returns200Ok() throws Exception {
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("refunded", "Hàng bể vỡ khi vận chuyển");
+            OrderDetailResponse response = mockOrderDetail(orderId, OrderStatus.REFUNDED);
+
+            when(orderService.resolveDispute(eq(orderId), any(ResolveOrderDisputeRequest.class), eq(adminId), any()))
+                    .thenReturn(response);
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/resolve-dispute", orderId)
+                            .with(adminJwt(adminId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data.status").value("REFUNDED"));
+
+            verify(orderService).resolveDispute(eq(orderId), any(ResolveOrderDisputeRequest.class), eq(adminId), any());
+        }
+
+        /**
+         * Mục đích: Admin phán quyết giải ngân cho người bán (released) thành công.
+         * Đầu vào: orderId, resolution = 'released'.
+         * Kết quả: Trả về 200 OK.
+         */
+        @Test
+        @DisplayName("Admin phán quyết giải ngân cho người bán (released) -> Trả về 200 OK")
+        void resolveDispute_adminRelease_returns200Ok() throws Exception {
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("released", "Bằng chứng người bán hợp lệ");
+            OrderDetailResponse response = mockOrderDetail(orderId, OrderStatus.COMPLETED);
+
+            when(orderService.resolveDispute(eq(orderId), any(ResolveOrderDisputeRequest.class), eq(adminId), any()))
+                    .thenReturn(response);
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/resolve-dispute", orderId)
+                            .with(adminJwt(adminId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data.status").value("COMPLETED"));
+        }
+
+        /**
+         * Mục đích: Admin phán quyết hoàn tiền một phần (partial_refund) thành công.
+         * Đầu vào: orderId, resolution = 'partial_refund'.
+         * Kết quả: Trả về 200 OK.
+         */
+        @Test
+        @DisplayName("Admin phán quyết hoàn tiền một phần (partial_refund) -> Trả về 200 OK")
+        void resolveDispute_adminPartialRefund_returns200Ok() throws Exception {
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("partial_refund", "Thỏa thuận bồi thường một phần");
+            OrderDetailResponse response = mockOrderDetail(orderId, OrderStatus.COMPLETED);
+
+            when(orderService.resolveDispute(eq(orderId), any(ResolveOrderDisputeRequest.class), eq(adminId), any()))
+                    .thenReturn(response);
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/resolve-dispute", orderId)
+                            .with(adminJwt(adminId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true));
+        }
+
+        /**
+         * Mục đích: Chặn người dùng không có quyền ADMIN gọi API giải quyết tranh chấp.
+         * Đầu vào: Token BUYER cố gắng gọi resolve-dispute.
+         * Kết quả: Trả về 403 Forbidden.
+         */
+        @Test
+        @DisplayName("Người mua gọi API giải quyết tranh chấp -> Bị chặn 403 Forbidden")
+        void resolveDispute_buyerCalling_returns403Forbidden() throws Exception {
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("refunded", "Buyer tự duyệt");
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/resolve-dispute", orderId)
+                            .with(buyerJwt(buyerId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isForbidden());
+
+            verify(orderService, never()).resolveDispute(any(), any(), any(), any());
+        }
+
+        /**
+         * Mục đích: Kiểm tra validation khi resolution không đúng các giá trị cho phép.
+         * Đầu vào: resolution = 'invalid_action'.
+         * Kết quả: Trả về 422 VALIDATION_ERROR.
+         */
+        @Test
+        @DisplayName("Resolution sai định dạng -> Ràng buộc Pattern ném 422 VALIDATION_ERROR")
+        void resolveDispute_invalidResolution_returns422ValidationError() throws Exception {
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("invalid_action", "Sai");
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/resolve-dispute", orderId)
+                            .with(adminJwt(adminId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+
+        /**
+         * Mục đích: Người mua gửi khiếu nại đơn hàng thành công.
+         * Đầu vào: orderId, reason khiếu nại.
+         * Kết quả: Trả về 200 OK.
+         */
+        @Test
+        @DisplayName("Người mua gửi khiếu nại đơn hàng -> Trả về 200 OK")
+        void submitDispute_buyer_returns200Ok() throws Exception {
+            SubmitOrderDisputeRequest request = new SubmitOrderDisputeRequest("Sản phẩm không đúng mô tả");
+            OrderDetailResponse response = mockOrderDetail(orderId, OrderStatus.DELIVERED);
+
+            when(orderService.submitDispute(eq(orderId), any(SubmitOrderDisputeRequest.class), eq(buyerId), any()))
+                    .thenReturn(response);
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/dispute", orderId)
+                            .with(buyerJwt(buyerId))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true));
+
+            verify(orderService).submitDispute(eq(orderId), any(SubmitOrderDisputeRequest.class), eq(buyerId), any());
+        }
+
+        /**
+         * Mục đích: Lý do khiếu nại bị để trống -> Báo lỗi 422.
+         */
+        @Test
+        @DisplayName("Lý do khiếu nại để trống -> Báo lỗi 422 VALIDATION_ERROR")
+        void submitDispute_blankReason_returns422() throws Exception {
+            SubmitOrderDisputeRequest request = new SubmitOrderDisputeRequest("   ");
+
+            mockMvc.perform(post("/api/v1/orders/{orderId}/dispute", orderId)
                             .with(buyerJwt(buyerId))
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))

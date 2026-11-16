@@ -79,6 +79,11 @@ public class RefundRequestService {
         if (orderIds.isEmpty()) { throw notFound(); }
         UUID orderId = orderIds.getFirst();
         jdbc.queryForList("SELECT id FROM orders WHERE id=? FOR UPDATE", orderId);
+        // Cùng khóa Order với claim: sau khi giữ quyền gửi hàng, không tạo refund mới cho tới đối soát cancel/return.
+        // Replay yêu cầu refund cũ vẫn trả audit cũ ở phía trên, không tạo thêm giao dịch hoặc giải phóng claim.
+        if (jdbc.queryForObject("SELECT count(*) FROM shipping_dispatch_claims WHERE order_id=?", Integer.class, orderId) > 0) {
+            throw error("REFUND_SHIPPING_CLAIMED", HttpStatus.CONFLICT, "Đơn đã giữ quyền dispatch, cần đối soát hủy/return trước refund");
+        }
         var payments = jdbc.queryForList("SELECT * FROM payments WHERE id=? FOR UPDATE", paymentId);
         if (payments.isEmpty()) { throw notFound(); }
         var payment = payments.getFirst();

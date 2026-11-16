@@ -25,6 +25,9 @@ public class UserService {
     private final AuditService audit;
     private final KeycloakClient keycloak;
 
+    /** Kết quả một lượt đồng bộ có giới hạn; skipped gồm tài khoản đã liên kết hoặc thiếu email hợp lệ. */
+    public record ProfileSyncResult(int scanned, int created, int skipped) { }
+
     public UserService(UserRepository users, AuditService audit, KeycloakClient keycloak) {
         this.users = users;
         this.audit = audit;
@@ -110,6 +113,57 @@ public class UserService {
         user.setStatus("INACTIVE");
         users.save(user);
         audit.record(id, "USER_DELETED", "Xóa mềm hồ sơ; IAM đã bị khóa", null, null, "SUCCESS");
+    }
+
+    /**
+     * Đồng bộ profile còn thiếu từ Keycloak theo lát cắt offset/limit.
+     * Không ghi đè profile đã tồn tại; identity thiếu email hoặc trùng email với profile khác được bỏ qua.
+     */
+    public ProfileSyncResult syncKeycloakProfiles(int first, int max) {
+        var realmUsers = keycloak.users(first, max);
+        int created = 0;
+        for (KeycloakClient.RealmUser realmUser : realmUsers) {
+            if (realmUser.id() == null || realmUser.email() == null || realmUser.email().isBlank()) { continue; }
+            UUID keycloakId;
+            try { keycloakId = UUID.fromString(realmUser.id()); }
+            catch (IllegalArgumentException exception) { continue; }
+            String email = realmUser.email().trim().toLowerCase(Locale.ROOT);
+            if (users.findByKeycloakId(keycloakId).isPresent() || users.existsByEmail(email)) { continue; }
+
+            String name = ((realmUser.firstName() == null ? "" : realmUser.firstName().trim()) + " "
+                    + (realmUser.lastName() == null ? "" : realmUser.lastName().trim())).trim();
+            if (name.isBlank()) { name = realmUser.username() == null || realmUser.username().isBlank()
+                    ? email.substring(0, email.indexOf('@')) : realmUser.username().trim(); }
+            User profile = new User();
+            profile.setId(keycloakId);
+            profile.setKeycloakId(keycloakId);
+            profile.setEmail(email);
+            profile.setFullName(name.length() > 255 ? name.substring(0, 255) : name);
+            profile.setStatus(realmUser.enabled() ? "ACTIVE" : "INACTIVE");
+            users.save(profile);
+            audit.record(keycloakId, "PROFILE_SYNCED_FROM_KEYCLOAK", "Tạo hồ sơ còn thiếu từ Keycloak", null, null, "SUCCESS");
+            created++;
+        }
+        return new ProfileSyncResult(realmUsers.size(), created, realmUsers.size() - created);
+    }
+
+    /** Khóa/mở khóa đồng nhất giữa Keycloak và profile; chỉ cập nhật DB sau khi IAM xác nhận thành công. */
+    public UserResponse setUserLocked(UUID id, boolean locked, UUID actorId) {
+        User user = getEntity(id);
+        if (locked && actorId.equals(user.getKeycloakId())) {
+            throw new com.nexus.common.exception.ApiException("USER_SELF_LOCK_FORBIDDEN", org.springframework.http.HttpStatus.CONFLICT,
+                    "Không thể tự khóa tài khoản đang đăng nhập", null);
+        }
+        if (user.getKeycloakId() == null) {
+            throw new com.nexus.common.exception.ApiException("IAM_USER_NOT_LINKED", org.springframework.http.HttpStatus.CONFLICT,
+                    "Hồ sơ chưa liên kết với tài khoản Keycloak", null);
+        }
+        keycloak.setEnabled(user.getKeycloakId(), !locked);
+        user.setStatus(locked ? "INACTIVE" : "ACTIVE");
+        users.save(user);
+        audit.record(id, locked ? "USER_LOCKED" : "USER_UNLOCKED",
+                locked ? "Khóa tài khoản Keycloak" : "Mở khóa tài khoản Keycloak", null, null, "SUCCESS");
+        return toResponse(user);
     }
 
     /** Phân trang hồ sơ chưa xóa; keyword rỗng không làm lộ hồ sơ đã xóa mềm. */

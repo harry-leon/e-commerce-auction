@@ -62,18 +62,56 @@ public class NotificationController {
     /** Tổng số chưa đọc tính toàn hộp thư, không chỉ riêng trang đang xem. */
     public record Inbox(List<Item> content, long totalElements, long unreadCount) { }
 
-    /** Phân trang ổn định theo thời gian rồi UUID; giới hạn 100 bản ghi và không chấp nhận userId từ query. */
+    /**
+     * Phân trang ổn định theo thời gian rồi UUID; giới hạn 100 bản ghi và không chấp nhận userId từ query.
+     * Bộ lọc tùy chọn theo loại sự kiện, chỉ chưa đọc và khoảng thời gian giúp tra cứu lịch sử mà vẫn khóa theo JWT subject.
+     */
     @GetMapping
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    @Operation(summary = "Đọc thông báo IN_APP của tài khoản hiện tại")
+    @Operation(summary = "Đọc thông báo IN_APP của tài khoản hiện tại, lọc theo loại/trạng thái/thời gian")
     public ApiResponse<Inbox> list(@AuthenticationPrincipal Jwt jwt, @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String type,
+            @RequestParam(defaultValue = "false") boolean unreadOnly,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to) {
         if (page < 0 || page > 10000 || size < 1 || size > 100) {
             throw new ApiException("INVALID_PAGE", HttpStatus.BAD_REQUEST, "Phân trang không hợp lệ", null);
         }
         UUID user = user(jwt);
-        String where = " FROM notifications WHERE user_id=? AND channel='IN_APP' AND status IN ('SENT','READ')";
-        List<Item> rows = jdbc.query("SELECT id,order_id,event_type,title,content,status,created_at,refund_id,auction_id,payment_link,payment_deadline" + where
+        String eventType = type == null || type.isBlank() ? null : type.trim();
+        if (eventType != null && !isKnownType(eventType)) {
+            throw new ApiException("INVALID_FILTER", HttpStatus.BAD_REQUEST, "Loại thông báo không hợp lệ", null);
+        }
+        Instant fromInstant = parseBound(from);
+        Instant toInstant = parseBound(to);
+        if (fromInstant != null && toInstant != null && fromInstant.isAfter(toInstant)) {
+            throw new ApiException("INVALID_FILTER", HttpStatus.BAD_REQUEST, "Khoảng thời gian không hợp lệ", null);
+        }
+        // Tham số bind theo đúng thứ tự xuất hiện trong WHERE; userId luôn đứng đầu để không lọc chéo người dùng.
+        List<Object> args = new java.util.ArrayList<>();
+        args.add(user);
+        StringBuilder where = new StringBuilder(
+                " FROM notifications WHERE user_id=? AND channel='IN_APP' AND status IN ('SENT','READ')");
+        if (eventType != null) {
+            where.append(" AND event_type=?");
+            args.add(eventType);
+        }
+        if (fromInstant != null) {
+            where.append(" AND created_at>=?");
+            args.add(java.sql.Timestamp.from(fromInstant));
+        }
+        if (toInstant != null) {
+            where.append(" AND created_at<=?");
+            args.add(java.sql.Timestamp.from(toInstant));
+        }
+        // unreadOnly chỉ thu hẹp danh sách; total/unread vẫn tính trên bộ lọc loại/thời gian gốc
+        // để badge chưa đọc không bị "biến mất" khi client đang xem tab chưa đọc.
+        String listWhere = unreadOnly ? where + " AND status='SENT'" : where.toString();
+        List<Object> pageArgs = new java.util.ArrayList<>(args);
+        pageArgs.add(size);
+        pageArgs.add((long) page * size);
+        List<Item> rows = jdbc.query("SELECT id,order_id,event_type,title,content,status,created_at,refund_id,auction_id,payment_link,payment_deadline" + listWhere
                 + " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?", (rs, row) -> new Item(
                         rs.getObject("id", UUID.class),
                         rs.getObject("order_id", UUID.class),
@@ -85,10 +123,29 @@ public class NotificationController {
                         rs.getObject("refund_id", UUID.class),
                         rs.getObject("auction_id", UUID.class),
                         rs.getString("payment_link"),
-                        rs.getTimestamp("payment_deadline") != null ? rs.getTimestamp("payment_deadline").toInstant() : null), user, size, (long) page * size);
-        long total = jdbc.queryForObject("SELECT count(*)" + where, Long.class, user);
-        long unread = jdbc.queryForObject("SELECT count(*)" + where + " AND status='SENT'", Long.class, user);
+                        rs.getTimestamp("payment_deadline") != null ? rs.getTimestamp("payment_deadline").toInstant() : null), pageArgs.toArray());
+        long total = jdbc.queryForObject("SELECT count(*)" + listWhere, Long.class, args.toArray());
+        long unread = jdbc.queryForObject("SELECT count(*)" + where + " AND status='SENT'", Long.class, args.toArray());
         return ApiResponse.ok(new Inbox(rows, total, unread));
+    }
+
+    /** Chỉ nhận loại sự kiện do hệ thống sinh ra; giá trị tự do bị từ chối trước khi chạm DB. */
+    private boolean isKnownType(String value) {
+        for (CommerceNotificationController.Type candidate : CommerceNotificationController.Type.values()) {
+            if (candidate.name().equals(value)) { return true; }
+        }
+        return false;
+    }
+
+    /** Mốc thời gian ISO-8601 tùy chọn; rỗng trả null, sai định dạng trả 400 thay vì lỗi 500 khi bind cột. */
+    private Instant parseBound(String value) {
+        if (value == null || value.isBlank()) { return null; }
+        try {
+            return Instant.parse(value.trim());
+        } catch (java.time.format.DateTimeParseException error) {
+            throw new ApiException("INVALID_FILTER", HttpStatus.BAD_REQUEST,
+                    "Mốc thời gian phải theo ISO-8601 (ví dụ 2026-11-01T00:00:00Z)", null);
+        }
     }
 
     /** Đọc lặp vẫn thành công; UUID không thuộc người dùng trả 404, không tiết lộ bản ghi của người khác. */

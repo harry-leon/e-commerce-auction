@@ -26,9 +26,12 @@ import {
     HeartHandshake,
     CreditCard,
 } from './UI'
-import { api, type Envelope, type ApiCategory } from '../api/client'
+import { api, errorMessage, type Envelope, type ApiCategory, type ApiProduct } from '../api/client'
 import { getNotifications, readNotification, type NotificationItem } from '../api/notifications'
 import { NOTIFICATIONS_CHANGED } from '../api/notificationStream'
+import { useSessionStore } from '../features/auth/sessionStore'
+import { getBatchStock } from '../api/inventory'
+import { filterInStockProducts } from '../features/catalog/catalog'
 
 // Simple monochrome SVG icons per category
 function IconElectronics(p: SVGProps<SVGSVGElement>) {
@@ -402,13 +405,93 @@ export function PublicHeader() {
             .catch(() => setCategories([]))
         return () => controller.abort()
     }, [])
-    const { lang, navigate, user, setUser, cartCount } = useApp()
-    const [searchQ, setSearchQ] = useState('')
+    // Session quyết định menu được phép hiện; pageParams giữ từ khóa tìm kiếm khi điều hướng từ Discovery.
+    const { lang, navigate, user, setUser, cartCount, pageParams } = useApp()
+    const sessionReady = useSessionStore((state) => state.sessionReady)
+    const [searchQ, setSearchQ] = useState(typeof pageParams?.q === 'string' ? pageParams.q : '')
+    const [suggestions, setSuggestions] = useState<ApiProduct[]>([])
+    const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+    const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+    const [suggestionsError, setSuggestionsError] = useState('')
     const [userOpen, setUserOpen] = useState(false)
 
-    const doSearch = () => {
-        if (searchQ.trim()) navigate('search', { q: searchQ })
+    // Đồng bộ từ khóa từ URL để thanh tìm kiếm không bị xóa khi chuyển sang trang kết quả.
+    useEffect(() => {
+        setSearchQ(typeof pageParams?.q === 'string' ? pageParams.q : '')
+    }, [pageParams?.q])
+
+    // Debounce truy vấn, lọc tên/mô tả/SKU theo đúng từ khóa rồi chỉ giữ SKU còn hàng.
+    useEffect(() => {
+        const query = searchQ.trim()
+        if (!query) {
+            setSuggestions([])
+            setSuggestionsLoading(false)
+            setSuggestionsError('')
+            return
+        }
+
+        const controller = new AbortController()
+        const timer = setTimeout(() => {
+            setSuggestionsLoading(true)
+            setSuggestionsError('')
+            api<Envelope<ApiProduct[]>>(
+                `/products?q=${encodeURIComponent(query)}&page=0&size=6&sort=name,asc`,
+                { signal: controller.signal },
+            )
+                .then(async (response) => {
+                    const products = Array.isArray(response?.data) ? response.data : []
+                    const normalizedQuery = query.toLocaleLowerCase()
+                    const matchingProducts = products.filter((product) =>
+                        [
+                            product.name,
+                            product.description,
+                            ...(product.skus || []).map((sku) => sku.skuCode || ''),
+                        ]
+                            .join(' ')
+                            .toLocaleLowerCase()
+                            .includes(normalizedQuery),
+                    )
+                    const skuIds = matchingProducts.flatMap((product) =>
+                        (product.skus || [])
+                            .filter((sku) => sku.status === 'ACTIVE')
+                            .map((sku) => sku.id),
+                    )
+                    if (skuIds.length === 0) return []
+                    const stocks = await getBatchStock({ skuIds }, controller.signal)
+                    return filterInStockProducts(
+                        matchingProducts,
+                        Object.fromEntries(
+                            stocks.map((stock) => [stock.skuId, stock.availableQty]),
+                        ),
+                    )
+                })
+                .then((products) => {
+                    if (!controller.signal.aborted) setSuggestions(products)
+                })
+                .catch((cause) => {
+                    if (!controller.signal.aborted) setSuggestionsError(errorMessage(cause))
+                })
+                .finally(() => {
+                    if (!controller.signal.aborted) setSuggestionsLoading(false)
+                })
+        }, 250)
+
+        return () => {
+            clearTimeout(timer)
+            controller.abort()
+        }
+    }, [searchQ])
+
+    const doSearch = (query = searchQ) => {
+        const normalizedQuery = query.trim()
+        if (normalizedQuery) {
+            setSuggestionsOpen(false)
+            setSearchQ(normalizedQuery)
+            navigate('search', { q: normalizedQuery })
+        }
     }
+    const showSuggestions =
+        suggestionsOpen && !suggestionsLoading && !suggestionsError && suggestions.length > 0
 
     return (
         /**
@@ -434,12 +517,29 @@ export function PublicHeader() {
                 </button>
 
                 {/* Search */}
-                <div className="flex-1 max-w-2xl">
+                <div
+                    className="relative flex-1 max-w-2xl"
+                    onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setSuggestionsOpen(false)
+                        }
+                    }}
+                >
                     <div className="flex border border-border rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary">
                         <input
                             value={searchQ}
-                            onChange={(e) => setSearchQ(e.target.value)}
+                            onChange={(e) => {
+                                const value = e.target.value
+                                setSearchQ(value)
+                                setSuggestions([])
+                                setSuggestionsError('')
+                                setSuggestionsLoading(value.trim().length > 0)
+                                setSuggestionsOpen(value.trim().length > 0)
+                            }}
                             onKeyDown={(e) => e.key === 'Enter' && doSearch()}
+                            aria-autocomplete="list"
+                            aria-expanded={showSuggestions}
+                            aria-controls="product-search-suggestions"
                             placeholder={
                                 lang === 'en'
                                     ? 'Search products, auctions...'
@@ -448,34 +548,70 @@ export function PublicHeader() {
                             className="flex-1 px-4 py-2.5 text-sm outline-none text-gray-800 placeholder-gray-400"
                         />
                         <button
-                            onClick={doSearch}
+                            type="button"
+                            onClick={() => doSearch()}
+                            aria-label={lang === 'en' ? 'Search' : 'Tìm kiếm'}
                             className="px-4 bg-primary text-white hover:bg-primary-dark transition-colors"
                         >
                             <Search size={16} />
                         </button>
                     </div>
+                    {showSuggestions && (
+                        <div
+                            id="product-search-suggestions"
+                            role="listbox"
+                            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white py-2 shadow-lg"
+                        >
+                            {suggestions.map((product) => (
+                                <button
+                                    key={product.id}
+                                    type="button"
+                                    role="option"
+                                    aria-selected={false}
+                                    className="block w-full px-4 py-2 text-left text-sm text-gray-800 hover:bg-orange-50"
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => doSearch(product.name)}
+                                >
+                                    {product.name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    {suggestionsOpen && suggestionsError && (
+                        <p role="alert" className="mt-1 text-xs text-red-600">
+                            {suggestionsError}
+                        </p>
+                    )}
                 </div>
 
                 {/* Right controls */}
                 <div className="flex items-center gap-2 shrink-0 ml-auto">
                     {/* Notifications realtime */}
-                    <NotificationBell iconSize={20} targetPage="notifications" />
+                    {sessionReady && user && (
+                        <NotificationBell iconSize={20} targetPage="notifications" />
+                    )}
 
                     {/* Cart */}
                     <button
                         onClick={() => navigate('cart')}
-                        className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-primary transition-colors"
+                        className="relative p-2 rounded-xl text-gray-600 hover:bg-gray-100 hover:text-primary transition-all duration-200 active:scale-95"
+                        aria-label="Shopping Cart"
                     >
                         <ShoppingCart size={20} />
                         {cartCount > 0 && (
-                            <span className="absolute top-1 right-1 w-4 h-4 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                            <span
+                                key={cartCount}
+                                className="cart-count-bounce absolute -top-1 -right-1 min-w-[20px] h-5 px-1 bg-primary text-white text-[11px] font-bold rounded-full flex items-center justify-center shadow-md ring-2 ring-white"
+                            >
                                 {cartCount}
                             </span>
                         )}
                     </button>
 
                     {/* User menu */}
-                    {user ? (
+                    {!sessionReady ? (
+                        <div className="w-36 h-10" aria-hidden="true" />
+                    ) : user ? (
                         <div className="relative">
                             <button
                                 onClick={() => setUserOpen((o) => !o)}
@@ -484,7 +620,7 @@ export function PublicHeader() {
                                 <img
                                     src={user.avatar}
                                     alt={user.fullName}
-                                    className="w-8 h-8 rounded-full object-cover"
+                                    className="w-8 h-8 rounded-full object-cover ring-1 ring-gray-200"
                                 />
                                 <span className="text-sm font-semibold text-gray-700 max-w-[100px] truncate">
                                     {user.fullName}
@@ -492,10 +628,10 @@ export function PublicHeader() {
                                 <ChevronDown size={14} className="text-gray-400" />
                             </button>
                             {userOpen && (
-                                <div className="absolute right-0 top-full mt-2 bg-white border border-border rounded-xl shadow-md py-2 w-52 z-50">
-                                    <div className="px-4 py-2 border-b border-border mb-1">
-                                        <p className="font-semibold text-sm">{user.fullName}</p>
-                                        <p className="text-xs text-gray-500">{user.email}</p>
+                                <div className="absolute right-0 top-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-56 z-50 animate-in fade-in zoom-in-95 duration-150">
+                                    <div className="px-4 py-2 border-b border-gray-100 mb-1">
+                                        <p className="font-semibold text-sm text-gray-900">{user.fullName}</p>
+                                        <p className="text-xs text-gray-500 truncate">{user.email}</p>
                                     </div>
                                     {[
                                         {
@@ -537,7 +673,7 @@ export function PublicHeader() {
                                             {item.label}
                                         </button>
                                     ))}
-                                    <div className="border-t border-border mt-1 pt-1">
+                                    <div className="border-t border-gray-100 mt-1 pt-1">
                                         <button
                                             onClick={async () => {
                                                 // Chỉ rời trang sau khi server xóa cookie; lỗi cho phép thử lại.
@@ -584,14 +720,14 @@ export function PublicHeader() {
 
             {/* Category nav */}
             <div className="border-t border-gray-100">
-                <div className="max-w-[1440px] mx-auto px-8 flex items-center gap-1 py-1">
+                <div className="max-w-[1440px] mx-auto px-8 flex items-center gap-1 py-1.5 overflow-x-auto">
                     {(categories || []).map((cat) => {
                         const Icon = CATEGORY_ICONS[cat.id]
                         return (
                             <button
                                 key={cat.id}
                                 onClick={() => navigate('search', { category: cat.id })}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:text-primary hover:bg-primary-light transition-colors whitespace-nowrap"
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-gray-600 hover:text-primary hover:bg-primary-light transition-all duration-200 active:scale-95 whitespace-nowrap"
                             >
                                 {Icon && <Icon className="text-gray-500" />}
                                 {lang === 'vi' ? cat.nameVi : cat.name}
@@ -600,10 +736,11 @@ export function PublicHeader() {
                     })}
                     <button
                         onClick={() => navigate('auction-list')}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-700 font-semibold hover:bg-gray-100 transition-colors whitespace-nowrap ml-auto"
+                        className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm text-auction font-bold bg-orange-50 hover:bg-orange-100/80 border border-orange-200/60 shadow-xs transition-all duration-200 active:scale-95 whitespace-nowrap ml-auto"
                     >
+                        <span className="live-indicator" />
                         <Gavel size={14} />
-                        {lang === 'en' ? 'Live Auctions' : 'Đấu giá'}
+                        {lang === 'en' ? 'Live Auctions' : 'Đấu giá trực tiếp'}
                     </button>
                 </div>
             </div>
@@ -716,6 +853,11 @@ export function BuyerLayout({ children, noPad }: { children: ReactNode; noPad?: 
 }
 
 // ─── Seller Layout ─────────────────────────────────────────────────────────────
+/**
+ * Chức năng: Danh sách menu điều hướng cho cổng Người bán (Seller Portal).
+ * Quy tắc & lý do: Đã loại bỏ mục 'seller-profile' khỏi danh sách điều hướng chính,
+ * chuyển lối vào Profile xuống nút tài khoản người dùng 'Seller Nexus' ở chân sidebar (đồng bộ với Admin).
+ */
 const SELLER_NAV = [
     {
         id: 'seller-dashboard',
@@ -740,9 +882,18 @@ const SELLER_NAV = [
         labelVi: 'Thông báo',
         icon: <Bell size={16} />,
     },
-    { id: 'seller-profile', label: 'Profile', labelVi: 'Hồ sơ', icon: <User2 size={16} /> },
 ]
 
+/**
+ * Chức năng: Khung bố cục chuẩn cho Seller Portal đồng bộ 100% với cấu trúc viewport của AdminLayout.
+ * Đầu vào: children (nội dung trang Seller), title (tiêu đề trang).
+ * Luồng & Quy tắc:
+ *   - Khung ngoài h-screen w-screen flex overflow-hidden bám cố định viewport.
+ *   - Sidebar cố định chiều rộng w-56 h-full min-h-0 với nền #0F172A, thanh cuộn độc lập min-h-0 overflow-y-auto.
+ *   - Lối vào Profile được gắn trực tiếp vào khối thẻ thông tin tài khoản 'Seller Nexus' ở chân sidebar.
+ *   - Đã loại bỏ hoàn toàn nút 'Buyer Storefront' (Trang mua hàng) theo yêu cầu.
+ *   - Main container độc lập min-h-0 overflow-y-auto overflow-x-hidden.
+ */
 export function SellerLayout({ children, title }: { children: ReactNode; title: string }) {
     const { lang, page, navigate, user, setUser } = useApp()
 
@@ -752,14 +903,14 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
         }
     }, [title])
     return (
-        <div className="min-h-screen flex bg-page">
-            {/* Sidebar */}
+        <div className="h-screen w-screen flex overflow-hidden bg-page">
+            {/* Sidebar Seller cố định chiều rộng w-56 đồng bộ AdminLayout */}
             <aside
-                className="w-56 min-h-screen flex flex-col shrink-0"
-                style={{ background: '#1E2A3B' }}
+                className="w-56 h-full min-h-0 flex flex-col shrink-0"
+                style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('home')} className="flex items-center gap-2">
+                    <button onClick={() => navigate('seller-dashboard')} className="flex items-center gap-2">
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Gavel size={14} className="text-white" />
                         </div>
@@ -769,12 +920,12 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         {lang === 'en' ? 'Seller Portal' : 'Cổng người bán'}
                     </p>
                 </div>
-                <nav className="flex-1 p-3 space-y-0.5">
+                <nav className="flex-1 min-h-0 p-3 overflow-y-auto space-y-1">
                     {SELLER_NAV.map((item) => (
                         <button
                             key={item.id}
                             onClick={() => navigate(item.id as any)}
-                            className={`sidebar-link w-full ${page === item.id || (item.id === 'seller-profile' && page === 'profile') ? 'active' : ''}`}
+                            className={`sidebar-link w-full ${page === item.id ? 'active' : ''}`}
                         >
                             {item.icon}
                             <span>{lang === 'vi' ? item.labelVi : item.label}</span>
@@ -783,28 +934,29 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                 </nav>
                 <div className="p-3 border-t border-white/10">
                     {user && (
-                        <div className="flex items-center gap-2 px-3 py-2 mb-2">
+                        // Chức năng: Bấm vào thẻ Seller Nexus để truy cập trang Profile (Hồ sơ người bán)
+                        <button
+                            type="button"
+                            aria-label={lang === 'en' ? 'Open Seller Nexus profile' : 'Mở hồ sơ Seller Nexus'}
+                            onClick={() => navigate('seller-profile')}
+                            className="sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
+                        >
                             <img
                                 src={user.avatar}
                                 alt=""
-                                className="w-8 h-8 rounded-full object-cover"
+                                className="w-7 h-7 rounded-full object-cover"
                             />
                             <div className="flex-1 min-w-0">
-                                <p className="text-white text-xs font-semibold truncate">
-                                    {user.fullName}
+                                <p className="text-gray-200 text-xs font-semibold truncate">
+                                    {user.fullName || 'Seller Nexus'}
                                 </p>
-                                <p className="text-gray-400 text-xs truncate">{user.email}</p>
+                                <p className="text-gray-500 text-[11px] truncate">
+                                    {lang === 'en' ? 'Seller' : 'Người bán'}
+                                </p>
                             </div>
-                        </div>
+                        </button>
                     )}
-                    {/* Chức năng: Cho phép Seller chuyển nhanh sang trang mua hàng của Buyer mà không cần đăng xuất */}
-                    <button
-                        onClick={() => navigate('home')}
-                        className="sidebar-link w-full text-indigo-300 hover:text-white"
-                    >
-                        <ShoppingCart size={16} />
-                        {lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}
-                    </button>
+                    {/* Bỏ mục 'Buyer Storefront', chỉ giữ nút Đăng xuất */}
                     <button
                         onClick={() => {
                             setUser(null)
@@ -812,13 +964,13 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         }}
                         className="sidebar-link w-full text-red-400 hover:text-red-300 hover:bg-red-900/20"
                     >
-                        <LogOut size={16} />
+                        <LogOut size={14} />
                         {lang === 'en' ? 'Log Out' : 'Đăng xuất'}
                     </button>
                 </div>
             </aside>
-            {/* Main */}
-            <div className="flex-1 flex flex-col min-w-0">
+            {/* Main view container bám chuẩn viewport với thanh cuộn dọc riêng */}
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
                 {/* Topbar */}
                 <div className="h-14 bg-white border-b border-border px-8 flex items-center justify-between shrink-0">
                     <h1 className="text-lg font-bold text-gray-900">{title}</h1>
@@ -827,7 +979,7 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         <NotificationBell iconSize={18} targetPage="seller-notifications" />
                     </div>
                 </div>
-                <main className="flex-1 p-8 overflow-auto">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">{children}</main>
             </div>
         </div>
     )
@@ -854,13 +1006,6 @@ const ADMIN_NAV = [
         label: 'Roles',
         labelVi: 'Vai trò',
         icon: <Shield size={15} />,
-        group: 'main',
-    },
-    {
-        id: 'admin-profile',
-        label: 'Profile',
-        labelVi: 'Hồ sơ',
-        icon: <User2 size={15} />,
         group: 'main',
     },
     {
@@ -996,23 +1141,25 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
     }
 
     return (
-        <div className="min-h-screen flex bg-page">
+        // Khung Admin bám viewport; sidebar và vùng nội dung tự cuộn dọc thay vì kéo dài trang ngoài.
+        <div className="h-screen w-screen flex overflow-hidden bg-page">
             <aside
-                className="w-56 min-h-screen flex flex-col shrink-0"
+                className="w-56 h-full min-h-0 flex flex-col shrink-0"
                 style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('home')} className="flex items-center gap-2">
+                    {/* Logo trong Admin luôn đưa quản trị viên về Dashboard, không chuyển sang storefront Buyer. */}
+                    <button
+                        onClick={() => navigate('admin-dashboard')}
+                        className="flex items-center gap-2"
+                    >
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Shield size={14} className="text-white" />
                         </div>
                         <span className="text-white font-black text-lg">Nexus</span>
                     </button>
-                    <p className="text-xs text-gray-500 mt-1">
-                        {lang === 'en' ? 'Admin Console' : 'Bảng quản trị'}
-                    </p>
                 </div>
-                <nav className="flex-1 p-3 overflow-y-auto space-y-1">
+                <nav className="flex-1 min-h-0 p-3 overflow-y-auto space-y-1">
                     {groups.map((g) => {
                         const items = ADMIN_NAV.filter((n) => n.group === g)
                         return (
@@ -1036,7 +1183,15 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                 </nav>
                 <div className="p-3 border-t border-white/10">
                     {user && (
-                        <div className="flex items-center gap-2 px-3 py-2 mb-2">
+                        // Đặt lối vào hồ sơ tại khu vực tài khoản để menu quản lý không có mục Profile riêng.
+                        <button
+                            type="button"
+                            aria-label={
+                                lang === 'en' ? 'Open Admin Nexus profile' : 'Mở hồ sơ Admin Nexus'
+                            }
+                            onClick={() => navigate('admin-profile')}
+                            className="admin-sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
+                        >
                             <img
                                 src={user.avatar}
                                 alt=""
@@ -1048,16 +1203,9 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                                 </p>
                                 <p className="text-gray-500 text-[11px] truncate">Admin</p>
                             </div>
-                        </div>
+                        </button>
                     )}
-                    {/* Chức năng: Cho phép Admin chuyển nhanh sang xem trang mua hàng của Buyer */}
-                    <button
-                        onClick={() => navigate('home')}
-                        className="admin-sidebar-link w-full text-indigo-300 hover:text-white hover:bg-white/10 mb-1"
-                    >
-                        <ShoppingCart size={14} />
-                        <span>{lang === 'en' ? 'Buyer Storefront' : 'Trang mua hàng (Buyer)'}</span>
-                    </button>
+                    {/* Bỏ mục chuyển sang Trang mua hàng (Buyer) theo yêu cầu, Admin chỉ giữ nút Đăng xuất */}
                     <button
                         onClick={() => {
                             setUser(null)
@@ -1070,14 +1218,16 @@ export function AdminLayout({ children, title }: { children: ReactNode; title: s
                     </button>
                 </div>
             </aside>
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
                 <div className="h-14 bg-white border-b border-border px-8 flex items-center justify-between shrink-0">
                     <h1 className="text-lg font-bold text-gray-900">{title}</h1>
                     <div className="flex items-center gap-3">
                         <LanguageSwitcher />
                     </div>
                 </div>
-                <main className="flex-1 p-8 overflow-auto">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">
+                    {children}
+                </main>
             </div>
         </div>
     )

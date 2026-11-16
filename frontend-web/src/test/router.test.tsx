@@ -1,15 +1,17 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { AppState, Page } from '../types'
 import { DEMO_ADMIN, DEMO_BUYER, DEMO_SELLER } from '../mockData'
 import { AppRouter } from '../routes/AppRouter'
 import { PublicHeader } from '../components/Layout'
+import { useSessionStore } from '../features/auth/sessionStore'
 
 const holder = vi.hoisted(() => ({ current: {} as AppState }))
 vi.mock('../context', () => ({ useApp: () => holder.current }))
 
 // Hồi quy router sau refactor: route công khai, phân quyền khu vực và mọi route đã đăng ký phải render đúng nhánh.
 beforeEach(() => {
+    useSessionStore.setState({ sessionReady: true })
     holder.current = {
         lang: 'en',
         setLang: vi.fn(),
@@ -37,6 +39,18 @@ beforeEach(() => {
             return new Response(JSON.stringify({ message: 'No fixture data' }), { status: 404 })
         }),
     )
+})
+
+/** Header không hiển thị profile cache trong lúc backend chưa xác minh cookie đăng nhập. */
+it('hides cached account details until session restoration finishes', () => {
+    holder.current.user = DEMO_ADMIN
+    useSessionStore.setState({ sessionReady: false })
+    render(<PublicHeader />)
+    expect(screen.queryByRole('button', { name: new RegExp(DEMO_ADMIN.fullName, 'i') })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Login' })).toBeNull()
+
+    act(() => useSessionStore.setState({ sessionReady: true }))
+    expect(screen.getByRole('button', { name: new RegExp(DEMO_ADMIN.fullName, 'i') })).toBeVisible()
 })
 
 it('requires a login for private routes and denies a wrong staff role', () => {

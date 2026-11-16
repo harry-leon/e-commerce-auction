@@ -288,19 +288,31 @@ function persistAuctionProductCache(cache: Map<string, AuctionProductCacheEntry>
 let auctionProductCache: Map<string, AuctionProductCacheEntry> = loadAuctionProductCache()
 
 /**
- * Chức năng: Lưu thông tin sản phẩm vào cache để auction hiển thị đúng tên/SKU.
+ * Chức năng: Lưu thông tin sản phẩm vào cache để auction hiển thị đúng tên/SKU/ảnh thật.
  * Đầu vào: productId (UUID từ Catalog Service) và metadata { name, nameVi, sku, images }.
- * Luồng: Gọi sau khi Seller chọn sản phẩm để tạo auction; hoặc khi load danh sách sản phẩm.
- * Quy tắc: Chỉ ghi đè nếu entry mới có nhiều thông tin hơn entry cũ.
+ * Luồng: Gọi sau khi Seller tạo auction, hoặc khi Admin/Seller nạp danh sách sản phẩm từ Catalog.
+ * Quy tắc: Hợp nhất thông tin và luôn ưu tiên ảnh thật thay vì ảnh placeholder unsplash.
  */
 export function cacheAuctionProduct(productId: string, entry: AuctionProductCacheEntry) {
     if (!productId || !entry.name) return
     const existing = auctionProductCache.get(productId)
-    // Ưu tiên giữ bản có đầy đủ thông tin hơn
-    if (!existing || (entry.sku && !existing.sku)) {
-        auctionProductCache.set(productId, entry)
-        persistAuctionProductCache(auctionProductCache)
+    const validImages = entry.images?.filter(
+        (img) => Boolean(img) && !img.includes('photo-1523275335684'),
+    )
+    const existingImages = existing?.images?.filter(
+        (img) => Boolean(img) && !img.includes('photo-1523275335684'),
+    )
+    const finalImages = validImages && validImages.length > 0 ? validImages : existingImages
+
+    const merged: AuctionProductCacheEntry = {
+        name: entry.name || existing?.name || '',
+        nameVi: entry.nameVi || existing?.nameVi || entry.name || existing?.name,
+        sku: entry.sku || existing?.sku,
+        images: finalImages,
     }
+
+    auctionProductCache.set(productId, merged)
+    persistAuctionProductCache(auctionProductCache)
 }
 
 /** ID dạng auc-{timestamp} chỉ được sinh khi API lỗi; backend dùng UUID nên không được coi các bản ghi này là phiên thật. */
@@ -618,9 +630,26 @@ export function validateAndNormalizeAuction(raw: unknown): Auction | null {
         .filter((b): b is AuctionBid => b !== null)
         .sort((a, b) => b.amount - a.amount)
 
-    const bidCount = Number.isFinite(item.bidCount ?? item.bid_count)
-        ? Number(item.bidCount ?? item.bid_count)
-        : bids.length
+    /**
+     * Chức năng: Tính toán chính xác tổng số lượt đặt giá (bidCount) của phiên đấu giá.
+     * Đầu vào: item từ API backend (có thể thiếu bidCount), mảng bids và các giá trị currentBid, startingPrice, minIncrement.
+     * Kết quả: Số nguyên lượt đặt giá thực tế (>= 0).
+     * Luồng xử lý:
+     *   1. Nếu backend có trả bidCount / bid_count hợp lệ -> dùng giá trị đó.
+     *   2. Nếu có danh sách bids đã nạp -> dùng bids.length.
+     *   3. Nếu chưa nạp chi tiết bids nhưng currentBid > startingPrice -> ước lượng theo số bước giá (currentBid - startingPrice)/minIncrement.
+     *   4. Mặc định là 0 nếu chưa có lượt đặt nào.
+     * Quy tắc & lý do: Tránh hiển thị "0 lượt" cho các phiên đã có người đặt giá cao hơn giá khởi điểm.
+     * Lỗi & giới hạn: Ước lượng bước giá chỉ dùng tạm thời trong khi chờ danh sách bids thật từ GET /auctions/{id}/bids.
+     */
+    const explicitBidCount = item.bidCount ?? item.bid_count
+    const bidCount = Number.isFinite(explicitBidCount)
+        ? Math.max(0, Number(explicitBidCount))
+        : bids.length > 0
+            ? bids.length
+            : currentBid > startingPrice && minIncrement > 0
+                ? Math.max(1, Math.round((currentBid - startingPrice) / minIncrement))
+                : 0
 
     return {
         id,
@@ -849,6 +878,29 @@ export const auctionsApi = {
         const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : ''
 
         try {
+            // Tải danh mục sản phẩm từ Catalog để nạp metadata (tên, ảnh Cloudinary) vào auctionProductCache nếu cache chưa có
+            if (auctionProductCache.size === 0) {
+                try {
+                    const prodEnv = await api<ApiResponse<ApiProduct[]> | ApiProduct[]>('/products?size=100')
+                    const prodList = prodEnv && typeof prodEnv === 'object' && 'data' in prodEnv
+                        ? (prodEnv as ApiResponse<ApiProduct[]>).data
+                        : prodEnv
+                    if (Array.isArray(prodList)) {
+                        for (const p of prodList) {
+                            const sku = p.skus?.[0]
+                            cacheAuctionProduct(p.id, {
+                                name: p.name,
+                                nameVi: p.name,
+                                sku: sku?.id || 'N/A',
+                                images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : undefined,
+                            })
+                        }
+                    }
+                } catch {
+                    // Tiếp tục nếu endpoint catalog tạm thời không phản hồi
+                }
+            }
+
             const envelope = await api<ApiResponse<unknown> | unknown[]>(`/auctions${qs}`)
             const rawData =
                 envelope && typeof envelope === 'object' && 'data' in envelope
@@ -941,11 +993,40 @@ export const auctionsApi = {
 
             const validated = validateAndNormalizeAuction(rawData)
             if (validated) {
-                // Endpoint lịch sử là nguồn chuẩn mới được bổ sung; giữ detail hoạt động nếu route bid tạm lỗi.
+                // Nếu sản phẩm chưa có tên chi tiết hoặc ảnh thực tế từ database, gọi Catalog Service lấy thông tin sản phẩm
+                if (validated.product.name === 'Auction Product' || !auctionProductCache.has(validated.productId)) {
+                    try {
+                        const prodRes = await api<ApiResponse<ApiProduct> | ApiProduct>(`/products/${encodeURIComponent(validated.productId)}`)
+                        const p = prodRes && typeof prodRes === 'object' && 'data' in prodRes
+                            ? (prodRes as ApiResponse<ApiProduct>).data
+                            : (prodRes as ApiProduct)
+                        if (p && p.name) {
+                            const sku = p.skus?.[0]
+                            const entry: AuctionProductCacheEntry = {
+                                name: p.name,
+                                nameVi: p.name,
+                                sku: sku?.id || 'N/A',
+                                images: p.images && p.images.length > 0 ? p.images.map((img) => img.url) : undefined,
+                            }
+                            cacheAuctionProduct(p.id, entry)
+                            validated.product.name = p.name
+                            validated.product.nameVi = p.name
+                            validated.product.description = p.description || ''
+                            validated.product.descriptionVi = p.description || ''
+                            if (entry.images && entry.images.length > 0) {
+                                validated.product.images = entry.images
+                            }
+                        }
+                    } catch {
+                        // Tiếp tục với thông tin hiện có nếu catalog tạm không phản hồi
+                    }
+                }
+                // Endpoint lịch sử là nguồn chuẩn mới được bổ sung; đồng bộ cả danh sách bids và số lượng lượt đặt thực tế.
                 const bids = await this.getBidHistory(id).catch(() => validated.bids)
                 return {
                     ...validated,
                     bids,
+                    bidCount: Math.max(validated.bidCount || 0, bids ? bids.length : 0),
                     status: resolveAuctionStatus(validated.id, validated.status, reviews),
                 }
             }

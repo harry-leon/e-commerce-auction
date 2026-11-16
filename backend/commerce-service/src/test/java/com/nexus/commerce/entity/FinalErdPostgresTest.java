@@ -36,7 +36,8 @@ class FinalErdPostgresTest {
         assertEquals("2026-10-27 02:03:04.123456", jdbc.queryForObject(
                 "SELECT expires_at::text FROM carts WHERE id = ?", String.class, cart.getId()));
         assertEquals(expected, entities.find(Cart.class, cart.getId()).getExpiresAt());
-        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM information_schema.columns WHERE table_name = 'carts' AND column_name = 'created_at'", Integer.class));
-        assertEquals(30, jdbc.queryForObject("SELECT character_maximum_length FROM information_schema.columns WHERE table_name = 'vouchers' AND column_name = 'name'", Integer.class));
+        // Chỉ kiểm tra schema đang dùng; database test có thể đồng thời chứa schema health/migration độc lập.
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name = 'carts' AND column_name = 'created_at'", Integer.class));
+        assertEquals(30, jdbc.queryForObject("SELECT character_maximum_length FROM information_schema.columns WHERE table_schema=current_schema() AND table_name = 'vouchers' AND column_name = 'name'", Integer.class));
     }
 }

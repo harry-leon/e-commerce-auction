@@ -49,6 +49,16 @@ import org.springframework.context.ApplicationEventPublisher;
  */
 class ShippingServiceTest {
 
+    /** Listener nội bộ OrderPaid cũng phải dừng trước repository/carrier, kể cả đã có Shipment cũ để replay. */
+    @Test
+    void orderPaidCannotBypassControlledIngressInsideTheProcess() {
+        shippingService.setIngressPolicy(new ClaimedDispatchIngressPolicy(false, true));
+        assertThatThrownBy(() -> shippingService.createShipmentForPaidOrder(UUID.randomUUID()))
+                .isInstanceOf(com.nexus.common.exception.ApiException.class)
+                .hasMessageContaining("claim/preflight");
+        org.mockito.Mockito.verifyNoInteractions(shipmentRepository, historyRepository, eventPublisher, outboxService);
+    }
+
     private ShipmentRepository shipmentRepository;
     private ShipmentStatusHistoryRepository historyRepository;
     private CarrierRepository carrierRepository;
@@ -134,6 +144,8 @@ class ShippingServiceTest {
     @Test
     @DisplayName("createShipment: dùng DEFAULT_CARRIER (GHN), lưu Shipment + History, ghi Outbox và phát ShipmentCreatedEvent")
     void createShipment_usesDefaultCarrierAndEmitsEvent() {
+        // Worker nội bộ vẫn dùng createShipment với guard; chỉ các ingress legacy bị đóng, không tắt adapter.
+        shippingService.setIngressPolicy(new ClaimedDispatchIngressPolicy(true, true));
         UUID orderId = UUID.randomUUID();
         Carrier ghn = new Carrier(UUID.randomUUID(), "GHN", "Giao Hang Nhanh", true);
         when(shipmentRepository.findByOrderId(orderId)).thenReturn(Optional.empty());

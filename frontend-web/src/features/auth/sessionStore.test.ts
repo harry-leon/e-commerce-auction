@@ -15,6 +15,7 @@ const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data)
 beforeEach(() => {
     sessionStorage.clear()
     localStorage.clear()
+    useSessionStore.setState({ sessionReady: false })
     saveSession(null)
 })
 afterEach(() => vi.unstubAllGlobals())
@@ -66,6 +67,17 @@ it('clears stale cached profiles without unauthorized requests when cookies are 
     expect(fetcher.mock.calls[0][0]).toBe('/api/v1/auth/session')
     expect(readSession()).toBeNull()
     expect(useSessionStore.getState().user).toBeNull()
+    expect(useSessionStore.getState().sessionReady).toBe(true)
+})
+
+/** Không cho profile cache xuất hiện như tài khoản đăng nhập nếu probe phiên thất bại. */
+it('clears an unverified cached profile when the session probe is unavailable', async () => {
+    saveSession({ user: mapUser(profile) })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    await useSessionStore.getState().restoreSession()
+    expect(useSessionStore.getState().user).toBeNull()
+    expect(useSessionStore.getState().sessionReady).toBe(true)
+    expect(readSession()).toBeNull()
 })
 
 /** Lỗi mạng/service lúc refresh không được coi là thao tác đăng xuất. */

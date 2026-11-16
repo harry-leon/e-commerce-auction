@@ -122,9 +122,11 @@ public class CommerceNotificationController {
         }
     }
 
-    /** Các loại sự kiện thông báo: đơn hàng, thanh toán, đấu giá, outbid và hoàn tiền (refund). */
+    /** Các loại sự kiện thông báo: đơn hàng, giao hàng, thanh toán, đấu giá, outbid và hoàn tiền (refund). ORDER_DELIVERED không có nghĩa hoàn tất thanh toán COD. */
     public enum Type {
         ORDER_CREATED,
+        ORDER_SHIPPED,
+        ORDER_DELIVERED,
         PAYMENT_SUCCESS,
         PAYMENT_FAILED,
         AUCTION_WON,
@@ -165,7 +167,7 @@ public class CommerceNotificationController {
         if (inserted == 1) {
             jdbc.update("INSERT INTO notification_attempts(id,notification_id,attempt_no,result) VALUES (?,?,1,'SUCCESS')",
                     UUID.randomUUID(), event.id());
-            if (isPushEnabled()) {
+            if (isPushEnabled() && pushAllowed(event.userId(), event.type())) {
                 recordAndDispatchPush(event, title, content, resolvedLink, createdAtUtc, deadlineTs);
             }
         } else {
@@ -183,6 +185,27 @@ public class CommerceNotificationController {
                 throw new ApiException("NOTIFICATION_EVENT_CONFLICT", HttpStatus.CONFLICT,
                         "UUID sự kiện đã có nội dung khác", null);
             }
+        }
+    }
+
+    /**
+     * Chỉ chặn kênh PUSH khi người dùng đã tắt rõ ràng trong notification_preferences.
+     *
+     * <p>Đầu vào: userId và loại sự kiện của snapshot Commerce. Kết quả: true nếu không có cấu hình
+     * (mặc định bật) hoặc cấu hình đang bật, false khi có dòng enabled=false.
+     *
+     * <p>Lý do: IN_APP vẫn được ghi để giữ nguồn resync; quyết định này chỉ ảnh hưởng bản ghi PUSH và
+     * WebSocket, không thay đổi nội dung inbox hay trạng thái tài chính. Lỗi đọc cấu hình không làm mất
+     * thông báo: trả true để push tiếp tục như hành vi trước khi có preferences.
+     */
+    private boolean pushAllowed(UUID userId, Type type) {
+        try {
+            Boolean enabled = jdbc.queryForObject(
+                    "SELECT enabled FROM notification_preferences WHERE user_id=? AND notification_type=? AND channel='PUSH'",
+                    Boolean.class, userId, type.name());
+            return enabled == null || enabled;
+        } catch (RuntimeException error) {
+            return true;
         }
     }
 
@@ -251,6 +274,8 @@ public class CommerceNotificationController {
     private String buildTitle(Type type) {
         return switch (type) {
             case ORDER_CREATED -> "Đã tạo đơn hàng";
+            case ORDER_SHIPPED -> "Đơn hàng đã bàn giao vận chuyển";
+            case ORDER_DELIVERED -> "Đơn hàng đã giao thành công";
             case PAYMENT_SUCCESS -> "Thanh toán thành công";
             case PAYMENT_FAILED -> "Thanh toán thất bại, đơn đã hủy";
             case AUCTION_WON -> "Chúc mừng thắng đấu giá";
@@ -269,6 +294,9 @@ public class CommerceNotificationController {
         String base = (event.orderNo() != null ? ("Đơn " + event.orderNo() + " • ") : "") + amountText + " VND";
         return switch (event.type()) {
             case ORDER_CREATED, PAYMENT_SUCCESS, PAYMENT_FAILED -> base;
+            // Chỉ phản ánh trạng thái Order đã được Commerce xác nhận, không hướng dẫn thanh toán hoặc xác nhận refund.
+            case ORDER_SHIPPED -> base + " • Đã bàn giao vận chuyển";
+            case ORDER_DELIVERED -> base + " • Đã giao thành công";
             // Chỉ SUCCEEDED xác nhận kết quả tài chính; REQUESTED/REVIEW không hướng dẫn người dùng trả tiền lại.
             case REFUND_REQUESTED -> base + " • Yêu cầu " + event.refundId() + " • Chưa xác nhận đã hoàn tiền";
             case REFUND_SUCCEEDED -> base + " • Yêu cầu " + event.refundId() + " • Backend đã xác nhận hoàn tiền";

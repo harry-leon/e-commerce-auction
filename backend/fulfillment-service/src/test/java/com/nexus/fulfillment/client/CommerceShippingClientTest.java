@@ -37,6 +37,11 @@ class CommerceShippingClientTest {
             exchange.getResponseBody().write(body);
             exchange.close();
         });
+        // Endpoint POST phải ACK 204; trả 200/redirect không được đánh dấu outbox done.
+        server.createContext("/api/v1/internal/commerce/shipping-events", exchange -> {
+            assertEquals("Bearer service-test-token", exchange.getRequestHeaders().getFirst("Authorization"));
+            exchange.getRequestBody().readAllBytes(); exchange.sendResponseHeaders(code.get(), -1); exchange.close();
+        });
         server.start();
         try {
             String base = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -55,6 +60,14 @@ class CommerceShippingClientTest {
             assertThrows(IllegalStateException.class, () -> client.get(order));
             code.set(302);
             assertThrows(IllegalStateException.class, () -> client.get(order));
+            assertEquals(true, client.configured());
+            code.set(204); client.sendEvent(java.util.Map.of("eventId", order));
+            code.set(200);
+            assertThrows(CommerceShippingClient.DeliveryFailure.class, () -> client.sendEvent(java.util.Map.of()));
+            code.set(401);
+            assertThrows(CommerceShippingClient.DeliveryFailure.class, () -> client.sendEvent(java.util.Map.of()));
+            code.set(204); client.sendEvent(java.util.Map.of());
+            assertEquals(3, tokenCalls.get());
         } finally { server.stop(0); }
     }
 }

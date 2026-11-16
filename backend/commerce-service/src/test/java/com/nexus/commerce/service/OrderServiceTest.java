@@ -19,6 +19,8 @@ import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.OrderMapper;
 import com.nexus.commerce.dto.request.CancelOrderRequest;
 import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
+import com.nexus.commerce.dto.request.ResolveOrderDisputeRequest;
+import com.nexus.commerce.dto.request.SubmitOrderDisputeRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
 import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
@@ -1191,6 +1193,140 @@ class OrderServiceTest {
                     () -> orderService.attachReservations(orderId, List.of(UUID.randomUUID()))
             );
             assertEquals(ErrorCode.ORDER_NOT_FOUND.name(), ex.getCode());
+        }
+    }
+
+    /**
+     * Nhóm kiểm thử giải quyết tranh chấp ký quỹ và khiếu nại; fixture stub findForPayment như service thật,
+     * vì khóa Order nằm trong JdbcTemplate, repository không có phương thức findForUpdate.
+     */
+    @Nested
+    @DisplayName("Xử lý tranh chấp ký quỹ đơn hàng (resolveDispute & submitDispute)")
+    class DisputeResolutionServiceTests {
+
+        /** Order đã hoàn tiền không được endpoint released mở lại COMPLETED sau finalization có audit. */
+        @Test
+        void refundedOrderCannotBeReopenedByDisputeRelease() {
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.REFUNDED);
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+            assertThrows(BusinessException.class, () -> orderService.resolveDispute(orderId,
+                    new ResolveOrderDisputeRequest("released", "Already refunded"), adminId, List.of("ADMIN")));
+            assertEquals(OrderStatus.REFUNDED, order.getStatus());
+            verify(orderRepository, never()).save(any(Order.class));
+        }
+
+        /**
+         * Admin không được giả hoàn tiền toàn phần/một phần từ phán quyết chưa có bằng chứng provider.
+         * Bảo vệ Order đã giao và kho: lỗi phải xảy ra trước save/history/enqueueRelease.
+         */
+        @Test
+        @DisplayName("Phán quyết refund không có bằng chứng không đổi Order hoặc kho")
+        void test_resolveDispute_refunded_success() {
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+            for (String resolution : List.of("refunded", "partial_refund")) {
+                var request = new ResolveOrderDisputeRequest(resolution, "Sản phẩm bị nứt vỡ");
+                assertThrows(BusinessException.class, () -> orderService.resolveDispute(orderId, request, adminId, List.of("ROLE_ADMIN")));
+            }
+            assertEquals(OrderStatus.DELIVERED, order.getStatus());
+            verify(orderRepository, never()).save(any(Order.class));
+            verify(orderStatusHistoryRepository, never()).save(any(OrderStatusHistory.class));
+        }
+
+        /**
+         * Mục đích: Admin giải ngân (released) cho người bán -> Đơn chuyển sang COMPLETED.
+         */
+        @Test
+        @DisplayName("Admin giải quyết tranh chấp giải ngân (released) -> Đơn sang COMPLETED")
+        void test_resolveDispute_released_success() {
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
+
+            OrderDetailResponse mockResponse = buildMockDetailResponse(order);
+            when(orderMapper.toDetailResponse(any(Order.class))).thenReturn(mockResponse);
+
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("released", "Chứng từ giao hàng hợp lệ");
+            OrderDetailResponse result = orderService.resolveDispute(orderId, request, adminId, List.of("ADMIN"));
+
+            assertNotNull(result);
+            assertEquals(OrderStatus.COMPLETED, order.getStatus());
+            verify(orderRepository).save(order);
+            verify(orderStatusHistoryRepository).save(any(OrderStatusHistory.class));
+        }
+
+        /**
+         * Mục đích: Người dùng không có vai trò ADMIN gọi resolveDispute bị từ chối 403.
+         */
+        @Test
+        @DisplayName("Non-Admin gọi resolveDispute -> Ném AUTH_FORBIDDEN")
+        void test_resolveDispute_nonAdmin_throwsForbidden() {
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("refunded", "Cố tình gọi");
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.resolveDispute(orderId, request, buyerId, List.of("ROLE_BUYER"))
+            );
+            assertEquals(ErrorCode.AUTH_FORBIDDEN.name(), ex.getCode());
+            verify(orderRepository, never()).findForPayment(any());
+        }
+
+        /**
+         * Mục đích: Từ chối xử lý tranh chấp khi đơn hàng chưa thanh toán (PENDING_PAYMENT).
+         */
+        @Test
+        @DisplayName("Đơn hàng chưa thanh toán (PENDING_PAYMENT) -> Ném ORDER_STATUS_INVALID")
+        void test_resolveDispute_pendingPayment_throwsInvalid() {
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PENDING_PAYMENT);
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+
+            ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("refunded", "Chưa thanh toán");
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.resolveDispute(orderId, request, adminId, List.of("ROLE_ADMIN"))
+            );
+            assertEquals(ErrorCode.ORDER_STATUS_INVALID.name(), ex.getCode());
+            verify(orderRepository, never()).save(any());
+        }
+
+        /**
+         * Mục đích: Người mua gửi khiếu nại đơn hàng của chính mình -> Ghi audit log [DISPUTE_FILED].
+         */
+        @Test
+        @DisplayName("Người mua gửi khiếu nại đơn hàng của mình -> Ghi vết kiểm toán thành công")
+        void test_submitDispute_buyer_success() {
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+
+            OrderDetailResponse mockResponse = buildMockDetailResponse(order);
+            when(orderMapper.toDetailResponse(any(Order.class))).thenReturn(mockResponse);
+
+            SubmitOrderDisputeRequest request = new SubmitOrderDisputeRequest("Giao sai phân loại hàng");
+            OrderDetailResponse result = orderService.submitDispute(orderId, request, buyerId, List.of("ROLE_BUYER"));
+
+            assertNotNull(result);
+            verify(orderStatusHistoryRepository).save(any(OrderStatusHistory.class));
+        }
+
+        /**
+         * Mục đích: Người dùng khác không phải chủ đơn gửi khiếu nại -> Ném AUTH_FORBIDDEN.
+         */
+        @Test
+        @DisplayName("Người khác gửi khiếu nại đơn hàng -> Ném AUTH_FORBIDDEN")
+        void test_submitDispute_otherUser_throwsForbidden() {
+            Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
+
+            UUID otherUserId = UUID.randomUUID();
+            SubmitOrderDisputeRequest request = new SubmitOrderDisputeRequest("Khiếu nại giùm");
+
+            BusinessException ex = assertThrows(
+                    BusinessException.class,
+                    () -> orderService.submitDispute(orderId, request, otherUserId, List.of("ROLE_BUYER"))
+            );
+            assertEquals(ErrorCode.AUTH_FORBIDDEN.name(), ex.getCode());
+            verify(orderStatusHistoryRepository, never()).save(any());
         }
     }
 }

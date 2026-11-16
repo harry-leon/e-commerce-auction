@@ -25,6 +25,9 @@ import {
     Trash2,
     Clock,
     Breadcrumb,
+    Copy,
+    SkeletonProductCard,
+    SkeletonAuctionCard,
 } from '../../components/UI'
 import {
     reputationApi,
@@ -34,6 +37,7 @@ import {
 } from '../../api/reputation'
 import {
     TrustLevelBadge,
+    RatingStars,
     RatingsList,
 } from '../../components/ReputationRating'
 import { OrderDetailView } from './OrderDetailView'
@@ -69,7 +73,7 @@ import {
     type ShippingQuoteResponse,
     type ShippingQuoteOption,
 } from '../../api/shipping'
-import { auctionsApi } from '../../api/auctions'
+import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
 import {
     formatSkuDisplay,
@@ -90,6 +94,7 @@ import {
     type CartItemResponse,
 } from '../../api/cart'
 import { getBatchStock } from '../../api/inventory'
+import { filterInStockProducts } from '../catalog/catalog'
 
 function getAuctionCurrentBid(auction: unknown) {
     if (!auction || typeof auction !== 'object') return 0
@@ -111,8 +116,8 @@ export function HomePage() {
     const [homeAuctions, setHomeAuctions] = useState<Auction[]>([])
     const [loadingAuctions, setLoadingAuctions] = useState(true)
     const [heroIndex, setHeroIndex] = useState(0)
-    const heroAuction =
-        homeAuctions.length > 0 ? homeAuctions[heroIndex % homeAuctions.length] : null
+    const [loadingProductStock, setLoadingProductStock] = useState(true)
+    const [productStockError, setProductStockError] = useState(false)
 
     /**
      * Lấy danh sách từ Auction API giống trang danh sách, cộng phiên vừa tạo trong context nếu API chưa đồng bộ.
@@ -167,28 +172,68 @@ export function HomePage() {
     // Tải danh mục thật từ Catalog Service backend (/api/v1/categories) với SWR cache
     const { data: catData, loading: catLoading } = useLoad<Envelope<ApiCategory[]>>('/categories')
     // Tải danh sách sản phẩm thật từ Catalog Service backend (/api/v1/products) với SWR cache
-    const { data: prodData, loading: prodLoading } = useLoad<Envelope<ApiProduct[]>>('/products')
+    const {
+        data: prodData,
+        loading: prodLoading,
+        error: prodError,
+    } = useLoad<Envelope<ApiProduct[]>>('/products')
     const [liveStockBySku, setLiveStockBySku] = useState<Record<string, number>>({})
 
-    // Buyer cards dùng cùng nguồn Fulfillment với trang chi tiết; SKU chưa có bản ghi kho được xem là 0.
+    // Nạp cache sản phẩm từ Catalog để các phiên đấu giá hiển thị đúng tên và ảnh Cloudinary từ database
+    useEffect(() => {
+        if (!prodData?.data) return
+        for (const p of prodData.data) {
+            const sku = p.skus?.[0]
+            cacheAuctionProduct(p.id, {
+                name: p.name,
+                nameVi: p.name,
+                sku: sku?.id || 'N/A',
+                images:
+                    p.images && p.images.length > 0 ? p.images.map((img) => img.url) : undefined,
+            })
+        }
+    }, [prodData])
+
+    // Chỉ cho phép card render sau khi batch tồn kho hoàn tất; thiếu bản ghi hoặc lỗi không được coi là còn hàng.
     useEffect(() => {
         let active = true
         const skuIds = (prodData?.data || []).flatMap((product) =>
-            (product.skus || []).map((sku) => sku.id).filter(Boolean),
+            (product.skus || [])
+                .filter((sku) => sku.status === 'ACTIVE')
+                .map((sku) => sku.id)
+                .filter(Boolean),
         )
+        if (prodData) {
+            setLoadingProductStock(true)
+            setProductStockError(false)
+            setLiveStockBySku({})
+        }
         if (skuIds.length === 0) {
             setLiveStockBySku({})
-            return () => { active = false }
+            if (prodData) setLoadingProductStock(false)
+            return () => {
+                active = false
+            }
         }
         getBatchStock({ skuIds })
             .then((stocks) => {
                 if (!active) return
-                setLiveStockBySku(Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty])))
+                setLiveStockBySku(
+                    Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty])),
+                )
             })
             .catch(() => {
-                if (active) setLiveStockBySku({})
+                if (active) {
+                    setLiveStockBySku({})
+                    setProductStockError(true)
+                }
             })
-        return () => { active = false }
+            .finally(() => {
+                if (active) setLoadingProductStock(false)
+            })
+        return () => {
+            active = false
+        }
     }, [prodData])
 
     /**
@@ -209,7 +254,10 @@ export function HomePage() {
      * Kết quả: Danh sách sản phẩm với giá, SKU và ảnh từ database.
      */
     const liveProducts: Product[] = (prodData?.data || []).map((p) => {
-        const sku = p.skus?.[0]
+        const sku =
+            p.skus?.find(
+                (item) => item.status === 'ACTIVE' && (liveStockBySku[item.id] ?? 0) > 0,
+            ) || p.skus?.[0]
         const categoryObj = allLiveCategories.find((c) => c.id === p.categoryId)
         const categoryName = categoryObj
             ? lang === 'vi'
@@ -249,22 +297,62 @@ export function HomePage() {
             weight: 500,
         }
     })
+    const availableProductIds = new Set(
+        filterInStockProducts(prodData?.data || [], liveStockBySku).map((product) => product.id),
+    )
+    const availableLiveProducts = liveProducts.filter((product) =>
+        availableProductIds.has(product.id),
+    )
+
+    /**
+     * Đồng bộ phiên đấu giá với thông tin sản phẩm thật từ Catalog Service (Supabase & Cloudinary)
+     */
+    const displayHomeAuctions = useMemo(() => {
+        return homeAuctions.map((auction) => {
+            const realProduct = liveProducts.find((p) => p.id === auction.productId)
+            if (!realProduct) return auction
+            return {
+                ...auction,
+                product: {
+                    ...auction.product,
+                    name: realProduct.name,
+                    nameVi: realProduct.nameVi || realProduct.name,
+                    description: realProduct.description || auction.product.description,
+                    descriptionVi: realProduct.descriptionVi || auction.product.descriptionVi,
+                    images:
+                        realProduct.images && realProduct.images.length > 0
+                            ? realProduct.images
+                            : auction.product.images,
+                    category: realProduct.category || auction.product.category,
+                    categoryId: realProduct.categoryId || auction.product.categoryId,
+                    sellerName: realProduct.sellerName || auction.sellerName,
+                },
+            }
+        })
+    }, [homeAuctions, liveProducts])
+
+    const heroAuction =
+        displayHomeAuctions.length > 0
+            ? displayHomeAuctions[heroIndex % displayHomeAuctions.length]
+            : null
 
     useEffect(() => {
-        setHeroIndex((index) => (homeAuctions.length > 0 ? index % homeAuctions.length : 0))
-        if (homeAuctions.length < 2) return
+        setHeroIndex((index) =>
+            displayHomeAuctions.length > 0 ? index % displayHomeAuctions.length : 0,
+        )
+        if (displayHomeAuctions.length < 2) return
         const timer = window.setInterval(() => {
-            setHeroIndex((index) => (index + 1) % homeAuctions.length)
+            setHeroIndex((index) => (index + 1) % displayHomeAuctions.length)
         }, 5000)
         return () => window.clearInterval(timer)
-    }, [homeAuctions.length])
+    }, [displayHomeAuctions.length])
 
     return (
         <BuyerLayout noPad>
             {/* Hero Banner - Thể hiện dữ liệu thực tế từ Database */}
             <section className="relative min-h-[500px] overflow-hidden bg-gray-950 text-white">
-                {homeAuctions.length > 0 ? (
-                    homeAuctions.map((auction, index) => (
+                {displayHomeAuctions.length > 0 ? (
+                    displayHomeAuctions.map((auction, index) => (
                         <img
                             key={auction.id}
                             src={auction.product.images[0]
@@ -352,9 +440,9 @@ export function HomePage() {
                     </div>
                 </div>
 
-                {homeAuctions.length > 1 && (
+                {displayHomeAuctions.length > 1 && (
                     <div className="absolute z-20 bottom-7 left-1/2 -translate-x-1/2 flex items-center gap-2">
-                        {homeAuctions.map((auction, index) => (
+                        {displayHomeAuctions.map((auction, index) => (
                             <button
                                 key={auction.id}
                                 type="button"
@@ -432,7 +520,7 @@ export function HomePage() {
                             >
                                 {tr(lang, 'liveAuctions')}
                             </h2>
-                            {homeAuctions.some((auction) => auction.status === 'active') && (
+                            {displayHomeAuctions.some((auction) => auction.status === 'active') && (
                                 <span className="badge badge-orange auction-live text-sm px-3 py-1">
                                     {lang === 'en' ? 'Ending Soon' : 'Sắp kết thúc'}
                                 </span>
@@ -447,24 +535,14 @@ export function HomePage() {
                         </Button>
                     </div>
                     {loadingAuctions ? (
-                        <div
-                            className="nexus-card py-10 text-center text-sm text-gray-500"
-                            role="status"
-                        >
-                            <div className="flex justify-center mb-2">
-                                <div
-                                    className="spinner-border text-primary"
-                                    style={{ width: '2rem', height: '2rem', color: '#ee4d2d' }}
-                                    role="status"
-                                >
-                                    <span className="visually-hidden">Loading...</span>
-                                </div>
-                            </div>
-                            {tr(lang, 'loadingAuctions')}
-                        </div>
-                    ) : homeAuctions.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                            {homeAuctions.map((auction) => (
+                            {[1, 2, 3, 4].map((i) => (
+                                <SkeletonAuctionCard key={i} />
+                            ))}
+                        </div>
+                    ) : displayHomeAuctions.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                            {displayHomeAuctions.map((auction) => (
                                 <AuctionCard key={auction.id} auction={auction} />
                             ))}
                         </div>
@@ -485,53 +563,59 @@ export function HomePage() {
                             {tr(lang, 'viewAll')} →
                         </Button>
                     </div>
-                    {prodLoading && liveProducts.length === 0 ? (
+                    {prodError ? (
+                        <p className="nexus-card px-5 py-8 text-center text-red-600">{prodError}</p>
+                    ) : prodLoading || loadingProductStock ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                            {[1, 2, 3, 4].map((i) => (
-                                <div
-                                    key={i}
-                                    className="nexus-card p-4 flex flex-col gap-3 animate-pulse"
-                                >
-                                    <div className="w-full h-48 bg-gray-100 rounded-xl" />
-                                    <div className="h-4 w-3/4 bg-gray-200 rounded" />
-                                    <div className="h-4 w-1/2 bg-gray-100 rounded" />
-                                    <div className="h-6 w-1/3 bg-gray-200 rounded mt-2" />
-                                </div>
+                            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                                <SkeletonProductCard key={i} />
                             ))}
                         </div>
-                    ) : liveProducts.length > 0 ? (
+                    ) : productStockError ? (
+                        <p className="nexus-card px-5 py-8 text-center text-red-600">
+                            {lang === 'vi'
+                                ? 'Không thể kiểm tra tồn kho sản phẩm.'
+                                : 'Product stock could not be checked.'}
+                        </p>
+                    ) : availableLiveProducts.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                            {liveProducts.map((p) => (
+                            {availableLiveProducts.map((p) => (
                                 <ProductCard key={p.id} product={p} />
                             ))}
                         </div>
                     ) : (
                         <p className="text-gray-500 py-8 text-center">
                             {lang === 'en'
-                                ? 'No products available.'
-                                : 'Chưa có sản phẩm nào trong cơ sở dữ liệu.'}
+                                ? 'No products currently in stock.'
+                                : 'Hiện không có sản phẩm còn hàng.'}
                         </p>
                     )}
                 </section>
 
                 {/* New Arrivals - Hiển thị các sản phẩm mới nhất từ Database */}
-                {liveProducts.length >= 3 && (
-                    <section>
-                        <div className="flex items-center justify-between mb-5">
-                            <h2 className="text-2xl font-bold text-gray-900">
-                                {tr(lang, 'newArrivals')}
-                            </h2>
-                            <Button variant="outline" size="sm" onClick={() => navigate('search')}>
-                                {tr(lang, 'viewAll')} →
-                            </Button>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                            {[...liveProducts].reverse().map((p) => (
-                                <ProductCard key={p.id} product={p} />
-                            ))}
-                        </div>
-                    </section>
-                )}
+                {availableLiveProducts.length >= 3 &&
+                    !loadingProductStock &&
+                    !productStockError && (
+                        <section>
+                            <div className="flex items-center justify-between mb-5">
+                                <h2 className="text-2xl font-bold text-gray-900">
+                                    {tr(lang, 'newArrivals')}
+                                </h2>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => navigate('search')}
+                                >
+                                    {tr(lang, 'viewAll')} →
+                                </Button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                                {[...availableLiveProducts].reverse().map((p) => (
+                                    <ProductCard key={p.id} product={p} />
+                                ))}
+                            </div>
+                        </section>
+                    )}
             </div>
         </BuyerLayout>
     )
@@ -1157,7 +1241,8 @@ export function CheckoutPage() {
     const [shipping, setShipping] = useState<string>('GHN')
     const [shippingQuoteLoading, setShippingQuoteLoading] = useState<boolean>(false)
     const [shippingQuoteError, setShippingQuoteError] = useState<string | null>(null)
-    const [shippingQuoteResponse, setShippingQuoteResponse] = useState<ShippingQuoteResponse | null>(null)
+    const [shippingQuoteResponse, setShippingQuoteResponse] =
+        useState<ShippingQuoteResponse | null>(null)
     const [shippingOptions, setShippingOptions] = useState<ShippingQuoteOption[]>([])
     const [loading, setLoading] = useState(false)
 
@@ -1451,7 +1536,10 @@ export function CheckoutPage() {
         setShippingQuoteError(null)
         try {
             const fullAddress = `${shippingData.street.trim()}, ${shippingData.ward.trim()}, ${shippingData.district.trim()}, ${shippingData.city.trim()}`
-            const subtotal = activeCheckoutItems.reduce((acc, i) => acc + i.unitPrice * i.quantity, 0)
+            const subtotal = activeCheckoutItems.reduce(
+                (acc, i) => acc + i.unitPrice * i.quantity,
+                0,
+            )
             const quote = await shippingApi.getShippingQuotes({
                 shippingAddress: fullAddress || 'Ho Chi Minh City',
                 orderTotal: subtotal,
@@ -1467,7 +1555,10 @@ export function CheckoutPage() {
             }
         } catch (err: any) {
             setShippingQuoteError(
-                err?.message || (lang === 'vi' ? 'Không thể tải phương thức vận chuyển' : 'Failed to load shipping methods'),
+                err?.message ||
+                    (lang === 'vi'
+                        ? 'Không thể tải phương thức vận chuyển'
+                        : 'Failed to load shipping methods'),
             )
         } finally {
             setShippingQuoteLoading(false)
@@ -1491,7 +1582,7 @@ export function CheckoutPage() {
         if (selectedShippingOption) {
             return selectedShippingOption.shippingFee
         }
-        return shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : (lang === 'vi' ? 35000 : 2.49)
+        return shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : lang === 'vi' ? 35000 : 2.49
     }, [selectedShippingOption, shipping, lang])
 
     /**
@@ -2123,14 +2214,19 @@ export function CheckoutPage() {
                                 {shippingQuoteResponse?.freeShippingApplied && (
                                     <span className="text-xs font-semibold px-2.5 py-1 bg-green-100 text-green-700 rounded-full flex items-center gap-1">
                                         <CheckCircle size={12} />
-                                        {lang === 'vi' ? 'Miễn phí vận chuyển' : 'Free Shipping Applied'}
+                                        {lang === 'vi'
+                                            ? 'Miễn phí vận chuyển'
+                                            : 'Free Shipping Applied'}
                                     </span>
                                 )}
                             </div>
 
                             {/* Xử lý trạng thái Loading khi gọi API báo giá */}
                             {shippingQuoteLoading && (
-                                <div className="p-8 text-center text-gray-500 border border-dashed rounded-xl bg-gray-50/50" role="status">
+                                <div
+                                    className="p-8 text-center text-gray-500 border border-dashed rounded-xl bg-gray-50/50"
+                                    role="status"
+                                >
                                     <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                                     <p className="text-sm font-medium">
                                         {lang === 'vi'
@@ -2144,102 +2240,138 @@ export function CheckoutPage() {
                             {!shippingQuoteLoading && shippingQuoteError && (
                                 <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between text-sm text-red-700">
                                     <span>{shippingQuoteError}</span>
-                                    <Button size="sm" variant="outline" onClick={fetchShippingQuotes}>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={fetchShippingQuotes}
+                                    >
                                         {lang === 'vi' ? 'Thử lại' : 'Retry'}
                                     </Button>
                                 </div>
                             )}
 
                             {/* Hiển thị danh sách phương thức vận chuyển khả dụng */}
-                            {!shippingQuoteLoading && !shippingQuoteError && shippingOptions.length > 0 && (
-                                <div className="space-y-3">
-                                    {shippingOptions.map((opt) => {
-                                        const isSelected = shipping === opt.carrier
-                                        const carrierDisplayName =
-                                            opt.carrier === 'GHN'
-                                                ? 'GHN Express'
-                                                : opt.carrier === 'GHTK'
-                                                  ? 'GHTK Standard'
-                                                  : opt.carrier
-                                        return (
-                                            <label
-                                                key={`${opt.carrier}-${opt.serviceType}`}
-                                                className={`flex items-center gap-4 p-4 border-2 rounded-xl cursor-pointer transition-colors ${
-                                                    isSelected
-                                                        ? 'border-primary bg-primary-light'
-                                                        : 'border-border hover:border-gray-300'
-                                                }`}
-                                            >
-                                                <input
-                                                    type="radio"
-                                                    name="shippingMethodOption"
-                                                    className="w-4 h-4 accent-primary"
-                                                    checked={isSelected}
-                                                    onChange={() => setShipping(opt.carrier)}
-                                                />
-                                                <Truck
-                                                    size={22}
-                                                    className={isSelected ? 'text-primary' : 'text-gray-400'}
-                                                />
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center gap-2">
-                                                        <p className="font-semibold text-gray-900">
-                                                            {carrierDisplayName}
+                            {!shippingQuoteLoading &&
+                                !shippingQuoteError &&
+                                shippingOptions.length > 0 && (
+                                    <div className="space-y-3">
+                                        {shippingOptions.map((opt) => {
+                                            const isSelected = shipping === opt.carrier
+                                            const carrierDisplayName =
+                                                opt.carrier === 'GHN'
+                                                    ? 'GHN Express'
+                                                    : opt.carrier === 'GHTK'
+                                                      ? 'GHTK Standard'
+                                                      : opt.carrier
+                                            return (
+                                                <label
+                                                    key={`${opt.carrier}-${opt.serviceType}`}
+                                                    className={`flex items-center gap-4 p-4 border-2 rounded-xl cursor-pointer transition-colors ${
+                                                        isSelected
+                                                            ? 'border-primary bg-primary-light'
+                                                            : 'border-border hover:border-gray-300'
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="radio"
+                                                        name="shippingMethodOption"
+                                                        className="w-4 h-4 accent-primary"
+                                                        checked={isSelected}
+                                                        onChange={() => setShipping(opt.carrier)}
+                                                    />
+                                                    <Truck
+                                                        size={22}
+                                                        className={
+                                                            isSelected
+                                                                ? 'text-primary'
+                                                                : 'text-gray-400'
+                                                        }
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <p className="font-semibold text-gray-900">
+                                                                {carrierDisplayName}
+                                                            </p>
+                                                            {opt.freeShippingApplied && (
+                                                                <span className="text-[11px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded">
+                                                                    {lang === 'vi'
+                                                                        ? 'FREESHIP'
+                                                                        : 'FREE'}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-xs text-gray-500 mt-0.5">
+                                                            {tr(lang, 'deliveryEstimate')}:{' '}
+                                                            {opt.estimatedDeliveryDays}{' '}
+                                                            {lang === 'vi'
+                                                                ? 'ngày làm việc'
+                                                                : 'business days'}
+                                                            {opt.estimatedDeliveryAt && (
+                                                                <span className="text-gray-400 ml-1">
+                                                                    (
+                                                                    {formatDate(
+                                                                        opt.estimatedDeliveryAt,
+                                                                        lang,
+                                                                    )}
+                                                                    )
+                                                                </span>
+                                                            )}
                                                         </p>
-                                                        {opt.freeShippingApplied && (
-                                                            <span className="text-[11px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded">
-                                                                {lang === 'vi' ? 'FREESHIP' : 'FREE'}
+                                                    </div>
+                                                    <div className="text-right">
+                                                        {opt.freeShippingApplied ? (
+                                                            <div className="flex flex-col items-end">
+                                                                {opt.originalFee !== undefined &&
+                                                                    opt.originalFee > 0 && (
+                                                                        <span className="text-xs line-through text-gray-400">
+                                                                            {formatCurrency(
+                                                                                opt.originalFee,
+                                                                                lang,
+                                                                            )}
+                                                                        </span>
+                                                                    )}
+                                                                <span className="font-bold text-green-600 text-sm">
+                                                                    {lang === 'vi'
+                                                                        ? 'Miễn phí'
+                                                                        : 'Free'}
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="font-bold text-primary text-base">
+                                                                {formatCurrency(
+                                                                    opt.shippingFee,
+                                                                    lang,
+                                                                )}
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <p className="text-xs text-gray-500 mt-0.5">
-                                                        {tr(lang, 'deliveryEstimate')}: {opt.estimatedDeliveryDays}{' '}
-                                                        {lang === 'vi' ? 'ngày làm việc' : 'business days'}
-                                                        {opt.estimatedDeliveryAt && (
-                                                            <span className="text-gray-400 ml-1">
-                                                                ({formatDate(opt.estimatedDeliveryAt, lang)})
-                                                            </span>
-                                                        )}
-                                                    </p>
-                                                </div>
-                                                <div className="text-right">
-                                                    {opt.freeShippingApplied ? (
-                                                        <div className="flex flex-col items-end">
-                                                            {opt.originalFee !== undefined && opt.originalFee > 0 && (
-                                                                <span className="text-xs line-through text-gray-400">
-                                                                    {formatCurrency(opt.originalFee, lang)}
-                                                                </span>
-                                                            )}
-                                                            <span className="font-bold text-green-600 text-sm">
-                                                                {lang === 'vi' ? 'Miễn phí' : 'Free'}
-                                                            </span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="font-bold text-primary text-base">
-                                                            {formatCurrency(opt.shippingFee, lang)}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </label>
-                                        )
-                                    })}
-                                </div>
-                            )}
+                                                </label>
+                                            )
+                                        })}
+                                    </div>
+                                )}
 
                             {/* Xử lý trạng thái rỗng (Empty state) */}
-                            {!shippingQuoteLoading && !shippingQuoteError && shippingOptions.length === 0 && (
-                                <div className="p-6 text-center text-gray-500 bg-gray-50 rounded-xl">
-                                    <Package size={28} className="mx-auto text-gray-400 mb-2" />
-                                    <p className="text-sm font-medium">
-                                        {lang === 'vi'
-                                            ? 'Không có phương thức vận chuyển khả dụng cho địa chỉ này.'
-                                            : 'No shipping methods available for this address.'}
-                                    </p>
-                                    <Button size="sm" variant="outline" className="mt-3" onClick={fetchShippingQuotes}>
-                                        {lang === 'vi' ? 'Tải lại' : 'Reload'}
-                                    </Button>
-                                </div>
-                            )}
+                            {!shippingQuoteLoading &&
+                                !shippingQuoteError &&
+                                shippingOptions.length === 0 && (
+                                    <div className="p-6 text-center text-gray-500 bg-gray-50 rounded-xl">
+                                        <Package size={28} className="mx-auto text-gray-400 mb-2" />
+                                        <p className="text-sm font-medium">
+                                            {lang === 'vi'
+                                                ? 'Không có phương thức vận chuyển khả dụng cho địa chỉ này.'
+                                                : 'No shipping methods available for this address.'}
+                                        </p>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="mt-3"
+                                            onClick={fetchShippingQuotes}
+                                        >
+                                            {lang === 'vi' ? 'Tải lại' : 'Reload'}
+                                        </Button>
+                                    </div>
+                                )}
 
                             <div className="flex gap-3">
                                 <Button variant="outline" size="lg" onClick={() => setStep(1)}>
@@ -2248,7 +2380,10 @@ export function CheckoutPage() {
                                 <Button
                                     variant="primary"
                                     size="lg"
-                                    disabled={shippingQuoteLoading || (!shippingQuoteLoading && shippingOptions.length === 0)}
+                                    disabled={
+                                        shippingQuoteLoading ||
+                                        (!shippingQuoteLoading && shippingOptions.length === 0)
+                                    }
                                     onClick={() => setStep(3)}
                                 >
                                     {tr(lang, 'next')} →
@@ -2580,7 +2715,9 @@ export function CheckoutPage() {
                                             createdOrder
                                                 ? (savedTotal ?? 0)
                                                 : previewData
-                                                  ? previewData.totalAmount - (previewData.shippingFee ?? 0) + currentShippingFee
+                                                  ? previewData.totalAmount -
+                                                    (previewData.shippingFee ?? 0) +
+                                                    currentShippingFee
                                                   : activeCheckoutItems.reduce(
                                                         (acc, i) => acc + i.unitPrice * i.quantity,
                                                         0,
@@ -2796,7 +2933,9 @@ export function CheckoutPage() {
                                   pricing.categoryDiscount +
                                   pricing.voucherDiscount
                             const total = previewData
-                                ? previewData.totalAmount - (previewData.shippingFee ?? 0) + currentShippingFee
+                                ? previewData.totalAmount -
+                                  (previewData.shippingFee ?? 0) +
+                                  currentShippingFee
                                 : Math.max(
                                       0,
                                       subtotal -
@@ -3569,7 +3708,7 @@ export function OrderHistoryPage() {
  *          địa chỉ, thanh toán VNPAY và thông tin người bán.
  */
 export function OrderDetailPage() {
-    return <OrderDetailView />
+
 }
 
 /**
@@ -3579,7 +3718,7 @@ export function OrderDetailPage() {
  *          voucher shop, 3 sản phẩm chủ lực, live auctions và đánh giá.
  */
 export function SellerShopPage() {
-    return <SellerShopView />
+
 }
 
 /**
@@ -3667,27 +3806,7 @@ export function MyReputationPage() {
                 <Breadcrumb
                     items={[
                         { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
-                        ...(isPublic && targetName
-                            ? [
-                                  {
-                                      label: targetName,
-                                      page: 'seller-shop',
-                                  },
-                                  {
-                                      label:
-                                          lang === 'vi'
-                                              ? 'Hồ sơ uy tín công khai'
-                                              : 'Public Reputation',
-                                  },
-                              ]
-                            : [
-                                  {
-                                      label:
-                                          lang === 'vi'
-                                              ? 'Hồ sơ uy tín & Đánh giá'
-                                              : 'Reputation & Ratings',
-                                  },
-                              ]),
+
                     ]}
                 />
 

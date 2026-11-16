@@ -22,7 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
  * - Đảm bảo tính nhất quán (Atomicity): các sự kiện miền ShipmentCreated, ShipmentPickedUp, ShipmentInTransit,
  *   ShipmentDelivered, ShipmentFailed, ShipmentReturned và InventoryInboundCompleted được ghi vào bảng outbox
  *   trong cùng transaction với thay đổi dữ liệu chính.
- * - Cho phép background scheduler hoặc Debezium CDC đẩy sự kiện sang Apache Kafka an toàn tuyệt đối.
+ * - Worker Shipping giao event shipment qua HTTP tới Commerce; các loại event khác không do worker đó xử lý.
+ * - Bản ghi outbox không chứng minh đã giao thành công hoặc đã có Kafka/Debezium; transport phải ACK/retry riêng.
  */
 @Service
 public class FulfillmentEventOutboxService {
@@ -131,10 +132,21 @@ public class FulfillmentEventOutboxService {
         saveOutboxEvent(eventId, "SHIPMENT", shipment.getId(), EVENT_SHIPMENT_RETURNED, body, now);
     }
 
+    /**
+     * Dựng envelope chung cho sự kiện shipment: định danh, phiên bản schema, aggregate và correlation.
+     *
+     * <p>Quy tắc: {@code aggregateId} bằng shipmentId để consumer kiểm tra chéo với cột aggregate_id của outbox.
+     * {@code correlationId} giữ chuỗi nhân quả; sự kiện phát sinh trực tiếp dùng chính eventId làm gốc.
+     * {@code schemaVersion} cố định 1 cho contract hiện tại; consumer từ chối phiên bản lạ thay vì đoán trường thiếu.
+     */
     private Map<String, Object> buildShipmentBasePayload(UUID eventId, String eventType, Shipment shipment, Instant now) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("eventId", eventId);
         body.put("eventType", eventType);
+        body.put("schemaVersion", 1);
+        body.put("aggregateType", "SHIPMENT");
+        body.put("aggregateId", shipment.getId());
+        body.put("correlationId", eventId);
         body.put("occurredAt", now.toString());
         body.put("shipmentId", shipment.getId());
         body.put("orderId", shipment.getOrderId());

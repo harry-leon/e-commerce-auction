@@ -2,6 +2,8 @@ package com.nexus.commerce.service;
 
 import com.nexus.commerce.dto.request.CancelOrderRequest;
 import com.nexus.commerce.dto.request.CreateAuctionOrderRequest;
+import com.nexus.commerce.dto.request.ResolveOrderDisputeRequest;
+import com.nexus.commerce.dto.request.SubmitOrderDisputeRequest;
 import com.nexus.commerce.dto.request.UpdateOrderStatusRequest;
 import com.nexus.commerce.dto.response.AuctionOrderResponse;
 import com.nexus.commerce.dto.response.OrderDetailResponse;
@@ -256,6 +258,73 @@ public interface OrderService {
      * @return kết quả thông tin đơn hàng AuctionOrderResponse
      */
     AuctionOrderResponse createAuctionOrder(CreateAuctionOrderRequest request);
+
+    /**
+     * Giải quyết tranh chấp ký quỹ của đơn hàng bởi Quản trị viên (Admin).
+     *
+     * <p>Chức năng: Ghi nhận phán quyết tranh chấp của Admin ('refunded', 'released', 'partial_refund')
+     * và cập nhật trạng thái đơn hàng cùng lịch sử kiểm toán bất biến.
+     *
+     * <p>Đầu vào và kết quả:
+     * Nhận orderId, ResolveOrderDisputeRequest, ID Admin và danh sách roles.
+     * Trả về OrderDetailResponse sau khi cập nhật; refunded/partial_refund hiện bị từ chối vì thiếu bằng chứng tài chính.
+     *
+     * <p>Luồng xử lý:
+     * Kiểm tra quyền ADMIN -> khóa Order -> kiểm tra trạng thái -> chặn refund/partial refund ->
+     * ghi COMPLETED/history cho released. Không gửi tiền hoặc hoàn trả tồn kho qua endpoint tranh chấp.
+     *
+     * <p>Quy tắc và lý do:
+     * Chỉ ADMIN mới có quyền can thiệp vào quỹ ký quỹ và phán quyết tranh chấp.
+     * Đơn PENDING_PAYMENT hoặc CANCELLED không thể giải quyết tranh chấp.
+     *
+     * <p>Lỗi và giới hạn:
+     * Ném AUTH_FORBIDDEN nếu không có quyền ADMIN. Ném ORDER_STATUS_INVALID nếu đơn không đủ điều kiện.
+     *
+     * @param orderId       mã định danh đơn hàng
+     * @param request       yêu cầu xử lý tranh chấp chứa phán quyết và lý do
+     * @param currentUserId ID của Quản trị viên thực hiện thao tác
+     * @param userRoles     danh sách vai trò của người thực hiện
+     * @return chi tiết đơn hàng OrderDetailResponse sau khi cập nhật
+     */
+    OrderDetailResponse resolveDispute(
+            UUID orderId,
+            ResolveOrderDisputeRequest request,
+            UUID currentUserId,
+            List<String> userRoles
+    );
+
+    /**
+     * Người mua mở khiếu nại tranh chấp đơn hàng (Dispute Filing).
+     *
+     * <p>Chức năng: Tiếp nhận khiếu nại từ Buyer đối với đơn hàng có vấn đề (hàng lỗi, không nhận được hàng),
+     * ghi nhận lý do vào vết kiểm toán để Quản trị viên thụ lý tạm giữ/xử lý ký quỹ.
+     *
+     * <p>Đầu vào và kết quả:
+     * Nhận orderId, SubmitOrderDisputeRequest, buyerId và userRoles.
+     * Trả về OrderDetailResponse sau khi ghi nhận.
+     *
+     * <p>Luồng xử lý:
+     * Kiểm tra quyền sở hữu đơn của Buyer -> kiểm tra đơn đã thanh toán và chưa hủy ->
+     * ghi OrderStatusHistory với [BUYER] [DISPUTE_FILED].
+     *
+     * <p>Quy tắc và lý do:
+     * Chỉ Buyer sở hữu đơn mới được gửi khiếu nại. Đơn chưa thanh toán hoặc đã hủy không thể khiếu nại.
+     *
+     * <p>Lỗi và giới hạn:
+     * Ném AUTH_FORBIDDEN nếu không phải chủ đơn. Ném ORDER_STATUS_INVALID nếu trạng thái đơn không hợp lệ.
+     *
+     * @param orderId       mã định danh đơn hàng
+     * @param request       yêu cầu khiếu nại chứa lý do
+     * @param currentUserId ID người mua gửi khiếu nại
+     * @param userRoles     danh sách vai trò của người thực hiện
+     * @return chi tiết đơn hàng OrderDetailResponse
+     */
+    OrderDetailResponse submitDispute(
+            UUID orderId,
+            SubmitOrderDisputeRequest request,
+            UUID currentUserId,
+            List<String> userRoles
+    );
 
     /**
      * Gắn danh sách mã phiếu giữ kho (reservation IDs) vào đơn hàng.

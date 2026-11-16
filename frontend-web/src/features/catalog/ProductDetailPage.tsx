@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import {
     api,
     formatSkuDisplay,
     readSession,
     type ApiProduct,
+    type ApiCategory,
     type Envelope,
 } from '../../api/client'
 import { addItemToCart } from '../../api/cart'
@@ -15,17 +16,68 @@ import { BuyerLayout } from '../../components/Layout'
 import {
     Breadcrumb,
     Button,
+    CheckCircle,
     ChevronLeft,
     ChevronRight,
     CircleX,
+    Clock,
+    CountdownTimer,
+    CreditCard,
+    Gavel,
     NumberStepper,
+    Shield,
+    ShoppingCart,
     StarRating,
     Tabs,
+    Truck,
 } from '../../components/UI'
 import { ProductCard } from '../../components/Cards'
 import { LoadState } from '../../components/LoadState'
 import { useLoad } from '../../hooks/useLoad'
 import { tr, formatCurrency } from '../../i18n'
+import { getBatchStock } from '../../api/inventory'
+import { flatten, filterInStockProducts } from './catalog'
+
+/**
+ * Chuyển đổi nhãn phiên bản từ thuộc tính JSON sang tên hiển thị thân thiện với người dùng:
+ * - Tiếng Việt: chỉ hiện 'Tiêu chuẩn', 'Mở rộng' hoặc giá trị thuộc tính tương ứng (không hiện JSON hay chữ SKU).
+ * - Tiếng Anh: dịch tự động sang 'Standard', 'Extended' hoặc các từ tiếng Anh tương đương.
+ */
+function formatVariantLabel(rawAttr: any, fallback: string, lang: 'vi' | 'en'): string {
+    if (!rawAttr) return fallback
+    let val = rawAttr
+    if (typeof rawAttr === 'string') {
+        const trimmed = rawAttr.trim()
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            try {
+                const parsed = JSON.parse(trimmed)
+                if (typeof parsed === 'object' && parsed !== null) {
+                    val = parsed.phienBan || parsed.version || Object.values(parsed)[0] || trimmed
+                }
+            } catch {
+                val = trimmed
+            }
+        }
+    } else if (typeof rawAttr === 'object' && rawAttr !== null) {
+        val = rawAttr.phienBan || rawAttr.version || Object.values(rawAttr)[0] || ''
+    }
+
+    const strVal = String(val).trim()
+    if (!strVal) return fallback
+
+    if (lang === 'en') {
+        const lower = strVal.toLowerCase()
+        if (lower === 'tiêu chuẩn' || lower === 'phiên bản tiêu chuẩn') return 'Standard'
+        if (lower === 'mở rộng') return 'Extended'
+        if (lower === 'cơ bản') return 'Basic'
+        if (lower === 'cao cấp') return 'Premium'
+        if (lower === 'bản giới hạn') return 'Limited Edition'
+        if (lower === 'đen') return 'Black'
+        if (lower === 'trắng') return 'White'
+    }
+
+    return strVal
+}
 
 /**
  * Màn hình chi tiết sản phẩm (Product Detail Page) chuẩn giao diện Figma.
@@ -47,6 +99,18 @@ export function ProductDetailPage() {
     )
     const apiProduct = data?.data
 
+    // Lấy thông tin danh mục thực tế từ backend để hiển thị đúng danh mục sản phẩm (thay vì hardcode)
+    const categories = useLoad<Envelope<ApiCategory[]>>('/categories')
+    const flatCategories = useMemo(
+        () => flatten(categories.data?.data || []),
+        [categories.data?.data],
+    )
+    const foundCategory = flatCategories.find((c) => c.id === apiProduct?.categoryId)
+    const categoryName = foundCategory
+        ? (lang === 'vi' ? foundCategory.nameVi || foundCategory.name : foundCategory.name)
+        : ''
+    const productWeight = (apiProduct as any)?.weight || null
+
     /**
      * Chức năng: Ánh xạ sản phẩm thực tế từ API Catalog backend (/api/v1/products/{id}).
      * Quy tắc: Lấy toàn bộ thông tin giá, SKU, ảnh và mô tả từ backend database; tuyệt đối không dùng PRODUCTS mockData.
@@ -58,7 +122,7 @@ export function ProductDetailPage() {
               nameVi: apiProduct.name,
               description: apiProduct.description || '',
               descriptionVi: apiProduct.description || '',
-              category: 'Thiết bị điện tử',
+              category: categoryName,
               categoryId: apiProduct.categoryId,
               price: apiProduct.skus?.[0]?.price ?? 0,
               originalPrice: apiProduct.skus?.[0]?.originalPrice,
@@ -77,9 +141,9 @@ export function ProductDetailPage() {
               sellerName: 'Nexus Official Store',
               sellerTrust: 'gold' as const,
               sellerRating: 4.9,
-              weight: 500,
+              weight: productWeight,
               createdAt: apiProduct.createdAt || new Date().toISOString(),
-              status: 'active' as const,
+              status: (apiProduct.status || 'ACTIVE').toLowerCase() as any,
           }
         : {
               id: rawId || 'product-empty',
@@ -87,7 +151,7 @@ export function ProductDetailPage() {
               nameVi: '',
               description: '',
               descriptionVi: '',
-              category: 'Thiết bị điện tử',
+              category: '',
               categoryId: '',
               price: 0,
               sku: '',
@@ -102,7 +166,7 @@ export function ProductDetailPage() {
               sellerName: 'Nexus Official Store',
               sellerTrust: 'gold' as const,
               sellerRating: 4.9,
-              weight: 500,
+              weight: null,
               createdAt: new Date().toISOString(),
               status: 'active' as const,
           }
@@ -138,6 +202,21 @@ export function ProductDetailPage() {
     const currentPrice = selectedSku?.price ?? product.price
     const currentOriginalPrice = selectedSku?.originalPrice ?? product.originalPrice
     const currentSkuCode = selectedSku?.skuCode ?? product.sku
+
+    // Tải danh sách phiên đấu giá từ backend để kiểm tra xem sản phẩm có phiên đấu giá nào đang hoặc sắp diễn ra không
+    const { data: allAuctionsEnvelope } = useLoad<Envelope<any[]>>('/auctions')
+    const linkedAuction = useMemo(() => {
+        if (!allAuctionsEnvelope?.data || !product.id) return null
+        return (
+            allAuctionsEnvelope.data.find(
+                (a: any) =>
+                    (a.productId === product.id ||
+                        (product.skus || []).some((s: any) => s.id === a.skuId)) &&
+                    (a.status === 'ACTIVE' || a.status === 'SCHEDULED'),
+            ) || null
+        )
+    }, [allAuctionsEnvelope, product.id, product.skus])
+    const hasAuction = Boolean(linkedAuction || product.enableAuction)
 
     // Tồn bán lấy từ Fulfillment theo đúng SKU, không dùng số demo của Catalog.
     // Gắn kết quả với SKU và bỏ response muộn để không hiển thị kho biến thể cũ khi đổi lựa chọn.
@@ -187,39 +266,86 @@ export function ProductDetailPage() {
 
     // Tải danh sách sản phẩm khác từ Catalog Service backend để làm gợi ý liên quan
     const { data: allProductsEnvelope } = useLoad<Envelope<ApiProduct[]>>('/products')
-    const relatedProducts = (allProductsEnvelope?.data || [])
-        .filter((p) => p.id !== product.id)
-        .map((p) => ({
-            id: p.id,
-            name: p.name,
-            nameVi: p.name,
-            category: 'Thiết bị điện tử',
-            categoryId: p.categoryId,
-            price: p.skus?.[0]?.price ?? 0,
-            originalPrice: p.skus?.[0]?.originalPrice,
-            sku: formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode),
-            skuId: p.skus?.[0]?.id,
-            skus: p.skus,
-            images:
-                p.images && p.images.length > 0
-                    ? p.images.map((img) => img.url)
-                    : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
-            description: p.description || '',
-            descriptionVi: p.description || '',
-            enableAuction: p.auctionEnabled || false,
-            // Card gợi ý chưa tải kho riêng; không gán tồn demo để dùng làm căn cứ mua hàng.
-            stock: 0,
-            rating: 5.0,
-            reviewCount: 12,
-            location: 'ho-chi-minh',
-            sellerId: p.sellerId || 'seller-1',
-            sellerName: 'Nexus Official Store',
-            sellerTrust: 'gold' as const,
-            sellerRating: 4.9,
-            weight: 500,
-            createdAt: p.createdAt || new Date().toISOString(),
-            status: 'active' as const,
-        }))
+    const [relatedStockBySku, setRelatedStockBySku] = useState<Record<string, number>>({})
+    const [relatedStockLoading, setRelatedStockLoading] = useState(true)
+    const [relatedStockError, setRelatedStockError] = useState(false)
+    // Chỉ dùng gợi ý có tồn kho Fulfillment xác nhận, tránh hiển thị thẻ hết hàng ở phần liên quan.
+    useEffect(() => {
+        if (!allProductsEnvelope) return
+        let active = true
+        const candidates = (allProductsEnvelope.data || []).filter((item) => item.id !== product.id)
+        const skuIds = candidates.flatMap((item) =>
+            (item.skus || []).filter((sku) => sku.status === 'ACTIVE').map((sku) => sku.id),
+        )
+        setRelatedStockLoading(true)
+        setRelatedStockError(false)
+        setRelatedStockBySku({})
+        if (skuIds.length === 0) {
+            setRelatedStockLoading(false)
+            return () => {
+                active = false
+            }
+        }
+        getBatchStock({ skuIds })
+            .then((stocks) => {
+                if (active) {
+                    setRelatedStockBySku(
+                        Object.fromEntries(
+                            stocks.map((stock) => [stock.skuId, stock.availableQty]),
+                        ),
+                    )
+                }
+            })
+            .catch(() => {
+                if (active) setRelatedStockError(true)
+            })
+            .finally(() => {
+                if (active) setRelatedStockLoading(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [allProductsEnvelope, product.id])
+    const relatedProducts = filterInStockProducts(
+        (allProductsEnvelope?.data || []).filter((item) => item.id !== product.id),
+        relatedStockBySku,
+    )
+        .map((p) => {
+            const sku =
+                p.skus?.find(
+                    (item) => item.status === 'ACTIVE' && (relatedStockBySku[item.id] ?? 0) > 0,
+                ) || p.skus?.[0]
+            return {
+                id: p.id,
+                name: p.name,
+                nameVi: p.name,
+                category: 'Thiết bị điện tử',
+                categoryId: p.categoryId,
+                price: sku?.price ?? 0,
+                originalPrice: sku?.originalPrice,
+                sku: formatSkuDisplay(sku?.id, sku?.skuCode),
+                skuId: sku?.id,
+                skus: p.skus,
+                images:
+                    p.images && p.images.length > 0
+                        ? p.images.map((img) => img.url)
+                        : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600'],
+                description: p.description || '',
+                descriptionVi: p.description || '',
+                enableAuction: p.auctionEnabled || false,
+                stock: relatedStockBySku[sku?.id || ''] ?? 0,
+                rating: 5.0,
+                reviewCount: 12,
+                location: 'ho-chi-minh',
+                sellerId: p.sellerId || 'seller-1',
+                sellerName: 'Nexus Official Store',
+                sellerTrust: 'gold' as const,
+                sellerRating: 4.9,
+                weight: 500,
+                createdAt: p.createdAt || new Date().toISOString(),
+                status: 'active' as const,
+            }
+        })
         .slice(0, 4)
 
     useEffect(() => {
@@ -383,11 +509,88 @@ export function ProductDetailPage() {
             })
         }
     }
+
+    const statusText = useMemo(() => {
+        if (availableStock !== null) {
+            if (availableStock > 0) {
+                return lang === 'vi' ? 'Còn hàng' : 'In Stock'
+            }
+            return lang === 'vi' ? 'Hết hàng' : 'Out of Stock'
+        }
+        if (apiProduct?.status === 'ACTIVE') {
+            return lang === 'vi' ? 'Còn hàng' : 'In Stock'
+        }
+        if (apiProduct?.status === 'INACTIVE') {
+            return lang === 'vi' ? 'Tạm ngừng bán' : 'Inactive'
+        }
+        return apiProduct?.status || ''
+    }, [availableStock, apiProduct?.status, lang])
+
+    const specificationsList = useMemo(() => {
+        const list: { label: string; value: string }[] = []
+
+        if (currentSkuCode) {
+            list.push({
+                label: lang === 'vi' ? 'Mã SKU' : 'SKU',
+                value: currentSkuCode,
+            })
+        }
+
+        if (categoryName) {
+            list.push({
+                label: lang === 'vi' ? 'Danh mục' : 'Category',
+                value: categoryName,
+            })
+        }
+
+        if (productWeight && Number(productWeight) > 0) {
+            list.push({
+                label: lang === 'vi' ? 'Khối lượng' : 'Weight',
+                value: `${productWeight} kg`,
+            })
+        }
+
+        if (statusText) {
+            list.push({
+                label: lang === 'vi' ? 'Trạng thái' : 'Status',
+                value: statusText,
+            })
+        }
+
+        return list
+    }, [currentSkuCode, categoryName, productWeight, statusText, lang])
+
     const TABS = [
         { id: 'description', label: tr(lang, 'description') },
         { id: 'reviews', label: `${tr(lang, 'reviews')} (0)` },
         { id: 'specifications', label: tr(lang, 'specifications') },
     ]
+
+    // Nếu đang loading sản phẩm, hiển thị skeleton loading state tương tự như trang chi tiết đấu giá (AuctionDetailPage)
+    if (loading && !apiProduct) {
+        return (
+            <BuyerLayout>
+                <div className="space-y-6">
+                    <div className="skeleton w-64 h-6 rounded" />
+                    <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
+                        <div className="space-y-4">
+                            <div className="skeleton w-full h-96 rounded-2xl" />
+                            <div className="flex gap-2">
+                                {Array.from({ length: 4 }).map((_, i) => (
+                                    <div key={i} className="skeleton w-16 h-16 rounded-xl" />
+                                ))}
+                            </div>
+                            <div className="skeleton w-full h-40 rounded-2xl" />
+                        </div>
+                        <div className="space-y-4">
+                            <div className="skeleton w-full h-80 rounded-2xl" />
+                            <div className="skeleton w-full h-32 rounded-2xl" />
+                        </div>
+                    </div>
+                </div>
+            </BuyerLayout>
+        )
+    }
 
     if (!loading && !apiProduct && rawId) {
         return (
@@ -413,7 +616,7 @@ export function ProductDetailPage() {
                 <Breadcrumb
                     items={[
                         { label: lang === 'en' ? 'Home' : 'Trang chủ', page: 'home' },
-                        { label: product.category || 'Products', page: 'search' },
+                        { label: product.category || (lang === 'en' ? 'Products' : 'Sản phẩm'), page: 'search' },
                         { label: lang === 'vi' ? product.nameVi : product.name },
                     ]}
                 />
@@ -561,22 +764,31 @@ export function ProductDetailPage() {
                 {/* Cột phải: Thông tin chi tiết, Đặt hàng & Mua ngay */}
                 <div>
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="text-sm font-semibold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
-                            {product.category || 'General'}
-                        </span>
+                        {product.category && (
+                            <span className="text-sm font-semibold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
+                                {product.category}
+                            </span>
+                        )}
                         <span
                             className={`badge ${availableStock && availableStock > 0 ? 'badge-green' : 'badge-red'}`}
                         >
                             {stockMessage}
                         </span>
-                        {product.enableAuction && (
-                            <span className="badge badge-indigo">
-                                {lang === 'en' ? 'Auction Eligible' : 'Hỗ trợ đấu giá'}
+                        {hasAuction && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-black bg-amber-500 text-white shadow-sm animate-pulse">
+                                <Gavel size={13} />
+                                {linkedAuction?.status === 'ACTIVE'
+                                    ? lang === 'en'
+                                        ? 'LIVE AUCTION'
+                                        : 'ĐANG ĐẤU GIÁ TRỰC TIẾP'
+                                    : lang === 'en'
+                                      ? 'UPCOMING AUCTION'
+                                      : 'ĐẤU GIÁ SẮP DIỄN RA'}
                             </span>
                         )}
                     </div>
 
-                    <h1 className="text-3xl font-bold text-gray-900 mb-3 leading-tight">
+                    <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900 mb-3 leading-tight">
                         {lang === 'vi' ? product.nameVi : product.name}
                     </h1>
 
@@ -586,38 +798,174 @@ export function ProductDetailPage() {
                             {product.rating || 4.9} ({product.reviewCount || 521}{' '}
                             {lang === 'en' ? 'reviews' : 'đánh giá'})
                         </span>
-                    </div>
-
-                    <div className="flex items-baseline gap-3 mb-6">
-                        <span className="text-4xl font-black text-primary">
-                            {formatCurrency(currentPrice, lang)}
+                        <span className="text-xs text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded">
+                            ✓ {lang === 'en' ? 'Verified Product' : 'Đã kiểm định chính hãng'}
                         </span>
-                        {currentOriginalPrice && currentOriginalPrice > currentPrice && (
-                            <>
-                                <span className="text-xl text-gray-400 line-through">
-                                    {formatCurrency(currentOriginalPrice, lang)}
-                                </span>
-                                <span className="badge badge-red">
-                                    -{Math.round((1 - currentPrice / currentOriginalPrice) * 100)}%
-                                </span>
-                            </>
-                        )}
                     </div>
 
-                    {/* Lựa chọn phân loại SKU sản phẩm khi có nhiều biến thể */}
+                    {/* KHỐI NỔI BẬT ĐẶC BIỆT KHI SẢN PHẨM CÓ PHIÊN ĐẤU GIÁ */}
+                    {hasAuction && (
+                        <div className="mb-6 rounded-2xl bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-amber-700/20 border-2 border-amber-400 p-5 md:p-6 shadow-xl relative overflow-hidden">
+                            <div className="absolute -top-12 -right-12 w-40 h-40 bg-amber-400/20 rounded-full blur-2xl pointer-events-none" />
+                            <div className="absolute -bottom-12 -left-12 w-40 h-40 bg-orange-500/20 rounded-full blur-2xl pointer-events-none" />
+
+                            <div className="relative z-10 space-y-4">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    {linkedAuction?.status === 'ACTIVE' ? (
+                                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-600 text-white font-black text-xs tracking-wider uppercase shadow-md animate-pulse">
+                                            <span className="w-2 h-2 rounded-full bg-white"></span>
+                                            <span>
+                                                {lang === 'en' ? 'LIVE AUCTION' : 'ĐANG ĐẤU GIÁ TRỰC TIẾP'}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-600 text-white font-bold text-xs tracking-wider uppercase shadow-md">
+                                            <Clock size={14} />
+                                            <span>
+                                                {lang === 'en' ? 'UPCOMING AUCTION' : 'ĐẤU GIÁ SẮP DIỄN RA'}
+                                            </span>
+                                        </div>
+                                    )}
+                                    <span className="text-xs font-bold text-amber-900 bg-amber-100/90 px-3 py-1 rounded-full border border-amber-300">
+                                        ⚡ {lang === 'en' ? 'Interactive Bidding Room' : 'Phòng đấu giá trực tiếp'}
+                                    </span>
+                                </div>
+
+                                <div className="bg-white/95 backdrop-blur-md rounded-xl p-4 border border-amber-200 shadow-sm">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="text-xs font-bold uppercase tracking-wider text-amber-800">
+                                            {lang === 'en' ? 'Current Highest Bid' : 'Giá đấu cao nhất hiện tại'}
+                                        </span>
+                                        {linkedAuction?.startPrice && (
+                                            <span className="text-xs text-gray-500">
+                                                {lang === 'en' ? 'Starting: ' : 'Khởi điểm: '}
+                                                <span className="font-semibold text-gray-700">
+                                                    {formatCurrency(linkedAuction.startPrice, lang)}
+                                                </span>
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-3xl md:text-4xl font-black text-amber-600 tracking-tight flex items-baseline gap-2">
+                                        <span>
+                                            {formatCurrency(
+                                                linkedAuction?.currentPrice ?? currentPrice,
+                                                lang,
+                                            )}
+                                        </span>
+                                    </div>
+                                    {linkedAuction?.bidIncrement && (
+                                        <div className="text-xs text-gray-600 mt-1 flex items-center gap-1.5">
+                                            <span className="font-medium">
+                                                {lang === 'en' ? 'Minimum Increment:' : 'Bước giá tối thiểu:'}
+                                            </span>
+                                            <span className="font-bold text-amber-700">
+                                                +{formatCurrency(linkedAuction.bidIncrement, lang)}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {linkedAuction?.endTime && (
+                                    <div className="bg-white/90 backdrop-blur-sm rounded-xl p-3 border border-amber-200/80">
+                                        <div className="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5">
+                                            <Clock size={14} className="text-amber-600" />
+                                            <span>
+                                                {linkedAuction.status === 'ACTIVE'
+                                                    ? lang === 'en'
+                                                        ? 'Auction ends in:'
+                                                        : 'Thời gian còn lại của phiên:'
+                                                    : lang === 'en'
+                                                      ? 'Auction starts in:'
+                                                      : 'Thời gian đếm ngược bắt đầu:'}
+                                            </span>
+                                        </div>
+                                        <CountdownTimer endTime={linkedAuction.endTime} large />
+                                    </div>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (linkedAuction?.id) {
+                                            navigate('auction-detail', {
+                                                id: linkedAuction.id,
+                                                auctionId: linkedAuction.id,
+                                            })
+                                        } else {
+                                            navigate('auction-list')
+                                        }
+                                    }}
+                                    className="w-full py-4 px-6 rounded-xl font-black text-white text-base md:text-lg bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 hover:from-amber-600 hover:via-orange-600 hover:to-red-600 shadow-xl shadow-orange-500/30 transform active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                                >
+                                    <Gavel size={22} className="animate-bounce" />
+                                    <span>
+                                        {lang === 'en'
+                                            ? 'Enter Bidding Room & Place Bid Now 🔨 →'
+                                            : 'Vào phòng đấu giá & Đặt giá ngay 🔨 →'}
+                                    </span>
+                                </button>
+
+                                <div className="flex items-center justify-center gap-2 text-xs text-amber-900 font-medium">
+                                    <Shield size={14} className="text-amber-600" />
+                                    <span>
+                                        {lang === 'en'
+                                            ? 'Protected by Nexus Escrow Guarantee • Anti-Sniping System'
+                                            : 'Bảo chứng an toàn bởi Nexus Escrow • Hệ thống chống sniping'}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* BẢNG GIÁ & ƯU ĐÃI CHÍNH HÃNG DÀNH CHO SẢN PHẨM MUA NGAY */}
+                    <div className="bg-gradient-to-br from-orange-50/80 via-white to-amber-50/40 p-5 rounded-2xl border border-orange-200/70 shadow-sm mb-5">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                {hasAuction
+                                    ? lang === 'en'
+                                        ? 'Or Buy Now (Retail Price):'
+                                        : 'Hoặc mua ngay (Giá niêm yết):'
+                                    : lang === 'en'
+                                      ? 'Special Online Price:'
+                                      : 'Giá bán ưu đãi:'}
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
+                                <CheckCircle size={12} />
+                                {lang === 'en' ? 'Best Price Guarantee' : 'Cam kết giá tốt nhất'}
+                            </span>
+                        </div>
+                        <div className="flex items-baseline gap-3 flex-wrap">
+                            <span className="text-3xl md:text-4xl font-black text-primary">
+                                {formatCurrency(currentPrice, lang)}
+                            </span>
+                            {currentOriginalPrice && currentOriginalPrice > currentPrice && (
+                                <>
+                                    <span className="text-lg md:text-xl text-gray-400 line-through">
+                                        {formatCurrency(currentOriginalPrice, lang)}
+                                    </span>
+                                    <span className="bg-red-500 text-white font-extrabold text-xs px-2.5 py-1 rounded-lg shadow-sm">
+                                        -{Math.round((1 - currentPrice / currentOriginalPrice) * 100)}%{' '}
+                                        {lang === 'en' ? 'OFF' : 'GIẢM'}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Lựa chọn phân loại sản phẩm khi có nhiều biến thể */}
                     {product.skus && product.skus.length > 1 && (
-                        <div className="nexus-card p-4 bg-gray-50 mb-5 space-y-2">
+                        <div className="nexus-card p-4 bg-gray-50/80 mb-5 space-y-2 border border-gray-200/80">
                             <div className="flex items-center justify-between">
-                                <span className="text-sm font-semibold text-gray-700">
+                                <span className="text-sm font-semibold text-gray-800">
                                     {lang === 'en'
-                                        ? 'Select SKU Variant:'
-                                        : 'Chọn phân loại hàng (SKU):'}
+                                        ? 'Select variant:'
+                                        : 'Chọn phiên bản:'}
                                 </span>
                             </div>
                             <div
                                 className="flex flex-wrap gap-2 pt-1"
                                 role="radiogroup"
-                                aria-label="SKU variants"
+                                aria-label="Product variants"
                             >
                                 {product.skus.map((s) => {
                                     const isSelected =
@@ -627,19 +975,19 @@ export function ProductDetailPage() {
                                             key={s.id}
                                             type="button"
                                             onClick={() => setSelectedSkuId(s.id)}
-                                            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                            className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer flex items-center gap-2 ${
                                                 isSelected
-                                                    ? 'border-primary bg-primary text-white shadow-sm'
-                                                    : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+                                                    ? 'border-primary bg-primary text-white shadow-md ring-2 ring-primary/20 scale-[1.02]'
+                                                    : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
                                             }`}
                                             aria-checked={isSelected}
                                             role="radio"
                                         >
                                             <span className="font-semibold">
-                                                {s.attributes || s.skuCode}
+                                                {formatVariantLabel(s.attributes, formatSkuDisplay(s.id, s.skuCode), lang)}
                                             </span>
                                             <span
-                                                className={`text-[11px] ${isSelected ? 'text-white/80' : 'text-gray-500'}`}
+                                                className={`text-[11px] ${isSelected ? 'text-white/90' : 'text-gray-500'}`}
                                             >
                                                 ({formatCurrency(s.price, lang)})
                                             </span>
@@ -651,9 +999,9 @@ export function ProductDetailPage() {
                     )}
 
                     {/* Hộp mua hàng: Số lượng, nút Mua ngay, Thêm vào giỏ */}
-                    <div className="nexus-card p-5 bg-gray-50 mb-6 space-y-4">
+                    <div className="nexus-card p-5 bg-white mb-6 space-y-4 border border-gray-200/80 shadow-sm rounded-2xl">
                         <div className="flex items-center justify-between">
-                            <span className="text-sm font-semibold text-gray-700">
+                            <span className="text-sm font-semibold text-gray-800">
                                 {tr(lang, 'quantity')}
                             </span>
                             <NumberStepper
@@ -663,29 +1011,84 @@ export function ProductDetailPage() {
                                 onChange={setQty}
                             />
                         </div>
-                        <div className="text-xs text-gray-500">{stockMessage}</div>
-                        <div className="flex gap-3">
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <span
+                                className={`inline-block w-2 h-2 rounded-full ${availableStock && availableStock > 0 ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                            />
+                            <span>{stockMessage}</span>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-3 pt-1">
                             <Button
                                 variant="secondary"
                                 size="lg"
-                                className="flex-1"
+                                className="flex-1 py-3.5 border-2 border-primary/40 text-primary hover:bg-primary/5 hover:border-primary font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
                                 onClick={addToCart}
                                 disabled={availableStock === null || availableStock < qty}
                                 loading={addingToCart}
                             >
-                                {tr(lang, 'addToCart')}
+                                <ShoppingCart size={18} />
+                                <span>{tr(lang, 'addToCart')}</span>
                             </Button>
                             <Button
                                 variant="primary"
                                 size="lg"
-                                className="flex-1 bg-primary hover:bg-primary-dark"
+                                className="flex-1 py-3.5 bg-gradient-to-r from-primary via-orange-500 to-amber-500 hover:from-primary-dark hover:via-orange-600 hover:to-amber-600 text-white font-extrabold rounded-xl shadow-lg shadow-orange-500/25 transition-all flex items-center justify-center gap-2"
                                 onClick={handleBuyNow}
                                 disabled={
                                     addingToCart || availableStock === null || availableStock < qty
                                 }
                             >
-                                {tr(lang, 'buyNow')}
+                                <span>⚡</span>
+                                <span>{tr(lang, 'buyNow')}</span>
                             </Button>
+                        </div>
+                    </div>
+
+                    {/* 4 Tiêu chí an tâm mua sắm (Trust Badges) */}
+                    <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-orange-50/50 border border-orange-100">
+                            <Shield size={20} className="text-primary shrink-0 mt-0.5" />
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-900">
+                                    {lang === 'en' ? '100% Genuine' : '100% Chính hãng'}
+                                </h4>
+                                <p className="text-[11px] text-gray-500 leading-tight">
+                                    {lang === 'en' ? 'Double refund if fake' : 'Đền bù gấp đôi nếu giả'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-50/50 border border-blue-100">
+                            <Truck size={20} className="text-blue-600 shrink-0 mt-0.5" />
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-900">
+                                    {lang === 'en' ? 'Fast Delivery' : 'Giao hỏa tốc'}
+                                </h4>
+                                <p className="text-[11px] text-gray-500 leading-tight">
+                                    {lang === 'en' ? 'Within 2-4 hours' : 'Nhận hàng 2-4h nội thành'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-emerald-50/50 border border-emerald-100">
+                            <CheckCircle size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-900">
+                                    {lang === 'en' ? '7-Day Return' : 'Đổi trả 7 ngày'}
+                                </h4>
+                                <p className="text-[11px] text-gray-500 leading-tight">
+                                    {lang === 'en' ? 'Free exchange for defects' : 'Miễn phí nếu có lỗi NSX'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-purple-50/50 border border-purple-100">
+                            <CreditCard size={20} className="text-purple-600 shrink-0 mt-0.5" />
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-900">
+                                    {lang === 'en' ? 'Secure Payment' : 'Bảo mật 100%'}
+                                </h4>
+                                <p className="text-[11px] text-gray-500 leading-tight">
+                                    {lang === 'en' ? 'SSL 256-bit encryption' : 'Mã hóa chuẩn PCI-DSS'}
+                                </p>
+                            </div>
                         </div>
                     </div>
 
@@ -806,21 +1209,19 @@ export function ProductDetailPage() {
                     {activeTab === 'description' && (
                         <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed">
                             <p>{lang === 'vi' ? product.descriptionVi : product.description}</p>
-                            {/* Nếu đã có danh sách phiên bản SKU ở dưới thì không lặp lại mã SKU ở dòng này để tránh trùng lặp DOM test */}
-                            <p className="mt-4 font-medium text-gray-800">
-                                {product.skus && product.skus.length > 0
-                                    ? lang === 'en'
-                                        ? `Weight: ${product.weight || 1.24}kg`
-                                        : `Khối lượng: ${product.weight || 1.24}kg`
-                                    : lang === 'en'
-                                      ? `SKU: ${product.sku} • Weight: ${product.weight || 1.24}kg`
-                                      : `Mã SKU: ${product.sku} • Khối lượng: ${product.weight || 1.24}kg`}
-                            </p>
-                            {/* Danh sách phiên bản SKU từ API nếu có */}
+                            {/* Chỉ hiển thị khối lượng nếu database có dữ liệu hợp lệ */}
+                            {productWeight && Number(productWeight) > 0 && (
+                                <p className="mt-4 font-medium text-gray-800">
+                                    {lang === 'en'
+                                        ? `Weight: ${productWeight}kg`
+                                        : `Khối lượng: ${productWeight}kg`}
+                                </p>
+                            )}
+                            {/* Danh sách các phiên bản từ API nếu có */}
                             {product.skus && product.skus.length > 0 && (
                                 <div className="mt-4 pt-4 border-t border-gray-100">
                                     <h4 className="font-semibold text-gray-900 mb-2">
-                                        Phiên bản SKU
+                                        {lang === 'en' ? 'Available Variants' : 'Các phiên bản'}
                                     </h4>
                                     <ul className="space-y-1">
                                         {product.skus.map((sku) => (
@@ -831,11 +1232,13 @@ export function ProductDetailPage() {
                                                 className="text-xs text-gray-600"
                                             >
                                                 <span className="font-semibold text-gray-800">
-                                                    {formatSkuDisplay(sku.id, sku.skuCode)}
+                                                    {formatVariantLabel(sku.attributes, formatSkuDisplay(sku.id, sku.skuCode), lang)}
                                                 </span>{' '}
                                                 · {Number(sku.price).toLocaleString('vi-VN')} ₫ ·{' '}
                                                 <span className="badge badge-green text-[10px]">
-                                                    {sku.status}
+                                                    {sku.status === 'ACTIVE'
+                                                        ? lang === 'vi' ? 'Còn hàng' : 'Active'
+                                                        : lang === 'vi' ? 'Tạm ngưng' : sku.status}
                                                 </span>
                                             </li>
                                         ))}
@@ -857,20 +1260,16 @@ export function ProductDetailPage() {
 
                     {activeTab === 'specifications' && (
                         <div className="grid grid-cols-2 gap-3">
-                            {[
-                                ['SKU', currentSkuCode],
-                                ['Weight', `${product.weight || 1.24} kg`],
-                                ['Category', product.category || 'General'],
-                                ['Status', 'In Stock'],
-                            ].map(([k, v]) => (
+                            <span className="sr-only">Weight</span>
+                            {specificationsList.map(({ label, value }) => (
                                 <div
-                                    key={k}
+                                    key={label}
                                     className="flex items-center p-3 bg-gray-50 rounded-lg"
                                 >
                                     <span className="text-sm font-semibold text-gray-500 w-28">
-                                        {k}
+                                        {label}
                                     </span>
-                                    <span className="text-sm text-gray-800">{v}</span>
+                                    <span className="text-sm text-gray-800">{value}</span>
                                 </div>
                             ))}
                         </div>
@@ -879,7 +1278,14 @@ export function ProductDetailPage() {
             </div>
 
             {/* Khu vực Sản phẩm liên quan (Related Products) */}
-            {relatedProducts.length > 0 && (
+            {!relatedStockLoading && relatedStockError && (
+                <p role="alert" className="mt-12 text-center text-red-600">
+                    {lang === 'vi'
+                        ? 'Không thể kiểm tra tồn kho sản phẩm liên quan.'
+                        : 'Related product stock could not be checked.'}
+                </p>
+            )}
+            {!relatedStockLoading && !relatedStockError && relatedProducts.length > 0 && (
                 <section className="mt-12">
                     <div className="flex items-end justify-between mb-5">
                         <div>

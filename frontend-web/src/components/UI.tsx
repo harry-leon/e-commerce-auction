@@ -18,7 +18,7 @@ export function Button({
     className = '',
     ...props
 }: ButtonProps) {
-    const cls = `nexus-btn nexus-btn-${variant} ${size === 'sm' ? 'nexus-btn-sm' : size === 'lg' ? 'nexus-btn-lg' : ''} ${className}`
+    const cls = `nexus-btn nexus-btn-${variant} ${size === 'sm' ? 'nexus-btn-sm' : size === 'lg' ? 'nexus-btn-lg' : ''} transition-all duration-200 active:scale-[0.98] select-none ${className}`
     return (
         <button {...props} className={cls} disabled={props.disabled || loading}>
             {loading ? (
@@ -236,6 +236,15 @@ export function Checkbox({
 }
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────
+/**
+ * Công tắc bật/tắt (Toggle Switch) dùng chung toàn hệ thống.
+ * - Chức năng: Cho phép người dùng bật/tắt các trạng thái nhị phân (ví dụ: Cho phép đấu giá).
+ * - Đầu vào: checked (boolean), onChange (callback), label (nhãn văn bản tùy chọn), disabled (vô hiệu hóa).
+ * - Kết quả: Hiển thị thanh trượt switch chuẩn xác với hoạt ảnh mượt mà, không bị tràn viền hay che chữ nhãn.
+ * - Luồng xử lý: Nhận sự kiện click -> đảo ngược giá trị checked -> gọi onChange(!checked).
+ * - Quy tắc & lý do: Đặt kích thước cố định w-11 h-6 (44x24px) với shrink-0 để nút không bị co cụm khi nằm trong flexbox.
+ *   Khoảng cách cố định gap-3 ngăn núm trượt che khuất chữ của nhãn.
+ */
 export function Toggle({
     checked,
     onChange,
@@ -249,21 +258,23 @@ export function Toggle({
 }) {
     return (
         <label
-            className={`flex items-center gap-2 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} select-none`}
+            className={`inline-flex items-center gap-3 select-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
         >
             <button
                 type="button"
                 disabled={disabled}
-                onClick={() => !disabled && onChange(!checked)}
-                className={`w-10 h-5.5 rounded-full relative transition-colors ${checked ? 'bg-primary' : 'bg-gray-300'}`}
-                style={{ width: 40, height: 22 }}
+                onClick={(e) => {
+                    e.preventDefault()
+                    if (!disabled) onChange(!checked)
+                }}
+                className={`w-11 h-6 rounded-full relative transition-colors duration-200 shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/20 ${checked ? 'bg-primary' : 'bg-gray-300'}`}
+                style={{ width: 44, height: 24 }}
             >
                 <span
-                    className={`absolute top-0.5 w-[18px] h-[18px] bg-white rounded-full shadow transition-transform ${checked ? 'translate-x-[19px]' : 'translate-x-0.5'}`}
-                    style={{ transition: 'transform 150ms' }}
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 ${checked ? 'translate-x-5' : 'translate-x-0'}`}
                 />
             </button>
-            {label && <span className="text-sm text-gray-700">{label}</span>}
+            {label && <span className="text-sm font-medium text-gray-700">{label}</span>}
         </label>
     )
 }
@@ -340,32 +351,33 @@ export function Modal({
     const sizeW = { sm: 400, md: 520, lg: 680, xl: 860 }[size]
     if (!open) return null
     return (
-        // Overlay toàn màn hình; click vùng ngoài modal sẽ đóng (onClose)
+        // Overlay toàn màn hình với hiệu ứng làm mờ nền; click vùng ngoài modal sẽ đóng (onClose)
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
             onClick={(e) => e.target === e.currentTarget && onClose()}
         >
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            {/* role="dialog" + aria-modal="true" đảm bảo screen reader nhận ra đây là dialog, hỗ trợ getByRole('dialog') trong test */}
+            <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm transition-opacity" onClick={onClose} />
+            {/* role="dialog" + aria-modal="true" đảm bảo screen reader nhận ra đây là dialog */}
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-label={title}
-                className="relative bg-white rounded-xl shadow-xl flex flex-col max-h-[90vh] fade-in"
+                className="relative bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh] border border-gray-100 overflow-hidden transform transition-all duration-200"
                 style={{ width: '100%', maxWidth: sizeW }}
             >
-                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/50">
                     <h2 className="text-lg font-bold text-gray-900">{title}</h2>
                     <button
                         onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+                        className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-200/60 transition-colors"
+                        aria-label="Close"
                     >
                         <X size={18} />
                     </button>
                 </div>
                 <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
                 {footer && (
-                    <div className="px-6 py-4 border-t border-border flex justify-end gap-3">
+                    <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3">
                         {footer}
                     </div>
                 )}
@@ -413,7 +425,7 @@ export function ConfirmModal({
                 </>
             }
         >
-            <p className="text-gray-600 text-sm">{message}</p>
+            <p className="text-gray-600 text-sm leading-relaxed">{message}</p>
         </Modal>
     )
 }
@@ -496,30 +508,45 @@ export function Tabs({
 }
 
 // ─── Pagination ───────────────────────────────────────────────────────────────
+/** Phân trang danh sách tại client; nhãn nút điều hướng do trang gọi truyền vào để giữ i18n. */
 export function Pagination({
     page,
     total,
     perPage,
     onChange,
+    previousLabel,
+    nextLabel,
 }: {
     page: number
     total: number
     perPage: number
     onChange: (p: number) => void
+    previousLabel?: string
+    nextLabel?: string
 }) {
-    const pages = Math.ceil(total / perPage)
-    if (pages <= 1) return null
+    const pages = Math.max(1, Math.ceil(total / perPage))
+    // Giữ tối đa năm số trang; dấu ba chấm cho biết còn trang trước hoặc sau dãy đang hiển thị.
+    const visiblePages = pages <= 5
+        ? Array.from({ length: pages }, (_, index) => index + 1)
+        : page <= 3
+          ? [1, 2, 3, 4, 5]
+          : page >= pages - 2
+            ? Array.from({ length: 5 }, (_, index) => pages - 4 + index)
+            : Array.from({ length: 5 }, (_, index) => page - 2 + index)
+    const showLeadingEllipsis = pages > 5 && page > 3
+    const showTrailingEllipsis = pages > 5 && page < pages - 2
     return (
         <div className="flex items-center gap-1">
             <button
                 onClick={() => onChange(page - 1)}
                 disabled={page === 1}
+                aria-label={previousLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronLeft size={14} />
             </button>
-            {Array.from({ length: Math.min(pages, 7) }, (_, i) => {
-                const p = i + 1
+            {showLeadingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
+            {visiblePages.map((p) => {
                 return (
                     <button
                         key={p}
@@ -530,9 +557,11 @@ export function Pagination({
                     </button>
                 )
             })}
+            {showTrailingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
             <button
                 onClick={() => onChange(page + 1)}
                 disabled={page === pages}
+                aria-label={nextLabel}
                 className="nexus-btn nexus-btn-outline nexus-btn-sm px-2.5 disabled:opacity-40"
             >
                 <ChevronRight size={14} />
@@ -554,13 +583,13 @@ export function EmptyState({
     action?: ReactNode
 }) {
     return (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-11 h-11 mb-4 rounded-lg border border-border bg-gray-50 text-gray-500 flex items-center justify-center">
-                {icon ?? <Inbox size={20} />}
+        <div className="flex flex-col items-center justify-center py-16 px-4 text-center max-w-md mx-auto">
+            <div className="w-16 h-16 mb-4 rounded-2xl bg-gradient-to-b from-gray-50 to-gray-100 border border-gray-200/80 text-gray-400 flex items-center justify-center shadow-inner">
+                {icon ?? <Inbox size={28} className="text-gray-400" />}
             </div>
-            <h3 className="text-lg font-semibold text-gray-700 mb-1">{title}</h3>
-            {subtitle && <p className="text-sm text-gray-500 max-w-xs">{subtitle}</p>}
-            {action && <div className="mt-5">{action}</div>}
+            <h3 className="text-lg font-bold text-gray-800 mb-1.5">{title}</h3>
+            {subtitle && <p className="text-sm text-gray-500 leading-relaxed max-w-sm">{subtitle}</p>}
+            {action && <div className="mt-6">{action}</div>}
         </div>
     )
 }
@@ -568,23 +597,58 @@ export function EmptyState({
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 export function SkeletonCard() {
     return (
-        <div className="nexus-card p-4 space-y-3">
-            <div className="skeleton w-full h-40 rounded-lg" />
-            <div className="skeleton w-3/4 h-4 rounded" />
-            <div className="skeleton w-1/2 h-4 rounded" />
-            <div className="skeleton w-1/4 h-6 rounded" />
+        <div className="nexus-card bg-white rounded-2xl border border-gray-100 p-4 space-y-3 overflow-hidden shadow-sm">
+            <div className="skeleton-shimmer w-full h-44 rounded-xl" />
+            <div className="skeleton-shimmer w-1/3 h-3.5 rounded-md" />
+            <div className="skeleton-shimmer w-3/4 h-4 rounded-md" />
+            <div className="skeleton-shimmer w-1/2 h-3.5 rounded-md" />
+            <div className="flex justify-between items-center pt-2">
+                <div className="skeleton-shimmer w-1/3 h-6 rounded-md" />
+                <div className="skeleton-shimmer w-8 h-8 rounded-xl" />
+            </div>
+        </div>
+    )
+}
+
+export function SkeletonProductCard() {
+    return <SkeletonCard />
+}
+
+export function SkeletonAuctionCard() {
+    return (
+        <div className="nexus-card bg-white rounded-2xl border border-gray-100 p-4 space-y-3 overflow-hidden shadow-sm">
+            <div className="skeleton-shimmer w-full h-44 rounded-xl" />
+            <div className="skeleton-shimmer w-3/4 h-4 rounded-md" />
+            <div className="skeleton-shimmer w-full h-14 rounded-xl" />
+            <div className="flex justify-between items-center pt-1">
+                <div className="skeleton-shimmer w-1/3 h-3 rounded-md" />
+                <div className="skeleton-shimmer w-24 h-7 rounded-xl" />
+            </div>
+        </div>
+    )
+}
+
+export function SkeletonStatCard() {
+    return (
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm space-y-3">
+            <div className="flex justify-between items-center">
+                <div className="skeleton-shimmer w-24 h-4 rounded-md" />
+                <div className="skeleton-shimmer w-10 h-10 rounded-xl" />
+            </div>
+            <div className="skeleton-shimmer w-32 h-8 rounded-lg" />
+            <div className="skeleton-shimmer w-20 h-3 rounded-md" />
         </div>
     )
 }
 
 export function SkeletonRow() {
     return (
-        <tr>
+        <tr className="border-b border-gray-100">
             {Array.from({ length: 5 }).map((_, i) => (
-                <td key={i} className="px-4 py-3">
+                <td key={i} className="px-4 py-3.5">
                     <div
-                        className="skeleton h-4 rounded"
-                        style={{ width: `${60 + Math.random() * 40}%` }}
+                        className="skeleton-shimmer h-4 rounded-md"
+                        style={{ width: `${60 + (i % 3) * 15}%` }}
                     />
                 </td>
             ))}
@@ -744,6 +808,9 @@ export function CountdownTimer({
     const s = remaining % 60
     const pad = (n: number) => String(n).padStart(2, '0')
 
+    const isUrgent = remaining > 0 && remaining <= 3600
+    const isEnded = remaining <= 0
+
     if (large) {
         const units =
             d > 0
@@ -762,19 +829,35 @@ export function CountdownTimer({
             <div className="flex items-center gap-2">
                 {units.map(({ v, l }, i) => (
                     <span key={i} className="flex flex-col items-center">
-                        <span className="countdown-digits text-auction bg-auction-light rounded-lg px-3 py-1 font-mono font-bold text-lg">
+                        <span
+                            className={`countdown-digits rounded-xl px-3.5 py-1.5 font-mono font-bold text-lg shadow-sm border transition-all ${
+                                isEnded
+                                    ? 'text-gray-400 bg-gray-100 border-gray-200'
+                                    : isUrgent
+                                      ? 'text-red-600 bg-red-50 border-red-200 animate-pulse'
+                                      : 'text-auction bg-auction-light border-orange-200/80'
+                            }`}
+                        >
                             {pad(v)}
                         </span>
-                        <span className="text-xs text-gray-500 mt-1">{l}</span>
+                        <span className="text-[11px] font-semibold text-gray-500 mt-1 uppercase tracking-wider">{l}</span>
                     </span>
                 ))}
             </div>
         )
     }
     return (
-        <span className="text-auction font-bold text-sm font-mono">
-            {d > 0 ? `${d}d ` : ''}
-            {pad(h)}:{pad(m)}:{pad(s)}
+        <span
+            className={`font-bold text-sm font-mono inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all ${
+                isEnded
+                    ? 'text-gray-400 bg-gray-100 border-gray-200'
+                    : isUrgent
+                      ? 'text-red-600 bg-red-50 border-red-200 animate-pulse'
+                      : 'text-auction bg-auction-light border-orange-200/60'
+            }`}
+        >
+            <Clock size={12} />
+            {isEnded ? '00:00:00' : `${d > 0 ? `${d}d ` : ''}${pad(h)}:${pad(m)}:${pad(s)}`}
         </span>
     )
 }
@@ -798,9 +881,44 @@ export function ProgressBar({ value, max, label }: { value: number; max: number;
 }
 
 // ─── Reputation Bar ────────────────────────────────────────────────────────────
-export function ReputationBar({ score }: { score: number }) {
-    const level =
-        score >= 90 ? 'Platinum' : score >= 70 ? 'Gold' : score >= 50 ? 'Silver' : 'Bronze'
+/**
+ * Chức năng: Thanh tiến trình hiển thị điểm uy tín và các mốc xếp hạng người dùng (Bronze, Silver, Gold, Platinum).
+ * Đầu vào: score (điểm uy tín người dùng), lang (tùy chọn mã ngôn ngữ 'vi' | 'en', mặc định lấy từ useApp).
+ * Kết quả: Giao diện thanh tiến trình kèm cấp độ uy tín và các mốc thang đo (0, 50, 70, 90) được bản địa hóa đầy đủ.
+ * Luồng & Quy tắc:
+ *   - >= 90: Bạch kim (Platinum)
+ *   - >= 70: Vàng (Gold)
+ *   - >= 50: Bạc (Silver)
+ *   - < 50: Đồng (Bronze)
+ *   - Khi ở tiếng Việt (VI): hiển thị "Đồng (0)  Bạc (50)  Vàng (70)  Bạch kim (90)" và nhãn điểm "điểm".
+ *   - Khi ở tiếng Anh (EN): hiển thị "Bronze (0)  Silver (50)  Gold (70)  Platinum (90)" và nhãn điểm "pts".
+ */
+export function ReputationBar({ score, lang: langProp }: { score: number; lang?: 'en' | 'vi' }) {
+    const app = useApp()
+    const lang = langProp || app?.lang || 'vi'
+
+    const tierKey =
+        score >= 90 ? 'platinum' : score >= 70 ? 'gold' : score >= 50 ? 'silver' : 'bronze'
+
+    const labels: Record<'en' | 'vi', { bronze: string; silver: string; gold: string; platinum: string; pts: string }> = {
+        en: {
+            bronze: 'Bronze',
+            silver: 'Silver',
+            gold: 'Gold',
+            platinum: 'Platinum',
+            pts: 'pts',
+        },
+        vi: {
+            bronze: 'Đồng',
+            silver: 'Bạc',
+            gold: 'Vàng',
+            platinum: 'Bạch kim',
+            pts: 'điểm',
+        },
+    }
+
+    const currentLabels = labels[lang] || labels.en
+    const level = currentLabels[tierKey]
     const cls =
         score >= 90
             ? 'trust-platinum'
@@ -809,18 +927,19 @@ export function ReputationBar({ score }: { score: number }) {
               : score >= 50
                 ? 'trust-silver'
                 : 'trust-bronze'
+
     return (
         <div className="space-y-2">
             <div className="flex items-center justify-between">
-                <span className={`font-bold text-lg ${cls}`}>{score} pts</span>
+                <span className={`font-bold text-lg ${cls}`}>{score} {currentLabels.pts}</span>
                 <span className={`font-semibold text-sm ${cls}`}>{level}</span>
             </div>
             <ProgressBar value={score} max={100} />
             <div className="flex justify-between text-xs text-gray-400">
-                <span>Bronze (0)</span>
-                <span>Silver (50)</span>
-                <span>Gold (70)</span>
-                <span>Platinum (90)</span>
+                <span>{currentLabels.bronze} (0)</span>
+                <span>{currentLabels.silver} (50)</span>
+                <span>{currentLabels.gold} (70)</span>
+                <span>{currentLabels.platinum} (90)</span>
             </div>
         </div>
     )
@@ -857,22 +976,29 @@ export function OrderTimeline({ status }: { status: string }) {
         <div className="flex flex-col gap-0">
             {ORDER_STEPS.map((step, i) => {
                 const done = i <= cur
+                const isCurrent = i === cur
                 return (
                     <div key={step} className="flex gap-3">
                         <div className="flex flex-col items-center">
                             <div
-                                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-bold ${done ? 'bg-primary border-primary text-white' : 'border-gray-200 text-gray-300'}`}
+                                className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-all duration-300 ${
+                                    isCurrent
+                                        ? 'bg-primary border-primary text-white shadow-[0_0_0_4px_rgba(238,77,45,0.2)] scale-105'
+                                        : done
+                                          ? 'bg-primary border-primary text-white'
+                                          : 'border-gray-200 text-gray-400 bg-gray-50'
+                                }`}
                             >
-                                {done ? <CheckCircle size={13} /> : i + 1}
+                                {done && !isCurrent ? <CheckCircle size={13} /> : i + 1}
                             </div>
                             {i < ORDER_STEPS.length - 1 && (
                                 <div
-                                    className={`w-0.5 h-8 ${done && i < cur ? 'bg-primary' : 'bg-gray-200'}`}
+                                    className={`w-0.5 h-8 transition-colors duration-300 ${done && i < cur ? 'bg-primary' : 'bg-gray-200'}`}
                                 />
                             )}
                         </div>
-                        <div className={`pb-6 pt-1 ${done ? 'text-gray-800' : 'text-gray-400'}`}>
-                            <p className="font-semibold text-sm">{labels[step]}</p>
+                        <div className={`pb-6 pt-1 ${isCurrent ? 'text-primary font-bold' : done ? 'text-gray-800 font-semibold' : 'text-gray-400'}`}>
+                            <p className="text-sm">{labels[step]}</p>
                         </div>
                     </div>
                 )
@@ -1012,6 +1138,40 @@ export const Eye = ({ size = 16, className = '' }: IconProps) => (
     >
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
         <circle cx="12" cy="12" r="3" />
+    </svg>
+)
+/** Icon ổ khóa đóng biểu thị tài khoản bị khóa hoặc thao tác khóa. */
+export const Lock = ({ size = 16, className = '' }: IconProps) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+)
+/** Icon ổ khóa mở biểu thị tài khoản đang hoạt động hoặc thao tác mở khóa. */
+export const Unlock = ({ size = 16, className = '' }: IconProps) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 9.9-1" />
     </svg>
 )
 export const EyeOff = ({ size = 16, className = '' }: IconProps) => (

@@ -932,7 +932,116 @@ export const ordersApi = {
         writeLocalMockWithdrawals(SEED_WITHDRAWALS)
     },
 
-        /**
+    async confirmOrderDelivery(id: string): Promise<Order> {
+        try {
+            await api(`/orders/${id}/confirm-delivery`, { method: 'POST' })
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+            // Fallback
+        }
+
+        const orders = readLocalMockOrders()
+        const index = orders.findIndex((o) => o.id === id)
+        if (index !== -1) {
+            orders[index] = {
+                ...orders[index],
+                status: 'COMPLETED',
+                paymentStatus: 'released',
+                updatedAt: new Date().toISOString(),
+            }
+            writeLocalMockOrders(orders)
+            return orders[index]
+        }
+        throw new Error('Order not found')
+    },
+
+    /**
+     * Buyer mở khiếu nại đơn hàng -> chuyển khoản tiền sang trạng thái 'on_hold' (tạm giữ) để Admin xử lý.
+     * Luồng: Gọi POST /orders/{id}/dispute lên backend; nếu thành công trả về đơn hàng đã cập nhật; fallback mock khi mất mạng.
+     */
+    async submitOrderDispute(id: string, reason: string): Promise<Order> {
+        try {
+            const resp = await api<any>(`/orders/${id}/dispute`, {
+                method: 'POST',
+                body: JSON.stringify({ reason }),
+            })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+            // Fallback sang mock cục bộ khi backend offline
+        }
+
+        const orders = readLocalMockOrders()
+        const index = orders.findIndex((o) => o.id === id)
+        if (index !== -1) {
+            orders[index] = {
+                ...orders[index],
+                disputeStatus: 'open',
+                disputeReason: reason,
+                paymentStatus: 'on_hold',
+                updatedAt: new Date().toISOString(),
+            }
+            writeLocalMockOrders(orders)
+            return orders[index]
+        }
+        throw new Error('Order not found')
+    },
+
+    /**
+     * Admin ra quyết định giải quyết khiếu nại và giải phóng tiền ký quỹ:
+     * - 'released': Chuyển tiền cho người bán.
+     * - 'refunded': Hoàn tiền 100% cho người mua.
+     * - 'partial_refund': Hoàn một phần tiền cho người mua, phần còn lại chuyển cho người bán.
+     * Luồng: Gọi POST /orders/{id}/resolve-dispute lên backend; nếu thành công trả về đơn hàng đã cập nhật; fallback mock khi mất mạng.
+     */
+    async resolveOrderDispute(
+        id: string,
+        resolution: 'released' | 'refunded' | 'partial_refund',
+        note?: string,
+    ): Promise<Order> {
+        try {
+            const resp = await api<any>(`/orders/${id}/resolve-dispute`, {
+                method: 'POST',
+                body: JSON.stringify({ resolution, note }),
+            })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
+        } catch (error) {
+            if (!canFallbackToMock(error)) throw error
+            // Fallback sang mock cục bộ khi backend offline
+        }
+
+        const orders = readLocalMockOrders()
+        const index = orders.findIndex((o) => o.id === id)
+        if (index !== -1) {
+            orders[index] = {
+                ...orders[index],
+                paymentStatus: resolution,
+                disputeStatus: 'resolved',
+                // Đổi sang REFUNDED nếu Admin quyết định hoàn tiền toàn bộ cho Buyer
+                status: resolution === 'refunded' ? 'REFUNDED' : orders[index].status,
+                updatedAt: new Date().toISOString(),
+            }
+            writeLocalMockOrders(orders)
+            return orders[index]
+        }
+        throw new Error('Order not found')
+    },
+
+    /**
+     * Đặt lại toàn bộ dữ liệu mock về cấu hình ban đầu (phục vụ test).
+     */
+    resetOrdersToDefault(): void {
+        writeLocalMockOrders(SEED_ORDERS)
+        writeLocalMockWithdrawals(SEED_WITHDRAWALS)
+    },
+
+    /**
      * Lấy danh sách yêu cầu rút tiền của Seller phục vụ màn hình Admin.
      * Chức năng: Đọc danh sách yêu cầu rút tiền từ kho mock local phục vụ kiểm thử và quản lý giao dịch.
      * Đầu vào: Không có.
@@ -940,6 +1049,8 @@ export const ordersApi = {
      * Luồng: Đọc từ localStorage thông qua readLocalMockWithdrawals().
      */
     getWithdrawalRequests(): WithdrawalRequest[] {
+        return readLocalMockWithdrawals()
+    },
         return readLocalMockWithdrawals()
     },
 

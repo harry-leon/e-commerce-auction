@@ -33,6 +33,10 @@ management:
         include: health,info,metrics,prometheus,refresh
   endpoint:
     health:
+      # Chỉ Admin thấy component health; không lộ backlog/chi tiết transport cho người gọi anonymous.
+      show-components: when_authorized
+      roles: ADMIN
+      show-details: when_authorized
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
   tracing:
@@ -46,6 +50,12 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  shipping:
+    # Mặc định không seed job/call Commerce/carrier; claim/preflight và recovery phải được review trước bật.
+    dispatch-worker-enabled: ${SHIPPING_DISPATCH_WORKER_ENABLED:false}
+    # Ép tất cả instance chặn legacy create ngay cả khi chỉ một instance chạy worker; không tự bật worker hoặc gửi carrier.
+    claimed-dispatch-required: ${SHIPPING_CLAIMED_DISPATCH_REQUIRED:false}
+    dispatch-worker-delay-ms: ${SHIPPING_DISPATCH_WORKER_DELAY_MS:5000}
   # Cấu hình dự phòng cục bộ cho fulfillment-service khi chưa kết nối Config Server
   fulfillment:
     default-warehouse-code: ${DEFAULT_WAREHOUSE_ID:WH_001}

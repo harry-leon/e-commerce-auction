@@ -13,6 +13,8 @@ import com.nexus.user.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -31,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.validation.annotation.Validated;
 
 /**
  * REST Controller quản lý thông tin tài khoản người dùng theo SRS mục 3.1.1.
@@ -39,6 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
  * @since 06/10/2026
  */
 @RestController
+@Validated
 @RequestMapping("/api/v1/users")
 @Tag(name = "User Management", description = "Các API quản lý tài khoản người dùng")
 public class UserController {
@@ -114,6 +118,34 @@ public class UserController {
             @RequestParam(required = false) String keyword,
             @PageableDefault(sort = "fullName", direction = Sort.Direction.ASC) Pageable pageable) {
         return ResponseEntity.ok(ApiResponse.ok(userService.searchUsers(keyword, pageable)));
+    }
+
+    /** Chỉ Admin được đồng bộ một lát cắt Keycloak; API không đọc DB IAM và không ghi đè hồ sơ đã có. */
+    @PostMapping("/sync-keycloak")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Đồng bộ profile còn thiếu từ Keycloak", description = "Tạo profile cho tài khoản Keycloak chưa liên kết; tối đa 100 tài khoản mỗi lượt")
+    public ResponseEntity<ApiResponse<UserService.ProfileSyncResult>> syncKeycloakProfiles(
+            @RequestParam(defaultValue = "0") @Min(0) int first,
+            @RequestParam(defaultValue = "100") @Min(1) @Max(100) int max) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.syncKeycloakProfiles(first, max)));
+    }
+
+    /** Khóa IAM trước, sau đó đồng bộ trạng thái profile; chỉ Admin được thay đổi quyền đăng nhập. */
+    @org.springframework.web.bind.annotation.PatchMapping("/{id}/lock")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Khóa tài khoản người dùng")
+    public ResponseEntity<ApiResponse<UserResponse>> lockUser(@PathVariable UUID id,
+            @AuthenticationPrincipal Jwt actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.setUserLocked(id, true, UUID.fromString(actor.getSubject()))));
+    }
+
+    /** Mở khóa IAM và profile qua cùng service; không thay đổi mật khẩu hoặc role hiện tại. */
+    @org.springframework.web.bind.annotation.PatchMapping("/{id}/unlock")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Mở khóa tài khoản người dùng")
+    public ResponseEntity<ApiResponse<UserResponse>> unlockUser(@PathVariable UUID id,
+            @AuthenticationPrincipal Jwt actor) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.setUserLocked(id, false, UUID.fromString(actor.getSubject()))));
     }
 
     /**

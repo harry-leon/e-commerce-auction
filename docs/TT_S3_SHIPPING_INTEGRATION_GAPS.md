@@ -1,5 +1,7 @@
 # TT-S3-06 — Điều kiện nối Commerce–Shipping
 
+> **Cập nhật 14/11/2026:** nội dung bên dưới ghi lại giới hạn tại thời điểm rà baseline, trước guard, handoff, claim và worker. Các phần này hiện đã có implementation; không xây lại từ danh sách lịch sử. Xem [bảng bàn giao hiện tại](TT_S3_UAT_HANDOFF.md), [worker dispatch](TT_S3_PARCEL_DISPATCH_WORKER.md), [đối soát job](TT_S3_DISPATCH_JOB_RECONCILIATION.md) và [test polling liên service](TT_S3_CARRIER_LIFECYCLE_INTEGRATION.md). Carrier sandbox/UAT vẫn chưa được chứng minh.
+
 Rà source ShippingServiceImpl cho thấy OrderPaid hiện chỉ mang orderId, tạo CreateShipmentRequest với người nhận/địa chỉ trống và weight 500g mặc định. Chưa có producer Commerce gọi endpoint này. Chưa bật tự động tạo vận đơn từ payment trong thay đổi này.
 
 ## Sửa retry trước khi nối producer
@@ -8,10 +10,12 @@ CarrierResilienceManager chỉ cho phép retry/fallback với hai thao tác đ�
 
 Giới hạn: chưa có dispatch attempt bền vững trước HTTP hoặc query-by-reference để phục hồi tạo vận đơn UNKNOWN. Caller/client gọi lại endpoint vẫn có thể gửi một lệnh carrier mới nếu kết quả trước chưa lưu DB. Thay đổi này chỉ bỏ retry tự động bên trong resilience manager, chưa cam kết exactly-once tại carrier. Không bật producer retry tự động trước khi xử lý giới hạn đó.
 
-## Thứ tự còn lại
+## Thứ tự triển khai tại baseline
 
 1. Contract snapshot giao hàng Commerce: recipient/address, district/ward, khối lượng thực và kho; không đoán mặc định hoặc truy cập DB khác service.
 2. Lưu dispatch attempt/command trước HTTP, key ổn định theo order, trạng thái UNKNOWN khi mất ACK; chỉ retry mutation khi carrier có contract idempotency đã kiểm chứng hoặc đã đối soát chắc chắn chưa tạo.
 3. Outbox Commerce sau payment/kho xác nhận, service account đúng quyền; không tạo shipment từ browser return hoặc payment đang REVIEW.
 4. Inbox sự kiện shipment ở Commerce, kiểm tra nguồn/quyền/dedup và chuyển state đúng chiều; phát notification cùng transaction, không tự refund/restock từ callback giao thất bại.
 5. Test hai service với IAM và carrier sandbox, timeout/restart/mất ACK/concurrent; mock pass chưa phải bằng chứng sandbox hoặc UAT.
+
+Phần producer tiếp theo: [ý định bàn giao Commerce sau xác nhận tiền/kho](TT_S3_SHIPPING_HANDOFF_OUTBOX.md), V21 và cổng mặc định tắt. WAITING_PARCEL chỉ là việc chờ đóng gói; chưa có consumer/transport hoặc quyền dispatch tuần tự với refund. Không dùng row này để bỏ qua kiểm tra lại tài chính, kiện thật hoặc guard trước HTTP carrier.

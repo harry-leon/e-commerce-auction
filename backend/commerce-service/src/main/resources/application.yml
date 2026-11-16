@@ -29,6 +29,11 @@ server:
 # Credential merchant và service account chỉ lấy từ môi trường; COD không cần VNPAY nhưng vẫn cần identity gọi kho.
 # Return URL là trang hiển thị; IPN URL /api/v1/payments/vnpay/ipn phải đăng ký riêng trên merchant VNPAY.
 app:
+  shipping:
+    # Chỉ ghi WAITING_PARCEL sau tiền/kho; chưa có worker dispatch, không backfill khi bật và không gọi carrier.
+    handoff-enabled: ${SHIPPING_HANDOFF_ENABLED:false}
+    # Claim giữ chặn refund không tự hết hạn; chỉ bật sau IAM/consumer/recovery được review, chưa gọi carrier tại Commerce.
+    dispatch-claim-enabled: ${SHIPPING_DISPATCH_CLAIM_ENABLED:false}
   frontend-url: ${FRONTEND_URL:http://localhost:3000}
   user:
     url: ${USER_SERVICE_URL:http://localhost:8081}
@@ -73,6 +78,10 @@ management:
     refresh:
       enabled: true
     health:
+      # Probe công khai chỉ status; Admin mới thấy component/count backlog, không trả payload hoặc credential.
+      show-components: when_authorized
+      show-details: when_authorized
+      roles: ADMIN
       probes:
         enabled: true             # /actuator/health/liveness, /readiness cho Kubernetes
   tracing:

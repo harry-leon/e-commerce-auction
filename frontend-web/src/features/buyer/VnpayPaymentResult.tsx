@@ -7,6 +7,7 @@ import {
 } from '../../api/payments'
 import { useApp } from '../../context'
 import { Button } from '../../components/UI'
+import { fireConfetti } from '../../utils/dialogs'
 
 /**
  * VNPAY return chỉ mang TxnRef để tra cứu; bỏ qua vnp_ResponseCode/status do browser truyền.
@@ -63,6 +64,12 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const cancelled = current?.status === 'CANCELLED'
     const expired = current?.status === 'EXPIRED'
     const review = current?.status === 'REQUIRES_REVIEW'
+
+    useEffect(() => {
+        if (success) {
+            fireConfetti({ particleCount: 100, spread: 80 })
+        }
+    }, [success])
 
     /**
      * Thử lại thanh toán qua API backend thật (POST /api/v1/payments).

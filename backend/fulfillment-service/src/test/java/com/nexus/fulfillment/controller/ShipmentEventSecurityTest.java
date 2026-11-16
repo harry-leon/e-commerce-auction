@@ -22,7 +22,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /** Chặn giả mạo OrderPaid từ người dùng/service khác trước khi ShippingService có thể tạo vận đơn. */
 @WebMvcTest(ShipmentController.class)
-@Import(SecurityConfig.class)
+// Policy thật mặc định legacy giữ kiểm tra azp/privilege cũ; worker mode được kiểm tra ở suite riêng.
+@Import({SecurityConfig.class, com.nexus.fulfillment.service.ClaimedDispatchIngressPolicy.class})
 @ActiveProfiles("test")
 class ShipmentEventSecurityTest {
     @Autowired private MockMvc mvc;
