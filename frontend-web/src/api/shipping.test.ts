@@ -267,7 +267,10 @@ describe('Shipping API Service', () => {
 
             expect(mockFetch).toHaveBeenCalledTimes(1)
             const [, options] = mockFetch.mock.calls[0]
-            const headers = options.headers instanceof Headers ? options.headers.get('Idempotency-Key') : options.headers['Idempotency-Key']
+            const headers =
+                options.headers instanceof Headers
+                    ? options.headers.get('Idempotency-Key')
+                    : options.headers['Idempotency-Key']
             expect(headers).toBe('idemp-key-1234')
             expect(result.id).toBe('shipment-new-uuid')
             expect(result.trackingNumber).toBe('GHTK999888VN')

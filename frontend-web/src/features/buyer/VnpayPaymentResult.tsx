@@ -7,6 +7,7 @@ import {
 } from '../../api/payments'
 import { useApp } from '../../context'
 import { Button } from '../../components/UI'
+import { fireConfetti } from '../../utils/dialogs'
 
 /**
  * VNPAY return chỉ mang TxnRef để tra cứu; bỏ qua vnp_ResponseCode/status do browser truyền.
@@ -63,6 +64,12 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const cancelled = current?.status === 'CANCELLED'
     const expired = current?.status === 'EXPIRED'
     const review = current?.status === 'REQUIRES_REVIEW'
+
+    useEffect(() => {
+        if (success) {
+            fireConfetti({ particleCount: 100, spread: 80 })
+        }
+    }, [success])
 
     /**
      * Thử lại thanh toán qua API backend thật (POST /api/v1/payments).
@@ -197,6 +204,19 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                 {failed && !review && current?.orderId && (
                     <Button variant="primary" loading={retrying} onClick={handleRetry}>
                         {lang === 'vi' ? 'Thử lại thanh toán' : 'Retry Payment'}
+                    </Button>
+                )}
+                {/*
+                 * Chức năng: Điều hướng người dùng tới màn hình chi tiết đơn hàng sau thanh toán.
+                 * Đầu vào: current.orderId từ kết quả thanh toán.
+                 * Kết quả: Chuyển sang màn hình /order-detail với ID đơn hàng.
+                 */}
+                {current?.orderId && (
+                    <Button
+                        variant="primary"
+                        onClick={() => navigate('order-detail', { id: current.orderId })}
+                    >
+                        {lang === 'vi' ? 'Xem chi tiết đơn hàng' : 'View order details'}
                     </Button>
                 )}
                 <Button variant="outline" onClick={() => navigate('order-history')}>

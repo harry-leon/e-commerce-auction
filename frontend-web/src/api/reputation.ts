@@ -1,6 +1,6 @@
 /**
  * Client API kết nối Reputation & Rating Service (Sprint 3 - HA-S3-2).
- * 
+ *
  * 1. Chức năng:
  *    - Gửi đánh giá hai chiều giữa Buyer và Seller sau giao dịch (POST /api/v1/ratings).
  *    - Tra cứu danh sách đánh giá nhận được theo userId (GET /api/v1/ratings/user/{userId}).
@@ -154,7 +154,9 @@ export const reputationApi = {
         size = 20,
     ): Promise<{ content: RatingResponse[]; totalElements: number }> {
         try {
-            const res = await api<ApiResponse<any>>(`/ratings/user/${encodeURIComponent(userId)}?page=${page}&size=${size}`)
+            const res = await api<ApiResponse<any>>(
+                `/ratings/user/${encodeURIComponent(userId)}?page=${page}&size=${size}`,
+            )
             if (res?.data) {
                 // Hỗ trợ cả Page<RatingResponse> hoặc danh sách thô
                 if (Array.isArray(res.data.content)) {
@@ -179,7 +181,9 @@ export const reputationApi = {
      */
     async getRatingsForOrder(orderId: string): Promise<RatingResponse[]> {
         try {
-            const res = await api<ApiResponse<RatingResponse[]>>(`/ratings/order/${encodeURIComponent(orderId)}`)
+            const res = await api<ApiResponse<RatingResponse[]>>(
+                `/ratings/order/${encodeURIComponent(orderId)}`,
+            )
             if (Array.isArray(res?.data)) return res.data
         } catch {
             // Fallback danh sách rỗng
@@ -205,7 +209,9 @@ export const reputationApi = {
      */
     async getUserReputation(userId: string): Promise<ReputationSummary> {
         try {
-            const res = await api<ApiResponse<ReputationSummary>>(`/reputations/${encodeURIComponent(userId)}`)
+            const res = await api<ApiResponse<ReputationSummary>>(
+                `/reputations/${encodeURIComponent(userId)}`,
+            )
             if (res?.data) return res.data
         } catch {
             // Fallback
@@ -240,10 +246,13 @@ export const reputationApi = {
      * Gắn cờ khiếu nại một đánh giá vi phạm (chỉ ratee hoặc admin/support).
      */
     async flagDispute(ratingId: string, reason?: string): Promise<RatingResponse> {
-        const res = await api<ApiResponse<RatingResponse>>(`/ratings/${encodeURIComponent(ratingId)}/dispute`, {
-            method: 'POST',
-            body: JSON.stringify({ reason: reason || 'Khiếu nại đánh giá không chính xác' }),
-        })
+        const res = await api<ApiResponse<RatingResponse>>(
+            `/ratings/${encodeURIComponent(ratingId)}/dispute`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ reason: reason || 'Khiếu nại đánh giá không chính xác' }),
+            },
+        )
         if (res?.data) return res.data
         return {
             id: ratingId,
@@ -263,7 +272,9 @@ export const reputationApi = {
      */
     async getPenalties(userId: string, page = 0, size = 20): Promise<PenaltyRecord[]> {
         try {
-            const res = await api<ApiResponse<any>>(`/reputations/${encodeURIComponent(userId)}/penalties?page=${page}&size=${size}`)
+            const res = await api<ApiResponse<any>>(
+                `/reputations/${encodeURIComponent(userId)}/penalties?page=${page}&size=${size}`,
+            )
             if (Array.isArray(res?.data)) return res.data
             if (Array.isArray(res?.data?.content)) return res.data.content
         } catch {

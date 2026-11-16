@@ -1,6 +1,6 @@
 /**
  * Bộ kiểm thử tích hợp Reputation, Rating và Notification UI (Sprint 3 - HA-S3-2).
- * 
+ *
  * 1. Chức năng:
  *    - AC 1 & 8: Buyer đánh giá Seller sau khi giao dịch hoàn tất (DELIVERED/COMPLETED).
  *    - AC 2 & 8: Seller đánh giá Buyer sau khi giao dịch hoàn tất.
@@ -12,14 +12,14 @@
  *    - AC 11: Quản lý tùy chọn nhận thông báo (Notification Preferences: IN_APP, EMAIL, PUSH).
  *    - AC 12 & 13: Xử lý quyền push notification trên trình duyệt.
  *    - AC 14: Xử lý các trạng thái loading, empty, error state.
- * 
+ *
  * 2. Đầu vào & kết quả:
  *    - Mô phỏng các API client (reputationApi, notificationsApi) và component React.
  *    - Kiểm tra DOM rendering, event triggers, API calls, and state transitions.
- * 
+ *
  * 3. Luồng xử lý:
  *    - Render component -> Tương tác người dùng (click, type) -> Khẳng định API được gọi với đúng payload.
- * 
+ *
  * 4. Quy tắc nghiệp vụ:
  *    - Điểm < 60: LOW, 60-109: STANDARD, 110-149: HIGH, >= 150: VIP.
  *    - Không được tự đánh giá (raterId !== rateeId).
@@ -34,11 +34,7 @@ import {
     RatingModal,
     RatingsList,
 } from '../components/ReputationRating'
-import {
-    calculateTrustLevel,
-    reputationApi,
-    type RatingResponse,
-} from '../api/reputation'
+import { calculateTrustLevel, reputationApi, type RatingResponse } from '../api/reputation'
 import * as notifApi from '../api/notifications'
 import { NotificationInbox } from '../features/buyer/NotificationInbox'
 import type { AppState } from '../types'
@@ -124,27 +120,25 @@ describe('Sprint 3 - HA-S3-2: Reputation, Rating and Notification UI', () => {
             )
 
             expect(
-                screen.getByText(/Hệ thống không cho phép bạn tự đánh giá chính tài khoản của mình/i),
+                screen.getByText(
+                    /Hệ thống không cho phép bạn tự đánh giá chính tài khoản của mình/i,
+                ),
             ).toBeInTheDocument()
-            expect(
-                screen.getByRole('button', { name: 'Đóng' }),
-            ).toBeInTheDocument()
+            expect(screen.getByRole('button', { name: 'Đóng' })).toBeInTheDocument()
         })
 
         it('hiển thị form đánh giá và gửi dữ liệu thành công lên API (AC 1, 2, 3, 8)', async () => {
-            const createRatingSpy = vi
-                .spyOn(reputationApi, 'createRating')
-                .mockResolvedValueOnce({
-                    id: 'rating-1',
-                    orderId: 'order-101',
-                    raterId: 'user-buyer-1',
-                    rateeId: 'user-seller-2',
-                    score: 5,
-                    comment: 'Hàng chất lượng, giao nhanh!',
-                    isAggregated: false,
-                    isDisputed: false,
-                    createdAt: '2026-11-13T10:00:00Z',
-                })
+            const createRatingSpy = vi.spyOn(reputationApi, 'createRating').mockResolvedValueOnce({
+                id: 'rating-1',
+                orderId: 'order-101',
+                raterId: 'user-buyer-1',
+                rateeId: 'user-seller-2',
+                score: 5,
+                comment: 'Hàng chất lượng, giao nhanh!',
+                isAggregated: false,
+                isDisputed: false,
+                createdAt: '2026-11-13T10:00:00Z',
+            })
 
             const onCloseMock = vi.fn()
             const onSuccessMock = vi.fn()
@@ -161,9 +155,7 @@ describe('Sprint 3 - HA-S3-2: Reputation, Rating and Notification UI', () => {
                 />,
             )
 
-            expect(
-                screen.getByText(/Đánh giá người bán: Shop Đồ Gỗ Cao Cấp/i),
-            ).toBeInTheDocument()
+            expect(screen.getByText(/Đánh giá người bán: Shop Đồ Gỗ Cao Cấp/i)).toBeInTheDocument()
 
             // Chọn 5 sao
             const starButtons = screen.getAllByRole('button', { name: /sao/i })
@@ -303,9 +295,7 @@ describe('Sprint 3 - HA-S3-2: Reputation, Rating and Notification UI', () => {
             render(<NotificationInbox />)
 
             // Kiểm tra các thông báo được hiển thị
-            expect(
-                await screen.findByText('Đơn hàng đã giao thành công'),
-            ).toBeInTheDocument()
+            expect(await screen.findByText('Đơn hàng đã giao thành công')).toBeInTheDocument()
             expect(screen.getByText('Thanh toán hoàn tất')).toBeInTheDocument()
 
             // Kiểm tra nút đánh dấu đọc cho tin chưa đọc
@@ -342,9 +332,7 @@ describe('Sprint 3 - HA-S3-2: Reputation, Rating and Notification UI', () => {
             fireEvent.click(prefButton)
 
             // Kiểm tra modal xuất hiện
-            expect(
-                await screen.findByText('Cài đặt Tùy chọn Nhận thông báo'),
-            ).toBeInTheDocument()
+            expect(await screen.findByText('Cài đặt Tùy chọn Nhận thông báo')).toBeInTheDocument()
 
             // Thay đổi checkbox email của mục Đơn hàng & Giao hàng
             const emailCheckbox = screen.getByLabelText(/Đơn hàng & Giao hàng email/i)

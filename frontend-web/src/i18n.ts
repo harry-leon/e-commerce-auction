@@ -62,7 +62,8 @@ const en = {
     dashboardGmvAllOrders: 'GMV (all paid orders)',
     dashboardOrderActivityAll: 'All order activity in the last 7 UTC days',
     syncKeycloakAccounts: 'Sync Keycloak accounts',
-    keycloakSyncCompleted: 'Keycloak sync complete: {created} profiles created from {scanned} accounts.',
+    keycloakSyncCompleted:
+        'Keycloak sync complete: {created} profiles created from {scanned} accounts.',
     lockAccount: 'Lock account',
     unlockAccount: 'Unlock account',
     accountStatusUpdated: 'Account status updated.',
@@ -733,7 +734,7 @@ export function formatDateTime(dateStr: string, lang: Lang): string {
  * Quy tắc & lý do: Đơn vị tiền tệ nền tảng là VND. Loại bỏ việc gán ký hiệu '$' và số thập phân .00 làm mâu thuẫn giá trị thực và tràn viền khung giao diện.
  */
 export function formatCurrency(amount: number | null | undefined, lang: Lang): string {
-    const val = typeof amount === 'number' && Number.isFinite(amount) ? amount : (Number(amount) || 0)
+    const val = typeof amount === 'number' && Number.isFinite(amount) ? amount : Number(amount) || 0
     if (lang === 'vi') {
         return val.toLocaleString('vi-VN') + ' ₫'
     }
@@ -746,7 +747,7 @@ export function formatCurrency(amount: number | null | undefined, lang: Lang): s
  * Kết quả: Chuỗi số đã format hoặc '0' nếu n là null/undefined.
  */
 export function formatNumber(n: number | null | undefined, lang: Lang): string {
-    const val = typeof n === 'number' && Number.isFinite(n) ? n : (Number(n) || 0)
+    const val = typeof n === 'number' && Number.isFinite(n) ? n : Number(n) || 0
     if (lang === 'vi') return val.toLocaleString('vi-VN')
     return val.toLocaleString('en-US')
 }
@@ -791,7 +792,10 @@ export function resolveBilingualName(rawName: string | null | undefined, lang: L
  *       - lang === 'en': chỉ hiển thị đoạn mô tả tiếng Anh (sau phân cách).
  *   - Nếu không có phân cách: trả về nguyên văn rawDesc.
  */
-export function resolveBilingualDescription(rawDesc: string | null | undefined, lang: Lang): string {
+export function resolveBilingualDescription(
+    rawDesc: string | null | undefined,
+    lang: Lang,
+): string {
     if (!rawDesc) return ''
     const str = rawDesc.trim()
     const regex = /---\s*English\s*---/i

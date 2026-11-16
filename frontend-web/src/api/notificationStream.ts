@@ -1,10 +1,22 @@
 import { api, ApiClientError } from './client'
 
 export const NOTIFICATIONS_CHANGED = 'nexus:notifications-changed'
+
+/**
+ * Cấu trúc thông báo đẩy PUSH qua WebSocket STOMP.
+ * Bổ sung các trường ngữ cảnh đấu giá: type (AUCTION_WON, AUCTION_OUTBID,...),
+ * orderId, auctionId, paymentLink, paymentDeadline để giao diện hiển thị nút thao tác.
+ */
 export interface NotificationPush {
     id: string
     title: string
     content: string
+    type?: string
+    orderId?: string
+    auctionId?: string
+    paymentLink?: string | null
+    paymentDeadline?: string | null
+    occurredAt?: string
 }
 
 /**
@@ -16,6 +28,7 @@ export interface NotificationPush {
 export function connectNotificationStream(
     onMessage: (event: NotificationPush) => void,
     onConnected: () => void,
+    userId?: string,
 ): () => void {
     let stopped = false
     let socket: WebSocket | undefined
@@ -83,6 +96,13 @@ export function connectNotificationStream(
                         current.send(
                             'SUBSCRIBE\nid:notifications\ndestination:/user/queue/notifications\nack:auto\n\n\0',
                         )
+                        if (userId) {
+                            current.send(
+                                'SUBSCRIBE\nid:notifications-topic\ndestination:/topic/users/' +
+                                    userId +
+                                    '/notifications\nack:auto\n\n\0',
+                            )
+                        }
                         heartbeat = setInterval(() => {
                             if (current.readyState !== WebSocket.OPEN) return
                             if (Date.now() - lastReceived > 25_000) current.close()
@@ -90,7 +110,7 @@ export function connectNotificationStream(
                         }, 10_000)
                         onConnected()
                     } else if (command === 'MESSAGE') {
-                        if (!lines.includes('subscription:notifications')) continue
+                        if (!lines.some((l) => l.startsWith('subscription:notifications'))) continue
                         try {
                             const event: unknown = JSON.parse(frame.slice(split + 2))
                             if (typeof event !== 'object' || event === null) continue
