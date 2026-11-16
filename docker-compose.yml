@@ -295,6 +295,8 @@ services:
       <<: *cloud-env
       SERVICE_NAME: reputation-service
       SERVER_PORT: 8080
+      # Review xác thực chủ đơn và trạng thái giao hàng qua Commerce trong mạng Compose, tránh gọi localhost của chính container.
+      COMMERCE_SERVICE_URL: http://commerce-service:8080
       # Dùng Supabase khi cấu hình REPUTATION_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${REPUTATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_reputation}
       DB_USERNAME: ${REPUTATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}

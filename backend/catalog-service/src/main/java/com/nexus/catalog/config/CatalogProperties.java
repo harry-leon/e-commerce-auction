@@ -39,6 +39,14 @@ public class CatalogProperties {
     @NotNull
     private Pagination pagination = new Pagination();
 
+    /**
+     * Cấu hình dịch vụ Cloudinary dùng để lưu trữ và quản lý media/ảnh sản phẩm.
+     * Nhận tham số từ app.catalog.cloudinary qua biến môi trường hoặc application.yml.
+     */
+    @Valid
+    @NotNull
+    private CloudinaryProperties cloudinary = new CloudinaryProperties();
+
     @Getter
     @Setter
     public static class Product {
@@ -68,5 +76,30 @@ public class CatalogProperties {
         @NotNull
         @Min(value = 1, message = "Kích thước trang tối đa phải lớn hơn hoặc bằng 1")
         private Integer maxPageSize = 100;
+    }
+
+
+    @Getter
+    @Setter
+    public static class CloudinaryProperties {
+        /**
+         * Cloud name trên Cloudinary.
+         */
+        private String cloudName;
+
+        /**
+         * API Key của tài khoản Cloudinary.
+         */
+        private String apiKey;
+
+        /**
+         * Khóa bí mật API Cloudinary.
+         */
+        private String apiSecret;
+
+        /**
+         * Thư mục gốc trên Cloudinary (mặc định là 'Nexus').
+         */
+        private String rootFolder = "Nexus";
     }
 }

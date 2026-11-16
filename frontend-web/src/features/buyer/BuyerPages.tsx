@@ -8,21 +8,11 @@ import { AuctionCard } from '../../components/Cards'
 import {
     Button,
     Input,
-    Textarea,
     NumberStepper,
-    Tabs,
-    Modal,
     ConfirmModal,
     AlertBanner,
     EmptyState,
-    StarRating,
-    StatusBadge,
-    OrderTimeline,
     ProgressBar,
-    Breadcrumb,
-    Download,
-    Search,
-    ChevronRight,
     AlertTriangle,
     CheckCircle,
     Truck,
@@ -34,7 +24,7 @@ import {
     Spinner,
     Trash2,
     Clock,
-    Copy,
+    Breadcrumb,
     SkeletonProductCard,
     SkeletonAuctionCard,
 } from '../../components/UI'
@@ -44,15 +34,17 @@ import {
     type RatingResponse,
     type ReputationEligibility,
 } from '../../api/reputation'
-import { TrustLevelBadge, RatingStars, RatingsList } from '../../components/ReputationRating'
+import { TrustLevelBadge, RatingsList } from '../../components/ReputationRating'
+import { OrderDetailView } from './OrderDetailView'
+import { OrderHistoryView } from './OrderHistoryView'
+import { SellerShopView } from './SellerShopView'
 import { CATEGORY_ICONS } from '../../components/Layout'
-import { getEffectivePaymentStatus } from '../../payment'
+import { resolveSellerName } from '../../utils/sellerHelper'
 import { calculateEstimatedPricing } from '../../utils/pricingEngine'
 import { getGuestCart, updateGuestCartItem, removeGuestCartItem, clearGuestCart } from './guestCart'
 import { VnpayPaymentResult } from './VnpayPaymentResult'
 import { syncGuestCart } from './syncGuestCart'
 import { purchaseAvailabilityMessage } from './purchaseAvailability'
-import { WinnerPaymentButton } from './WinnerPaymentButton'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import { createPaymentAttempt, redirectToGateway } from '../../api/payments'
 import {
@@ -61,7 +53,7 @@ import {
     checkoutAttemptKey,
     clearCheckoutCommand,
 } from './checkoutRecovery'
-import type { Auction, Order, Product } from '../../types'
+import type { Auction, Product } from '../../types'
 import {
     ordersApi,
     type CreateOrderRequest,
@@ -75,8 +67,6 @@ import {
     shippingApi,
     type ShippingQuoteResponse,
     type ShippingQuoteOption,
-    type ShipmentResponse,
-    type ShipmentTrackingResponse,
 } from '../../api/shipping'
 import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
 import { useLoad } from '../../hooks/useLoad'
@@ -3697,1581 +3687,60 @@ export function PaymentResultPage() {
 }
 
 /** Lịch sử đơn lấy từ backend; lỗi hiển thị để người mua có thể thử lại. */
+/**
+ * Chức năng: Màn hình Lịch sử đơn hàng của Buyer (OrderHistoryPage) - Chuẩn Figma & Image 3.
+ * Đầu vào: Bộ lọc trạng thái, tìm kiếm, context người dùng.
+ * Kết quả: Render OrderHistoryView chuẩn Image 3 với đầy đủ chức năng tra cứu, hủy đơn và điều hướng.
+ */
 export function OrderHistoryPage() {
-    const { lang, navigate, showToast, user } = useApp()
-    const [orders, setOrders] = useState<Order[]>([])
-    const [statusFilter, setStatusFilter] = useState<string>('all')
-    const [searchQuery, setSearchQuery] = useState<string>('')
-    const [loading, setLoading] = useState<boolean>(true)
-    const [cancelOrderId, setCancelOrderId] = useState<string | null>(null)
-    const [cancelReason, setCancelReason] = useState<string>('')
-
-    const STATUS_TABS = [
-        { id: 'all', label: tr(lang, 'all') },
-        { id: 'PENDING_PAYMENT', label: tr(lang, 'statusPending') },
-        { id: 'PAID', label: tr(lang, 'statusPaid') },
-        { id: 'PROCESSING', label: tr(lang, 'statusProcessing') },
-        { id: 'SHIPPED', label: tr(lang, 'statusShipped') },
-        { id: 'DELIVERED', label: tr(lang, 'statusDelivered') },
-        { id: 'COMPLETED', label: tr(lang, 'statusCompleted') },
-        { id: 'CANCELLED', label: tr(lang, 'statusCancelled') },
-        { id: 'REFUNDED', label: tr(lang, 'statusRefunded') },
-    ]
-
-    const statusLabel = (s: string) =>
-        ({
-            PENDING_PAYMENT: tr(lang, 'statusPending'),
-            PAID: tr(lang, 'statusPaid'),
-            PROCESSING: tr(lang, 'statusProcessing'),
-            SHIPPED: tr(lang, 'statusShipped'),
-            DELIVERED: tr(lang, 'statusDelivered'),
-            COMPLETED: tr(lang, 'statusCompleted'),
-            CANCELLED: tr(lang, 'statusCancelled'),
-            REFUNDED: tr(lang, 'statusRefunded'),
-        })[s] || s
-
-    // Tải danh sách đơn hàng từ API hoặc kho mock store
-    const loadOrders = async () => {
-        setLoading(true)
-        try {
-            const data = await ordersApi.getOrders({
-                role: 'buyer',
-                userId: user?.id,
-                status: statusFilter,
-                search: searchQuery,
-            })
-            setOrders(data)
-        } catch {
-            setOrders([])
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    useEffect(() => {
-        loadOrders()
-    }, [statusFilter, searchQuery])
-
-    // Xử lý xác nhận hủy đơn hàng
-    const handleConfirmCancel = async () => {
-        if (!cancelOrderId) return
-        try {
-            await ordersApi.cancelOrder(cancelOrderId, cancelReason)
-            showToast({
-                type: 'success',
-                message:
-                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
-            })
-            setCancelOrderId(null)
-            setCancelReason('')
-            await loadOrders()
-        } catch (err: any) {
-            showToast({
-                type: 'error',
-                message:
-                    err.message ||
-                    (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
-            })
-        }
-    }
-
-    return (
-        <BuyerLayout>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-900">{tr(lang, 'orderHistory')}</h1>
-                    <p className="text-sm text-gray-500 mt-1">
-                        {lang === 'en'
-                            ? 'Track, inspect and manage your placed purchases'
-                            : 'Theo dõi, tra cứu và quản lý các đơn hàng bạn đã mua'}
-                    </p>
-                </div>
-                <div className="w-full sm:w-72">
-                    <Input
-                        icon={<Search size={16} />}
-                        placeholder={
-                            lang === 'en'
-                                ? 'Search order ID or item...'
-                                : 'Tìm mã đơn hoặc tên sản phẩm...'
-                        }
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full !pl-10"
-                    />
-                </div>
-            </div>
-
-            <div className="nexus-card">
-                <Tabs tabs={STATUS_TABS} active={statusFilter} onChange={setStatusFilter} />
-                <div className="p-4 sm:p-6">
-                    {loading ? (
-                        <div className="py-12 text-center text-gray-400">
-                            <div
-                                className="spinner-border text-primary mb-2"
-                                style={{ color: '#ee4d2d' }}
-                                role="status"
-                            >
-                                <span className="visually-hidden">Loading...</span>
-                            </div>
-                            <p>
-                                {lang === 'en'
-                                    ? 'Loading orders...'
-                                    : 'Đang tải danh sách đơn hàng...'}
-                            </p>
-                        </div>
-                    ) : orders.length === 0 ? (
-                        <EmptyState
-                            icon={<Package size={24} />}
-                            title={tr(lang, 'noData')}
-                            subtitle={
-                                lang === 'en'
-                                    ? 'No orders found matching the filter.'
-                                    : 'Không tìm thấy đơn hàng nào phù hợp với bộ lọc.'
-                            }
-                        />
-                    ) : (
-                        <div className="space-y-5">
-                            {orders.map((order) => {
-                                const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
-                                return (
-                                    <div
-                                        key={order.id}
-                                        className="border border-border rounded-xl p-5 hover:border-primary/40 transition-colors bg-white"
-                                    >
-                                        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border/60 mb-3">
-                                            <div className="flex items-center gap-3">
-                                                <StatusBadge
-                                                    status={order.status}
-                                                    label={statusLabel(order.status)}
-                                                />
-                                                <span className="font-mono font-semibold text-sm text-gray-800">
-                                                    {order.id}
-                                                </span>
-                                                <span className="text-xs text-gray-400">
-                                                    {formatDate(order.createdAt, lang)}
-                                                </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                {canCancel && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="text-danger hover:bg-danger/10"
-                                                        onClick={() => setCancelOrderId(order.id)}
-                                                    >
-                                                        {tr(lang, 'cancelOrder')}
-                                                    </Button>
-                                                )}
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    onClick={() =>
-                                                        navigate('order-detail', { id: order.id })
-                                                    }
-                                                >
-                                                    {tr(lang, 'orderDetail')}{' '}
-                                                    <ChevronRight size={14} />
-                                                </Button>
-                                            </div>
-                                        </div>
-
-                                        {/* DTO tóm tắt không có items; mở chi tiết để tải sản phẩm thật, không tạo item demo. */}
-                                        {(!order.items || order.items.length === 0) && (
-                                            <p className="text-sm text-gray-500 mb-3">
-                                                {lang === 'vi'
-                                                    ? 'Mở chi tiết đơn để xem sản phẩm.'
-                                                    : 'Open order details to view products.'}
-                                            </p>
-                                        )}
-                                        <div className="space-y-3">
-                                            {order.items &&
-                                            Array.isArray(order.items) &&
-                                            order.items.length > 0 ? (
-                                                order.items.map((item, idx) => (
-                                                    <div
-                                                        key={item.productId || idx}
-                                                        className="flex items-center justify-between gap-4"
-                                                    >
-                                                        <div className="flex items-center gap-3">
-                                                            <img
-                                                                src={item.image}
-                                                                alt=""
-                                                                className="w-14 h-14 object-cover rounded-lg border border-border"
-                                                            />
-                                                            <div>
-                                                                <p className="text-sm font-semibold text-gray-900 line-clamp-1">
-                                                                    {item.productName}
-                                                                </p>
-                                                                <p className="text-xs text-gray-500 mt-0.5">
-                                                                    ×{item.quantity} ·{' '}
-                                                                    {formatCurrency(
-                                                                        item.unitPrice,
-                                                                        lang,
-                                                                    )}
-                                                                </p>
-                                                            </div>
-                                                        </div>
-                                                        <span className="font-semibold text-sm text-gray-800 shrink-0">
-                                                            {formatCurrency(item.subtotal, lang)}
-                                                        </span>
-                                                    </div>
-                                                ))
-                                            ) : (
-                                                <div className="flex items-center justify-between py-2.5 px-3.5 bg-gray-50/80 rounded-lg text-xs text-gray-600 border border-gray-100">
-                                                    <div className="flex items-center gap-2">
-                                                        <Package
-                                                            size={16}
-                                                            className="text-gray-400"
-                                                        />
-                                                        <span>
-                                                            {lang === 'en'
-                                                                ? `${(order as any).itemCount || 1} product(s) in this order`
-                                                                : `${(order as any).itemCount || 1} sản phẩm trong đơn hàng`}
-                                                        </span>
-                                                    </div>
-                                                    <span className="text-gray-400 font-mono text-[11px]">
-                                                        {(order as any).orderNo || order.id}
-                                                    </span>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="flex items-center justify-between pt-3 mt-3 border-t border-border/60">
-                                            <div className="text-xs text-gray-500">
-                                                <span>
-                                                    {lang === 'en'
-                                                        ? `Sold by ${order.sellerName}`
-                                                        : `Cung cấp bởi ${order.sellerName}`}
-                                                </span>
-                                                {order.shippingAddress && (
-                                                    <span className="hidden md:inline ml-3 text-gray-400">
-                                                        · {order.shippingAddress}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="text-right">
-                                                <span className="text-xs text-gray-500 mr-2">
-                                                    {lang === 'en'
-                                                        ? 'Total payable:'
-                                                        : 'Tổng thanh toán:'}
-                                                </span>
-                                                <span className="font-bold text-base text-primary">
-                                                    {formatCurrency(order.total, lang)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )
-                            })}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Modal xác nhận hủy đơn */}
-            <Modal
-                open={!!cancelOrderId}
-                onClose={() => {
-                    setCancelOrderId(null)
-                    setCancelReason('')
-                }}
-                title={tr(lang, 'confirmCancel')}
-                footer={
-                    <>
-                        <Button variant="outline" onClick={() => setCancelOrderId(null)}>
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button variant="danger" onClick={handleConfirmCancel}>
-                            {tr(lang, 'cancelOrder')}
-                        </Button>
-                    </>
-                }
-            >
-                <div className="space-y-4">
-                    <p className="text-sm text-gray-600">
-                        {lang === 'en'
-                            ? 'Cancelling will release inventory reservations and refund payments when applicable.'
-                            : 'Hủy đơn sẽ giải phóng kho hàng và hoàn tiền nếu đơn đã được thanh toán.'}
-                    </p>
-                    <Textarea
-                        label={lang === 'en' ? 'Cancellation reason' : 'Lý do hủy đơn'}
-                        value={cancelReason}
-                        onChange={(event) => setCancelReason(event.target.value)}
-                        placeholder={
-                            lang === 'en'
-                                ? 'Tell us why you are cancelling...'
-                                : 'Nhập lý do hủy đơn...'
-                        }
-                        rows={3}
-                    />
-                </div>
-            </Modal>
-        </BuyerLayout>
-    )
+    return <OrderHistoryView />
 }
 
-// ─── Order Detail Page ───
 /**
- * Màn hình Chi tiết đơn hàng của Buyer
- *
- * Chức năng: Hiển thị đầy đủ thông tin một đơn hàng: tiến trình timeline, sản phẩm, địa chỉ,
- * thanh toán, trạng thái ký quỹ Escrow (Bảo vệ Buyer), vận chuyển tracking;
- * cho phép Buyer thực hiện các hành động: Hủy đơn, Xác nhận đã nhận hàng (giải ngân Escrow),
- * Mở khiếu nại (giữ tiền để Admin xử lý), và Đánh giá người bán.
- *
- * Luồng dữ liệu:
- * - Gọi `ordersApi.getOrderById(pageParams.id)` để lấy thông tin đơn hàng mới nhất từ API / Mock store.
- * - Các tương tác hành động gọi API tương ứng trong `ordersApi` và cập nhật trực tiếp dữ liệu.
+ * Chức năng: Màn hình Chi tiết đơn hàng của Buyer (OrderDetailPage) - Chuẩn Figma & Image 2.
+ * Đầu vào: ID đơn hàng từ pageParams.
+ * Kết quả: Render OrderDetailView chuẩn Image 2 với Stepper 5 bước, đa sản phẩm, giá chuẩn không 0đ,
+ *          địa chỉ, thanh toán VNPAY và thông tin người bán.
  */
 export function OrderDetailPage() {
-    const { lang, pageParams, showToast, user } = useApp()
-    const [order, setOrder] = useState<Order | null>(null)
-    const [loading, setLoading] = useState(true)
-    const [cancelOpen, setCancelOpen] = useState(false)
-    const [reviewOpen, setReviewOpen] = useState(false)
-    const [rating, setRating] = useState(5)
-    const [comment, setComment] = useState('')
-    const [reviewed, setReviewed] = useState(false)
-    const [disputeOpen, setDisputeOpen] = useState(false)
-    const [disputeReason, setDisputeReason] = useState('')
-    // Quản lý thông tin điểm uy tín người bán và trạng thái gửi đánh giá (Sprint 3 - HA-S3-2)
-    const [sellerReputation, setSellerReputation] = useState<ReputationSummary | null>(null)
-    const [reviewSubmitting, setReviewSubmitting] = useState(false)
-
-    // Quản lý thông tin vận đơn và hành trình giao hàng (Sprint 3 - HA-S3-1)
-    const [shipment, setShipment] = useState<ShipmentResponse | null>(null)
-    const [tracking, setTracking] = useState<ShipmentTrackingResponse | null>(null)
-    const [shipmentLoading, setShipmentLoading] = useState<boolean>(false)
-    const [shipmentError, setShipmentError] = useState<string | null>(null)
-
-    /**
-     * Nạp chi tiết vận đơn và hành trình thời gian thực (Sprint 3 - HA-S3-1).
-     * Luồng: GET /api/v1/shipments/order/{orderId} → GET /api/v1/shipments/{shipmentId}/tracking
-     * Xử lý loading, error state và hiển thị thông tin hãng vận chuyển (GHN/GHTK), mã vận đơn.
-     */
-    const loadShipmentInfo = useCallback(
-        async (orderId: string) => {
-            setShipmentLoading(true)
-            setShipmentError(null)
-            try {
-                const ship = await shippingApi.getShipmentByOrderId(orderId)
-                setShipment(ship)
-                if (ship?.id) {
-                    const trk = await shippingApi.getShipmentTracking(ship.id)
-                    setTracking(trk)
-                } else {
-                    setTracking(null)
-                }
-            } catch (err: any) {
-                setShipmentError(
-                    err?.message ||
-                        (lang === 'vi'
-                            ? 'Lỗi tải hành trình vận đơn'
-                            : 'Failed to load shipment tracking'),
-                )
-            } finally {
-                setShipmentLoading(false)
-            }
-        },
-        [lang],
-    )
-
-    // Nạp chi tiết đơn hàng
-    const loadDetail = async () => {
-        setLoading(true)
-        try {
-            const targetId = typeof pageParams?.id === 'string' ? pageParams.id : ''
-            if (!targetId) {
-                setOrder(null)
-                return
-            }
-            const data = await ordersApi.getOrderById(targetId)
-            if (data) {
-                setOrder(data)
-                setReviewed(Boolean(data.reviewed))
-                if (data.sellerId) {
-                    reputationApi
-                        .getUserReputation(data.sellerId)
-                        .then(setSellerReputation)
-                        .catch(() => {})
-                }
-                reputationApi
-                    .getRatingsForOrder(data.id)
-                    .then((ratings) => {
-                        const existing = ratings.find(
-                            (r) => r.rateeId === data.sellerId || (user && r.raterId === user.id),
-                        )
-                        if (existing) {
-                            setReviewed(true)
-                            setRating(existing.score)
-                            setComment(existing.comment || '')
-                        }
-                    })
-                    .catch(() => {})
-            }
-            void loadShipmentInfo(targetId)
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    useEffect(() => {
-        loadDetail()
-    }, [pageParams?.id])
-
-    if (loading || !order) {
-        return (
-            <BuyerLayout>
-                <div className="py-20 text-center text-gray-500">
-                    <div
-                        className="spinner-border text-primary mb-3"
-                        style={{ color: '#ee4d2d' }}
-                        role="status"
-                    >
-                        <span className="visually-hidden">Loading...</span>
-                    </div>
-                    <p>
-                        {lang === 'en'
-                            ? 'Loading order details...'
-                            : 'Đang tải chi tiết đơn hàng...'}
-                    </p>
-                </div>
-            </BuyerLayout>
-        )
-    }
-
-    const paymentStatus = getEffectivePaymentStatus(order)
-
-    const statusLabel = (s: string) =>
-        ({
-            PENDING_PAYMENT: tr(lang, 'statusPending'),
-            PAID: tr(lang, 'statusPaid'),
-            PROCESSING: tr(lang, 'statusProcessing'),
-            SHIPPED: tr(lang, 'statusShipped'),
-            DELIVERED: tr(lang, 'statusDelivered'),
-            COMPLETED: tr(lang, 'statusCompleted'),
-            CANCELLED: tr(lang, 'statusCancelled'),
-            REFUNDED: tr(lang, 'statusRefunded'),
-        })[s] || s
-
-    const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
-    const protectionDays = order.protectionEndsAt
-        ? Math.max(
-              0,
-              Math.ceil((new Date(order.protectionEndsAt).getTime() - Date.now()) / 86400000),
-          )
-        : 0
-    const isProtectionActive = order.status === 'DELIVERED' && paymentStatus === 'protection_period'
-
-    // Xác nhận đã nhận hàng -> chuyển sang completed và giải ngân tiền cho Seller
-    const confirmDelivery = async () => {
-        try {
-            const updated = await ordersApi.confirmOrderDelivery(order.id)
-            setOrder(updated)
-            showToast({
-                type: 'success',
-                message:
-                    lang === 'en'
-                        ? 'Order confirmed. Payment has been released to the seller.'
-                        : 'Đã xác nhận nhận hàng. Khoản tiền đã được giải ngân cho người bán.',
-            })
-        } catch {
-            showToast({
-                type: 'error',
-                message:
-                    lang === 'en' ? 'Failed to confirm delivery.' : 'Không thể xác nhận nhận hàng.',
-            })
-        }
-    }
-
-    // Mở khiếu nại đơn hàng -> chuyển tiền sang on_hold để Admin xử lý
-    const submitDispute = async () => {
-        if (!disputeReason.trim()) return
-        try {
-            const updated = await ordersApi.submitOrderDispute(order.id, disputeReason)
-            setOrder(updated)
-            setDisputeOpen(false)
-            showToast({
-                type: 'success',
-                message:
-                    lang === 'en'
-                        ? 'Dispute submitted. Payment remains on hold for admin review.'
-                        : 'Đã gửi khiếu nại. Khoản thanh toán tiếp tục được giữ để Admin xử lý.',
-            })
-        } catch {
-            showToast({
-                type: 'error',
-                message: lang === 'en' ? 'Failed to submit dispute.' : 'Không thể gửi khiếu nại.',
-            })
-        }
-    }
-
-    // Hủy đơn hàng
-    const handleCancelOrder = async () => {
-        try {
-            const updated = await ordersApi.cancelOrder(order.id, 'Buyer requested cancellation')
-            setOrder(updated)
-            setCancelOpen(false)
-            showToast({
-                type: 'success',
-                message:
-                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
-            })
-        } catch {
-            showToast({
-                type: 'error',
-                message: lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.',
-            })
-        }
-    }
-
-    return (
-        <BuyerLayout>
-            <Breadcrumb
-                items={[
-                    {
-                        label: lang === 'en' ? 'Order History' : 'Lịch sử đơn hàng',
-                        page: 'order-history',
-                    },
-                    { label: order.id },
-                ]}
-            />
-            <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
-                <div className="space-y-5">
-                    {/* Header đơn hàng */}
-                    <div className="nexus-card p-5 flex flex-wrap items-center justify-between gap-4">
-                        <div>
-                            <div className="flex items-center gap-3 mb-1">
-                                <StatusBadge
-                                    status={order.status}
-                                    label={statusLabel(order.status)}
-                                />
-                                <span className="font-mono font-semibold text-gray-800">
-                                    {order.id}
-                                </span>
-                            </div>
-                            <p className="text-sm text-gray-500">
-                                {lang === 'en' ? 'Placed on' : 'Đặt lúc'}{' '}
-                                {formatDate(order.createdAt, lang)}
-                            </p>
-                        </div>
-                        <div className="flex gap-2">
-                            {canCancel && (
-                                <Button
-                                    variant="danger"
-                                    size="sm"
-                                    onClick={() => setCancelOpen(true)}
-                                >
-                                    {tr(lang, 'cancelOrder')}
-                                </Button>
-                            )}
-                            <Button variant="outline" size="sm">
-                                <Download size={14} />
-                                {tr(lang, 'downloadInvoice')}
-                            </Button>
-                        </div>
-                    </div>
-
-                    {/* Danh sách sản phẩm mua */}
-                    <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en' ? 'Purchased Items' : 'Sản phẩm đã mua'}
-                        </h3>
-                        <div className="divide-y divide-border/60">
-                            {(order.items || []).map((item) => (
-                                <div
-                                    key={item.productId}
-                                    className="flex gap-4 py-3 first:pt-0 last:pb-0"
-                                >
-                                    <img
-                                        src={item.image}
-                                        alt=""
-                                        className="w-16 h-16 object-cover rounded-xl border border-border shrink-0"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-semibold text-gray-900 line-clamp-1">
-                                            {item.productName}
-                                        </p>
-                                        <p className="text-sm text-gray-500 mt-1">
-                                            ×{item.quantity} ·{' '}
-                                            {formatCurrency(item.unitPrice, lang)}
-                                        </p>
-                                    </div>
-                                    <p className="font-bold text-primary shrink-0">
-                                        {formatCurrency(item.subtotal, lang)}
-                                    </p>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Tổng kết chi phí */}
-                        <div className="pt-4 border-t border-border mt-4 space-y-2 text-sm">
-                            <div className="flex justify-between text-gray-600">
-                                <span>{tr(lang, 'subtotal')}</span>
-                                <span>{formatCurrency(order.subtotal, lang)}</span>
-                            </div>
-                            <div className="flex justify-between text-gray-600">
-                                <span>{tr(lang, 'shipping')}</span>
-                                <span>{formatCurrency(order.shipping, lang)}</span>
-                            </div>
-                            <div className="flex justify-between text-gray-600">
-                                <span>{tr(lang, 'tax')}</span>
-                                <span>{formatCurrency(order.tax, lang)}</span>
-                            </div>
-                            {order.discount > 0 && (
-                                <div className="flex justify-between text-green-600">
-                                    <span>{tr(lang, 'discount')}</span>
-                                    <span>-{formatCurrency(order.discount, lang)}</span>
-                                </div>
-                            )}
-                            <div className="flex justify-between font-bold text-base text-gray-900 border-t border-border pt-3 mt-1">
-                                <span>{tr(lang, 'total')}</span>
-                                <span className="text-primary text-lg">
-                                    {formatCurrency(order.total, lang)}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Timeline tiến trình đơn hàng */}
-                    <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-4">
-                            {lang === 'en'
-                                ? 'Order Status Timeline'
-                                : 'Tiến trình trạng thái đơn hàng'}
-                        </h3>
-                        <OrderTimeline status={order.status} />
-                    </div>
-
-                    {/* Thời hạn bảo vệ người mua (Buyer Protection) */}
-                    {isProtectionActive && (
-                        <div className="nexus-card p-5 border-primary/40 bg-primary/5">
-                            <div className="flex flex-col sm:flex-row items-start justify-between gap-6">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Shield size={20} className="text-primary" />
-                                        <h3 className="font-bold text-gray-900">
-                                            {lang === 'en'
-                                                ? 'Bảo vệ người mua 7 ngày'
-                                                : 'Bảo vệ người mua & Giữ tiền an toàn trong 7 ngày'}
-                                        </h3>
-                                    </div>
-                                    <p className="text-sm text-gray-600">
-                                        {lang === 'en'
-                                            ? `Payment is safely held by Nexus for ${protectionDays} more day(s). Confirm satisfactory goods to release payment, or submit a return/dispute.`
-                                            : `Tiền của bạn đang được giữ an toàn tại Nexus thêm ${protectionDays} ngày. Vui lòng kiểm tra hàng và xác nhận hài lòng để thanh toán cho người bán, hoặc yêu cầu khiếu nại nếu hàng có vấn đề.`}
-                                    </p>
-                                    {order.protectionEndsAt && (
-                                        <p className="text-xs text-gray-500 mt-2">
-                                            {lang === 'en'
-                                                ? 'Auto release at'
-                                                : 'Tự động giải ngân lúc'}
-                                            : {new Date(order.protectionEndsAt).toLocaleString()}
-                                        </p>
-                                    )}
-                                </div>
-                                <div className="flex sm:flex-col gap-2 shrink-0 w-full sm:w-auto">
-                                    <Button
-                                        variant="primary"
-                                        size="sm"
-                                        onClick={confirmDelivery}
-                                        className="flex-1 sm:flex-initial"
-                                    >
-                                        {lang === 'en'
-                                            ? 'Confirm Received'
-                                            : 'Xác nhận đã nhận hàng'}
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => setDisputeOpen(true)}
-                                        className="flex-1 sm:flex-initial"
-                                    >
-                                        {lang === 'en'
-                                            ? 'Return / Dispute'
-                                            : 'Trả hàng / Khiếu nại'}
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {paymentStatus === 'on_hold' && (
-                        <AlertBanner
-                            type="warning"
-                            message={
-                                lang === 'en'
-                                    ? `Payment is on hold while Admin reviews the dispute: "${order.disputeReason || 'Customer reported issue'}"`
-                                    : `Khoản thanh toán đang được giữ lại để Admin thụ lý khiếu nại: "${order.disputeReason || 'Khách hàng báo cáo sự cố'}"`
-                            }
-                        />
-                    )}
-
-                    {paymentStatus === 'released' && (
-                        <AlertBanner
-                            type="success"
-                            message={
-                                lang === 'en'
-                                    ? 'Order successfully completed. Payment has been released to the seller.'
-                                    : 'Đơn hàng đã hoàn tất thành công. Tiền ký quỹ đã được chuyển vào số dư người bán.'
-                            }
-                        />
-                    )}
-
-                    {/* Theo dõi vận chuyển thời gian thực (Sprint 3 - HA-S3-1) */}
-                    {(() => {
-                        const effectiveShipment =
-                            shipment ||
-                            (order.shipment
-                                ? {
-                                      id: order.shipment.id || 'mock-shipment',
-                                      orderId: order.id,
-                                      carrier: order.shipment.carrier,
-                                      serviceType: 'EXPRESS',
-                                      shippingFee: order.shipping,
-                                      freeShippingApplied: order.shipping === 0,
-                                      trackingNumber: order.shipment.trackingNumber,
-                                      status: (order.shipment.status?.toUpperCase() ||
-                                          order.status) as any,
-                                      estimatedDeliveryDays: 3,
-                                      shippingAddress: order.shippingAddress,
-                                  }
-                                : null)
-
-                        const trackingHistory =
-                            tracking?.history && tracking.history.length > 0
-                                ? tracking.history
-                                : (order.shipment?.events || []).map((ev) => ({
-                                      carrierStatus: ev.description,
-                                      internalStatus: (ev.status?.toUpperCase() ||
-                                          'IN_TRANSIT') as any,
-                                      occurredAt: ev.timestamp,
-                                      location: ev.location,
-                                      description: ev.description,
-                                  }))
-
-                        return (
-                            <div className="nexus-card p-5">
-                                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                                    <h3 className="font-bold flex items-center gap-2">
-                                        <Truck size={18} className="text-primary" />
-                                        {lang === 'en'
-                                            ? 'Shipment Tracking'
-                                            : 'Hành trình vận chuyển'}
-                                    </h3>
-                                    {effectiveShipment && (
-                                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                                            <span className="font-semibold text-gray-800">
-                                                {effectiveShipment.carrier}
-                                            </span>
-                                            <span>·</span>
-                                            <span className="font-mono font-semibold bg-gray-100 px-2 py-0.5 rounded text-gray-900">
-                                                {effectiveShipment.trackingNumber}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    try {
-                                                        navigator.clipboard?.writeText(
-                                                            effectiveShipment.trackingNumber,
-                                                        )
-                                                        showToast({
-                                                            type: 'success',
-                                                            message:
-                                                                lang === 'vi'
-                                                                    ? 'Đã sao chép mã vận đơn'
-                                                                    : 'Tracking number copied',
-                                                        })
-                                                    } catch {}
-                                                }}
-                                                title={
-                                                    lang === 'vi'
-                                                        ? 'Sao chép mã vận đơn'
-                                                        : 'Copy tracking number'
-                                                }
-                                                className="text-primary hover:text-primary-dark p-1 cursor-pointer"
-                                            >
-                                                <Copy size={15} />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {shipmentLoading ? (
-                                    <div className="py-6 text-center text-gray-500" role="status">
-                                        <div className="spinner-border spinner-border-sm text-primary mb-2 inline-block w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                                        <p className="text-xs">
-                                            {lang === 'vi'
-                                                ? 'Đang cập nhật hành trình vận đơn...'
-                                                : 'Loading shipment tracking...'}
-                                        </p>
-                                    </div>
-                                ) : shipmentError ? (
-                                    <div className="p-4 bg-red-50 text-red-700 rounded-lg text-sm flex items-center justify-between">
-                                        <span>{shipmentError}</span>
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => loadShipmentInfo(order.id)}
-                                        >
-                                            {lang === 'vi' ? 'Thử lại' : 'Retry'}
-                                        </Button>
-                                    </div>
-                                ) : effectiveShipment ? (
-                                    <div className="space-y-4">
-                                        <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gray-50 rounded-lg text-sm">
-                                            <div>
-                                                <span className="text-gray-500 mr-2">
-                                                    {lang === 'vi'
-                                                        ? 'Trạng thái giao hàng:'
-                                                        : 'Delivery status:'}
-                                                </span>
-                                                <span className="font-semibold text-primary">
-                                                    {effectiveShipment.status}
-                                                </span>
-                                            </div>
-                                            {effectiveShipment.estimatedDeliveryDays && (
-                                                <div className="text-xs text-gray-500">
-                                                    {lang === 'vi'
-                                                        ? 'Thời gian giao dự kiến:'
-                                                        : 'Estimated delivery:'}{' '}
-                                                    <span className="font-medium text-gray-700">
-                                                        {effectiveShipment.estimatedDeliveryDays}{' '}
-                                                        {lang === 'vi' ? 'ngày' : 'days'}
-                                                    </span>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* Timeline các mốc tracking */}
-                                        <div className="space-y-3 pt-2">
-                                            {trackingHistory.length > 0 ? (
-                                                trackingHistory.map((ev, i) => (
-                                                    <div key={i} className="flex gap-4">
-                                                        <div className="flex flex-col items-center">
-                                                            <div
-                                                                className={`w-3 h-3 rounded-full ${
-                                                                    i === 0
-                                                                        ? 'bg-primary ring-4 ring-primary/20'
-                                                                        : 'bg-gray-300'
-                                                                }`}
-                                                            />
-                                                            {i < trackingHistory.length - 1 && (
-                                                                <div className="w-0.5 h-8 bg-gray-200 mt-1" />
-                                                            )}
-                                                        </div>
-                                                        <div className="pb-3 flex-1">
-                                                            <p className="text-sm font-semibold text-gray-800">
-                                                                {ev.description || ev.carrierStatus}
-                                                            </p>
-                                                            {ev.location && (
-                                                                <p className="text-xs text-gray-500">
-                                                                    {ev.location}
-                                                                </p>
-                                                            )}
-                                                            <p className="text-xs text-gray-400">
-                                                                {formatDate(ev.occurredAt, lang)}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                ))
-                                            ) : (
-                                                <div className="p-3 text-xs text-gray-500 italic bg-gray-50 rounded">
-                                                    {lang === 'vi'
-                                                        ? `Vận đơn ${effectiveShipment.trackingNumber} đã tạo với ${effectiveShipment.carrier}. Đang chờ hãng scan mốc đầu tiên.`
-                                                        : `Shipment ${effectiveShipment.trackingNumber} created with ${effectiveShipment.carrier}. Awaiting first scan.`}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    /* Trạng thái trống (Empty State) khi đơn chưa tạo vận đơn */
-                                    <div className="py-6 px-4 bg-gray-50 rounded-xl text-center text-sm text-gray-500">
-                                        <Package size={26} className="mx-auto text-gray-400 mb-2" />
-                                        <p className="font-medium text-gray-700">
-                                            {lang === 'vi'
-                                                ? 'Đang chuẩn bị hàng'
-                                                : 'Preparing for shipment'}
-                                        </p>
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            {lang === 'vi'
-                                                ? 'Đơn hàng đang chờ người bán đóng gói và bàn giao cho đơn vị vận chuyển. Mã vận đơn sẽ xuất hiện tại đây ngay khi bàn giao.'
-                                                : 'The seller is preparing your package. Carrier details and tracking number will appear here once dispatched.'}
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        )
-                    })()}
-
-                    {/* Đánh giá đơn hàng (Sprint 3 - HA-S3-2) */}
-                    {(order.status === 'DELIVERED' || order.status === 'COMPLETED') &&
-                        !reviewed && (
-                            <div className="nexus-card p-5 border-primary/20 bg-primary-light/30">
-                                <h3 className="font-bold mb-2">{tr(lang, 'leaveReview')}</h3>
-                                <p className="text-sm text-gray-500 mb-3">
-                                    {lang === 'en'
-                                        ? 'How was your purchase? Share your experience with others.'
-                                        : 'Trải nghiệm mua sắm của bạn thế nào? Hãy chia sẻ đánh giá của bạn.'}
-                                </p>
-                                <Button
-                                    variant="primary"
-                                    size="sm"
-                                    onClick={() => {
-                                        if (user && user.id === order.sellerId) {
-                                            showToast({
-                                                type: 'error',
-                                                message:
-                                                    lang === 'vi'
-                                                        ? 'Bạn không thể tự đánh giá chính mình'
-                                                        : 'You cannot rate yourself',
-                                            })
-                                            return
-                                        }
-                                        setReviewOpen(true)
-                                    }}
-                                >
-                                    {tr(lang, 'leaveReview')}
-                                </Button>
-                            </div>
-                        )}
-                    {reviewed && (
-                        <div className="nexus-card p-4 bg-green-50/70 border border-green-200 rounded-xl space-y-1">
-                            <div className="flex items-center gap-2 text-green-800 font-semibold text-sm">
-                                <CheckCircle size={16} className="text-green-600" />
-                                <span>{tr(lang, 'alreadyReviewed')}</span>
-                            </div>
-                            {rating > 0 && (
-                                <div className="flex items-center gap-2 pt-1 text-xs text-gray-700">
-                                    <RatingStars value={rating} readOnly size={14} />
-                                    <span className="font-bold">({rating}/5)</span>
-                                    {comment && (
-                                        <span className="italic text-gray-600 truncate max-w-md">
-                                            - "{comment}"
-                                        </span>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {/* Sidebar thông tin người bán, địa chỉ, thanh toán */}
-                <div className="space-y-5">
-                    <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-3">{tr(lang, 'shippingAddress')}</h3>
-                        <p className="text-sm text-gray-700 leading-relaxed">
-                            {order.shippingAddress}
-                        </p>
-                    </div>
-
-                    <div className="nexus-card p-5">
-                        <h3 className="font-bold mb-3">{tr(lang, 'payment')}</h3>
-                        <p className="text-sm text-gray-700">{order.paymentMethod}</p>
-                        {/* Winner dùng orderId từ API, server quyết định quyền/hạn/kho và không lấy giá từ màn hình. */}
-                        {order.isAuctionOrder && order.status === 'PENDING_PAYMENT' && (
-                            <WinnerPaymentButton orderId={order.id} />
-                        )}
-                        <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
-                            <span className="text-xs text-gray-500">
-                                {lang === 'en' ? 'Payment status' : 'Tình trạng thanh toán'}
-                            </span>
-                            <StatusBadge
-                                status={paymentStatus}
-                                label={
-                                    {
-                                        // API đơn hàng chưa cung cấp escrow nên không suy đoán đã thu tiền.
-                                        unknown:
-                                            lang === 'en' ? 'Not available' : 'Chưa có thông tin',
-                                        held: lang === 'en' ? 'Held by Nexus' : 'Nexus đang giữ',
-                                        protection_period:
-                                            lang === 'en'
-                                                ? 'Buyer protection'
-                                                : 'Đang bảo vệ Buyer',
-                                        released: lang === 'en' ? 'Released' : 'Đã giải ngân',
-                                        on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ khiếu nại',
-                                        refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
-                                        partial_refund:
-                                            lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
-                                    }[paymentStatus] || paymentStatus
-                                }
-                            />
-                        </div>
-                        {order.refundStatus !== 'none' && (
-                            <div className="mt-2 flex items-center justify-between">
-                                <span className="text-xs text-gray-500">
-                                    {lang === 'en' ? 'Refund progress' : 'Tiến trình hoàn tiền'}
-                                </span>
-                                <StatusBadge
-                                    status={order.refundStatus}
-                                    label={
-                                        order.refundStatus === 'completed'
-                                            ? tr(lang, 'refundProcessed')
-                                            : tr(lang, 'refundInitiated')
-                                    }
-                                />
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="nexus-card p-5">
-                        <div className="flex items-center justify-between mb-2">
-                            <h3 className="font-bold">{tr(lang, 'seller')}</h3>
-                            {sellerReputation && (
-                                <TrustLevelBadge
-                                    level={sellerReputation.trustLevel}
-                                    score={sellerReputation.score}
-                                    size="sm"
-                                />
-                            )}
-                        </div>
-                        <p className="text-sm font-semibold text-gray-800">{order.sellerName}</p>
-                        <p className="text-xs text-gray-400 mt-1">ID: {order.sellerId}</p>
-                        {sellerReputation && (
-                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100 text-xs text-gray-600">
-                                <span className="font-bold text-amber-500">
-                                    ★ {sellerReputation.avgRating.toFixed(1)}
-                                </span>
-                                <span>
-                                    ({sellerReputation.totalRatings}{' '}
-                                    {lang === 'vi' ? 'đánh giá' : 'reviews'})
-                                </span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Modal xác nhận hủy đơn */}
-            <ConfirmModal
-                open={cancelOpen}
-                onClose={() => setCancelOpen(false)}
-                onConfirm={handleCancelOrder}
-                title={tr(lang, 'confirmCancel')}
-                message={
-                    lang === 'en'
-                        ? 'Are you sure you want to cancel this order? This action cannot be undone.'
-                        : 'Bạn có chắc chắn muốn hủy đơn hàng này? Thao tác này không thể hoàn tác.'
-                }
-                danger
-            />
-
-            {/* Modal đánh giá người bán (Sprint 3 - HA-S3-2) */}
-            <Modal
-                open={reviewOpen}
-                onClose={() => setReviewOpen(false)}
-                title={tr(lang, 'leaveReview')}
-                footer={
-                    <>
-                        <Button
-                            variant="outline"
-                            onClick={() => setReviewOpen(false)}
-                            disabled={reviewSubmitting}
-                        >
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button
-                            variant="primary"
-                            disabled={reviewSubmitting}
-                            onClick={async () => {
-                                if (user && user.id === order.sellerId) {
-                                    showToast({
-                                        type: 'error',
-                                        message:
-                                            lang === 'vi'
-                                                ? 'Bạn không thể tự đánh giá chính mình'
-                                                : 'You cannot rate yourself',
-                                    })
-                                    return
-                                }
-                                if (rating < 1 || rating > 5) {
-                                    showToast({
-                                        type: 'error',
-                                        message:
-                                            lang === 'vi'
-                                                ? 'Vui lòng chọn từ 1 đến 5 sao'
-                                                : 'Please select 1 to 5 stars',
-                                    })
-                                    return
-                                }
-                                setReviewSubmitting(true)
-                                try {
-                                    await reputationApi.createRating({
-                                        orderId: order.id,
-                                        rateeId: order.sellerId,
-                                        score: rating,
-                                        comment: comment.trim(),
-                                    })
-                                    setReviewed(true)
-                                    setReviewOpen(false)
-                                    showToast({
-                                        type: 'success',
-                                        message: tr(lang, 'reviewSubmitted'),
-                                    })
-                                } catch (err: any) {
-                                    showToast({
-                                        type: 'error',
-                                        message:
-                                            err?.message ||
-                                            (lang === 'vi'
-                                                ? 'Không thể gửi đánh giá'
-                                                : 'Failed to submit review'),
-                                    })
-                                } finally {
-                                    setReviewSubmitting(false)
-                                }
-                            }}
-                        >
-                            {reviewSubmitting
-                                ? lang === 'en'
-                                    ? 'Submitting...'
-                                    : 'Đang gửi...'
-                                : lang === 'en'
-                                  ? 'Submit Review'
-                                  : 'Gửi đánh giá'}
-                        </Button>
-                    </>
-                }
-            >
-                <div className="space-y-4">
-                    <div>
-                        <p className="text-sm font-semibold mb-2">
-                            {lang === 'en' ? 'Your Rating' : 'Đánh giá của bạn'}
-                        </p>
-                        <StarRating rating={rating} interactive onChange={setRating} size={28} />
-                    </div>
-                    <div>
-                        <label className="text-sm font-semibold mb-2 block">
-                            {lang === 'en' ? 'Comment' : 'Nhận xét'}
-                        </label>
-                        <textarea
-                            value={comment}
-                            onChange={(e) => setComment(e.target.value)}
-                            className="nexus-input min-h-[100px]"
-                            placeholder={
-                                lang === 'en'
-                                    ? 'Tell us about your experience...'
-                                    : 'Chia sẻ trải nghiệm của bạn...'
-                            }
-                        />
-                    </div>
-                </div>
-            </Modal>
-
-            {/* Modal gửi khiếu nại */}
-            <Modal
-                open={disputeOpen}
-                onClose={() => setDisputeOpen(false)}
-                title={
-                    lang === 'en' ? 'Return or dispute request' : 'Yêu cầu trả hàng hoặc khiếu nại'
-                }
-                size="sm"
-                footer={
-                    <>
-                        <Button variant="outline" onClick={() => setDisputeOpen(false)}>
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button
-                            variant="primary"
-                            disabled={!disputeReason.trim()}
-                            onClick={submitDispute}
-                        >
-                            {lang === 'en' ? 'Submit Request' : 'Gửi yêu cầu'}
-                        </Button>
-                    </>
-                }
-            >
-                <AlertBanner
-                    type="info"
-                    message={
-                        lang === 'en'
-                            ? 'The payment will remain on hold until Admin resolves the dispute.'
-                            : 'Khoản thanh toán sẽ tiếp tục được giữ cho đến khi Admin xử lý xong khiếu nại.'
-                    }
-                />
-                <div className="mt-4">
-                    <Textarea
-                        label={tr(lang, 'reason')}
-                        value={disputeReason}
-                        onChange={(e) => setDisputeReason(e.target.value)}
-                        rows={4}
-                        placeholder={
-                            lang === 'en'
-                                ? 'Describe the issue with the item...'
-                                : 'Mô tả vấn đề với sản phẩm...'
-                        }
-                    />
-                </div>
-            </Modal>
-        </BuyerLayout>
-    )
+    return <OrderDetailView />
 }
 
-// ─── Shopee-Style Public Seller Shop Page ──────────────────────────────────────
+/**
+ * Chức năng: Màn hình Gian hàng công khai của Người bán (SellerShopPage) - Chuẩn Figma & Image 4.
+ * Đầu vào: sellerId, sellerName từ URL query/params.
+ * Kết quả: Render SellerShopView chuẩn Image 4 với banner tông trầm sang trọng, lưới 2x3 metrics Shopee,
+ *          voucher shop, 3 sản phẩm chủ lực, live auctions và đánh giá.
+ */
 export function SellerShopPage() {
-    const { lang, pageParams } = useApp()
-    const sellerId =
-        typeof pageParams?.id === 'string' && pageParams.id ? pageParams.id : 'seller-1'
-    const sellerName =
-        typeof pageParams?.sellerName === 'string' && pageParams.sellerName
-            ? pageParams.sellerName
-            : 'TechZone Store'
-    const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions' | 'reviews'>('all')
-    const [sellerReputation, setSellerReputation] = useState<ReputationSummary | null>(null)
-    const [sellerRatings, setSellerRatings] = useState<RatingResponse[]>([])
-    const [ratingsLoading, setRatingsLoading] = useState(false)
-    const [ratingsError, setRatingsError] = useState<string | null>(null)
-
-    // Tải danh sách sản phẩm của người bán từ Product Service qua useLoad
-    const { data: shopProductsEnvelope } = useLoad<Envelope<ApiProduct[]>>(
-        sellerId ? `/products/seller/${encodeURIComponent(sellerId)}` : '',
-    )
-    const [shopStockBySku, setShopStockBySku] = useState<Record<string, number>>({})
-    const [shopStockLoading, setShopStockLoading] = useState(true)
-    const [shopStockError, setShopStockError] = useState(false)
-    // Chỉ xác nhận sản phẩm hiển thị sau khi Fulfillment trả tồn kho cho các SKU đang hoạt động.
-    useEffect(() => {
-        if (!shopProductsEnvelope) return
-        let active = true
-        const skuIds = (shopProductsEnvelope.data || []).flatMap((product) =>
-            (product.skus || []).filter((sku) => sku.status === 'ACTIVE').map((sku) => sku.id),
-        )
-        setShopStockLoading(true)
-        setShopStockError(false)
-        setShopStockBySku({})
-        if (skuIds.length === 0) {
-            setShopStockLoading(false)
-            return () => {
-                active = false
-            }
-        }
-        getBatchStock({ skuIds })
-            .then((stocks) => {
-                if (active) {
-                    setShopStockBySku(
-                        Object.fromEntries(
-                            stocks.map((stock) => [stock.skuId, stock.availableQty]),
-                        ),
-                    )
-                }
-            })
-            .catch(() => {
-                if (active) setShopStockError(true)
-            })
-            .finally(() => {
-                if (active) setShopStockLoading(false)
-            })
-        return () => {
-            active = false
-        }
-    }, [shopProductsEnvelope])
-    const availableShopProductIds = new Set(
-        filterInStockProducts(shopProductsEnvelope?.data || [], shopStockBySku).map(
-            (product) => product.id,
-        ),
-    )
-    const loadedProducts: Product[] = (shopProductsEnvelope?.data || []).map((product) => {
-        const sku =
-            product.skus?.find(
-                (item) => item.status === 'ACTIVE' && (shopStockBySku[item.id] ?? 0) > 0,
-            ) || product.skus?.[0]
-        return {
-            id: product.id,
-            name: product.name,
-            nameVi: product.name,
-            description: product.description || '',
-            descriptionVi: product.description || '',
-            price: sku?.price ?? 0,
-            originalPrice: sku?.originalPrice,
-            images: product.images?.map((image) => image.url) || [],
-            category: '',
-            categoryId: product.categoryId,
-            location: '',
-            sku: formatSkuDisplay(sku?.id, sku?.skuCode),
-            skuId: sku?.id,
-            stock: shopStockBySku[sku?.id || ''] ?? 0,
-            status: (product.status || 'draft').toLowerCase() as Product['status'],
-            sellerId: product.sellerId || sellerId,
-            sellerName,
-            sellerTrust: 'bronze' as const,
-            sellerRating: 0,
-            rating: 0,
-            reviewCount: 0,
-            weight: 0,
-            enableAuction: product.auctionEnabled || false,
-            createdAt: product.createdAt || '',
-        }
-    })
-    const displayProducts =
-        shopStockLoading || shopStockError
-            ? []
-            : loadedProducts.filter((product) => availableShopProductIds.has(product.id))
-
-    const [sellerAuctions, setSellerAuctions] = useState<Auction[]>([])
-    // Tải danh sách đấu giá từ Auction Service cho người bán
-    useEffect(() => {
-        let active = true
-        if (!sellerId) return
-        auctionsApi
-            .getAuctions({ sellerId, status: 'all', limit: 100 })
-            .then((result) => {
-                if (active) {
-                    setSellerAuctions(result.items || [])
-                }
-            })
-            .catch(() => {
-                if (active) {
-                    setSellerAuctions([])
-                }
-            })
-        return () => {
-            active = false
-        }
-    }, [sellerId])
-
-    useEffect(() => {
-        let active = true
-        reputationApi
-            .getUserReputation(sellerId)
-            .then((rep) => {
-                if (active) setSellerReputation(rep)
-            })
-            .catch(() => {})
-
-        setRatingsLoading(true)
-        reputationApi
-            .getRatingsForUser(sellerId, 0, 50)
-            .then((res) => {
-                if (active) setSellerRatings(res.content)
-            })
-            .catch((err) => {
-                if (active) setRatingsError(err?.message || null)
-            })
-            .finally(() => {
-                if (active) setRatingsLoading(false)
-            })
-
-        return () => {
-            active = false
-        }
-    }, [sellerId])
-
-    return (
-        <BuyerLayout>
-            <div className="max-w-[1440px] mx-auto space-y-6">
-                <Breadcrumb
-                    items={[
-                        { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
-                        { label: sellerName },
-                    ]}
-                />
-
-                {/* Shopee-style Store Header Banner */}
-                <div className="nexus-card overflow-hidden border border-border/80 bg-white">
-                    <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] p-6 gap-6 items-center bg-gradient-to-r from-gray-900 via-slate-800 to-indigo-950 text-white rounded-xl">
-                        {/* Left Box: Avatar & Action Buttons */}
-                        <div className="flex items-center gap-4 bg-white/10 backdrop-blur-md p-4 rounded-xl border border-white/15">
-                            <div className="relative">
-                                <div className="w-16 h-16 rounded-full bg-white text-gray-900 font-black text-2xl flex items-center justify-center shadow-lg border-2 border-white">
-                                    {sellerName[0]}
-                                </div>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                    <h2 className="font-bold text-base text-white truncate">
-                                        {sellerName}
-                                    </h2>
-                                    {sellerReputation && (
-                                        <TrustLevelBadge
-                                            level={sellerReputation.trustLevel}
-                                            score={sellerReputation.score}
-                                            size="sm"
-                                        />
-                                    )}
-                                </div>
-                                <p className="text-xs text-gray-300 mt-0.5">—</p>
-                                <div className="flex items-center gap-2 mt-2.5">
-                                    <button
-                                        disabled
-                                        className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${'bg-white/20 text-white border border-white/40'}`}
-                                    >
-                                        {lang === 'vi' ? 'Theo dõi' : 'Follow'}
-                                    </button>
-                                    <button
-                                        disabled
-                                        className="px-3 py-1 rounded-md text-xs font-semibold bg-white/20 hover:bg-white/30 text-white border border-white/30 transition-all"
-                                    >
-                                        💬 {lang === 'vi' ? 'Chat' : 'Chat'}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Right Box: Shopee Metrics Grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3.5 text-xs">
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-300">
-                                    📦 {lang === 'vi' ? 'Sản Phẩm:' : 'Products:'}
-                                </span>
-                                <span className="font-bold text-yellow-400 text-sm">
-                                    {displayProducts.length}
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-300">
-                                    👥 {lang === 'vi' ? 'Người Theo Dõi:' : 'Followers:'}
-                                </span>
-                                <span className="font-bold text-yellow-400 text-sm">—</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-300">
-                                    ★ {lang === 'vi' ? 'Đánh Giá:' : 'Rating:'}
-                                </span>
-                                <span className="font-bold text-yellow-400 text-sm">
-                                    {sellerReputation
-                                        ? `${sellerReputation.avgRating.toFixed(1)} (${sellerReputation.totalRatings} ${lang === 'vi' ? 'Đánh Giá' : 'Reviews'})`
-                                        : '—'}
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-300">
-                                    ⚡ {lang === 'vi' ? 'Tỉ Lệ Phản Hồi:' : 'Response Rate:'}
-                                </span>
-                                <span className="font-bold text-green-400 text-sm">—</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-300">
-                                    🕒 {lang === 'vi' ? 'Tham Gia:' : 'Joined:'}
-                                </span>
-                                <span className="font-bold text-white text-sm">—</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-300">
-                                    📍 {lang === 'vi' ? 'Kho Hàng:' : 'Location:'}
-                                </span>
-                                <span className="font-bold text-white text-sm">—</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Tab Navigation for Shop Items */}
-                <div className="flex items-center justify-between border-b border-border pb-3 flex-wrap gap-3">
-                    <div className="flex items-center gap-2">
-                        {[
-                            {
-                                id: 'all' as const,
-                                label: lang === 'vi' ? 'TẤT CẢ SẢN PHẨM' : 'ALL PRODUCTS',
-                                count: displayProducts.length,
-                            },
-                            {
-                                id: 'popular' as const,
-                                label: lang === 'vi' ? 'BÁN CHẠY NHẤT' : 'BEST SELLERS',
-                                count: Math.min(4, displayProducts.length),
-                            },
-                            {
-                                id: 'auctions' as const,
-                                label: lang === 'vi' ? 'ĐANG ĐẤU GIÁ' : 'LIVE AUCTIONS',
-                                count: sellerAuctions.length,
-                            },
-                            {
-                                id: 'reviews' as const,
-                                label: lang === 'vi' ? 'ĐÁNH GIÁ SHOP' : 'SHOP REVIEWS',
-                                count:
-                                    sellerRatings.length || (sellerReputation?.totalRatings ?? 0),
-                            },
-                        ].map((tab) => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setShopTab(tab.id)}
-                                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                                    shopTab === tab.id
-                                        ? 'bg-primary text-white shadow-sm'
-                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                                }`}
-                            >
-                                {tab.label} ({tab.count})
-                            </button>
-                        ))}
-                    </div>
-
-                    <p className="text-xs text-gray-400">
-                        {lang === 'vi'
-                            ? `Đang hiển thị ${displayProducts.length} mặt hàng`
-                            : `Showing ${displayProducts.length} items`}
-                    </p>
-                </div>
-
-                {/* Content Area */}
-                {shopTab === 'reviews' ? (
-                    <div className="bg-white p-6 rounded-xl border border-border">
-                        <h3 className="font-bold text-base mb-4 text-gray-900">
-                            {lang === 'vi' ? 'Đánh giá từ khách hàng' : 'Customer Reviews'}
-                        </h3>
-                        <RatingsList
-                            ratings={sellerRatings}
-                            loading={ratingsLoading}
-                            error={ratingsError}
-                            onRetry={() => {
-                                setRatingsLoading(true)
-                                reputationApi
-                                    .getRatingsForUser(sellerId, 0, 50)
-                                    .then((res) => setSellerRatings(res.content))
-                                    .catch((err) => setRatingsError(err?.message || null))
-                                    .finally(() => setRatingsLoading(false))
-                            }}
-                        />
-                    </div>
-                ) : shopTab === 'auctions' ? (
-                    sellerAuctions.length > 0 ? (
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-                            {sellerAuctions.map((auc) => (
-                                <AuctionCard key={auc.id} auction={auc} />
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="py-16 text-center bg-white rounded-xl border border-border/60">
-                            <p className="text-gray-500 text-sm">
-                                {lang === 'vi'
-                                    ? 'Shop hiện chưa có phiên đấu giá nào đang diễn ra.'
-                                    : 'No live auctions from this shop at the moment.'}
-                            </p>
-                        </div>
-                    )
-                ) : shopStockLoading ? (
-                    <p role="status" className="py-8 text-center text-gray-500">
-                        {lang === 'vi' ? 'Đang kiểm tra tồn kho…' : 'Checking stock…'}
-                    </p>
-                ) : shopStockError ? (
-                    <p role="alert" className="py-8 text-center text-red-600">
-                        {lang === 'vi'
-                            ? 'Không thể kiểm tra tồn kho sản phẩm.'
-                            : 'Product stock could not be checked.'}
-                    </p>
-                ) : displayProducts.length === 0 ? (
-                    <p className="py-8 text-center text-gray-500">
-                        {lang === 'vi'
-                            ? 'Shop hiện không có sản phẩm còn hàng.'
-                            : 'This shop has no products in stock.'}
-                    </p>
-                ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-5">
-                        {(shopTab === 'popular'
-                            ? displayProducts.slice(0, 4)
-                            : displayProducts
-                        ).map((p) => (
-                            <ProductCard key={p.id} product={p} />
-                        ))}
-                    </div>
-                )}
-            </div>
-        </BuyerLayout>
-    )
+    return <SellerShopView />
 }
 
-// ─── My Reputation & Ratings Page (Sprint 3 - HA-S3-2) ──────────────────────────
+/**
+ * Chức năng: Màn hình Hồ sơ uy tín & Đánh giá cá nhân của Buyer (MyReputationPage).
+ * Đầu vào: User context hiện tại, gọi reputationApi lấy điểm, cấp độ, điều kiện đấu giá và ratings.
+ * Kết quả: Hiển thị TrustLevelBadge, điểm uy tín, điều kiện tham gia đấu giá, thống kê giao dịch và lịch sử đánh giá từ cộng đồng.
+ * Luồng xử lý:
+ *   1. Kiểm tra session đăng nhập, nếu chưa đăng nhập yêu cầu đăng nhập.
+ *   2. Gọi đồng thời getMyReputation, checkEligibility('BID') và getRatingsForUser.
+ *   3. Hiển thị loading/error state và các card thống kê tương ứng.
+ */
 export function MyReputationPage() {
-    const { lang, user, navigate } = useApp()
+    const { lang, user, navigate, pageParams, page } = useApp()
+    const isPublic =
+        page === 'public-reputation' ||
+        Boolean(pageParams?.id || pageParams?.userId || pageParams?.sellerId)
+    const targetUserId = String(
+        pageParams?.id ||
+            pageParams?.userId ||
+            pageParams?.sellerId ||
+            user?.id ||
+            'b1fb6fd5-936c-439e-994c-f0c5c529b406',
+    )
+    const targetName = resolveSellerName(
+        targetUserId,
+        typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null,
+    )
     const [reputation, setReputation] = useState<ReputationSummary | null>(null)
     const [eligibility, setEligibility] = useState<ReputationEligibility | null>(null)
     const [ratings, setRatings] = useState<RatingResponse[]>([])
@@ -5279,18 +3748,29 @@ export function MyReputationPage() {
     const [error, setError] = useState<string | null>(null)
 
     const loadData = useCallback(async () => {
-        if (!user) return
         setLoading(true)
         setError(null)
         try {
-            const [rep, elig, rates] = await Promise.all([
-                reputationApi.getMyReputation(),
-                reputationApi.checkEligibility(user.id, 'BID'),
-                reputationApi.getRatingsForUser(user.id, 0, 50),
-            ])
-            setReputation(rep)
-            setEligibility(elig)
-            setRatings(rates.content)
+            if (isPublic) {
+                const [rep, elig, rates] = await Promise.all([
+                    reputationApi.getUserReputation(targetUserId),
+                    reputationApi.checkEligibility(targetUserId, 'BID'),
+                    reputationApi.getRatingsForUser(targetUserId, 0, 50),
+                ])
+                setReputation(rep)
+                setEligibility(elig)
+                setRatings(rates?.content || [])
+            } else {
+                if (!user) return
+                const [rep, elig, rates] = await Promise.all([
+                    reputationApi.getMyReputation(),
+                    reputationApi.checkEligibility(user.id, 'BID'),
+                    reputationApi.getRatingsForUser(user.id, 0, 50),
+                ])
+                setReputation(rep)
+                setEligibility(elig)
+                setRatings(rates?.content || [])
+            }
         } catch (err: any) {
             setError(
                 err?.message ||
@@ -5301,13 +3781,13 @@ export function MyReputationPage() {
         } finally {
             setLoading(false)
         }
-    }, [user, lang])
+    }, [user, targetUserId, isPublic, lang])
 
     useEffect(() => {
         loadData()
     }, [loadData])
 
-    if (!user) {
+    if (!isPublic && !user) {
         return (
             <BuyerLayout>
                 <div className="py-20 text-center">
@@ -5328,19 +3808,19 @@ export function MyReputationPage() {
         <BuyerLayout>
             <div className="max-w-4xl mx-auto space-y-6">
                 <Breadcrumb
-                    items={[
-                        { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
-                        {
-                            label:
-                                lang === 'vi' ? 'Hồ sơ uy tín & Đánh giá' : 'Reputation & Ratings',
-                        },
-                    ]}
+                    items={[{ label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' }]}
                 />
 
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">
-                            {lang === 'vi' ? 'Điểm uy tín & Đánh giá' : 'Reputation & Ratings'}
+                            {isPublic
+                                ? lang === 'vi'
+                                    ? `Hồ sơ uy tín: ${targetName}`
+                                    : `Reputation Profile: ${targetName}`
+                                : lang === 'vi'
+                                  ? 'Điểm uy tín & Đánh giá của tôi'
+                                  : 'My Reputation & Ratings'}
                         </h1>
                         <p className="text-sm text-gray-500 mt-1">
                             {lang === 'vi'
@@ -5499,5 +3979,4 @@ export function MyReputationPage() {
     )
 }
 
-/** Hộp thư đơn/thanh toán dùng API thật, thay cho thông báo và tùy chọn email/push mock. */
 export { NotificationInbox as NotificationPage } from './NotificationInbox'

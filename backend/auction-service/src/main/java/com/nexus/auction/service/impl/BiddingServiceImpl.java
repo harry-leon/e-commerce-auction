@@ -10,6 +10,7 @@ import com.nexus.auction.entity.Auction;
 import com.nexus.auction.entity.Bid;
 import com.nexus.auction.enums.AuctionStatus;
 import com.nexus.auction.event.AuctionExtendedEvent;
+import com.nexus.auction.event.AuctionOutbidEvent;
 import com.nexus.auction.event.BidPlacedEvent;
 import com.nexus.auction.repository.AuctionRepository;
 import com.nexus.auction.repository.AuctionSettlementRepository;
@@ -216,7 +217,8 @@ public class BiddingServiceImpl implements BiddingService {
             }
         }
 
-        // 7. Cập nhật thông tin giá cao nhất trên Auction
+        // 7. Cập nhật thông tin giá cao nhất trên Auction (lưu previousHighestBidderId để phát hiện outbid)
+        UUID previousHighestBidderId = auction.getHighestBidderId();
         auction.setCurrentPrice(request.getAmount());
         auction.setHighestBidderId(bidderId);
 
@@ -272,6 +274,10 @@ public class BiddingServiceImpl implements BiddingService {
                 "Phiên đấu giá được gia hạn thêm do có lượt trả giá giờ chót!"
         ) : null;
 
+        final AuctionOutbidEvent outbidEvent = (previousHighestBidderId != null && !previousHighestBidderId.equals(bidderId))
+                ? new AuctionOutbidEvent(auctionId, null, previousHighestBidderId, bid.getAmount(), now)
+                : null;
+
         if (TransactionSynchronizationManager.isSynchronizationActive()
                 && TransactionSynchronizationManager.isActualTransactionActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -283,12 +289,19 @@ public class BiddingServiceImpl implements BiddingService {
                         log.info("Phát sự kiện AuctionExtendedEvent cho phiên [{}]", auctionId);
                         eventPublisher.publishEvent(extendedEvent);
                     }
+                    if (outbidEvent != null) {
+                        log.info("Phát sự kiện AuctionOutbidEvent cho phiên [{}] tới người dùng [{}]", auctionId, outbidEvent.outbidUserId());
+                        eventPublisher.publishEvent(outbidEvent);
+                    }
                 }
             });
         } else {
             eventPublisher.publishEvent(event);
             if (extendedEvent != null) {
                 eventPublisher.publishEvent(extendedEvent);
+            }
+            if (outbidEvent != null) {
+                eventPublisher.publishEvent(outbidEvent);
             }
         }
 

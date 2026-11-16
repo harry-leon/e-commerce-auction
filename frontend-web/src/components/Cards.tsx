@@ -2,7 +2,15 @@ import { useState } from 'react'
 import { addGuestCartItem } from '../features/buyer/guestCart'
 import { useApp } from '../context'
 import { tr, formatCurrency } from '../i18n'
-import { CountdownTimer, StarRating, StatusBadge, Gavel, ShoppingCart, CheckCircle, Clock } from './UI'
+import {
+    CountdownTimer,
+    StarRating,
+    StatusBadge,
+    Gavel,
+    ShoppingCart,
+    CheckCircle,
+    Clock,
+} from './UI'
 import type { Product, Auction } from '../types'
 import { formatSkuDisplay, readSession } from '../api/client'
 import { addItemToCart } from '../api/cart'
@@ -112,13 +120,17 @@ export function ProductCard({ product }: { product: Product }) {
             </div>
             <div className="p-4 flex-1 flex flex-col justify-between">
                 <div>
-                    <p className="text-xs font-medium text-gray-400 mb-1 tracking-wide uppercase">{product.category}</p>
+                    <p className="text-xs font-medium text-gray-400 mb-1 tracking-wide uppercase">
+                        {product.category}
+                    </p>
                     <h3 className="font-semibold text-sm text-gray-900 leading-snug line-clamp-2 mb-2 group-hover:text-primary transition-colors duration-200">
                         {lang === 'vi' ? product.nameVi : product.name}
                     </h3>
                     <div className="flex items-center gap-1.5 mb-3">
                         <StarRating rating={product.rating} size={12} />
-                        <span className="text-xs text-gray-500 font-medium">({product.reviewCount})</span>
+                        <span className="text-xs text-gray-500 font-medium">
+                            ({product.reviewCount})
+                        </span>
                     </div>
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-gray-50">
@@ -146,7 +158,10 @@ export function ProductCard({ product }: { product: Product }) {
                             {addedSuccess ? (
                                 <CheckCircle size={15} />
                             ) : isAdding ? (
-                                <div className="spinner-border spinner-border-sm text-primary" style={{ width: 14, height: 14 }} />
+                                <div
+                                    className="spinner-border spinner-border-sm text-primary"
+                                    style={{ width: 14, height: 14 }}
+                                />
                             ) : (
                                 <ShoppingCart size={15} />
                             )}
@@ -221,14 +236,18 @@ export function AuctionCard({ auction }: { auction: Auction }) {
                     </h3>
                     <div className="flex items-center justify-between mb-3 bg-gray-50/80 p-2.5 rounded-xl border border-gray-100/60">
                         <div>
-                            <p className="text-xs text-gray-500 font-medium">{tr(lang, 'currentBid')}</p>
+                            <p className="text-xs text-gray-500 font-medium">
+                                {tr(lang, 'currentBid')}
+                            </p>
                             <p className="text-xl font-bold text-auction">
                                 {formatCurrency(auction.currentBid, lang)}
                             </p>
                         </div>
                         {isActive && (
                             <div className="text-right">
-                                <p className="text-xs text-gray-500 font-medium mb-1">{tr(lang, 'timeLeft')}</p>
+                                <p className="text-xs text-gray-500 font-medium mb-1">
+                                    {tr(lang, 'timeLeft')}
+                                </p>
                                 <CountdownTimer endTime={auction.endTime} />
                             </div>
                         )}
@@ -236,7 +255,8 @@ export function AuctionCard({ auction }: { auction: Auction }) {
                 </div>
                 <div className="flex items-center justify-between text-xs text-gray-400 pt-1">
                     <span className="truncate max-w-[130px]">
-                        {lang === 'en' ? 'By' : 'Bởi'} <strong className="text-gray-600 font-medium">{auction.sellerName}</strong>
+                        {lang === 'en' ? 'By' : 'Bởi'}{' '}
+                        <strong className="text-gray-600 font-medium">{auction.sellerName}</strong>
                     </span>
                     <button
                         className="nexus-btn nexus-btn-auction nexus-btn-sm rounded-xl shadow-sm hover:shadow-md transition-all duration-200 active:scale-95"

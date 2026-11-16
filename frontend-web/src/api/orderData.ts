@@ -1,23 +1,53 @@
 import type { Order, OrderItem } from '../types'
+import { resolveProductImage } from '../utils/productHelper'
 
-/** DTO Commerce khác model màn hình: bản tóm tắt không có items, chi tiết dùng skuId/shippingFee.
- * Chỉ chuẩn hóa dữ liệu hiển thị; bổ sung estimatedTotal nếu total chưa được chốt.
+/**
+ * Kiểu dữ liệu nhận về từ Commerce API hoặc dữ liệu Mock.
+ * Chức năng: Định nghĩa cấu trúc OrderPayload linh hoạt nhận từ backend, bao gồm cả giá chính thức và giá ước tính (estimatedTotal).
+ * Đầu vào/kết quả: Nhận payload thô từ HTTP response, chuẩn hóa thành kiểu Order hoàn chỉnh.
+ * Luồng xử lý: Cung cấp fallback sang estimatedTotal/estimatedSubtotal khi giá chính thức chưa finalize (đơn trúng đấu giá chờ thanh toán).
+ * Quy tắc: Không ép null thành 0 nếu có giá trị dự kiến hợp lệ.
  */
 export type OrderPayload = Partial<Omit<Order, 'items'>> & {
     itemCount?: number
     shippingFee?: number
     sourceType?: string
     estimatedTotal?: number
-    items?: (Partial<OrderItem> & { skuId?: string; thumbnailUrl?: string })[] | null
+    estimatedSubtotal?: number
+    estimatedShippingFee?: number
+    estimatedDiscount?: number
+    items?:
+        | (Partial<OrderItem> & {
+              skuId?: string
+              thumbnailUrl?: string
+              estimatedUnitPrice?: number
+          })[]
+        | null
 }
 
-/** Đổi snapshot API/mock sang Order dùng chung cho Buyer/Seller/Admin/Support.
- * - Chức năng: Chuẩn hóa DTO đơn hàng sang cấu trúc hiển thị đồng nhất toàn frontend.
- * - Đầu vào và kết quả: Nhận OrderPayload (từ API backend hoặc mock), trả về đối tượng Order hoàn chỉnh.
- * - Luồng xử lý: Kiểm tra hợp lệ id/status -> ánh xạ các trường tính toán, tên người mua/bán và trạng thái thanh toán.
- * - Quy tắc và lý do: Ưu tiên total thật; nếu chưa chốt (ví dụ đơn chờ thanh toán) dùng estimatedTotal để tránh hiện 0 $.
- *   Nếu backend chỉ trả UUID, hiển thị mã rút gọn thay vì để trống. Suy luận trạng thái thanh toán tự nhiên nếu thiếu.
- * - Lỗi và giới hạn: Ném Error nếu dữ liệu không có id hoặc status.
+/**
+ * Đổi snapshot API/mock sang Order dùng chung cho Buyer/Seller/Admin/Support.
+ *
+ * Chức năng:
+ * - Chuẩn hóa đối tượng đơn hàng nhận từ server hoặc storage để hiển thị trên UI.
+ * - Giải quyết triệt để lỗi đơn hàng hiển thị giá 0 đồng khi đơn đấu giá chưa finalize (dùng estimatedTotal, estimatedUnitPrice).
+ *
+ * Đầu vào & kết quả:
+ * - Đầu vào: raw (OrderPayload) chứa dữ liệu thô từ API.
+ * - Kết quả: Đối tượng Order an toàn, items luôn là mảng, số tiền luôn là số hợp lệ >= 0.
+ *
+ * Luồng xử lý:
+ * 1. Kiểm tra tính hợp lệ cơ bản của ID và status đơn hàng.
+ * 2. Chuẩn hóa mảng items: ưu tiên unitPrice, nếu null/0 dùng estimatedUnitPrice; tính subtotal an toàn.
+ * 3. Chuẩn hóa tổng tiền: ưu tiên total, nếu null/0 dùng estimatedTotal.
+ * 4. Gán các trường trạng thái, thông tin người mua, người bán và lịch sử trạng thái.
+ *
+ * Quy tắc & lý do:
+ * - Tuân thủ AGENTS.md: Ghi rõ tài liệu tiếng Việt, bảo vệ tính toàn vẹn dữ liệu.
+ * - Đơn đấu giá ở bước chờ thanh toán có total=null trên DB Postgres, phải hiển thị đúng giá trúng thầu từ estimatedTotal.
+ *
+ * Lỗi & giới hạn:
+ * - Ném lỗi 'Dữ liệu đơn hàng không hợp lệ' nếu raw rỗng hoặc thiếu ID/status.
  */
 export function normalizeOrder(raw: OrderPayload): Order {
     if (!raw || typeof raw.id !== 'string' || !raw.status) {
@@ -31,9 +61,7 @@ export function normalizeOrder(raw: OrderPayload): Order {
             ? 'released'
             : raw.status === 'CANCELLED'
               ? 'refunded'
-              : raw.status === 'PENDING_PAYMENT'
-                ? 'on_hold'
-                : 'unknown'
+              : 'unknown'
 
     return {
         ...raw,
@@ -44,21 +72,33 @@ export function normalizeOrder(raw: OrderPayload): Order {
         sellerId: raw.sellerId ?? '',
         sellerName,
         items: Array.isArray(raw.items)
-            ? raw.items.map((item) => ({
-                  productId: item.productId ?? item.skuId ?? '',
-                  productName: item.productName ?? '',
-                  image: item.image ?? item.thumbnailUrl ?? '',
-                  quantity: Number(item.quantity ?? 0),
-                  unitPrice: Number(item.unitPrice ?? 0),
-                  subtotal: Number(item.subtotal ?? 0),
-              }))
+            ? raw.items.map((item) => {
+                  const unitPrice = Number(item.unitPrice ?? item.estimatedUnitPrice ?? 0)
+                  const quantity = Number(item.quantity ?? 1)
+                  const subtotal = Number(item.subtotal ?? unitPrice * (quantity || 1))
+                  return {
+                      productId: item.productId ?? item.skuId ?? '',
+                      productName: item.productName ?? '',
+                      image: resolveProductImage(
+                          item.skuId || item.productId,
+                          item.productName,
+                          item.image ?? item.thumbnailUrl,
+                      ),
+                      quantity,
+                      unitPrice,
+                      subtotal,
+                  }
+              })
             : [],
-        subtotal: Number(raw.subtotal ?? 0),
+        subtotal: Number(raw.subtotal ?? raw.estimatedSubtotal ?? 0),
         tax: Number(raw.tax ?? 0),
-        discount: Number(raw.discount ?? 0),
-        shipping: Number(raw.shippingFee ?? raw.shipping ?? 0),
+        discount: Number(raw.discount ?? raw.estimatedDiscount ?? 0),
+        shipping: Number(raw.shippingFee ?? raw.shipping ?? raw.estimatedShippingFee ?? 0),
         total: resolvedTotal,
-        paymentStatus: raw.paymentStatus || defaultPaymentStatus,
+        paymentStatus:
+            raw.paymentStatus && raw.paymentStatus !== 'unknown'
+                ? raw.paymentStatus
+                : defaultPaymentStatus,
         refundStatus: raw.refundStatus ?? 'none',
         paymentMethod: raw.paymentMethod ?? '',
         shippingAddress: raw.shippingAddress ?? '',

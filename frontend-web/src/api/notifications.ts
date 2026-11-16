@@ -1,6 +1,6 @@
 /**
  * Client API Quản lý thông báo và cấu hình nhận thông báo (Sprint 3 - HA-S3-2).
- * 
+ *
  * 1. Chức năng:
  *    - Lấy danh sách thông báo IN_APP theo trang (GET /api/v1/notifications).
  *    - Đánh dấu đã đọc một thông báo hoặc tất cả thông báo (POST /api/v1/notifications/{id}/read, read-all).
@@ -18,7 +18,11 @@
 
 import { api, type ApiResponse } from './client'
 
-/** Hộp thư từ Notification service; không dùng mock/localStorage khi lỗi API hoặc hết phiên. */
+/**
+ * Hộp thư từ Notification service; không dùng mock/localStorage khi lỗi API hoặc hết phiên.
+ * Bổ sung auctionId, paymentLink, paymentDeadline phục vụ điều hướng thanh toán đấu giá (AUCTION_WON)
+ * và xem lại phiên đấu giá khi bị vượt giá (AUCTION_OUTBID).
+ */
 export interface NotificationItem {
     id: string
     orderId: string | null
@@ -27,6 +31,9 @@ export interface NotificationItem {
     content: string
     read: boolean
     createdAt: string
+    auctionId?: string | null
+    paymentLink?: string | null
+    paymentDeadline?: string | null
 }
 
 export interface Inbox {

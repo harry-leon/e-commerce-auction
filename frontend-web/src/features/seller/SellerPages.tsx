@@ -45,16 +45,8 @@ import type { Auction, Order, OrderStatus, ProductStatus } from '../../types'
 import { getEffectivePaymentStatus } from '../../payment'
 import { ordersApi } from '../../api/orders'
 import { auctionsApi, cacheAuctionProduct } from '../../api/auctions'
-import {
-    reputationApi,
-    type ReputationSummary,
-    type RatingResponse,
-} from '../../api/reputation'
-import {
-    TrustLevelBadge,
-    RatingModal,
-    RatingsList,
-} from '../../components/ReputationRating'
+import { reputationApi, type ReputationSummary, type RatingResponse } from '../../api/reputation'
+import { TrustLevelBadge, RatingModal, RatingsList } from '../../components/ReputationRating'
 import {
     shippingApi,
     type ShipmentResponse,
@@ -140,7 +132,7 @@ const VIETNAMESE_BANKS = [
 
 // Định dạng số tiền VND an toàn, phòng ngừa amount là null/undefined khiến trang bị sập
 const formatVnd = (amount: number | null | undefined) =>
-    `${(typeof amount === 'number' && Number.isFinite(amount) ? amount : (Number(amount) || 0)).toLocaleString('vi-VN')} ₫`
+    `${(typeof amount === 'number' && Number.isFinite(amount) ? amount : Number(amount) || 0).toLocaleString('vi-VN')} ₫`
 
 /**
  * Chức năng: Component hiển thị trạng thái loading spinner đồng bộ với Admin portal.
@@ -149,7 +141,10 @@ const formatVnd = (amount: number | null | undefined) =>
  */
 function SellerLoading({ label }: { label: string }) {
     return (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-gray-500" role="status">
+        <div
+            className="flex flex-col items-center justify-center gap-3 py-16 text-gray-500"
+            role="status"
+        >
             <BootstrapSpinner size="lg" />
             <span className="text-sm font-medium">{label}</span>
         </div>
@@ -171,7 +166,12 @@ export function SellerDashboardPage() {
             listSellerSkus({ page: 0, size: 100 }),
             api<any>('/reputations/me'),
             user?.id
-                ? auctionsApi.getAuctions({ sellerId: user.id, status: 'active', includePending: true, limit: 100 })
+                ? auctionsApi.getAuctions({
+                      sellerId: user.id,
+                      status: 'active',
+                      includePending: true,
+                      limit: 100,
+                  })
                 : Promise.resolve(null),
         ]).then(([ordersResult, stockResult, reputationResult, auctionsResult]) => {
             if (!active) return
@@ -183,13 +183,17 @@ export function SellerDashboardPage() {
             }
             if (stockResult.status === 'fulfilled') setDashboardStocks(stockResult.value.items)
             if (reputationResult.status === 'fulfilled') {
-                const score = reputationResult.value?.data?.score ?? reputationResult.value?.data?.reputationScore
+                const score =
+                    reputationResult.value?.data?.score ??
+                    reputationResult.value?.data?.reputationScore
                 if (typeof score === 'number') setReputationScore(score)
             }
             if (auctionsResult.status === 'fulfilled' && auctionsResult.value)
                 setDashboardAuctionCount(auctionsResult.value.total)
         })
-        return () => { active = false }
+        return () => {
+            active = false
+        }
     }, [user?.id])
     const KPIs = [
         {
@@ -238,12 +242,21 @@ export function SellerDashboardPage() {
             {/* KPIs */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-7">
                 {KPIs.map((k) => (
-                    <div key={k.label} className="nexus-card p-5 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+                    <div
+                        key={k.label}
+                        className="nexus-card p-5 bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300"
+                    >
                         <div className="flex items-center gap-3 mb-3">
-                            <span className="w-10 h-10 rounded-xl bg-orange-50 text-primary flex items-center justify-center">{k.icon}</span>
-                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{k.label}</span>
+                            <span className="w-10 h-10 rounded-xl bg-orange-50 text-primary flex items-center justify-center">
+                                {k.icon}
+                            </span>
+                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                {k.label}
+                            </span>
                         </div>
-                        <p className="text-2xl font-black text-gray-900 tracking-tight">{k.value}</p>
+                        <p className="text-2xl font-black text-gray-900 tracking-tight">
+                            {k.value}
+                        </p>
                         {k.change && (
                             <p
                                 className={`text-xs font-semibold mt-1 ${k.positive ? 'text-success' : 'text-danger'}`}
@@ -268,7 +281,9 @@ export function SellerDashboardPage() {
                         </select>
                     </div>
                     <div className="flex h-36 items-center justify-center text-sm text-gray-400">
-                        {lang === 'en' ? 'Revenue analytics API is not available.' : 'Chưa có API thống kê doanh thu.'}
+                        {lang === 'en'
+                            ? 'Revenue analytics API is not available.'
+                            : 'Chưa có API thống kê doanh thu.'}
                     </div>
                 </div>
 
@@ -279,17 +294,23 @@ export function SellerDashboardPage() {
                         <h3 className="font-bold text-gray-900">{tr(lang, 'lowStock')}</h3>
                     </div>
                     <div className="space-y-3">
-                        {dashboardStocks.filter((stock) => stock.availableQty <= 5).map((p) => (
-                            <div key={p.id} className="flex items-center gap-3">
-                                <Package size={20} className="text-gray-400" />
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-semibold truncate">{p.skuCode}</p>
-                                    <p className="text-xs text-danger font-bold">
-                                        {lang === 'en' ? `${p.availableQty} left` : `Còn ${p.availableQty}`}
-                                    </p>
+                        {dashboardStocks
+                            .filter((stock) => stock.availableQty <= 5)
+                            .map((p) => (
+                                <div key={p.id} className="flex items-center gap-3">
+                                    <Package size={20} className="text-gray-400" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-semibold truncate">
+                                            {p.skuCode}
+                                        </p>
+                                        <p className="text-xs text-danger font-bold">
+                                            {lang === 'en'
+                                                ? `${p.availableQty} left`
+                                                : `Còn ${p.availableQty}`}
+                                        </p>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))}
                     </div>
                 </div>
             </div>
@@ -371,14 +392,8 @@ export function SellerBalancePage() {
                     <p className="text-sm text-gray-500">
                         {lang === 'en' ? 'Available balance' : 'Số dư khả dụng'}
                     </p>
-                    <p className="text-3xl font-black text-gray-900 mt-2">
-                        —
-                    </p>
-                    <Button
-                        variant="primary"
-                        className="mt-4"
-                        disabled
-                    >
+                    <p className="text-3xl font-black text-gray-900 mt-2">—</p>
+                    <Button variant="primary" className="mt-4" disabled>
                         {lang === 'en' ? 'Request Withdrawal' : 'Yêu cầu rút tiền'}
                     </Button>
                 </div>
@@ -386,9 +401,7 @@ export function SellerBalancePage() {
                     <p className="text-sm text-gray-500">
                         {lang === 'en' ? 'Buyer protection' : 'Đang bảo vệ Buyer'}
                     </p>
-                    <p className="text-3xl font-black text-gray-900 mt-2">
-                        —
-                    </p>
+                    <p className="text-3xl font-black text-gray-900 mt-2">—</p>
                     <p className="text-xs text-gray-400 mt-2">
                         {lang === 'en'
                             ? 'Releases automatically after the protection period.'
@@ -422,7 +435,13 @@ export function SellerBalancePage() {
                     {lang === 'en' ? 'Balance activity' : 'Lịch sử số dư'}
                 </div>
                 <div className="p-5">
-                    {transactions.length === 0 && <p className="text-sm text-gray-500">{lang === 'en' ? 'Balance API is not available.' : 'Backend chưa cung cấp API số dư.'}</p>}
+                    {transactions.length === 0 && (
+                        <p className="text-sm text-gray-500">
+                            {lang === 'en'
+                                ? 'Balance API is not available.'
+                                : 'Backend chưa cung cấp API số dư.'}
+                        </p>
+                    )}
                     {visibleTrans.map((transaction) => (
                         <div
                             key={transaction.id}
@@ -647,16 +666,22 @@ export function SellerProductListPage() {
     useEffect(() => {
         let active = true
         const skuIds = Array.isArray(rawList)
-            ? rawList.flatMap((product: ApiProduct) => (product.skus || []).map((sku) => sku.id).filter(Boolean))
+            ? rawList.flatMap((product: ApiProduct) =>
+                  (product.skus || []).map((sku) => sku.id).filter(Boolean),
+              )
             : []
         if (!skuIds.length) {
             setInventoryBySku({})
-            return () => { active = false }
+            return () => {
+                active = false
+            }
         }
         getBatchStock({ skuIds })
             .then((stocks) => {
                 if (active) {
-                    const map = Object.fromEntries(stocks.map((stock) => [stock.skuId, stock.availableQty]))
+                    const map = Object.fromEntries(
+                        stocks.map((stock) => [stock.skuId, stock.availableQty]),
+                    )
                     setInventoryBySku((prev) => ({ ...prev, ...map }))
                 }
             })
@@ -673,7 +698,9 @@ export function SellerProductListPage() {
                 setInventoryBySku((prev) => ({ ...prev, ...map }))
             })
             .catch(() => {})
-        return () => { active = false }
+        return () => {
+            active = false
+        }
     }, [prodEnvelope])
     /**
      * Chức năng: Ánh xạ danh sách sản phẩm thật của người bán từ Catalog backend kèm giải quyết song ngữ VI / EN.
@@ -685,8 +712,12 @@ export function SellerProductListPage() {
         ? rawList.map((p: ApiProduct) => {
               const cat = p.categoryId ? categoryNameById.get(p.categoryId) : null
               const categoryLabel = cat
-                  ? (lang === 'vi' ? cat.vi : cat.en)
-                  : (lang === 'vi' ? 'Thiết bị điện tử' : 'Electronics')
+                  ? lang === 'vi'
+                      ? cat.vi
+                      : cat.en
+                  : lang === 'vi'
+                    ? 'Thiết bị điện tử'
+                    : 'Electronics'
               const prodNameEn = resolveBilingualName(p.name, 'en')
               const prodNameVi = resolveBilingualName(p.name, 'vi')
               const prodDescEn = resolveBilingualDescription(p.description, 'en')
@@ -789,9 +820,7 @@ export function SellerProductListPage() {
                 {loadingProducts ? (
                     <SellerLoading
                         label={
-                            lang === 'en'
-                                ? 'Loading products...'
-                                : 'Đang tải danh sách sản phẩm...'
+                            lang === 'en' ? 'Loading products...' : 'Đang tải danh sách sản phẩm...'
                         }
                     />
                 ) : filtered.length === 0 ? (
@@ -876,7 +905,9 @@ export function SellerProductListPage() {
                                     render: (r: any) => (
                                         <span
                                             className={
-                                                r.stock <= 3 ? 'text-danger font-bold' : 'text-gray-700'
+                                                r.stock <= 3
+                                                    ? 'text-danger font-bold'
+                                                    : 'text-gray-700'
                                             }
                                         >
                                             {r.stock}
@@ -887,7 +918,10 @@ export function SellerProductListPage() {
                                     key: 'status',
                                     label: tr(lang, 'status'),
                                     render: (r: any) => (
-                                        <StatusBadge status={r.status} label={statusLabel(r.status)} />
+                                        <StatusBadge
+                                            status={r.status}
+                                            label={statusLabel(r.status)}
+                                        />
                                     ),
                                 },
                                 {
@@ -898,8 +932,16 @@ export function SellerProductListPage() {
                                             {/* Nút chỉnh sửa sản phẩm riêng biệt (bấm vào hàng đã mở xem chi tiết nên bỏ icon eye) */}
                                             <button
                                                 type="button"
-                                                title={lang === 'en' ? 'Edit product' : 'Chỉnh sửa sản phẩm'}
-                                                aria-label={lang === 'en' ? 'Edit product' : 'Chỉnh sửa sản phẩm'}
+                                                title={
+                                                    lang === 'en'
+                                                        ? 'Edit product'
+                                                        : 'Chỉnh sửa sản phẩm'
+                                                }
+                                                aria-label={
+                                                    lang === 'en'
+                                                        ? 'Edit product'
+                                                        : 'Chỉnh sửa sản phẩm'
+                                                }
                                                 onClick={(e) => {
                                                     e.stopPropagation()
                                                     navigate('seller-edit-product', { id: r.id })
@@ -911,8 +953,16 @@ export function SellerProductListPage() {
                                             {/* Nút xóa sản phẩm */}
                                             <button
                                                 type="button"
-                                                title={lang === 'en' ? 'Delete product' : 'Xóa sản phẩm'}
-                                                aria-label={lang === 'en' ? 'Delete product' : 'Xóa sản phẩm'}
+                                                title={
+                                                    lang === 'en'
+                                                        ? 'Delete product'
+                                                        : 'Xóa sản phẩm'
+                                                }
+                                                aria-label={
+                                                    lang === 'en'
+                                                        ? 'Delete product'
+                                                        : 'Xóa sản phẩm'
+                                                }
                                                 onClick={(e) => {
                                                     e.stopPropagation()
                                                     setDeleteId(r.id)
@@ -984,10 +1034,7 @@ export function SellerProductListPage() {
                 size="lg"
                 footer={
                     <div className="flex justify-between items-center w-full">
-                        <Button
-                            variant="outline"
-                            onClick={() => setSelectedProduct(null)}
-                        >
+                        <Button variant="outline" onClick={() => setSelectedProduct(null)}>
                             {lang === 'en' ? 'Close' : 'Đóng'}
                         </Button>
                         <Button
@@ -1015,7 +1062,13 @@ export function SellerProductListPage() {
                             />
                             <div className="min-w-0 flex-1">
                                 <h4 className="font-bold text-base text-gray-900 leading-snug">
-                                    {resolveBilingualName(selectedProduct.rawName || (lang === 'vi' ? selectedProduct.nameVi : selectedProduct.name), lang)}
+                                    {resolveBilingualName(
+                                        selectedProduct.rawName ||
+                                            (lang === 'vi'
+                                                ? selectedProduct.nameVi
+                                                : selectedProduct.name),
+                                        lang,
+                                    )}
                                 </h4>
                                 <p className="text-xs text-gray-500 mt-1">
                                     SKU:{' '}
@@ -1057,7 +1110,8 @@ export function SellerProductListPage() {
                                     {lang === 'en' ? 'Inventory (SKU)' : 'Tồn kho (SKU)'}
                                 </span>
                                 <span className="font-semibold text-gray-800 text-xs sm:text-sm md:text-base block">
-                                    {selectedProduct.stock !== null && selectedProduct.stock !== undefined
+                                    {selectedProduct.stock !== null &&
+                                    selectedProduct.stock !== undefined
                                         ? selectedProduct.stock
                                         : 0}
                                 </span>
@@ -1083,14 +1137,17 @@ export function SellerProductListPage() {
                                     </span>
                                     {selectedProduct.price >= selectedProduct.originalPrice ? (
                                         <span className="font-semibold text-emerald-700">
-                                            {lang === 'en' ? 'Gross Markup' : 'Biên lợi nhuận sàn'}: +
+                                            {lang === 'en' ? 'Gross Markup' : 'Biên lợi nhuận sàn'}:
+                                            +
                                             {formatCurrency(
-                                                selectedProduct.price - selectedProduct.originalPrice,
+                                                selectedProduct.price -
+                                                    selectedProduct.originalPrice,
                                                 lang,
                                             )}{' '}
                                             (+
                                             {(
-                                                ((selectedProduct.price - selectedProduct.originalPrice) /
+                                                ((selectedProduct.price -
+                                                    selectedProduct.originalPrice) /
                                                     selectedProduct.originalPrice) *
                                                 100
                                             ).toFixed(1)}
@@ -1100,12 +1157,14 @@ export function SellerProductListPage() {
                                         <span className="font-semibold text-amber-700">
                                             {lang === 'en' ? 'Discount' : 'Chiết khấu'}: -
                                             {formatCurrency(
-                                                selectedProduct.originalPrice - selectedProduct.price,
+                                                selectedProduct.originalPrice -
+                                                    selectedProduct.price,
                                                 lang,
                                             )}{' '}
                                             (-
                                             {(
-                                                ((selectedProduct.originalPrice - selectedProduct.price) /
+                                                ((selectedProduct.originalPrice -
+                                                    selectedProduct.price) /
                                                     selectedProduct.originalPrice) *
                                                 100
                                             ).toFixed(1)}
@@ -1119,7 +1178,9 @@ export function SellerProductListPage() {
                         {Array.isArray(selectedProduct.skus) && selectedProduct.skus.length > 0 && (
                             <div className="p-3 bg-gray-50 rounded-lg text-sm">
                                 <span className="text-gray-500 text-xs block mb-2 font-medium">
-                                    {lang === 'en' ? 'Product Variants (SKUs)' : 'Biến thể SKU của sản phẩm'}
+                                    {lang === 'en'
+                                        ? 'Product Variants (SKUs)'
+                                        : 'Biến thể SKU của sản phẩm'}
                                 </span>
                                 <div className="space-y-1.5">
                                     {selectedProduct.skus.map((sku: any, idx: number) => {
@@ -1150,11 +1211,17 @@ export function SellerProductListPage() {
                                                 </div>
                                                 <div className="flex items-center gap-3">
                                                     <span className="font-semibold text-primary">
-                                                        {formatCurrency(sku.price || selectedProduct.price, lang)}
+                                                        {formatCurrency(
+                                                            sku.price || selectedProduct.price,
+                                                            lang,
+                                                        )}
                                                     </span>
                                                     {sku.originalPrice && (
                                                         <span className="text-gray-400 line-through text-[11px]">
-                                                            {formatCurrency(sku.originalPrice, lang)}
+                                                            {formatCurrency(
+                                                                sku.originalPrice,
+                                                                lang,
+                                                            )}
                                                         </span>
                                                     )}
                                                 </div>
@@ -1173,7 +1240,10 @@ export function SellerProductListPage() {
                                 </span>
                                 <p className="text-gray-700 text-xs leading-relaxed whitespace-pre-line">
                                     {resolveBilingualDescription(
-                                        selectedProduct.rawDescription || (lang === 'vi' ? selectedProduct.descriptionVi : selectedProduct.description),
+                                        selectedProduct.rawDescription ||
+                                            (lang === 'vi'
+                                                ? selectedProduct.descriptionVi
+                                                : selectedProduct.description),
                                         lang,
                                     )}
                                 </p>
@@ -1674,39 +1744,54 @@ export function CreateProductPage() {
                                                 </button>
                                             )}
                                         </div>
-                                        <div className={`grid grid-cols-1 ${isEdit ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
+                                        <div
+                                            className={`grid grid-cols-1 ${isEdit ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}
+                                        >
                                             <div>
                                                 <Input
                                                     label={
                                                         inputLang === 'vi'
-                                                            ? (lang === 'en'
-                                                                  ? 'Attributes (Color / Size - Vietnamese)'
-                                                                  : 'Thuộc tính (Màu / Size - Tiếng Việt)')
-                                                            : (lang === 'en'
-                                                                  ? 'Attributes (Color / Size - English)'
-                                                                  : 'Thuộc tính (Màu / Size - English)')
+                                                            ? lang === 'en'
+                                                                ? 'Attributes (Color / Size - Vietnamese)'
+                                                                : 'Thuộc tính (Màu / Size - Tiếng Việt)'
+                                                            : lang === 'en'
+                                                              ? 'Attributes (Color / Size - English)'
+                                                              : 'Thuộc tính (Màu / Size - English)'
                                                     }
-                                                    value={inputLang === 'vi' ? row.attributesVi : row.attributesEn}
+                                                    value={
+                                                        inputLang === 'vi'
+                                                            ? row.attributesVi
+                                                            : row.attributesEn
+                                                    }
                                                     onChange={(e) =>
                                                         updateSkuRow(idx, {
-                                                            [inputLang === 'vi' ? 'attributesVi' : 'attributesEn']:
-                                                                e.target.value,
+                                                            [inputLang === 'vi'
+                                                                ? 'attributesVi'
+                                                                : 'attributesEn']: e.target.value,
                                                         })
                                                     }
                                                     placeholder={
                                                         inputLang === 'vi'
-                                                            ? (lang === 'en' ? 'e.g. Black / Size L' : 'Ví dụ: Đen / Size L')
+                                                            ? lang === 'en'
+                                                                ? 'e.g. Black / Size L'
+                                                                : 'Ví dụ: Đen / Size L'
                                                             : 'e.g. Black / Size L'
                                                     }
                                                 />
                                                 {inputLang === 'vi' && row.attributesEn && (
                                                     <span className="text-[11px] text-gray-400 block mt-1">
-                                                        🇬🇧 EN: <span className="text-gray-600 font-medium">{row.attributesEn}</span>
+                                                        🇬🇧 EN:{' '}
+                                                        <span className="text-gray-600 font-medium">
+                                                            {row.attributesEn}
+                                                        </span>
                                                     </span>
                                                 )}
                                                 {inputLang === 'en' && row.attributesVi && (
                                                     <span className="text-[11px] text-gray-400 block mt-1">
-                                                        🇻🇳 VI: <span className="text-gray-600 font-medium">{row.attributesVi}</span>
+                                                        🇻🇳 VI:{' '}
+                                                        <span className="text-gray-600 font-medium">
+                                                            {row.attributesVi}
+                                                        </span>
                                                     </span>
                                                 )}
                                             </div>
@@ -1747,7 +1832,9 @@ export function CreateProductPage() {
                                                         {
                                                             value: 'DRAFT',
                                                             label:
-                                                                lang === 'en' ? 'Draft' : 'Bản nháp',
+                                                                lang === 'en'
+                                                                    ? 'Draft'
+                                                                    : 'Bản nháp',
                                                         },
                                                         {
                                                             value: 'INACTIVE',
@@ -1781,7 +1868,11 @@ export function CreateProductPage() {
                                         </strong>
                                         {pricePreview.appliedRuleName && (
                                             <span className="ml-2 text-gray-500">
-                                                ({lang === 'en' ? 'Platform margin' : 'Biên lợi nhuận sàn'} +
+                                                (
+                                                {lang === 'en'
+                                                    ? 'Platform margin'
+                                                    : 'Biên lợi nhuận sàn'}{' '}
+                                                +
                                                 {Math.round(
                                                     ((pricePreview.effectiveRate ??
                                                         pricePreview.marginRate ??
@@ -2014,8 +2105,7 @@ export function SellerAuctionListPage() {
                         const imgs = p.images
                             ?.map((img: any) => (typeof img === 'string' ? img : img.url))
                             .filter(Boolean)
-                        const sku =
-                            formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || p.sku
+                        const sku = formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || p.sku
                         const pNameEn = resolveBilingualName(p.name, 'en')
                         const pNameVi = resolveBilingualName(p.name, 'vi')
                         cacheAuctionProduct(p.id, {
@@ -2139,8 +2229,7 @@ export function SellerAuctionListPage() {
                         const imgs = p.images
                             ?.map((img: any) => (typeof img === 'string' ? img : img.url))
                             .filter(Boolean)
-                        const sku =
-                            formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || p.sku
+                        const sku = formatSkuDisplay(p.skus?.[0]?.id, p.skus?.[0]?.skuCode) || p.sku
                         const pNameEn = resolveBilingualName(p.name, 'en')
                         const pNameVi = resolveBilingualName(p.name, 'vi')
                         cacheAuctionProduct(p.id, {
@@ -2258,22 +2347,33 @@ export function SellerAuctionListPage() {
                             {tr(lang, 'all')} ({sellerAuctions.length})
                         </option>
                         <option value="active">
-                            {tr(lang, 'statusActive')} ({sellerAuctions.filter((a) => a.status === 'active').length})
+                            {tr(lang, 'statusActive')} (
+                            {sellerAuctions.filter((a) => a.status === 'active').length})
                         </option>
                         <option value="pending_approval">
-                            {lang === 'en' ? 'Pending approval' : 'Chờ duyệt'} ({sellerAuctions.filter((a) => a.status === 'pending_approval').length})
+                            {lang === 'en' ? 'Pending approval' : 'Chờ duyệt'} (
+                            {sellerAuctions.filter((a) => a.status === 'pending_approval').length})
                         </option>
                         <option value="scheduled">
-                            {tr(lang, 'statusScheduled')} ({sellerAuctions.filter((a) => a.status === 'scheduled').length})
+                            {tr(lang, 'statusScheduled')} (
+                            {sellerAuctions.filter((a) => a.status === 'scheduled').length})
                         </option>
                         <option value="ended">
-                            {tr(lang, 'statusEnded')} ({sellerAuctions.filter((a) => a.status === 'ended').length})
+                            {tr(lang, 'statusEnded')} (
+                            {sellerAuctions.filter((a) => a.status === 'ended').length})
                         </option>
                         <option value="settled">
-                            {tr(lang, 'statusSettled')} ({sellerAuctions.filter((a) => a.status === 'settled').length})
+                            {tr(lang, 'statusSettled')} (
+                            {sellerAuctions.filter((a) => a.status === 'settled').length})
                         </option>
                         <option value="cancelled">
-                            {tr(lang, 'statusCancelled')} ({sellerAuctions.filter((a) => ['cancelled', 'rejected', 'failed'].includes(a.status)).length})
+                            {tr(lang, 'statusCancelled')} (
+                            {
+                                sellerAuctions.filter((a) =>
+                                    ['cancelled', 'rejected', 'failed'].includes(a.status),
+                                ).length
+                            }
+                            )
                         </option>
                     </select>
                 </div>
@@ -2289,9 +2389,7 @@ export function SellerAuctionListPage() {
                 {auctionsLoading ? (
                     <SellerLoading
                         label={
-                            lang === 'en'
-                                ? 'Loading auctions...'
-                                : 'Đang tải danh sách đấu giá...'
+                            lang === 'en' ? 'Loading auctions...' : 'Đang tải danh sách đấu giá...'
                         }
                     />
                 ) : filtered.length === 0 ? (
@@ -2360,7 +2458,9 @@ export function SellerAuctionListPage() {
                                 {
                                     key: 'bidCount',
                                     label: lang === 'en' ? 'Bids' : 'Lượt đặt',
-                                    render: (r: any) => <span className="font-semibold">{r.bidCount}</span>,
+                                    render: (r: any) => (
+                                        <span className="font-semibold">{r.bidCount}</span>
+                                    ),
                                 },
                                 {
                                     key: 'startTime',
@@ -2384,20 +2484,26 @@ export function SellerAuctionListPage() {
                                     key: 'status',
                                     label: tr(lang, 'status'),
                                     render: (r: any) => (
-                                        <StatusBadge status={r.status} label={statusLabel(r.status)} />
+                                        <StatusBadge
+                                            status={r.status}
+                                            label={statusLabel(r.status)}
+                                        />
                                     ),
                                 },
                                 {
                                     key: 'actions',
                                     label: tr(lang, 'actions'),
                                     render: (r: any) => {
-                                        const isBeforeStart = new Date(r.startTime).getTime() > Date.now()
+                                        const isBeforeStart =
+                                            new Date(r.startTime).getTime() > Date.now()
                                         const isEditable =
-                                            ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
-                                            isBeforeStart
+                                            ['pending_approval', 'scheduled', 'draft'].includes(
+                                                r.status,
+                                            ) && isBeforeStart
                                         const isCancellable =
-                                            ['pending_approval', 'scheduled', 'draft'].includes(r.status) &&
-                                            isBeforeStart
+                                            ['pending_approval', 'scheduled', 'draft'].includes(
+                                                r.status,
+                                            ) && isBeforeStart
 
                                         return (
                                             <div className="flex gap-1 items-center">
@@ -2422,7 +2528,9 @@ export function SellerAuctionListPage() {
                                                         }
                                                         onClick={(e) => {
                                                             e.stopPropagation()
-                                                            navigate('seller-create-auction', { id: r.id })
+                                                            navigate('seller-create-auction', {
+                                                                id: r.id,
+                                                            })
                                                         }}
                                                         className="nexus-btn nexus-btn-ghost nexus-btn-sm p-1.5 text-primary hover:bg-primary/10 rounded"
                                                     >
@@ -2457,7 +2565,9 @@ export function SellerAuctionListPage() {
                                                             setReviewedAuction(r)
                                                         }}
                                                     >
-                                                        {lang === 'en' ? 'View Result' : 'Xem kết quả'}
+                                                        {lang === 'en'
+                                                            ? 'View Result'
+                                                            : 'Xem kết quả'}
                                                     </Button>
                                                 )}
                                             </div>
@@ -2875,8 +2985,7 @@ export function CreateAuctionPage() {
         if (
             productId &&
             (productId.startsWith('prod-') ||
-                (!loadingProducts &&
-                    !availableProducts.some((p) => p.id === productId)))
+                (!loadingProducts && !availableProducts.some((p) => p.id === productId)))
         ) {
             setProductId('')
         }
@@ -3424,7 +3533,8 @@ export function SellerOrdersPage() {
             .then((ratings) => {
                 if (active) {
                     const existing = ratings.find(
-                        (r) => r.rateeId === selectedOrder.buyerId || (user && r.raterId === user.id),
+                        (r) =>
+                            r.rateeId === selectedOrder.buyerId || (user && r.raterId === user.id),
                     )
                     setOrderRating(existing || null)
                 }
@@ -3461,7 +3571,11 @@ export function SellerOrdersPage() {
                 }
             })
             .catch((err) => {
-                if (active) setModalShipmentError(err?.message || (lang === 'vi' ? 'Lỗi tải vận đơn' : 'Failed to load shipment'))
+                if (active)
+                    setModalShipmentError(
+                        err?.message ||
+                            (lang === 'vi' ? 'Lỗi tải vận đơn' : 'Failed to load shipment'),
+                    )
             })
             .finally(() => {
                 if (active) setModalShipmentLoading(false)
@@ -3634,220 +3748,232 @@ export function SellerOrdersPage() {
                 ) : (
                     <>
                         <DataTable
-                        columns={[
-                            {
-                                key: 'id',
-                                label: lang === 'en' ? 'Order' : 'Đơn hàng',
-                                render: (r: Order) => (
-                                    <div className="flex flex-col">
-                                        <span className="font-mono text-xs font-bold text-gray-900">
-                                            {r.id}
-                                        </span>
-                                        <span className="text-[11px] text-gray-400">
-                                            {formatDate(r.createdAt, lang)}
-                                        </span>
-                                    </div>
-                                ),
-                            },
-                            {
-                                key: 'buyerName',
-                                label: lang === 'en' ? 'Buyer & Address' : 'Người mua & Địa chỉ',
-                                render: (r: Order) => (
-                                    <div>
-                                        <p className="font-medium text-sm text-gray-800">
-                                            {r.buyerName}
-                                        </p>
-                                        <p
-                                            className="text-xs text-gray-500 line-clamp-1 max-w-[200px]"
-                                            title={r.shippingAddress}
-                                        >
-                                            {r.shippingAddress}
-                                        </p>
-                                    </div>
-                                ),
-                            },
-                            {
-                                key: 'items',
-                                label: lang === 'en' ? 'Items' : 'Sản phẩm',
-                                render: (r: Order) => (
-                                    <div className="flex items-center gap-2">
-                                        {Boolean(r.items[0]?.image) && (
-                                            <img
-                                                src={r.items[0].image}
-                                                alt=""
-                                                className="w-8 h-8 object-cover rounded border border-border shrink-0"
-                                            />
-                                        )}
-                                        <div className="text-xs">
-                                            <span className="font-medium text-gray-800 line-clamp-1 max-w-[150px]">
-                                                {r.items[0]?.productName || 'N/A'}
+                            columns={[
+                                {
+                                    key: 'id',
+                                    label: lang === 'en' ? 'Order' : 'Đơn hàng',
+                                    render: (r: Order) => (
+                                        <div className="flex flex-col">
+                                            <span className="font-mono text-xs font-bold text-gray-900">
+                                                {r.id}
                                             </span>
-                                            {r.items.length > 1 && (
-                                                <span className="text-gray-400 text-[11px]">
-                                                    +{r.items.length - 1}{' '}
-                                                    {lang === 'en' ? 'more' : 'khác'}
+                                            <span className="text-[11px] text-gray-400">
+                                                {formatDate(r.createdAt, lang)}
+                                            </span>
+                                        </div>
+                                    ),
+                                },
+                                {
+                                    key: 'buyerName',
+                                    label:
+                                        lang === 'en' ? 'Buyer & Address' : 'Người mua & Địa chỉ',
+                                    render: (r: Order) => (
+                                        <div>
+                                            <p className="font-medium text-sm text-gray-800">
+                                                {r.buyerName}
+                                            </p>
+                                            <p
+                                                className="text-xs text-gray-500 line-clamp-1 max-w-[200px]"
+                                                title={r.shippingAddress}
+                                            >
+                                                {r.shippingAddress}
+                                            </p>
+                                        </div>
+                                    ),
+                                },
+                                {
+                                    key: 'items',
+                                    label: lang === 'en' ? 'Items' : 'Sản phẩm',
+                                    render: (r: Order) => (
+                                        <div className="flex items-center gap-2">
+                                            {Boolean(r.items[0]?.image) && (
+                                                <img
+                                                    src={r.items[0].image}
+                                                    alt=""
+                                                    className="w-8 h-8 object-cover rounded border border-border shrink-0"
+                                                />
+                                            )}
+                                            <div className="text-xs">
+                                                <span className="font-medium text-gray-800 line-clamp-1 max-w-[150px]">
+                                                    {r.items[0]?.productName || 'N/A'}
+                                                </span>
+                                                {r.items.length > 1 && (
+                                                    <span className="text-gray-400 text-[11px]">
+                                                        +{r.items.length - 1}{' '}
+                                                        {lang === 'en' ? 'more' : 'khác'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ),
+                                },
+                                {
+                                    key: 'total',
+                                    label: lang === 'en' ? 'Total' : 'Tổng',
+                                    render: (r: Order) => (
+                                        <span className="font-bold text-primary">
+                                            {formatCurrency(
+                                                r.total ?? (r as any).totalAmount ?? 0,
+                                                lang,
+                                            )}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'status',
+                                    label: tr(lang, 'status'),
+                                    render: (r: Order) => (
+                                        <StatusBadge
+                                            status={r.status}
+                                            label={statusLabel(r.status)}
+                                        />
+                                    ),
+                                },
+                                {
+                                    key: 'paymentStatus',
+                                    label: lang === 'en' ? 'Payment' : 'Thanh toán',
+                                    render: (r: Order) => {
+                                        const status = getEffectivePaymentStatus(r)
+                                        return (
+                                            <StatusBadge
+                                                status={status}
+                                                label={paymentLabel(status)}
+                                            />
+                                        )
+                                    },
+                                },
+                                {
+                                    key: 'shipping',
+                                    label: lang === 'en' ? 'Shipping' : 'Vận chuyển',
+                                    render: (r: Order) => (
+                                        <div className="flex flex-col text-xs">
+                                            {r.shipment ? (
+                                                <>
+                                                    <span className="font-semibold text-gray-800 flex items-center gap-1">
+                                                        <Truck size={12} className="text-primary" />
+                                                        {r.shipment.carrier}
+                                                    </span>
+                                                    <span className="font-mono text-[11px] text-gray-500">
+                                                        {r.shipment.trackingNumber}
+                                                    </span>
+                                                </>
+                                            ) : (
+                                                <span className="text-gray-400 italic">
+                                                    {['PENDING_PAYMENT'].includes(r.status)
+                                                        ? lang === 'vi'
+                                                            ? 'Chưa thanh toán'
+                                                            : 'Unpaid'
+                                                        : lang === 'vi'
+                                                          ? 'Chờ xuất vận đơn'
+                                                          : 'Pending dispatch'}
                                                 </span>
                                             )}
                                         </div>
-                                    </div>
-                                ),
-                            },
-                            {
-                                key: 'total',
-                                label: lang === 'en' ? 'Total' : 'Tổng',
-                                render: (r: Order) => (
-                                    <span className="font-bold text-primary">
-                                        {formatCurrency(r.total ?? (r as any).totalAmount ?? 0, lang)}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'status',
-                                label: tr(lang, 'status'),
-                                render: (r: Order) => (
-                                    <StatusBadge status={r.status} label={statusLabel(r.status)} />
-                                ),
-                            },
-                            {
-                                key: 'paymentStatus',
-                                label: lang === 'en' ? 'Payment' : 'Thanh toán',
-                                render: (r: Order) => {
-                                    const status = getEffectivePaymentStatus(r)
-                                    return (
-                                        <StatusBadge status={status} label={paymentLabel(status)} />
-                                    )
+                                    ),
                                 },
-                            },
-                            {
-                                key: 'shipping',
-                                label: lang === 'en' ? 'Shipping' : 'Vận chuyển',
-                                render: (r: Order) => (
-                                    <div className="flex flex-col text-xs">
-                                        {r.shipment ? (
-                                            <>
-                                                <span className="font-semibold text-gray-800 flex items-center gap-1">
-                                                    <Truck size={12} className="text-primary" />
-                                                    {r.shipment.carrier}
-                                                </span>
-                                                <span className="font-mono text-[11px] text-gray-500">
-                                                    {r.shipment.trackingNumber}
-                                                </span>
-                                            </>
-                                        ) : (
-                                            <span className="text-gray-400 italic">
-                                                {['PENDING_PAYMENT'].includes(r.status)
-                                                    ? lang === 'vi'
-                                                        ? 'Chưa thanh toán'
-                                                        : 'Unpaid'
-                                                    : lang === 'vi'
-                                                      ? 'Chờ xuất vận đơn'
-                                                      : 'Pending dispatch'}
-                                            </span>
-                                        )}
-                                    </div>
-                                ),
-                            },
-                            {
-                                key: 'actions',
-                                label: lang === 'en' ? 'Actions' : 'Thao tác',
-                                render: (r: Order) => (
-                                    <div
-                                        className="flex items-center gap-2"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => setSelectedOrder(r)}
-                                            className="text-xs px-2 py-1"
+                                {
+                                    key: 'actions',
+                                    label: lang === 'en' ? 'Actions' : 'Thao tác',
+                                    render: (r: Order) => (
+                                        <div
+                                            className="flex items-center gap-2"
+                                            onClick={(e) => e.stopPropagation()}
                                         >
-                                            {lang === 'en' ? 'View' : 'Chi tiết'}
-                                        </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => setSelectedOrder(r)}
+                                                className="text-xs px-2 py-1"
+                                            >
+                                                {lang === 'en' ? 'View' : 'Chi tiết'}
+                                            </Button>
 
-                                        {/* Dropdown cập nhật trạng thái hợp lệ theo state machine.
+                                            {/* Dropdown cập nhật trạng thái hợp lệ theo state machine.
                                             DELIVERED bị disable vì bước tiếp (COMPLETED) do Buyer xác nhận,
                                             CANCELLED/COMPLETED/REFUNDED là trạng thái cuối không thể chuyển tiếp. */}
-                                        {[
-                                            'DELIVERED',
-                                            'CANCELLED',
-                                            'COMPLETED',
-                                            'REFUNDED',
-                                        ].includes(r.status) ? (
-                                            <span className="text-xs text-gray-400 italic px-2">
-                                                {r.status === 'DELIVERED'
-                                                    ? lang === 'en'
-                                                        ? 'Awaiting buyer confirmation'
-                                                        : 'Chờ Buyer xác nhận'
-                                                    : lang === 'en'
-                                                      ? 'Final status'
-                                                      : 'Trạng thái cuối'}
-                                            </span>
-                                        ) : (
-                                            <select
-                                                className="nexus-input text-xs py-1 px-2 w-32 font-medium"
-                                                value=""
-                                                disabled={updatingId === r.id}
-                                                onChange={(e) =>
-                                                    handleStatusChange(r.id, e.target.value)
-                                                }
-                                            >
-                                                <option value="">
-                                                    {lang === 'en'
-                                                        ? 'Change status'
-                                                        : 'Đổi trạng thái'}
-                                                </option>
-                                                {r.status === 'PAID' && (
-                                                    <option value="PROCESSING">
+                                            {[
+                                                'DELIVERED',
+                                                'CANCELLED',
+                                                'COMPLETED',
+                                                'REFUNDED',
+                                            ].includes(r.status) ? (
+                                                <span className="text-xs text-gray-400 italic px-2">
+                                                    {r.status === 'DELIVERED'
+                                                        ? lang === 'en'
+                                                            ? 'Awaiting buyer confirmation'
+                                                            : 'Chờ Buyer xác nhận'
+                                                        : lang === 'en'
+                                                          ? 'Final status'
+                                                          : 'Trạng thái cuối'}
+                                                </span>
+                                            ) : (
+                                                <select
+                                                    className="nexus-input text-xs py-1 px-2 w-32 font-medium"
+                                                    value=""
+                                                    disabled={updatingId === r.id}
+                                                    onChange={(e) =>
+                                                        handleStatusChange(r.id, e.target.value)
+                                                    }
+                                                >
+                                                    <option value="">
                                                         {lang === 'en'
-                                                            ? 'To Processing'
-                                                            : 'Sang Đóng gói'}
+                                                            ? 'Change status'
+                                                            : 'Đổi trạng thái'}
                                                     </option>
-                                                )}
-                                                {['PAID', 'PROCESSING'].includes(r.status) && (
-                                                    <option value="SHIPPED">
-                                                        {lang === 'en'
-                                                            ? 'To Shipped'
-                                                            : 'Sang Đang giao'}
-                                                    </option>
-                                                )}
-                                                {r.status === 'SHIPPED' && (
-                                                    <option value="DELIVERED">
-                                                        {lang === 'en'
-                                                            ? 'To Delivered'
-                                                            : 'Sang Đã giao'}
-                                                    </option>
-                                                )}
-                                                {['PENDING_PAYMENT', 'PAID', 'PROCESSING'].includes(
-                                                    r.status,
-                                                ) && (
-                                                    <option value="CANCELLED">
-                                                        {lang === 'en'
-                                                            ? 'Cancel Order'
-                                                            : 'Hủy đơn hàng'}
-                                                    </option>
-                                                )}
-                                            </select>
-                                        )}
-                                    </div>
-                                ),
-                            },
-                        ]}
-                        data={visibleOrders}
-                        rowKey={(r) => r.id}
-                        onRowClick={(r) => setSelectedOrder(r)}
-                    />
-                    <div className="flex justify-center border-t border-border px-4 py-3">
-                        <nav aria-label={tr(lang, 'listPagination')}>
-                            <Pagination
-                                page={ordersPage}
-                                total={orders.length}
-                                perPage={ordersPerPage}
-                                onChange={setOrdersPage}
-                                previousLabel={tr(lang, 'previousPage')}
-                                nextLabel={tr(lang, 'nextPage')}
-                            />
-                        </nav>
-                    </div>
+                                                    {r.status === 'PAID' && (
+                                                        <option value="PROCESSING">
+                                                            {lang === 'en'
+                                                                ? 'To Processing'
+                                                                : 'Sang Đóng gói'}
+                                                        </option>
+                                                    )}
+                                                    {['PAID', 'PROCESSING'].includes(r.status) && (
+                                                        <option value="SHIPPED">
+                                                            {lang === 'en'
+                                                                ? 'To Shipped'
+                                                                : 'Sang Đang giao'}
+                                                        </option>
+                                                    )}
+                                                    {r.status === 'SHIPPED' && (
+                                                        <option value="DELIVERED">
+                                                            {lang === 'en'
+                                                                ? 'To Delivered'
+                                                                : 'Sang Đã giao'}
+                                                        </option>
+                                                    )}
+                                                    {[
+                                                        'PENDING_PAYMENT',
+                                                        'PAID',
+                                                        'PROCESSING',
+                                                    ].includes(r.status) && (
+                                                        <option value="CANCELLED">
+                                                            {lang === 'en'
+                                                                ? 'Cancel Order'
+                                                                : 'Hủy đơn hàng'}
+                                                        </option>
+                                                    )}
+                                                </select>
+                                            )}
+                                        </div>
+                                    ),
+                                },
+                            ]}
+                            data={visibleOrders}
+                            rowKey={(r) => r.id}
+                            onRowClick={(r) => setSelectedOrder(r)}
+                        />
+                        <div className="flex justify-center border-t border-border px-4 py-3">
+                            <nav aria-label={tr(lang, 'listPagination')}>
+                                <Pagination
+                                    page={ordersPage}
+                                    total={orders.length}
+                                    perPage={ordersPerPage}
+                                    onChange={setOrdersPage}
+                                    previousLabel={tr(lang, 'previousPage')}
+                                    nextLabel={tr(lang, 'nextPage')}
+                                />
+                            </nav>
+                        </div>
                     </>
                 )}
             </div>
@@ -3905,12 +4031,16 @@ export function SellerOrdersPage() {
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-xs text-gray-500">
-                                        {lang === 'en' ? 'Buyer Profile & Reputation' : 'Hồ sơ uy tín người mua'}
+                                        {lang === 'en'
+                                            ? 'Buyer Profile & Reputation'
+                                            : 'Hồ sơ uy tín người mua'}
                                     </p>
                                     <p className="font-semibold text-gray-900 mt-0.5">
                                         {selectedOrder.buyerName}
                                     </p>
-                                    <p className="text-xs text-gray-400">ID: {selectedOrder.buyerId}</p>
+                                    <p className="text-xs text-gray-400">
+                                        ID: {selectedOrder.buyerId}
+                                    </p>
                                 </div>
                                 {buyerReputation && (
                                     <div className="text-right">
@@ -3970,7 +4100,9 @@ export function SellerOrdersPage() {
                                                     setRatingModalOpen(true)
                                                 }}
                                             >
-                                                {lang === 'vi' ? 'Đánh giá người mua' : 'Rate Buyer'}
+                                                {lang === 'vi'
+                                                    ? 'Đánh giá người mua'
+                                                    : 'Rate Buyer'}
                                             </Button>
                                         </div>
                                     )}
@@ -4031,28 +4163,35 @@ export function SellerOrdersPage() {
 
                         {/* Thông tin vận chuyển & Vận đơn (Sprint 3 - HA-S3-1) */}
                         {(() => {
-                            const effectiveShip = modalShipment || (selectedOrder.shipment ? {
-                                id: selectedOrder.shipment.id || 'mock-shipment',
-                                orderId: selectedOrder.id,
-                                carrier: selectedOrder.shipment.carrier,
-                                serviceType: 'EXPRESS',
-                                shippingFee: selectedOrder.shipping,
-                                freeShippingApplied: selectedOrder.shipping === 0,
-                                trackingNumber: selectedOrder.shipment.trackingNumber,
-                                status: (selectedOrder.shipment.status?.toUpperCase() || selectedOrder.status) as any,
-                                estimatedDeliveryDays: 3,
-                                shippingAddress: selectedOrder.shippingAddress,
-                            } : null)
+                            const effectiveShip =
+                                modalShipment ||
+                                (selectedOrder.shipment
+                                    ? {
+                                          id: selectedOrder.shipment.id || 'mock-shipment',
+                                          orderId: selectedOrder.id,
+                                          carrier: selectedOrder.shipment.carrier,
+                                          serviceType: 'EXPRESS',
+                                          shippingFee: selectedOrder.shipping,
+                                          freeShippingApplied: selectedOrder.shipping === 0,
+                                          trackingNumber: selectedOrder.shipment.trackingNumber,
+                                          status: (selectedOrder.shipment.status?.toUpperCase() ||
+                                              selectedOrder.status) as any,
+                                          estimatedDeliveryDays: 3,
+                                          shippingAddress: selectedOrder.shippingAddress,
+                                      }
+                                    : null)
 
-                            const trackingHistory = (modalTracking?.history && modalTracking.history.length > 0)
-                                ? modalTracking.history
-                                : (selectedOrder.shipment?.events || []).map((ev) => ({
-                                      carrierStatus: ev.description,
-                                      internalStatus: (ev.status?.toUpperCase() || 'IN_TRANSIT') as any,
-                                      occurredAt: ev.timestamp,
-                                      location: ev.location,
-                                      description: ev.description,
-                                  }))
+                            const trackingHistory =
+                                modalTracking?.history && modalTracking.history.length > 0
+                                    ? modalTracking.history
+                                    : (selectedOrder.shipment?.events || []).map((ev) => ({
+                                          carrierStatus: ev.description,
+                                          internalStatus: (ev.status?.toUpperCase() ||
+                                              'IN_TRANSIT') as any,
+                                          occurredAt: ev.timestamp,
+                                          location: ev.location,
+                                          description: ev.description,
+                                      }))
 
                             return (
                                 <div className="border border-border rounded-xl p-4 bg-gray-50/60">
@@ -4060,7 +4199,9 @@ export function SellerOrdersPage() {
                                         <div className="flex items-center gap-2">
                                             <Truck size={18} className="text-primary" />
                                             <span className="font-semibold text-sm text-gray-900">
-                                                {lang === 'en' ? 'Shipment Information' : 'Thông tin vận chuyển & Đơn vị giao'}
+                                                {lang === 'en'
+                                                    ? 'Shipment Information'
+                                                    : 'Thông tin vận chuyển & Đơn vị giao'}
                                             </span>
                                         </div>
                                         {effectiveShip && (
@@ -4075,14 +4216,23 @@ export function SellerOrdersPage() {
                                                     type="button"
                                                     onClick={() => {
                                                         try {
-                                                            navigator.clipboard?.writeText(effectiveShip.trackingNumber)
+                                                            navigator.clipboard?.writeText(
+                                                                effectiveShip.trackingNumber,
+                                                            )
                                                             showToast({
                                                                 type: 'success',
-                                                                message: lang === 'vi' ? 'Đã sao chép mã vận đơn' : 'Tracking number copied',
+                                                                message:
+                                                                    lang === 'vi'
+                                                                        ? 'Đã sao chép mã vận đơn'
+                                                                        : 'Tracking number copied',
                                                             })
                                                         } catch {}
                                                     }}
-                                                    title={lang === 'vi' ? 'Sao chép mã vận đơn' : 'Copy tracking number'}
+                                                    title={
+                                                        lang === 'vi'
+                                                            ? 'Sao chép mã vận đơn'
+                                                            : 'Copy tracking number'
+                                                    }
                                                     className="text-primary hover:text-primary-dark p-1 cursor-pointer"
                                                 >
                                                     <Copy size={13} />
@@ -4092,9 +4242,14 @@ export function SellerOrdersPage() {
                                     </div>
 
                                     {modalShipmentLoading ? (
-                                        <div className="py-4 text-center text-xs text-gray-500" role="status">
+                                        <div
+                                            className="py-4 text-center text-xs text-gray-500"
+                                            role="status"
+                                        >
                                             <div className="spinner-border spinner-border-sm text-primary inline-block w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
-                                            {lang === 'vi' ? 'Đang tải dữ liệu vận đơn...' : 'Loading shipment details...'}
+                                            {lang === 'vi'
+                                                ? 'Đang tải dữ liệu vận đơn...'
+                                                : 'Loading shipment details...'}
                                         </div>
                                     ) : modalShipmentError ? (
                                         <div className="p-3 bg-red-50 text-red-700 rounded-lg text-xs flex items-center justify-between">
@@ -4105,7 +4260,9 @@ export function SellerOrdersPage() {
                                             <div className="flex flex-wrap items-center justify-between gap-2 text-xs p-2.5 bg-white rounded-lg border border-border">
                                                 <div>
                                                     <span className="text-gray-500 mr-1.5">
-                                                        {lang === 'vi' ? 'Trạng thái giao:' : 'Status:'}
+                                                        {lang === 'vi'
+                                                            ? 'Trạng thái giao:'
+                                                            : 'Status:'}
                                                     </span>
                                                     <span className="font-bold text-primary">
                                                         {effectiveShip.status}
@@ -4113,12 +4270,19 @@ export function SellerOrdersPage() {
                                                 </div>
                                                 <div>
                                                     <span className="text-gray-500 mr-1.5">
-                                                        {lang === 'vi' ? 'Cước vận chuyển:' : 'Shipping fee:'}
+                                                        {lang === 'vi'
+                                                            ? 'Cước vận chuyển:'
+                                                            : 'Shipping fee:'}
                                                     </span>
                                                     <span className="font-semibold text-gray-900">
                                                         {effectiveShip.freeShippingApplied
-                                                            ? (lang === 'vi' ? 'Miễn phí' : 'Free')
-                                                            : formatCurrency(effectiveShip.shippingFee, lang)}
+                                                            ? lang === 'vi'
+                                                                ? 'Miễn phí'
+                                                                : 'Free'
+                                                            : formatCurrency(
+                                                                  effectiveShip.shippingFee,
+                                                                  lang,
+                                                              )}
                                                     </span>
                                                 </div>
                                             </div>
@@ -4127,20 +4291,39 @@ export function SellerOrdersPage() {
                                             {trackingHistory.length > 0 && (
                                                 <div className="pt-1 space-y-2">
                                                     <p className="text-xs font-semibold text-gray-700">
-                                                        {lang === 'vi' ? 'Hành trình vận chuyển:' : 'Tracking checkpoints:'}
+                                                        {lang === 'vi'
+                                                            ? 'Hành trình vận chuyển:'
+                                                            : 'Tracking checkpoints:'}
                                                     </p>
                                                     {trackingHistory.map((ev, i) => (
-                                                        <div key={i} className="flex gap-2.5 text-xs">
+                                                        <div
+                                                            key={i}
+                                                            className="flex gap-2.5 text-xs"
+                                                        >
                                                             <div className="flex flex-col items-center">
-                                                                <div className={`w-2 h-2 rounded-full mt-1 ${i === 0 ? 'bg-primary' : 'bg-gray-300'}`} />
-                                                                {i < trackingHistory.length - 1 && <div className="w-0.5 h-6 bg-gray-200 mt-0.5" />}
+                                                                <div
+                                                                    className={`w-2 h-2 rounded-full mt-1 ${i === 0 ? 'bg-primary' : 'bg-gray-300'}`}
+                                                                />
+                                                                {i < trackingHistory.length - 1 && (
+                                                                    <div className="w-0.5 h-6 bg-gray-200 mt-0.5" />
+                                                                )}
                                                             </div>
                                                             <div className="flex-1 pb-1">
                                                                 <p className="font-medium text-gray-800">
-                                                                    {ev.description || ev.carrierStatus}
+                                                                    {ev.description ||
+                                                                        ev.carrierStatus}
                                                                 </p>
-                                                                {ev.location && <p className="text-[11px] text-gray-400">{ev.location}</p>}
-                                                                <p className="text-[10px] text-gray-400">{formatDate(ev.occurredAt, lang)}</p>
+                                                                {ev.location && (
+                                                                    <p className="text-[11px] text-gray-400">
+                                                                        {ev.location}
+                                                                    </p>
+                                                                )}
+                                                                <p className="text-[10px] text-gray-400">
+                                                                    {formatDate(
+                                                                        ev.occurredAt,
+                                                                        lang,
+                                                                    )}
+                                                                </p>
                                                             </div>
                                                         </div>
                                                     ))}
@@ -4914,133 +5097,135 @@ export function SellerInventoryPage() {
                     <>
                         <DataTable
                             columns={[
-                            {
-                                key: 'skuCode',
-                                label: lang === 'en' ? 'Fulfillment SKU' : 'Mã SKU Kho',
-                                render: (r: SellerSkuResponse) => {
-                                    const productInfo = catalogSkuMap[r.skuId]
-                                    return (
-                                        <div>
-                                            <p className="font-mono text-xs font-bold text-primary">
-                                                {r.skuCode}
-                                            </p>
-                                            {productInfo && (
-                                                <p className="text-xs font-medium text-gray-900 mt-0.5">
-                                                    {productInfo.productName}
+                                {
+                                    key: 'skuCode',
+                                    label: lang === 'en' ? 'Fulfillment SKU' : 'Mã SKU Kho',
+                                    render: (r: SellerSkuResponse) => {
+                                        const productInfo = catalogSkuMap[r.skuId]
+                                        return (
+                                            <div>
+                                                <p className="font-mono text-xs font-bold text-primary">
+                                                    {r.skuCode}
                                                 </p>
-                                            )}
-                                            <p className="text-[11px] font-mono text-gray-400">
-                                                skuId: {r.skuId.slice(0, 8)}...
-                                                {productInfo ? ` · ${productInfo.attributes}` : ''}
-                                            </p>
-                                        </div>
-                                    )
+                                                {productInfo && (
+                                                    <p className="text-xs font-medium text-gray-900 mt-0.5">
+                                                        {productInfo.productName}
+                                                    </p>
+                                                )}
+                                                <p className="text-[11px] font-mono text-gray-400">
+                                                    skuId: {r.skuId.slice(0, 8)}...
+                                                    {productInfo
+                                                        ? ` · ${productInfo.attributes}`
+                                                        : ''}
+                                                </p>
+                                            </div>
+                                        )
+                                    },
                                 },
-                            },
-                            {
-                                key: 'warehouses',
-                                label: lang === 'en' ? 'Warehouses' : 'Số kho',
-                                render: (r: SellerSkuResponse) => (
-                                    <span className="font-semibold text-gray-700">
-                                        {r.warehouseCount}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'totalQty',
-                                label: lang === 'en' ? 'Total' : 'Tổng tồn',
-                                render: (r: SellerSkuResponse) => (
-                                    <span className="font-bold">{r.totalQty}</span>
-                                ),
-                            },
-                            {
-                                key: 'availableQty',
-                                label: tr(lang, 'totalAvailable'),
-                                render: (r: SellerSkuResponse) => (
-                                    <span className="font-semibold text-success">
-                                        {r.availableQty}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'reservedQty',
-                                label: tr(lang, 'totalReserved'),
-                                render: (r: SellerSkuResponse) => (
-                                    <span className="font-semibold text-warning">
-                                        {r.reservedQty}
-                                    </span>
-                                ),
-                            },
-                            {
-                                key: 'status',
-                                label: tr(lang, 'status'),
-                                render: (r: SellerSkuResponse) => (
-                                    <StatusBadge
-                                        status={r.status === 'ACTIVE' ? 'active' : 'inactive'}
-                                        label={r.status}
-                                    />
-                                ),
-                            },
-                            {
-                                key: 'actions',
-                                label: tr(lang, 'actions'),
-                                render: (r: SellerSkuResponse) => (
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            icon={<Eye size={14} />}
-                                            onClick={() => void handleOpenDetail(r)}
-                                        >
-                                            {lang === 'en' ? 'Details' : 'Chi tiết'}
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() =>
-                                                openInboundModal({
-                                                    skuId: r.skuId,
-                                                    skuCode: r.skuCode,
-                                                })
-                                            }
-                                        >
-                                            {lang === 'en' ? 'Inbound' : 'Nhập thêm'}
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() =>
-                                                openAdjustModal({
-                                                    skuId: r.skuId,
-                                                    skuCode: r.skuCode,
-                                                    totalQty: r.totalQty,
-                                                    availableQty: r.availableQty,
-                                                    reservedQty: r.reservedQty,
-                                                    unavailableQty: r.unavailableQty,
-                                                })
-                                            }
-                                        >
-                                            {lang === 'en' ? 'Adjust' : 'Điều chỉnh'}
-                                        </Button>
-                                    </div>
-                                ),
-                            },
-                        ]}
-                        data={visibleSkuRows}
-                        rowKey={(r) => r.sellerSkuId || r.id || r.skuId}
-                    />
-                    <div className="flex justify-center border-t border-border px-4 py-3">
-                        <nav aria-label={tr(lang, 'listPagination')}>
-                            <Pagination
-                                page={skuPage}
-                                total={skuRows.length}
-                                perPage={skuPerPage}
-                                onChange={setSkuPage}
-                                previousLabel={tr(lang, 'previousPage')}
-                                nextLabel={tr(lang, 'nextPage')}
-                            />
-                        </nav>
-                    </div>
+                                {
+                                    key: 'warehouses',
+                                    label: lang === 'en' ? 'Warehouses' : 'Số kho',
+                                    render: (r: SellerSkuResponse) => (
+                                        <span className="font-semibold text-gray-700">
+                                            {r.warehouseCount}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'totalQty',
+                                    label: lang === 'en' ? 'Total' : 'Tổng tồn',
+                                    render: (r: SellerSkuResponse) => (
+                                        <span className="font-bold">{r.totalQty}</span>
+                                    ),
+                                },
+                                {
+                                    key: 'availableQty',
+                                    label: tr(lang, 'totalAvailable'),
+                                    render: (r: SellerSkuResponse) => (
+                                        <span className="font-semibold text-success">
+                                            {r.availableQty}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'reservedQty',
+                                    label: tr(lang, 'totalReserved'),
+                                    render: (r: SellerSkuResponse) => (
+                                        <span className="font-semibold text-warning">
+                                            {r.reservedQty}
+                                        </span>
+                                    ),
+                                },
+                                {
+                                    key: 'status',
+                                    label: tr(lang, 'status'),
+                                    render: (r: SellerSkuResponse) => (
+                                        <StatusBadge
+                                            status={r.status === 'ACTIVE' ? 'active' : 'inactive'}
+                                            label={r.status}
+                                        />
+                                    ),
+                                },
+                                {
+                                    key: 'actions',
+                                    label: tr(lang, 'actions'),
+                                    render: (r: SellerSkuResponse) => (
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                icon={<Eye size={14} />}
+                                                onClick={() => void handleOpenDetail(r)}
+                                            >
+                                                {lang === 'en' ? 'Details' : 'Chi tiết'}
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() =>
+                                                    openInboundModal({
+                                                        skuId: r.skuId,
+                                                        skuCode: r.skuCode,
+                                                    })
+                                                }
+                                            >
+                                                {lang === 'en' ? 'Inbound' : 'Nhập thêm'}
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() =>
+                                                    openAdjustModal({
+                                                        skuId: r.skuId,
+                                                        skuCode: r.skuCode,
+                                                        totalQty: r.totalQty,
+                                                        availableQty: r.availableQty,
+                                                        reservedQty: r.reservedQty,
+                                                        unavailableQty: r.unavailableQty,
+                                                    })
+                                                }
+                                            >
+                                                {lang === 'en' ? 'Adjust' : 'Điều chỉnh'}
+                                            </Button>
+                                        </div>
+                                    ),
+                                },
+                            ]}
+                            data={visibleSkuRows}
+                            rowKey={(r) => r.sellerSkuId || r.id || r.skuId}
+                        />
+                        <div className="flex justify-center border-t border-border px-4 py-3">
+                            <nav aria-label={tr(lang, 'listPagination')}>
+                                <Pagination
+                                    page={skuPage}
+                                    total={skuRows.length}
+                                    perPage={skuPerPage}
+                                    onChange={setSkuPage}
+                                    previousLabel={tr(lang, 'previousPage')}
+                                    nextLabel={tr(lang, 'nextPage')}
+                                />
+                            </nav>
+                        </div>
                     </>
                 )}
             </div>
@@ -5252,7 +5437,8 @@ export function SellerInventoryPage() {
                                                 {formatDateTime(entry.createdAt, lang)}
                                             </span>
                                             <span className="badge badge-gray text-xs">
-                                                {entry.warehouseCode || entry.warehouseId.slice(0, 8)}
+                                                {entry.warehouseCode ||
+                                                    entry.warehouseId.slice(0, 8)}
                                             </span>
                                             <span className="font-mono text-xs text-gray-700">
                                                 {formatSkuDisplay(
@@ -5275,7 +5461,9 @@ export function SellerInventoryPage() {
                                         <div className="flex items-center gap-4">
                                             <span className="text-xs text-gray-500">
                                                 {entry.reason || entry.refType || '—'}
-                                                {entry.refId ? ` · #${entry.refId.slice(0, 8)}` : ''}
+                                                {entry.refId
+                                                    ? ` · #${entry.refId.slice(0, 8)}`
+                                                    : ''}
                                             </span>
                                             <span
                                                 className={`font-bold ${isDecrease ? 'text-danger' : 'text-success'}`}
@@ -5739,9 +5927,7 @@ export function SellerReputationPage() {
         } catch (err: any) {
             setError(
                 err?.message ||
-                    (lang === 'vi'
-                        ? 'Không thể tải điểm uy tín'
-                        : 'Failed to load reputation'),
+                    (lang === 'vi' ? 'Không thể tải điểm uy tín' : 'Failed to load reputation'),
             )
         } finally {
             setLoading(false)
@@ -5829,9 +6015,7 @@ export function SellerReputationPage() {
                                         </p>
                                         <p className="text-xs text-gray-500 mt-1">
                                             {reputation.totalRatings || ratings.length}{' '}
-                                            {lang === 'en'
-                                                ? 'Buyer reviews'
-                                                : 'Đánh giá từ Buyer'}
+                                            {lang === 'en' ? 'Buyer reviews' : 'Đánh giá từ Buyer'}
                                         </p>
                                     </div>
                                 </div>
@@ -5913,7 +6097,9 @@ export function SellerNotificationPage() {
                         size="sm"
                         onClick={async () => {
                             await readNotification()
-                            setNotifications((current) => current.map((notification) => ({ ...notification, read: true })))
+                            setNotifications((current) =>
+                                current.map((notification) => ({ ...notification, read: true })),
+                            )
                         }}
                     >
                         {tr(lang, 'markAllRead')}
@@ -5956,7 +6142,13 @@ export function SellerNotificationPage() {
                                         onClick={async () => {
                                             if (notification.read) return
                                             await readNotification(notification.id)
-                                            setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read: true } : item))
+                                            setNotifications((current) =>
+                                                current.map((item) =>
+                                                    item.id === notification.id
+                                                        ? { ...item, read: true }
+                                                        : item,
+                                                ),
+                                            )
                                         }}
                                         className={`w-full flex items-start gap-4 p-4 text-left border-b border-border last:border-0 transition-colors ${notification.read ? 'hover:bg-gray-50' : 'bg-gray-50'}`}
                                     >
@@ -6002,7 +6194,11 @@ export function SellerNotificationPage() {
                             </div>
                         )
                     ) : (
-                        <div className="p-5 text-sm text-gray-500">{lang === 'en' ? 'Notification preferences API is not available.' : 'Backend chưa cung cấp API tùy chọn thông báo.'}</div>
+                        <div className="p-5 text-sm text-gray-500">
+                            {lang === 'en'
+                                ? 'Notification preferences API is not available.'
+                                : 'Backend chưa cung cấp API tùy chọn thông báo.'}
+                        </div>
                     )}
                 </div>
             </div>

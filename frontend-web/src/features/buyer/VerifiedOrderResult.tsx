@@ -6,8 +6,39 @@ import type { Order } from '../../types'
 import { fireConfetti } from '../../utils/dialogs'
 
 /**
- * Chỉ công nhận trạng thái đơn từ Commerce; query thành công và đơn local PAID không chứng minh đã thu tiền.
- * Đổi ID hoặc API lỗi bỏ kết quả cũ và báo chưa xác nhận, không fallback sang dữ liệu demo.
+ * Định dạng nhãn trạng thái đơn hàng thân thiện (DoD UI sạch, không lộ enum thô).
+ * Đầu vào: status (PAID, PENDING_PAYMENT, CANCELLED...), lang ('vi' | 'en').
+ * Kết quả: Chuỗi tiếng Việt/Anh thân thiện với người dùng cuối.
+ */
+function formatStatusLabel(status: string, lang: string = 'vi'): string {
+    const mapVi: Record<string, string> = {
+        PAID: 'Đã thanh toán',
+        PENDING_PAYMENT: 'Chờ thanh toán',
+        PROCESSING: 'Đang xử lý',
+        SHIPPED: 'Đang giao hàng',
+        DELIVERED: 'Đã giao hàng',
+        COMPLETED: 'Hoàn thành',
+        CANCELLED: 'Đã hủy',
+        REFUNDED: 'Đã hoàn tiền',
+    }
+    const mapEn: Record<string, string> = {
+        PAID: 'Paid',
+        PENDING_PAYMENT: 'Pending Payment',
+        PROCESSING: 'Processing',
+        SHIPPED: 'Shipped',
+        DELIVERED: 'Delivered',
+        COMPLETED: 'Completed',
+        CANCELLED: 'Cancelled',
+        REFUNDED: 'Refunded',
+    }
+    return (lang === 'vi' ? mapVi[status] : mapEn[status]) || status
+}
+
+/**
+ * Màn hình kết quả thanh toán đã xác thực (VerifiedOrderResult).
+ * Chức năng: Hiển thị kết quả thanh toán từ Commerce Backend và cung cấp điều hướng sang Chi tiết đơn / Lịch sử đơn.
+ * Đầu vào: orderId từ URL routeParams.
+ * Kết quả: Trạng thái thanh toán (Thành công / Chờ xử lý), mã đơn hàng, nút "Xem chi tiết đơn hàng" và "Lịch sử đơn hàng".
  */
 export function VerifiedOrderResult({ orderId }: { orderId: string }) {
     const { lang, navigate, user, pageParams } = useApp()
@@ -63,7 +94,11 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                                 : 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white shadow-blue-500/25 ring-8 ring-blue-50'
                         }`}
                     >
-                        {isPaid ? <CheckCircle size={40} className="stroke-[2.5]" /> : <Package size={40} className="stroke-[2.5]" />}
+                        {isPaid ? (
+                            <CheckCircle size={40} className="stroke-[2.5]" />
+                        ) : (
+                            <Package size={40} className="stroke-[2.5]" />
+                        )}
                     </div>
                 </div>
             )}
@@ -84,7 +119,11 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
 
             {current && (
                 <div className="text-sm font-medium text-gray-600 mb-6 font-mono bg-gray-50 py-2.5 px-4 rounded-xl border border-gray-200 inline-block">
-                    {current.orderNo || current.id} ·{' '}
+                    {current.orderNo ||
+                        (current.id.length > 8
+                            ? '#' + current.id.slice(0, 8).toUpperCase()
+                            : current.id)}{' '}
+                    ·{' '}
                     <span
                         className={
                             isPaid
@@ -94,7 +133,7 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                                   : 'text-blue-600 font-semibold'
                         }
                     >
-                        {current.status}
+                        {formatStatusLabel(current.status, lang)}
                     </span>
                 </div>
             )}
@@ -110,12 +149,20 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                 </p>
             )}
 
-            <div className="flex justify-center gap-3 mt-4">
+            <div className="flex justify-center gap-3 mt-4 flex-wrap">
+                {current && (
+                    <Button
+                        variant="primary"
+                        onClick={() => navigate('order-detail', { id: current.id })}
+                    >
+                        {lang === 'vi' ? 'Xem chi tiết đơn hàng' : 'View order details'}
+                    </Button>
+                )}
                 <Button variant="outline" onClick={() => navigate('order-history')}>
                     {lang === 'vi' ? 'Lịch sử đơn hàng' : 'Order history'}
                 </Button>
                 {current && (
-                    <Button variant="primary" onClick={() => navigate('home')}>
+                    <Button variant="ghost" onClick={() => navigate('home')}>
                         {lang === 'vi' ? 'Tiếp tục mua sắm' : 'Continue shopping'}
                     </Button>
                 )}
