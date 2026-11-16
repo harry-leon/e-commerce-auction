@@ -19,7 +19,8 @@ import java.util.UUID;
 public class User {
     @Id
     private UUID id;
-    @Column(name = "keycloak_id", unique = true)
+    // Bắt buộc từ V8__require_keycloak_id: mọi hồ sơ phải liên kết tài khoản Keycloak để đăng nhập/đổi mật khẩu.
+    @Column(name = "keycloak_id", nullable = false, unique = true)
     private UUID keycloakId;
     @Column(nullable = false, unique = true, length = 255)
     private String email;
