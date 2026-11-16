@@ -19,6 +19,9 @@ spring:
     enabled: true
     locations: classpath:db/migration
     out-of-order: true
+    # Supabase đã có V7__system_configs từ nhánh feature/admin-dashboard-apis nhưng dev chưa có file này, trong khi dev có V8.
+    # *:missing cho phép validate bỏ qua migration đã chạy trên DB mà nhánh hiện tại chưa có (giống fulfillment-service).
+    ignore-migration-patterns: "*:missing,*:future"
 
 server:
   port: ${SERVER_PORT:8080}
