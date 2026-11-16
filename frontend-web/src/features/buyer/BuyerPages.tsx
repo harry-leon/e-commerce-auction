@@ -25,7 +25,6 @@ import {
     Trash2,
     Clock,
     Breadcrumb,
-    Copy,
     SkeletonProductCard,
     SkeletonAuctionCard,
 } from '../../components/UI'
@@ -35,11 +34,7 @@ import {
     type RatingResponse,
     type ReputationEligibility,
 } from '../../api/reputation'
-import {
-    TrustLevelBadge,
-    RatingStars,
-    RatingsList,
-} from '../../components/ReputationRating'
+import { TrustLevelBadge, RatingsList } from '../../components/ReputationRating'
 import { OrderDetailView } from './OrderDetailView'
 import { OrderHistoryView } from './OrderHistoryView'
 import { SellerShopView } from './SellerShopView'
@@ -3708,7 +3703,7 @@ export function OrderHistoryPage() {
  *          địa chỉ, thanh toán VNPAY và thông tin người bán.
  */
 export function OrderDetailPage() {
-
+    return <OrderDetailView />
 }
 
 /**
@@ -3718,7 +3713,7 @@ export function OrderDetailPage() {
  *          voucher shop, 3 sản phẩm chủ lực, live auctions và đánh giá.
  */
 export function SellerShopPage() {
-
+    return <SellerShopView />
 }
 
 /**
@@ -3732,11 +3727,20 @@ export function SellerShopPage() {
  */
 export function MyReputationPage() {
     const { lang, user, navigate, pageParams, page } = useApp()
-    const isPublic = page === 'public-reputation' || Boolean(pageParams?.id || pageParams?.userId || pageParams?.sellerId)
+    const isPublic =
+        page === 'public-reputation' ||
+        Boolean(pageParams?.id || pageParams?.userId || pageParams?.sellerId)
     const targetUserId = String(
-        pageParams?.id || pageParams?.userId || pageParams?.sellerId || user?.id || 'b1fb6fd5-936c-439e-994c-f0c5c529b406'
+        pageParams?.id ||
+            pageParams?.userId ||
+            pageParams?.sellerId ||
+            user?.id ||
+            'b1fb6fd5-936c-439e-994c-f0c5c529b406',
     )
-    const targetName = resolveSellerName(targetUserId, typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null)
+    const targetName = resolveSellerName(
+        targetUserId,
+        typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null,
+    )
     const [reputation, setReputation] = useState<ReputationSummary | null>(null)
     const [eligibility, setEligibility] = useState<ReputationEligibility | null>(null)
     const [ratings, setRatings] = useState<RatingResponse[]>([])
@@ -3804,10 +3808,7 @@ export function MyReputationPage() {
         <BuyerLayout>
             <div className="max-w-4xl mx-auto space-y-6">
                 <Breadcrumb
-                    items={[
-                        { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
-
-                    ]}
+                    items={[{ label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' }]}
                 />
 
                 <div className="flex items-center justify-between">

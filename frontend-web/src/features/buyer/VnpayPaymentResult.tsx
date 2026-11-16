@@ -212,7 +212,10 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
                  * Kết quả: Chuyển sang màn hình /order-detail với ID đơn hàng.
                  */}
                 {current?.orderId && (
-                    <Button variant="primary" onClick={() => navigate('order-detail', { id: current.orderId })}>
+                    <Button
+                        variant="primary"
+                        onClick={() => navigate('order-detail', { id: current.orderId })}
+                    >
                         {lang === 'vi' ? 'Xem chi tiết đơn hàng' : 'View order details'}
                     </Button>
                 )}

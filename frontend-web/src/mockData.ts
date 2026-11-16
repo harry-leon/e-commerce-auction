@@ -798,9 +798,9 @@ export const USERS: User[] = [
     },
 ]
 
-export const DEMO_BUYER: User = USERS[0]
-export const DEMO_SELLER: User = USERS[1]
-export const DEMO_ADMIN: User = USERS[3]
+export const DEMO_BUYER: User = USERS.find((u) => u.id === 'u1') || USERS[0]
+export const DEMO_SELLER: User = USERS.find((u) => u.id === 'u2') || USERS[1]
+export const DEMO_ADMIN: User = USERS.find((u) => u.role === 'admin') || USERS[6]
 export const DEMO_SUPPORT: User = {
     id: 'u8',
     fullName: 'Support Agent',

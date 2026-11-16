@@ -630,8 +630,12 @@ export function PublicHeader() {
                             {userOpen && (
                                 <div className="absolute right-0 top-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-56 z-50 animate-in fade-in zoom-in-95 duration-150">
                                     <div className="px-4 py-2 border-b border-gray-100 mb-1">
-                                        <p className="font-semibold text-sm text-gray-900">{user.fullName}</p>
-                                        <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                                        <p className="font-semibold text-sm text-gray-900">
+                                            {user.fullName}
+                                        </p>
+                                        <p className="text-xs text-gray-500 truncate">
+                                            {user.email}
+                                        </p>
                                     </div>
                                     {[
                                         {
@@ -910,7 +914,10 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                 style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('seller-dashboard')} className="flex items-center gap-2">
+                    <button
+                        onClick={() => navigate('seller-dashboard')}
+                        className="flex items-center gap-2"
+                    >
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Gavel size={14} className="text-white" />
                         </div>
@@ -937,7 +944,11 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         // Chức năng: Bấm vào thẻ Seller Nexus để truy cập trang Profile (Hồ sơ người bán)
                         <button
                             type="button"
-                            aria-label={lang === 'en' ? 'Open Seller Nexus profile' : 'Mở hồ sơ Seller Nexus'}
+                            aria-label={
+                                lang === 'en'
+                                    ? 'Open Seller Nexus profile'
+                                    : 'Mở hồ sơ Seller Nexus'
+                            }
                             onClick={() => navigate('seller-profile')}
                             className="sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
                         >
@@ -979,7 +990,9 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         <NotificationBell iconSize={18} targetPage="seller-notifications" />
                     </div>
                 </div>
-                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">
+                    {children}
+                </main>
             </div>
         </div>
     )

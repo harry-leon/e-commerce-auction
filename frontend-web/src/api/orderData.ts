@@ -16,7 +16,13 @@ export type OrderPayload = Partial<Omit<Order, 'items'>> & {
     estimatedSubtotal?: number
     estimatedShippingFee?: number
     estimatedDiscount?: number
-    items?: (Partial<OrderItem> & { skuId?: string; thumbnailUrl?: string; estimatedUnitPrice?: number })[] | null
+    items?:
+        | (Partial<OrderItem> & {
+              skuId?: string
+              thumbnailUrl?: string
+              estimatedUnitPrice?: number
+          })[]
+        | null
 }
 
 /**
@@ -43,7 +49,6 @@ export type OrderPayload = Partial<Omit<Order, 'items'>> & {
  * Lỗi & giới hạn:
  * - Ném lỗi 'Dữ liệu đơn hàng không hợp lệ' nếu raw rỗng hoặc thiếu ID/status.
  */
- */
 export function normalizeOrder(raw: OrderPayload): Order {
     if (!raw || typeof raw.id !== 'string' || !raw.status) {
         throw new Error('Dữ liệu đơn hàng không hợp lệ')
@@ -56,9 +61,7 @@ export function normalizeOrder(raw: OrderPayload): Order {
             ? 'released'
             : raw.status === 'CANCELLED'
               ? 'refunded'
-              : raw.status === 'PENDING_PAYMENT'
-                ? 'on_hold'
-                : 'unknown'
+              : 'unknown'
 
     return {
         ...raw,
@@ -72,7 +75,7 @@ export function normalizeOrder(raw: OrderPayload): Order {
             ? raw.items.map((item) => {
                   const unitPrice = Number(item.unitPrice ?? item.estimatedUnitPrice ?? 0)
                   const quantity = Number(item.quantity ?? 1)
-                  const subtotal = Number(item.subtotal ?? (unitPrice * (quantity || 1)))
+                  const subtotal = Number(item.subtotal ?? unitPrice * (quantity || 1))
                   return {
                       productId: item.productId ?? item.skuId ?? '',
                       productName: item.productName ?? '',
@@ -92,7 +95,10 @@ export function normalizeOrder(raw: OrderPayload): Order {
         discount: Number(raw.discount ?? raw.estimatedDiscount ?? 0),
         shipping: Number(raw.shippingFee ?? raw.shipping ?? raw.estimatedShippingFee ?? 0),
         total: resolvedTotal,
-        paymentStatus: (raw.paymentStatus && raw.paymentStatus !== 'unknown') ? raw.paymentStatus : defaultPaymentStatus,
+        paymentStatus:
+            raw.paymentStatus && raw.paymentStatus !== 'unknown'
+                ? raw.paymentStatus
+                : defaultPaymentStatus,
         refundStatus: raw.refundStatus ?? 'none',
         paymentMethod: raw.paymentMethod ?? '',
         shippingAddress: raw.shippingAddress ?? '',

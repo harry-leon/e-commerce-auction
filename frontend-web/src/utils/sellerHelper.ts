@@ -29,7 +29,8 @@ export const KNOWN_SELLERS: Record<string, string> = {
  * Ưu tiên danh mục cửa hàng thật từ database; nếu có fallbackName hợp lệ và khác TechZone Store thì ưu tiên dùng.
  */
 export function resolveSellerName(sellerId?: string | null, fallbackName?: string | null): string {
-    if (!sellerId) return fallbackName && fallbackName !== 'TechZone Store' ? fallbackName : 'Cửa hàng đối tác'
+    if (!sellerId)
+        return fallbackName && fallbackName !== 'TechZone Store' ? fallbackName : 'Cửa hàng đối tác'
     if (KNOWN_SELLERS[sellerId]) return KNOWN_SELLERS[sellerId]
     if (fallbackName && fallbackName !== 'TechZone Store' && fallbackName !== 'Cửa hàng đối tác') {
         return fallbackName

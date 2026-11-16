@@ -180,7 +180,10 @@ describe('Reputation & Rating API Service', () => {
                 data: { id: 'rate-1', isDisputed: true },
             } as any)
 
-            const result = await reputationApi.flagDispute('rate-1', 'Người mua đánh giá sai sự thật')
+            const result = await reputationApi.flagDispute(
+                'rate-1',
+                'Người mua đánh giá sai sự thật',
+            )
             expect(apiSpy).toHaveBeenCalledWith(
                 '/ratings/rate-1/dispute',
                 expect.objectContaining({

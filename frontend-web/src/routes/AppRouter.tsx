@@ -121,7 +121,12 @@ export function AppRouter() {
     if (page.startsWith('admin-') && user?.role !== 'admin')
         return <p role="alert">Access denied</p>
     // Trang quản trị của seller (ngoại trừ seller-shop là gian hàng công khai cho buyer ghé thăm)
-    if (page.startsWith('seller-') && page !== 'seller-shop' && user?.role !== 'seller' && user?.role !== 'admin')
+    if (
+        page.startsWith('seller-') &&
+        page !== 'seller-shop' &&
+        user?.role !== 'seller' &&
+        user?.role !== 'admin'
+    )
         return <p role="alert">Access denied</p>
     if (page.startsWith('support-') && user?.role !== 'support' && user?.role !== 'admin')
         return <p role="alert">Access denied</p>

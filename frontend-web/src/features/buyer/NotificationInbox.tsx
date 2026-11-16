@@ -1,6 +1,6 @@
 /**
  * Màn hình Hộp thư Thông báo và Tùy chọn Nhận thông báo (Sprint 3 - HA-S3-2 & Flow 3 Clean UI).
- * 
+ *
  * 1. Chức năng:
  *    - Hiển thị danh sách thông báo phân nhóm theo ngày (Hôm nay, Hôm qua, Trước đó).
  *    - Bộ lọc trạng thái đa năng: "Tất cả", "Chưa đọc", "Đã đọc" kèm bộ đếm số lượng.
@@ -38,7 +38,17 @@ import { Modal, Button } from '../../components/UI'
 
 function LayersIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <polygon points="12 2 2 7 12 12 22 7 12 2" />
             <polyline points="2 17 12 22 22 17" />
             <polyline points="2 12 12 17 22 12" />
@@ -48,7 +58,17 @@ function LayersIcon({ size = 16, className = '' }: { size?: number; className?: 
 
 function MailIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <rect x="2" y="4" width="20" height="16" rx="2" />
             <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
         </svg>
@@ -57,7 +77,17 @@ function MailIcon({ size = 16, className = '' }: { size?: number; className?: st
 
 function CheckSquareIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <polyline points="9 11 12 14 22 4" />
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
         </svg>
@@ -66,7 +96,17 @@ function CheckSquareIcon({ size = 16, className = '' }: { size?: number; classNa
 
 function RefreshIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <path d="M21 2v6h-6" />
             <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
             <path d="M3 22v-6h6" />
@@ -77,7 +117,17 @@ function RefreshIcon({ size = 15, className = '' }: { size?: number; className?:
 
 function SettingsCogIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
         </svg>
@@ -86,7 +136,17 @@ function SettingsCogIcon({ size = 16, className = '' }: { size?: number; classNa
 
 function BellOutlineIcon({ size = 20, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
             <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
         </svg>
@@ -95,7 +155,17 @@ function BellOutlineIcon({ size = 20, className = '' }: { size?: number; classNa
 
 function GiftIcon({ size = 20, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <polyline points="20 12 20 22 4 22 4 12" />
             <rect x="2" y="7" width="20" height="5" />
             <line x1="12" y1="22" x2="12" y2="7" />
@@ -107,7 +177,17 @@ function GiftIcon({ size = 20, className = '' }: { size?: number; className?: st
 
 function ShoppingCartIcon({ size = 20, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <circle cx="8" cy="21" r="1" />
             <circle cx="19" cy="21" r="1" />
             <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
@@ -117,7 +197,17 @@ function ShoppingCartIcon({ size = 20, className = '' }: { size?: number; classN
 
 function GavelIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <path d="m14 13-7.5 7.5c-.83.83-2.17.83-3 0 0 0 0 0 0 0a2.12 2.12 0 0 1 0-3L11 10" />
             <path d="m16 16 6-6" />
             <path d="m8 8 6-6" />
@@ -129,7 +219,17 @@ function GavelIcon({ size = 15, className = '' }: { size?: number; className?: s
 
 function CreditCardIcon({ size = 15, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <rect x="2" y="5" width="20" height="14" rx="2" />
             <line x1="2" y1="10" x2="22" y2="10" />
         </svg>
@@ -138,7 +238,17 @@ function CreditCardIcon({ size = 15, className = '' }: { size?: number; classNam
 
 function ClockIcon({ size = 13, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <circle cx="12" cy="12" r="10" />
             <polyline points="12 6 12 12 16 14" />
         </svg>
@@ -147,7 +257,17 @@ function ClockIcon({ size = 13, className = '' }: { size?: number; className?: s
 
 function CheckmarkIcon({ size = 16, className = '' }: { size?: number; className?: string }) {
     return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
             <polyline points="20 6 9 17 4 12" />
         </svg>
     )
@@ -159,10 +279,16 @@ function formatNotificationTag(type?: string): { label: string; color: string } 
     if (!type) return { label: 'Thông báo', color: 'bg-gray-100 text-gray-700' }
     switch (type) {
         case 'AUCTION_OUTBID':
-            return { label: 'Đấu giá', color: 'bg-orange-100 text-orange-700 border border-orange-200' }
+            return {
+                label: 'Đấu giá',
+                color: 'bg-orange-100 text-orange-700 border border-orange-200',
+            }
         case 'AUCTION_WON':
         case 'AUCTION_PAYMENT_REMINDER':
-            return { label: 'Trúng đấu giá', color: 'bg-emerald-100 text-emerald-800 border border-emerald-200' }
+            return {
+                label: 'Trúng đấu giá',
+                color: 'bg-emerald-100 text-emerald-800 border border-emerald-200',
+            }
         case 'ORDER_PLACED':
         case 'ORDER_CREATED':
         case 'PAYMENT_SUCCESS':
@@ -193,7 +319,9 @@ export function NotificationInbox() {
                             onClick={() => navigate('login')}
                             className="px-6 py-2.5 bg-[#ee4d2d] hover:bg-[#d03e20] text-white text-sm font-semibold rounded-2xl transition-colors shadow-sm cursor-pointer"
                         >
-                            {currentLang === 'vi' ? 'Đăng nhập để xem thông báo' : 'Log in to view notifications'}
+                            {currentLang === 'vi'
+                                ? 'Đăng nhập để xem thông báo'
+                                : 'Log in to view notifications'}
                         </button>
                     </div>
                 </div>
@@ -225,7 +353,9 @@ function InboxContent({
     const [filterTab, setFilterTab] = useState<'all' | 'unread' | 'read'>('all')
 
     // Quyền Web Push Notification (AC 12, 13)
-    const [pushStatus, setPushStatus] = useState<NotificationPermission>(() => getPushPermissionStatus())
+    const [pushStatus, setPushStatus] = useState<NotificationPermission>(() =>
+        getPushPermissionStatus(),
+    )
 
     async function handleRequestPush() {
         const result = await requestPushPermission()
@@ -233,7 +363,10 @@ function InboxContent({
         if (result === 'granted') {
             showToast({
                 type: 'success',
-                message: lang === 'vi' ? 'Đã bật thông báo đẩy thành công!' : 'Push notifications enabled!',
+                message:
+                    lang === 'vi'
+                        ? 'Đã bật thông báo đẩy thành công!'
+                        : 'Push notifications enabled!',
             })
         }
     }
@@ -317,8 +450,12 @@ function InboxContent({
             showToast({
                 type: 'success',
                 message: id
-                    ? (lang === 'vi' ? 'Đã đánh dấu thông báo là đã đọc.' : 'Marked notification as read.')
-                    : (lang === 'vi' ? 'Đã đánh dấu tất cả thông báo là đã đọc.' : 'All notifications marked as read.'),
+                    ? lang === 'vi'
+                        ? 'Đã đánh dấu thông báo là đã đọc.'
+                        : 'Marked notification as read.'
+                    : lang === 'vi'
+                      ? 'Đã đánh dấu tất cả thông báo là đã đọc.'
+                      : 'All notifications marked as read.',
             })
         } catch (reason) {
             setError(errorMessage(reason))
@@ -346,20 +483,25 @@ function InboxContent({
             await updateNotificationPreferences(preferences)
             showToast({
                 type: 'success',
-                message: lang === 'vi' ? 'Đã lưu cấu hình tùy chọn nhận thông báo.' : 'Notification preferences saved.',
+                message:
+                    lang === 'vi'
+                        ? 'Đã lưu cấu hình tùy chọn nhận thông báo.'
+                        : 'Notification preferences saved.',
             })
             setPrefOpen(false)
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'vi' ? 'Không thể lưu cài đặt' : 'Failed to save preferences'),
+                message:
+                    err?.message ||
+                    (lang === 'vi' ? 'Không thể lưu cài đặt' : 'Failed to save preferences'),
             })
         } finally {
             setPrefSaving(false)
         }
     }
 
-        // Lấy thông báo thật từ API Backend - không mock data ảo
+    // Lấy thông báo thật từ API Backend - không mock data ảo
     const rawItems: NotificationItem[] = useMemo(() => {
         return inbox?.content || []
     }, [inbox])
@@ -401,7 +543,10 @@ function InboxContent({
             groups.push({ groupName: lang === 'vi' ? 'Hôm nay' : 'Today', items: todayGroup })
         }
         if (yesterdayGroup.length > 0) {
-            groups.push({ groupName: lang === 'vi' ? 'Hôm qua' : 'Yesterday', items: yesterdayGroup })
+            groups.push({
+                groupName: lang === 'vi' ? 'Hôm qua' : 'Yesterday',
+                items: yesterdayGroup,
+            })
         }
         if (earlierGroup.length > 0) {
             groups.push({ groupName: lang === 'vi' ? 'Trước đó' : 'Earlier', items: earlierGroup })
@@ -466,7 +611,9 @@ function InboxContent({
                             {unreadCount > 0 && (
                                 <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-600">
                                     <span className="w-1.5 h-1.5 rounded-full bg-orange-500 inline-block" />
-                                    {lang === 'vi' ? `${unreadCount} chưa đọc` : `${unreadCount} unread`}
+                                    {lang === 'vi'
+                                        ? `${unreadCount} chưa đọc`
+                                        : `${unreadCount} unread`}
                                 </span>
                             )}
                         </div>
@@ -515,7 +662,9 @@ function InboxContent({
                         }`}
                     >
                         <LayersIcon size={15} />
-                        <span>{lang === 'vi' ? `Tất cả (${totalCount})` : `All (${totalCount})`}</span>
+                        <span>
+                            {lang === 'vi' ? `Tất cả (${totalCount})` : `All (${totalCount})`}
+                        </span>
                     </button>
 
                     {/* Tab Chưa đọc */}
@@ -529,7 +678,11 @@ function InboxContent({
                         }`}
                     >
                         <MailIcon size={15} />
-                        <span>{lang === 'vi' ? `Chưa đọc (${unreadCount})` : `Unread (${unreadCount})`}</span>
+                        <span>
+                            {lang === 'vi'
+                                ? `Chưa đọc (${unreadCount})`
+                                : `Unread (${unreadCount})`}
+                        </span>
                     </button>
 
                     {/* Tab Đã đọc */}
@@ -543,7 +696,9 @@ function InboxContent({
                         }`}
                     >
                         <CheckSquareIcon size={15} />
-                        <span>{lang === 'vi' ? `Đã đọc (${readCount})` : `Read (${readCount})`}</span>
+                        <span>
+                            {lang === 'vi' ? `Đã đọc (${readCount})` : `Read (${readCount})`}
+                        </span>
                     </button>
                 </div>
 
@@ -561,7 +716,10 @@ function InboxContent({
 
             {/* Error banner */}
             {error && (
-                <div className="p-4 bg-red-50 border border-red-200 text-sm text-red-700 rounded-2xl flex items-center justify-between" role="alert">
+                <div
+                    className="p-4 bg-red-50 border border-red-200 text-sm text-red-700 rounded-2xl flex items-center justify-between"
+                    role="alert"
+                >
                     <span>{error}</span>
                     <Button size="sm" variant="outline" onClick={fetchInbox}>
                         {lang === 'vi' ? 'Thử lại' : 'Retry'}
@@ -573,7 +731,9 @@ function InboxContent({
             {loading && rawItems.length === 0 && (
                 <div className="py-16 text-center text-gray-500 flex flex-col items-center justify-center gap-2">
                     <div className="w-7 h-7 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs font-semibold">{lang === 'vi' ? 'Đang tải thông báo…' : 'Loading notifications…'}</span>
+                    <span className="text-xs font-semibold">
+                        {lang === 'vi' ? 'Đang tải thông báo…' : 'Loading notifications…'}
+                    </span>
                 </div>
             )}
 
@@ -583,8 +743,12 @@ function InboxContent({
                     <BellOutlineIcon size={40} className="mx-auto text-gray-300 mb-3" />
                     <p className="text-sm font-medium text-gray-500">
                         {page > 0
-                            ? (lang === 'vi' ? 'Chưa có thông báo trên trang này.' : 'No notifications on this page.')
-                            : (lang === 'vi' ? 'Không có thông báo nào trong mục này.' : 'No notifications in this tab.')}
+                            ? lang === 'vi'
+                                ? 'Chưa có thông báo trên trang này.'
+                                : 'No notifications on this page.'
+                            : lang === 'vi'
+                              ? 'Không có thông báo nào trong mục này.'
+                              : 'No notifications in this tab.'}
                     </p>
                 </div>
             )}
@@ -625,7 +789,8 @@ function InboxContent({
                                         <div className="w-11 h-11 rounded-2xl bg-orange-100/70 text-orange-600 flex items-center justify-center shrink-0">
                                             {item.type === 'AUCTION_OUTBID' ? (
                                                 <BellOutlineIcon size={20} />
-                                            ) : item.type === 'AUCTION_WON' || item.type === 'AUCTION_PAYMENT_REMINDER' ? (
+                                            ) : item.type === 'AUCTION_WON' ||
+                                              item.type === 'AUCTION_PAYMENT_REMINDER' ? (
                                                 <GiftIcon size={20} />
                                             ) : (
                                                 <ShoppingCartIcon size={20} />
@@ -638,7 +803,9 @@ function InboxContent({
                                                 <h3 className="text-sm font-bold text-gray-900 leading-snug">
                                                     {item.title}
                                                 </h3>
-                                                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md ${tag.color}`}>
+                                                <span
+                                                    className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md ${tag.color}`}
+                                                >
                                                     {tag.label}
                                                 </span>
                                             </div>
@@ -650,9 +817,14 @@ function InboxContent({
                                             <div className="flex items-center gap-1.5 text-[11px] text-gray-400 pt-1 font-medium">
                                                 <ClockIcon size={12} />
                                                 <span>
-                                                    {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    {new Date(item.createdAt).toLocaleTimeString(
+                                                        [],
+                                                        { hour: '2-digit', minute: '2-digit' },
+                                                    )}
                                                     {' · '}
-                                                    {new Date(item.createdAt).toLocaleDateString('vi-VN')}
+                                                    {new Date(item.createdAt).toLocaleDateString(
+                                                        'vi-VN',
+                                                    )}
                                                 </span>
                                             </div>
                                         </div>
@@ -666,7 +838,9 @@ function InboxContent({
                                                 type="button"
                                                 onClick={() => {
                                                     if (item.auctionId) {
-                                                        navigate('auction-detail' as any, { id: item.auctionId })
+                                                        navigate('auction-detail' as any, {
+                                                            id: item.auctionId,
+                                                        })
                                                     } else {
                                                         navigate('auction-list')
                                                     }
@@ -674,19 +848,26 @@ function InboxContent({
                                                 className="px-4 py-2 border-2 border-orange-400 text-orange-600 hover:bg-orange-50 text-xs font-bold rounded-2xl flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
                                             >
                                                 <GavelIcon size={14} />
-                                                <span>{lang === 'vi' ? 'Đặt giá lại' : 'Re-bid'}</span>
+                                                <span>
+                                                    {lang === 'vi' ? 'Đặt giá lại' : 'Re-bid'}
+                                                </span>
                                             </button>
                                         )}
 
                                         {/* Nút "Thanh toán ngay" khi thắng đấu giá */}
-                                        {(item.type === 'AUCTION_WON' || item.type === 'AUCTION_PAYMENT_REMINDER') && (
+                                        {(item.type === 'AUCTION_WON' ||
+                                            item.type === 'AUCTION_PAYMENT_REMINDER') && (
                                             <button
                                                 type="button"
                                                 onClick={() => {
                                                     if (item.auctionId) {
-                                                        navigate('auction-payment' as any, { auctionId: item.auctionId })
+                                                        navigate('auction-payment' as any, {
+                                                            auctionId: item.auctionId,
+                                                        })
                                                     } else if (item.orderId) {
-                                                        navigate('order-detail' as any, { id: item.orderId })
+                                                        navigate('order-detail' as any, {
+                                                            id: item.orderId,
+                                                        })
                                                     } else if (item.paymentLink) {
                                                         window.location.href = item.paymentLink
                                                     }
@@ -694,20 +875,26 @@ function InboxContent({
                                                 className="px-4 py-2 bg-[#ee4d2d] hover:bg-[#d03e20] text-white text-xs font-bold rounded-2xl flex items-center gap-1.5 transition-colors shadow-sm shadow-orange-500/20 cursor-pointer"
                                             >
                                                 <CreditCardIcon size={14} />
-                                                <span>{lang === 'vi' ? 'Thanh toán ngay' : 'Pay now'}</span>
+                                                <span>
+                                                    {lang === 'vi' ? 'Thanh toán ngay' : 'Pay now'}
+                                                </span>
                                             </button>
                                         )}
 
                                         {/* Nút đánh dấu đã đọc khi tin nhắn chưa đọc và không phải auction */}
-                                        {isUnread && item.type !== 'AUCTION_WON' && item.type !== 'AUCTION_OUTBID' && (
-                                            <button
-                                                type="button"
-                                                onClick={() => void markRead(item.id)}
-                                                className="px-3.5 py-1.5 border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
-                                            >
-                                                {lang === 'vi' ? 'Đánh dấu đã đọc' : 'Mark read'}
-                                            </button>
-                                        )}
+                                        {isUnread &&
+                                            item.type !== 'AUCTION_WON' &&
+                                            item.type !== 'AUCTION_OUTBID' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void markRead(item.id)}
+                                                    className="px-3.5 py-1.5 border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                                                >
+                                                    {lang === 'vi'
+                                                        ? 'Đánh dấu đã đọc'
+                                                        : 'Mark read'}
+                                                </button>
+                                            )}
                                     </div>
                                 </div>
                             )
@@ -746,7 +933,9 @@ function InboxContent({
             <Modal
                 open={prefOpen}
                 onClose={() => setPrefOpen(false)}
-                title={lang === 'vi' ? 'Cài đặt Tùy chọn Nhận thông báo' : 'Notification Preferences'}
+                title={
+                    lang === 'vi' ? 'Cài đặt Tùy chọn Nhận thông báo' : 'Notification Preferences'
+                }
             >
                 <div className="space-y-5">
                     <p className="text-xs text-gray-500 leading-relaxed">
@@ -765,31 +954,79 @@ function InboxContent({
                     ) : (
                         <div className="border border-border rounded-xl overflow-hidden divide-y divide-border">
                             <div className="grid grid-cols-[1fr_70px_70px_70px] p-3 bg-gray-50 text-[11px] font-bold text-gray-500 uppercase tracking-wider text-center">
-                                <span className="text-left">{lang === 'vi' ? 'Loại thông báo' : 'Category'}</span>
+                                <span className="text-left">
+                                    {lang === 'vi' ? 'Loại thông báo' : 'Category'}
+                                </span>
                                 <span>App</span>
                                 <span>Email</span>
                                 <span>Push</span>
                             </div>
 
                             {[
-                                { type: 'ORDER', label: lang === 'vi' ? 'Đơn hàng & Giao hàng' : 'Orders & Shipping' },
-                                { type: 'AUCTION', label: lang === 'vi' ? 'Đấu giá & Trả giá' : 'Auctions & Bids' },
-                                { type: 'PAYMENT', label: lang === 'vi' ? 'Thanh toán & Ví tiền' : 'Payments & Escrow' },
-                                { type: 'PROMOTION', label: lang === 'vi' ? 'Khuyến mãi & Tin tức' : 'Promotions & News' },
-                                { type: 'SYSTEM', label: lang === 'vi' ? 'Uy tín & Hệ thống' : 'Reputation & System' },
+                                {
+                                    type: 'ORDER',
+                                    label:
+                                        lang === 'vi'
+                                            ? 'Đơn hàng & Giao hàng'
+                                            : 'Orders & Shipping',
+                                },
+                                {
+                                    type: 'AUCTION',
+                                    label: lang === 'vi' ? 'Đấu giá & Trả giá' : 'Auctions & Bids',
+                                },
+                                {
+                                    type: 'PAYMENT',
+                                    label:
+                                        lang === 'vi'
+                                            ? 'Thanh toán & Ví tiền'
+                                            : 'Payments & Escrow',
+                                },
+                                {
+                                    type: 'PROMOTION',
+                                    label:
+                                        lang === 'vi'
+                                            ? 'Khuyến mãi & Tin tức'
+                                            : 'Promotions & News',
+                                },
+                                {
+                                    type: 'SYSTEM',
+                                    label:
+                                        lang === 'vi' ? 'Uy tín & Hệ thống' : 'Reputation & System',
+                                },
                             ].map((cat) => {
-                                const inApp = preferences.find((p) => p.notificationType === cat.type && p.channel === 'IN_APP')?.enabled ?? true
-                                const email = preferences.find((p) => p.notificationType === cat.type && p.channel === 'EMAIL')?.enabled ?? true
-                                const push = preferences.find((p) => p.notificationType === cat.type && p.channel === 'PUSH')?.enabled ?? false
+                                const inApp =
+                                    preferences.find(
+                                        (p) =>
+                                            p.notificationType === cat.type &&
+                                            p.channel === 'IN_APP',
+                                    )?.enabled ?? true
+                                const email =
+                                    preferences.find(
+                                        (p) =>
+                                            p.notificationType === cat.type &&
+                                            p.channel === 'EMAIL',
+                                    )?.enabled ?? true
+                                const push =
+                                    preferences.find(
+                                        (p) =>
+                                            p.notificationType === cat.type && p.channel === 'PUSH',
+                                    )?.enabled ?? false
 
                                 return (
-                                    <div key={cat.type} className="grid grid-cols-[1fr_70px_70px_70px] p-3 items-center text-xs">
-                                        <span className="font-semibold text-gray-800">{cat.label}</span>
+                                    <div
+                                        key={cat.type}
+                                        className="grid grid-cols-[1fr_70px_70px_70px] p-3 items-center text-xs"
+                                    >
+                                        <span className="font-semibold text-gray-800">
+                                            {cat.label}
+                                        </span>
                                         <div className="flex justify-center">
                                             <input
                                                 type="checkbox"
                                                 checked={inApp}
-                                                onChange={() => togglePreference(cat.type, 'IN_APP')}
+                                                onChange={() =>
+                                                    togglePreference(cat.type, 'IN_APP')
+                                                }
                                                 className="w-4 h-4 accent-primary cursor-pointer"
                                                 aria-label={`${cat.label} in-app`}
                                             />
@@ -819,11 +1056,27 @@ function InboxContent({
                     )}
 
                     <div className="flex justify-end gap-2 pt-2 border-t border-border">
-                        <Button variant="outline" size="sm" onClick={() => setPrefOpen(false)} disabled={prefSaving}>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPrefOpen(false)}
+                            disabled={prefSaving}
+                        >
                             {lang === 'vi' ? 'Hủy' : 'Cancel'}
                         </Button>
-                        <Button variant="primary" size="sm" onClick={handleSavePreferences} disabled={prefSaving || prefLoading}>
-                            {prefSaving ? (lang === 'vi' ? 'Đang lưu...' : 'Saving...') : (lang === 'vi' ? 'Lưu tùy chọn' : 'Save Preferences')}
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={handleSavePreferences}
+                            disabled={prefSaving || prefLoading}
+                        >
+                            {prefSaving
+                                ? lang === 'vi'
+                                    ? 'Đang lưu...'
+                                    : 'Saving...'
+                                : lang === 'vi'
+                                  ? 'Lưu tùy chọn'
+                                  : 'Save Preferences'}
                         </Button>
                     </div>
                 </div>

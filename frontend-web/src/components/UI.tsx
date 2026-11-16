@@ -356,7 +356,10 @@ export function Modal({
             className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
             onClick={(e) => e.target === e.currentTarget && onClose()}
         >
-            <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm transition-opacity" onClick={onClose} />
+            <div
+                className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm transition-opacity"
+                onClick={onClose}
+            />
             {/* role="dialog" + aria-modal="true" đảm bảo screen reader nhận ra đây là dialog */}
             <div
                 role="dialog"
@@ -526,13 +529,14 @@ export function Pagination({
 }) {
     const pages = Math.max(1, Math.ceil(total / perPage))
     // Giữ tối đa năm số trang; dấu ba chấm cho biết còn trang trước hoặc sau dãy đang hiển thị.
-    const visiblePages = pages <= 5
-        ? Array.from({ length: pages }, (_, index) => index + 1)
-        : page <= 3
-          ? [1, 2, 3, 4, 5]
-          : page >= pages - 2
-            ? Array.from({ length: 5 }, (_, index) => pages - 4 + index)
-            : Array.from({ length: 5 }, (_, index) => page - 2 + index)
+    const visiblePages =
+        pages <= 5
+            ? Array.from({ length: pages }, (_, index) => index + 1)
+            : page <= 3
+              ? [1, 2, 3, 4, 5]
+              : page >= pages - 2
+                ? Array.from({ length: 5 }, (_, index) => pages - 4 + index)
+                : Array.from({ length: 5 }, (_, index) => page - 2 + index)
     const showLeadingEllipsis = pages > 5 && page > 3
     const showTrailingEllipsis = pages > 5 && page < pages - 2
     return (
@@ -545,7 +549,11 @@ export function Pagination({
             >
                 <ChevronLeft size={14} />
             </button>
-            {showLeadingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
+            {showLeadingEllipsis && (
+                <span className="px-1 text-gray-400" aria-hidden="true">
+                    …
+                </span>
+            )}
             {visiblePages.map((p) => {
                 return (
                     <button
@@ -557,7 +565,11 @@ export function Pagination({
                     </button>
                 )
             })}
-            {showTrailingEllipsis && <span className="px-1 text-gray-400" aria-hidden="true">…</span>}
+            {showTrailingEllipsis && (
+                <span className="px-1 text-gray-400" aria-hidden="true">
+                    …
+                </span>
+            )}
             <button
                 onClick={() => onChange(page + 1)}
                 disabled={page === pages}
@@ -588,7 +600,9 @@ export function EmptyState({
                 {icon ?? <Inbox size={28} className="text-gray-400" />}
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-1.5">{title}</h3>
-            {subtitle && <p className="text-sm text-gray-500 leading-relaxed max-w-sm">{subtitle}</p>}
+            {subtitle && (
+                <p className="text-sm text-gray-500 leading-relaxed max-w-sm">{subtitle}</p>
+            )}
             {action && <div className="mt-6">{action}</div>}
         </div>
     )
@@ -840,7 +854,9 @@ export function CountdownTimer({
                         >
                             {pad(v)}
                         </span>
-                        <span className="text-[11px] font-semibold text-gray-500 mt-1 uppercase tracking-wider">{l}</span>
+                        <span className="text-[11px] font-semibold text-gray-500 mt-1 uppercase tracking-wider">
+                            {l}
+                        </span>
                     </span>
                 ))}
             </div>
@@ -900,7 +916,10 @@ export function ReputationBar({ score, lang: langProp }: { score: number; lang?:
     const tierKey =
         score >= 90 ? 'platinum' : score >= 70 ? 'gold' : score >= 50 ? 'silver' : 'bronze'
 
-    const labels: Record<'en' | 'vi', { bronze: string; silver: string; gold: string; platinum: string; pts: string }> = {
+    const labels: Record<
+        'en' | 'vi',
+        { bronze: string; silver: string; gold: string; platinum: string; pts: string }
+    > = {
         en: {
             bronze: 'Bronze',
             silver: 'Silver',
@@ -931,7 +950,9 @@ export function ReputationBar({ score, lang: langProp }: { score: number; lang?:
     return (
         <div className="space-y-2">
             <div className="flex items-center justify-between">
-                <span className={`font-bold text-lg ${cls}`}>{score} {currentLabels.pts}</span>
+                <span className={`font-bold text-lg ${cls}`}>
+                    {score} {currentLabels.pts}
+                </span>
                 <span className={`font-semibold text-sm ${cls}`}>{level}</span>
             </div>
             <ProgressBar value={score} max={100} />
@@ -997,7 +1018,9 @@ export function OrderTimeline({ status }: { status: string }) {
                                 />
                             )}
                         </div>
-                        <div className={`pb-6 pt-1 ${isCurrent ? 'text-primary font-bold' : done ? 'text-gray-800 font-semibold' : 'text-gray-400'}`}>
+                        <div
+                            className={`pb-6 pt-1 ${isCurrent ? 'text-primary font-bold' : done ? 'text-gray-800 font-semibold' : 'text-gray-400'}`}
+                        >
                             <p className="text-sm">{labels[step]}</p>
                         </div>
                     </div>

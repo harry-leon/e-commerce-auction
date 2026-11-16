@@ -92,13 +92,23 @@ const SvgTrophyMaster = ({ className = '' }: { className?: string }) => (
         </g>
 
         {/* Quai cúp bên trái */}
-        <path d="M56 42C44 42 38 52 40 66C42 78 52 84 62 84L60 76C54 76 48 72 47 64C46 56 50 49 57 49Z" fill="url(#goldGradient)" />
+        <path
+            d="M56 42C44 42 38 52 40 66C42 78 52 84 62 84L60 76C54 76 48 72 47 64C46 56 50 49 57 49Z"
+            fill="url(#goldGradient)"
+        />
 
         {/* Quai cúp bên phải */}
-        <path d="M104 42C116 42 122 52 120 66C118 78 108 84 98 84L100 76C106 76 112 72 113 64C114 56 110 49 103 49Z" fill="url(#goldGradient)" />
+        <path
+            d="M104 42C116 42 122 52 120 66C118 78 108 84 98 84L100 76C106 76 112 72 113 64C114 56 110 49 103 49Z"
+            fill="url(#goldGradient)"
+        />
 
         {/* Thân cúp chính */}
-        <path d="M52 32H108C108 32 108 68 80 82C52 68 52 32 52 32Z" fill="url(#goldGradient)" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.15))" />
+        <path
+            d="M52 32H108C108 32 108 68 80 82C52 68 52 32 52 32Z"
+            fill="url(#goldGradient)"
+            filter="drop-shadow(0 4px 6px rgba(0,0,0,0.15))"
+        />
         {/* Miệng cúp bo tròn */}
         <ellipse cx="80" cy="32" rx="28" ry="7" fill="#fef08a" stroke="#ca8a04" strokeWidth="1.5" />
 
@@ -106,7 +116,11 @@ const SvgTrophyMaster = ({ className = '' }: { className?: string }) => (
         <path d="M56 36C56 36 57 62 76 74C72 65 70 48 70 36Z" fill="#ffffff" opacity="0.45" />
 
         {/* Ngôi sao vàng chạm nổi trên cúp */}
-        <path d="M80 46L82.5 52.5L89 53L84 57.5L85.5 64L80 60.5L74.5 64L76 57.5L71 53L77.5 52.5L80 46Z" fill="#ffffff" filter="drop-shadow(0 1px 2px rgba(0,0,0,0.25))" />
+        <path
+            d="M80 46L82.5 52.5L89 53L84 57.5L85.5 64L80 60.5L74.5 64L76 57.5L71 53L77.5 52.5L80 46Z"
+            fill="#ffffff"
+            filter="drop-shadow(0 1px 2px rgba(0,0,0,0.25))"
+        />
 
         {/* Cổ cúp */}
         <path d="M74 81H86V91H74V81Z" fill="url(#bronzeGradient)" />
@@ -117,21 +131,41 @@ const SvgTrophyMaster = ({ className = '' }: { className?: string }) => (
         <rect x="60" y="111" width="40" height="4" rx="2" fill="url(#goldGradient)" />
 
         {/* Dải ruy băng lượn sóng bên dưới đế */}
-        <path d="M48 106C60 102 70 105 80 103C90 101 100 104 112 106L108 114C98 111 88 113 80 112C72 111 62 113 52 114L48 106Z" fill="url(#ribbonGradient)" opacity="0.9" />
+        <path
+            d="M48 106C60 102 70 105 80 103C90 101 100 104 112 106L108 114C98 111 88 113 80 112C72 111 62 113 52 114L48 106Z"
+            fill="url(#ribbonGradient)"
+            opacity="0.9"
+        />
 
         {/* Các ngôi sao và đốm sáng nhỏ bay quanh */}
         <circle cx="28" cy="30" r="2.5" fill="#fde047" />
         <circle cx="132" cy="28" r="2" fill="#fde047" />
         <circle cx="20" cy="75" r="1.5" fill="#fde047" />
         <circle cx="140" cy="80" r="2.5" fill="#fde047" />
-        <path d="M102 24L103.5 28L107.5 29.5L103.5 31L102 35L100.5 31L96.5 29.5L100.5 28L102 24Z" fill="#fef08a" />
-        <path d="M58 20L59.2 23L62.2 24.2L59.2 25.4L58 28.4L56.8 25.4L53.8 24.2L56.8 23L58 20Z" fill="#fef08a" />
+        <path
+            d="M102 24L103.5 28L107.5 29.5L103.5 31L102 35L100.5 31L96.5 29.5L100.5 28L102 24Z"
+            fill="#fef08a"
+        />
+        <path
+            d="M58 20L59.2 23L62.2 24.2L59.2 25.4L58 28.4L56.8 25.4L53.8 24.2L56.8 23L58 20Z"
+            fill="#fef08a"
+        />
     </svg>
 )
 
 // Các icon SVG phụ trợ gọn nhẹ
 const SvgShoppingCart = ({ size = 18, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <circle cx="8" cy="21" r="1" />
         <circle cx="19" cy="21" r="1" />
         <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
@@ -139,34 +173,84 @@ const SvgShoppingCart = ({ size = 18, className = '' }: { size?: number; classNa
 )
 
 const SvgArrowRight = ({ size = 18, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <line x1="5" y1="12" x2="19" y2="12" />
         <polyline points="12 5 19 12 12 19" />
     </svg>
 )
 
 const SvgClose = ({ size = 20, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
 )
 
 const SvgUserCircle = ({ size = 18, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
         <circle cx="12" cy="7" r="4" />
     </svg>
 )
 
 const SvgCheckSmall = ({ size = 14, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <polyline points="20 6 9 17 4 12" />
     </svg>
 )
 
 const SvgTag = ({ size = 12, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z" />
         <path d="M7 7h.01" />
     </svg>
@@ -215,8 +299,15 @@ export function CelebrationCanvas({ active }: { active: boolean }) {
         let animationFrameId: number
         let particles: Particle[] = []
         const colors = [
-            '#ff3e3e', '#ffaa00', '#ffd700', '#00e5ff',
-            '#ff007f', '#00ff66', '#a855f7', '#ff6b00', '#f59e0b'
+            '#ff3e3e',
+            '#ffaa00',
+            '#ffd700',
+            '#00e5ff',
+            '#ff007f',
+            '#00ff66',
+            '#a855f7',
+            '#ff6b00',
+            '#f59e0b',
         ]
 
         const handleResize = () => {
@@ -238,11 +329,14 @@ export function CelebrationCanvas({ active }: { active: boolean }) {
                     y: targetY,
                     vx: Math.cos(angle) * speed + (Math.random() - 0.5) * 1.5,
                     vy: Math.sin(angle) * speed + (Math.random() - 0.5) * 1.5,
-                    color: Math.random() > 0.3 ? baseColor : colors[Math.floor(Math.random() * colors.length)],
+                    color:
+                        Math.random() > 0.3
+                            ? baseColor
+                            : colors[Math.floor(Math.random() * colors.length)],
                     size: 2.5 + Math.random() * 2.5,
                     alpha: 1,
                     decay: 0.014 + Math.random() * 0.01,
-                    type: 'firework'
+                    type: 'firework',
                 })
             }
         }
@@ -261,7 +355,7 @@ export function CelebrationCanvas({ active }: { active: boolean }) {
                     decay: 0.003,
                     type: 'confetti',
                     rotation: Math.random() * 360,
-                    rotationSpeed: (Math.random() - 0.5) * 10
+                    rotationSpeed: (Math.random() - 0.5) * 10,
                 })
             }
         }
@@ -270,7 +364,7 @@ export function CelebrationCanvas({ active }: { active: boolean }) {
         for (let i = 0; i < 4; i++) {
             spawnFirework(
                 canvas.width * (0.2 + 0.6 * Math.random()),
-                canvas.height * (0.2 + 0.4 * Math.random())
+                canvas.height * (0.2 + 0.4 * Math.random()),
             )
         }
 
@@ -283,7 +377,7 @@ export function CelebrationCanvas({ active }: { active: boolean }) {
             if (frameCount % 45 === 0 && particles.length < 250) {
                 spawnFirework(
                     canvas.width * (0.15 + 0.7 * Math.random()),
-                    canvas.height * (0.15 + 0.45 * Math.random())
+                    canvas.height * (0.15 + 0.45 * Math.random()),
                 )
             }
             // Thả confetti
@@ -374,18 +468,20 @@ export function WinnerCelebrationModal({
 }: CelebrationFireworksProps) {
     if (!isOpen) return null
 
-    const savingsPercent = originalPrice && originalPrice > finalPrice
-        ? Math.round(((originalPrice - finalPrice) / originalPrice) * 100)
-        : 85 // Mặc định 85% theo thiết kế mẫu nếu chưa có giá gốc
+    const savingsPercent =
+        originalPrice && originalPrice > finalPrice
+            ? Math.round(((originalPrice - finalPrice) / originalPrice) * 100)
+            : 85 // Mặc định 85% theo thiết kế mẫu nếu chưa có giá gốc
 
     // Ảnh sản phẩm mặc định là tai nghe Sony WH-1000XM5 chuẩn theo ảnh mẫu nếu không có ảnh truyền vào
     const fallbackImage = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&q=80'
     const displayImage = productImage && productImage.trim() !== '' ? productImage : fallbackImage
 
     const displayWinner = winnerName && winnerName.trim() !== '' ? winnerName : 'Minh Tran'
-    const displayProduct = productName && productName.trim() !== ''
-        ? productName
-        : 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling'
+    const displayProduct =
+        productName && productName.trim() !== ''
+            ? productName
+            : 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling'
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
@@ -479,7 +575,10 @@ export function WinnerCelebrationModal({
                         </div>
 
                         {/* Tên sản phẩm */}
-                        <h3 data-testid="celebration-product-name" className="text-sm sm:text-base font-bold text-slate-800 line-clamp-2 leading-snug">
+                        <h3
+                            data-testid="celebration-product-name"
+                            className="text-sm sm:text-base font-bold text-slate-800 line-clamp-2 leading-snug"
+                        >
                             {displayProduct}
                         </h3>
 
@@ -489,7 +588,9 @@ export function WinnerCelebrationModal({
                                 {lang === 'vi' ? 'Giá trúng:' : 'Winning bid:'}
                             </span>
                             <span className="text-xl sm:text-2xl font-black text-[#dc2626]">
-                                {finalPrice && finalPrice > 0 ? formatCurrency(finalPrice, lang) : '$150,000.00'}
+                                {finalPrice && finalPrice > 0
+                                    ? formatCurrency(finalPrice, lang)
+                                    : '$150,000.00'}
                             </span>
                         </div>
 
@@ -518,7 +619,9 @@ export function WinnerCelebrationModal({
                         className="flex-1 py-3.5 px-6 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-[#ff6b00] via-[#ea580c] to-[#dc2626] hover:from-orange-600 hover:to-red-600 shadow-lg shadow-orange-500/25 flex items-center justify-center gap-2.5 transition-all transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
                     >
                         <SvgShoppingCart size={18} />
-                        <span>{lang === 'vi' ? 'Tiến hành thanh toán ngay' : 'Proceed to Checkout'}</span>
+                        <span>
+                            {lang === 'vi' ? 'Tiến hành thanh toán ngay' : 'Proceed to Checkout'}
+                        </span>
                         <SvgArrowRight size={18} />
                     </button>
                     <button

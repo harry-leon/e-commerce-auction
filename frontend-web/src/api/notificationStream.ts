@@ -98,7 +98,9 @@ export function connectNotificationStream(
                         )
                         if (userId) {
                             current.send(
-                                'SUBSCRIBE\nid:notifications-topic\ndestination:/topic/users/' + userId + '/notifications\nack:auto\n\n\0',
+                                'SUBSCRIBE\nid:notifications-topic\ndestination:/topic/users/' +
+                                    userId +
+                                    '/notifications\nack:auto\n\n\0',
                             )
                         }
                         heartbeat = setInterval(() => {

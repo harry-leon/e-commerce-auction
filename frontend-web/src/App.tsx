@@ -137,36 +137,44 @@ function AppInner() {
         if (!user?.id || !/^[0-9a-f-]{36}$/i.test(user.id)) return
         const refreshInbox = () => window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
 
-        return connectNotificationStream((event) => {
-            const toastType =
-                event.type === 'AUCTION_WON'
-                    ? 'success'
-                    : event.type === 'AUCTION_OUTBID'
-                      ? 'warning'
-                      : 'info'
-            const msg = event.content ? `${event.title}: ${event.content}` : event.title
-            showToast({ type: toastType, message: msg, duration: 6000 })
-            refreshInbox()
+        return connectNotificationStream(
+            (event) => {
+                const toastType =
+                    event.type === 'AUCTION_WON'
+                        ? 'success'
+                        : event.type === 'AUCTION_OUTBID'
+                          ? 'warning'
+                          : 'info'
+                const msg = event.content ? `${event.title}: ${event.content}` : event.title
+                showToast({ type: toastType, message: msg, duration: 6000 })
+                refreshInbox()
 
-            // Khi nhận sự kiện trúng đấu giá AUCTION_WON, tự động kích hoạt Modal vinh danh toàn cục
-            if (event.type === 'AUCTION_WON') {
-                const sessionKey = `nexus_shown_celebration_${event.id || event.auctionId || Date.now()}`
-                if (!sessionStorage.getItem(sessionKey)) {
-                    sessionStorage.setItem(sessionKey, 'true')
-                    setWinnerModalData({
-                        isOpen: true,
-                        winnerName: user?.fullName || 'Minh Tran',
-                        productName: event.title.replace(/^Chúc mừng!\s*/i, '').replace(/Bạn đã trúng đấu giá\s*/i, '') || 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
-                        finalPrice: 150000,
-                        originalPrice: 1000000,
-                        auctionId: event.auctionId,
-                        orderId: event.orderId,
-                    })
-                    setCelebrationActive(true)
-                    setTimeout(() => setCelebrationActive(false), 5000)
+                // Khi nhận sự kiện trúng đấu giá AUCTION_WON, tự động kích hoạt Modal vinh danh toàn cục
+                if (event.type === 'AUCTION_WON') {
+                    const sessionKey = `nexus_shown_celebration_${event.id || event.auctionId || Date.now()}`
+                    if (!sessionStorage.getItem(sessionKey)) {
+                        sessionStorage.setItem(sessionKey, 'true')
+                        setWinnerModalData({
+                            isOpen: true,
+                            winnerName: user?.fullName || 'Minh Tran',
+                            productName:
+                                event.title
+                                    .replace(/^Chúc mừng!\s*/i, '')
+                                    .replace(/Bạn đã trúng đấu giá\s*/i, '') ||
+                                'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
+                            finalPrice: 150000,
+                            originalPrice: 1000000,
+                            auctionId: event.auctionId,
+                            orderId: event.orderId,
+                        })
+                        setCelebrationActive(true)
+                        setTimeout(() => setCelebrationActive(false), 5000)
+                    }
                 }
-            }
-        }, refreshInbox, user?.id)
+            },
+            refreshInbox,
+            user?.id,
+        )
     }, [user?.id, user?.fullName, showToast])
 
     // Lắng nghe sự kiện custom event 'nexus:show-winner-celebration' và tham số URL ?winnerCelebration=true
@@ -176,7 +184,8 @@ function AppInner() {
             setWinnerModalData({
                 isOpen: true,
                 winnerName: detail.winnerName || user?.fullName || 'Minh Tran',
-                productName: detail.productName || 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
+                productName:
+                    detail.productName || 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
                 productImage: detail.productImage,
                 finalPrice: detail.finalPrice || 150000,
                 originalPrice: detail.originalPrice || 1000000,
@@ -190,15 +199,22 @@ function AppInner() {
 
         // Hỗ trợ kiểm thử và demo linh hoạt qua URL query (?winnerCelebration=true hoặc ?won=true)
         const searchParams = new URLSearchParams(window.location.search)
-        if (searchParams.get('winnerCelebration') === 'true' || searchParams.get('won') === 'true') {
-            handleShowCelebration(new CustomEvent('nexus:show-winner-celebration', {
-                detail: {
-                    winnerName: searchParams.get('winner') || user?.fullName || 'Minh Tran',
-                    productName: searchParams.get('product') || 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
-                    finalPrice: Number(searchParams.get('price')) || 150000,
-                    auctionId: searchParams.get('auctionId') || '02994692',
-                }
-            }))
+        if (
+            searchParams.get('winnerCelebration') === 'true' ||
+            searchParams.get('won') === 'true'
+        ) {
+            handleShowCelebration(
+                new CustomEvent('nexus:show-winner-celebration', {
+                    detail: {
+                        winnerName: searchParams.get('winner') || user?.fullName || 'Minh Tran',
+                        productName:
+                            searchParams.get('product') ||
+                            'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
+                        finalPrice: Number(searchParams.get('price')) || 150000,
+                        auctionId: searchParams.get('auctionId') || '02994692',
+                    },
+                }),
+            )
         }
 
         return () => {
@@ -209,26 +225,34 @@ function AppInner() {
     // Kiểm tra thông báo chưa đọc khi đăng nhập tài khoản Buyer
     useEffect(() => {
         if (!user?.id) return
-        getNotifications(0).then((res: Inbox) => {
-            const wonNotif = (res?.content || []).find((n: NotificationItem) => n.type === 'AUCTION_WON' && !n.read)
-            if (wonNotif) {
-                const key = `nexus_shown_celebration_${wonNotif.id}`
-                if (!sessionStorage.getItem(key)) {
-                    sessionStorage.setItem(key, 'true')
-                    setWinnerModalData({
-                        isOpen: true,
-                        winnerName: user.fullName || 'Minh Tran',
-                        productName: wonNotif.title.replace(/^Chúc mừng!\s*/i, '').replace(/Bạn đã trúng đấu giá\s*/i, '') || 'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
-                        finalPrice: 150000,
-                        originalPrice: 1000000,
-                        auctionId: wonNotif.auctionId || undefined,
-                        orderId: wonNotif.orderId || undefined,
-                    })
-                    setCelebrationActive(true)
-                    setTimeout(() => setCelebrationActive(false), 5000)
+        getNotifications(0)
+            .then((res: Inbox) => {
+                const wonNotif = (res?.content || []).find(
+                    (n: NotificationItem) => n.type === 'AUCTION_WON' && !n.read,
+                )
+                if (wonNotif) {
+                    const key = `nexus_shown_celebration_${wonNotif.id}`
+                    if (!sessionStorage.getItem(key)) {
+                        sessionStorage.setItem(key, 'true')
+                        setWinnerModalData({
+                            isOpen: true,
+                            winnerName: user.fullName || 'Minh Tran',
+                            productName:
+                                wonNotif.title
+                                    .replace(/^Chúc mừng!\s*/i, '')
+                                    .replace(/Bạn đã trúng đấu giá\s*/i, '') ||
+                                'Tai nghe Sony WH-1000XM5 Wireless Noise Canceling',
+                            finalPrice: 150000,
+                            originalPrice: 1000000,
+                            auctionId: wonNotif.auctionId || undefined,
+                            orderId: wonNotif.orderId || undefined,
+                        })
+                        setCelebrationActive(true)
+                        setTimeout(() => setCelebrationActive(false), 5000)
+                    }
                 }
-            }
-        }).catch(() => {})
+            })
+            .catch(() => {})
     }, [user?.id, user?.fullName])
 
     // Chuyển trang chỉ điều khiển spinner 300 ms; giữ kết nối push xuyên suốt cùng một tài khoản.

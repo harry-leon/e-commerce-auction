@@ -42,7 +42,17 @@ import type { Auction } from '../../types'
 
 // SVG Icons tự định nghĩa đồng bộ hệ thống
 const SvgShoppingCart = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <circle cx="8" cy="21" r="1" />
         <circle cx="19" cy="21" r="1" />
         <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" />
@@ -50,13 +60,32 @@ const SvgShoppingCart = ({ size = 16, className = '' }: { size?: number; classNa
 )
 
 const SvgChevronDown = ({ size = 14 }: { size?: number }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+    >
         <polyline points="6 9 12 15 18 9" />
     </svg>
 )
 
 const SvgStoreIcon = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" />
         <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
         <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
@@ -65,7 +94,17 @@ const SvgStoreIcon = ({ size = 16, className = '' }: { size?: number; className?
 )
 
 const SvgUserFollowing = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
         <circle cx="9" cy="7" r="4" />
         <polyline points="16 11 18 13 22 9" />
@@ -73,13 +112,33 @@ const SvgUserFollowing = ({ size = 16, className = '' }: { size?: number; classN
 )
 
 const SvgChatBubble = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
 )
 
 const SvgUsersGroup = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
         <circle cx="9" cy="7" r="4" />
         <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
@@ -88,13 +147,33 @@ const SvgUsersGroup = ({ size = 16, className = '' }: { size?: number; className
 )
 
 const SvgStarOutline = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
     </svg>
 )
 
 const SvgCalendarIcon = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
         <line x1="16" y1="2" x2="16" y2="6" />
         <line x1="8" y1="2" x2="8" y2="6" />
@@ -104,12 +183,16 @@ const SvgCalendarIcon = ({ size = 16, className = '' }: { size?: number; classNa
 
 export function SellerShopView() {
     const { lang, pageParams, showToast, navigate } = useApp()
-    const sellerId = typeof pageParams?.sellerId === 'string' && pageParams.sellerId
-        ? pageParams.sellerId
-        : typeof pageParams?.id === 'string' && pageParams.id
-          ? pageParams.id
-          : 'b1fb6fd5-936c-439e-994c-f0c5c529b406'
-    const sellerName = resolveSellerName(sellerId, typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null)
+    const sellerId =
+        typeof pageParams?.sellerId === 'string' && pageParams.sellerId
+            ? pageParams.sellerId
+            : typeof pageParams?.id === 'string' && pageParams.id
+              ? pageParams.id
+              : 'b1fb6fd5-936c-439e-994c-f0c5c529b406'
+    const sellerName = resolveSellerName(
+        sellerId,
+        typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null,
+    )
     const [shopTab, setShopTab] = useState<'all' | 'popular' | 'auctions' | 'reviews'>('all')
     const [savedVouchers, setSavedVouchers] = useState<string[]>([])
     const [isFollowed, setIsFollowed] = useState<boolean>(() => {
@@ -131,22 +214,33 @@ export function SellerShopView() {
     useEffect(() => {
         let active = true
         // 1. Tải uy tín của người bán từ Reputation Service
-        reputationApi.getUserReputation(sellerId)
-            .then((rep) => { if (active && rep) setReputation(rep) })
+        reputationApi
+            .getUserReputation(sellerId)
+            .then((rep) => {
+                if (active && rep) setReputation(rep)
+            })
             .catch(() => {})
 
         // 2. Tải danh sách đánh giá từ Reputation Service
-        reputationApi.getRatingsForUser(sellerId, 0, 20)
-            .then((res) => { if (active && res?.content) setRatings(res.content) })
+        reputationApi
+            .getRatingsForUser(sellerId, 0, 20)
+            .then((res) => {
+                if (active && res?.content) setRatings(res.content)
+            })
             .catch(() => {})
 
         // 3. Tải các phiên đấu giá của shop từ Auction Service
-        auctionsApi.getAuctions({ sellerId, status: 'all', limit: 10 })
-            .then((res) => { if (active && res.items) setAuctions(res.items) })
+        auctionsApi
+            .getAuctions({ sellerId, status: 'all', limit: 10 })
+            .then((res) => {
+                if (active && res.items) setAuctions(res.items)
+            })
             .catch(() => {})
 
         // 4. Tải danh sách sản phẩm thật từ Catalog Service
-        api<Envelope<ApiProduct[]> | ApiProduct[]>(`/products/seller/${encodeURIComponent(sellerId)}`)
+        api<Envelope<ApiProduct[]> | ApiProduct[]>(
+            `/products/seller/${encodeURIComponent(sellerId)}`,
+        )
             .then((res) => {
                 if (!active || !res) return
                 const list = Array.isArray(res) ? res : (res as any)?.data
@@ -158,7 +252,9 @@ export function SellerShopView() {
                 if (active) setProducts([])
             })
 
-        return () => { active = false }
+        return () => {
+            active = false
+        }
     }, [sellerId])
 
     // Xử lý Theo dõi shop
@@ -168,15 +264,21 @@ export function SellerShopView() {
         setFollowCount((c) => (next ? c + 1 : Math.max(0, c - 1)))
         try {
             const list = JSON.parse(localStorage.getItem('nexus_followed_sellers') || '[]')
-            const updated = next ? [...list, sellerId] : list.filter((id: string) => id !== sellerId)
+            const updated = next
+                ? [...list, sellerId]
+                : list.filter((id: string) => id !== sellerId)
             localStorage.setItem('nexus_followed_sellers', JSON.stringify(updated))
         } catch {}
 
         showToast({
             type: 'success',
             message: next
-                ? (lang === 'vi' ? 'Đã theo dõi gian hàng thành công!' : 'Store followed successfully!')
-                : (lang === 'vi' ? 'Đã hủy theo dõi gian hàng.' : 'Store unfollowed.'),
+                ? lang === 'vi'
+                    ? 'Đã theo dõi gian hàng thành công!'
+                    : 'Store followed successfully!'
+                : lang === 'vi'
+                  ? 'Đã hủy theo dõi gian hàng.'
+                  : 'Store unfollowed.',
         })
     }
 
@@ -186,7 +288,10 @@ export function SellerShopView() {
         setSavedVouchers([...savedVouchers, code])
         showToast({
             type: 'success',
-            message: lang === 'vi' ? `Đã lưu mã ${code} vào ví voucher của bạn!` : `Saved voucher ${code} to wallet!`,
+            message:
+                lang === 'vi'
+                    ? `Đã lưu mã ${code} vào ví voucher của bạn!`
+                    : `Saved voucher ${code} to wallet!`,
         })
     }
 
@@ -198,8 +303,13 @@ export function SellerShopView() {
         rating: 5,
         reviewsCount: p.ratingCount || 1,
         price: formatCurrency(p.skus?.[0]?.price || p.minPrice || p.price || 150000, lang),
-        originalPrice: p.skus?.[0]?.originalPrice ? formatCurrency(p.skus[0].originalPrice, lang) : null,
-        image: p.images?.[0]?.url || p.images?.[0] || 'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542345/Nexus/fashion/ao-thun-cotton-thuong-ngay/ao-thun-cotton-thuong-ngay-main.jpg',
+        originalPrice: p.skus?.[0]?.originalPrice
+            ? formatCurrency(p.skus[0].originalPrice, lang)
+            : null,
+        image:
+            p.images?.[0]?.url ||
+            p.images?.[0] ||
+            'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542345/Nexus/fashion/ao-thun-cotton-thuong-ngay/ao-thun-cotton-thuong-ngay-main.jpg',
     }))
 
     return (
@@ -259,7 +369,15 @@ export function SellerShopView() {
                             </button>
                             <button
                                 type="button"
-                                onClick={() => showToast({ type: 'info', message: lang === 'vi' ? `Đang kết nối chat với ${sellerName}...` : 'Connecting chat...' })}
+                                onClick={() =>
+                                    showToast({
+                                        type: 'info',
+                                        message:
+                                            lang === 'vi'
+                                                ? `Đang kết nối chat với ${sellerName}...`
+                                                : 'Connecting chat...',
+                                    })
+                                }
                                 className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-black/30 hover:bg-black/40 border border-white/30 backdrop-blur-sm transition-all cursor-pointer flex items-center gap-1.5"
                             >
                                 <SvgChatBubble size={14} />
@@ -280,7 +398,9 @@ export function SellerShopView() {
                             <SvgUsersGroup size={18} className="text-slate-600" />
                             <span>Người theo dõi:</span>
                             <span className="font-bold text-[#ea580c]">
-                                {followCount >= 1000 ? `${(followCount / 1000).toFixed(1).replace('.', ',')}K` : followCount}
+                                {followCount >= 1000
+                                    ? `${(followCount / 1000).toFixed(1).replace('.', ',')}K`
+                                    : followCount}
                             </span>
                         </div>
 
@@ -288,13 +408,21 @@ export function SellerShopView() {
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgUserFollowing size={18} className="text-slate-600" />
                             <span>Giao dịch thành công:</span>
-                            <span className="font-bold text-[#ea580c]">{reputation?.successTx ?? 0}</span>
+                            <span className="font-bold text-[#ea580c]">
+                                {reputation?.successTx ?? 0}
+                            </span>
                         </div>
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgStarOutline size={18} className="text-slate-600" />
                             <span>Đánh giá:</span>
                             <span className="font-bold text-[#ea580c]">
-                                {(reputation?.avgRating || (ratings.length > 0 ? ratings.reduce((s, r) => s + r.score, 0) / ratings.length : 5.0)).toFixed(1)} ({reputation?.totalRatings || ratings.length} đánh giá)
+                                {(
+                                    reputation?.avgRating ||
+                                    (ratings.length > 0
+                                        ? ratings.reduce((s, r) => s + r.score, 0) / ratings.length
+                                        : 5.0)
+                                ).toFixed(1)}{' '}
+                                ({reputation?.totalRatings || ratings.length} đánh giá)
                             </span>
                         </div>
 
@@ -302,12 +430,16 @@ export function SellerShopView() {
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgChatBubble size={18} className="text-slate-600" />
                             <span>Điểm uy tín:</span>
-                            <span className="font-bold text-[#ea580c]">{reputation?.score ?? 100} ({reputation?.trustLevel || 'STANDARD'})</span>
+                            <span className="font-bold text-[#ea580c]">
+                                {reputation?.score ?? 100} ({reputation?.trustLevel || 'STANDARD'})
+                            </span>
                         </div>
                         <div className="flex items-center gap-2.5 text-slate-700">
                             <SvgCalendarIcon size={18} className="text-slate-600" />
                             <span>Đấu giá thắng:</span>
-                            <span className="font-bold text-[#ea580c]">{reputation?.auctionWon ?? 0}</span>
+                            <span className="font-bold text-[#ea580c]">
+                                {reputation?.auctionWon ?? 0}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -371,11 +503,15 @@ export function SellerShopView() {
                         <div className="bg-[#fff8f6] border border-red-200/90 rounded-2xl p-5 flex items-center justify-between shadow-sm relative">
                             <div className="space-y-1">
                                 <h3 className="font-black text-xl text-[#ea580c]">Giảm 20k</h3>
-                                <p className="text-xs text-slate-700 font-semibold">Đơn tối thiểu 200k</p>
+                                <p className="text-xs text-slate-700 font-semibold">
+                                    Đơn tối thiểu 200k
+                                </p>
                                 <div className="w-36 h-1.5 rounded-full bg-slate-200 overflow-hidden mt-2">
                                     <div className="h-full bg-[#ea580c] w-[65%]" />
                                 </div>
-                                <p className="text-[11px] text-slate-400 font-medium pt-1">HSD: 25.01.2027</p>
+                                <p className="text-[11px] text-slate-400 font-medium pt-1">
+                                    HSD: 25.01.2027
+                                </p>
                             </div>
                             <button
                                 type="button"
@@ -394,11 +530,15 @@ export function SellerShopView() {
                         <div className="bg-[#fff8f6] border border-red-200/90 rounded-2xl p-5 flex items-center justify-between shadow-sm relative">
                             <div className="space-y-1">
                                 <h3 className="font-black text-xl text-[#ea580c]">Giảm 50k</h3>
-                                <p className="text-xs text-slate-700 font-semibold">Đơn tối thiểu 500k</p>
+                                <p className="text-xs text-slate-700 font-semibold">
+                                    Đơn tối thiểu 500k
+                                </p>
                                 <div className="w-36 h-1.5 rounded-full bg-slate-200 overflow-hidden mt-2">
                                     <div className="h-full bg-[#ea580c] w-[40%]" />
                                 </div>
-                                <p className="text-[11px] text-slate-400 font-medium pt-1">HSD: 03.12.2026</p>
+                                <p className="text-[11px] text-slate-400 font-medium pt-1">
+                                    HSD: 03.12.2026
+                                </p>
                             </div>
                             <button
                                 type="button"
@@ -419,9 +559,7 @@ export function SellerShopView() {
                 {(shopTab === 'all' || shopTab === 'popular') && (
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
-                            <h2 className="font-bold text-lg text-slate-900">
-                                Gợi ý cho bạn
-                            </h2>
+                            <h2 className="font-bold text-lg text-slate-900">Gợi ý cho bạn</h2>
                             <button
                                 type="button"
                                 onClick={() => setShopTab('all')}
@@ -434,66 +572,77 @@ export function SellerShopView() {
 
                         {storeProducts.length === 0 ? (
                             <div className="py-12 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
-                                <p className="font-semibold text-sm">Gian hàng hiện chưa có sản phẩm nào đang bán.</p>
-                                <p className="text-xs text-slate-400 mt-1">Vui lòng quay lại sau hoặc theo dõi gian hàng để nhận cập nhật.</p>
+                                <p className="font-semibold text-sm">
+                                    Gian hàng hiện chưa có sản phẩm nào đang bán.
+                                </p>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    Vui lòng quay lại sau hoặc theo dõi gian hàng để nhận cập nhật.
+                                </p>
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            {storeProducts.map((p) => (
-                                <div
-                                    key={p.id}
-                                    onClick={() => navigate('product-detail', { id: p.id })}
-                                    className="bg-white rounded-2xl border border-slate-200/90 hover:border-orange-300 shadow-sm hover:shadow-md transition-all overflow-hidden p-4 space-y-3 cursor-pointer group flex flex-col justify-between"
-                                >
-                                    <div className="space-y-3">
-                                        <div className="aspect-square w-full rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center">
-                                            <img
-                                                src={p.image}
-                                                alt={p.name}
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                            />
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-slate-400 font-medium">
-                                                {p.category}
-                                            </p>
-                                            <h3 className="font-bold text-sm text-slate-900 line-clamp-1 mt-0.5 group-hover:text-orange-600 transition-colors">
-                                                {p.name}
-                                            </h3>
-                                            <div className="flex items-center gap-1.5 text-xs mt-1.5">
-                                                <span className="text-slate-800 font-bold">★★★★★</span>
-                                                <span className="text-slate-400 font-medium">({p.reviewsCount})</span>
+                                {storeProducts.map((p) => (
+                                    <div
+                                        key={p.id}
+                                        onClick={() => navigate('product-detail', { id: p.id })}
+                                        className="bg-white rounded-2xl border border-slate-200/90 hover:border-orange-300 shadow-sm hover:shadow-md transition-all overflow-hidden p-4 space-y-3 cursor-pointer group flex flex-col justify-between"
+                                    >
+                                        <div className="space-y-3">
+                                            <div className="aspect-square w-full rounded-xl overflow-hidden bg-slate-50 flex items-center justify-center">
+                                                <img
+                                                    src={p.image}
+                                                    alt={p.name}
+                                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                                />
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-slate-400 font-medium">
+                                                    {p.category}
+                                                </p>
+                                                <h3 className="font-bold text-sm text-slate-900 line-clamp-1 mt-0.5 group-hover:text-orange-600 transition-colors">
+                                                    {p.name}
+                                                </h3>
+                                                <div className="flex items-center gap-1.5 text-xs mt-1.5">
+                                                    <span className="text-slate-800 font-bold">
+                                                        ★★★★★
+                                                    </span>
+                                                    <span className="text-slate-400 font-medium">
+                                                        ({p.reviewsCount})
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
 
-                                    {/* Giá tiền và nút giỏ hàng viền cam */}
-                                    <div className="flex items-center justify-between pt-2">
-                                        <div className="flex items-baseline gap-2">
-                                            <span className="font-black text-lg text-[#ea580c]">
-                                                {p.price}
-                                            </span>
-                                            {p.originalPrice && (
-                                                <span className="text-xs text-slate-400 line-through">
-                                                    {p.originalPrice}
+                                        {/* Giá tiền và nút giỏ hàng viền cam */}
+                                        <div className="flex items-center justify-between pt-2">
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="font-black text-lg text-[#ea580c]">
+                                                    {p.price}
                                                 </span>
-                                            )}
+                                                {p.originalPrice && (
+                                                    <span className="text-xs text-slate-400 line-through">
+                                                        {p.originalPrice}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    showToast({
+                                                        type: 'success',
+                                                        message: `Đã thêm ${p.name} vào giỏ hàng!`,
+                                                    })
+                                                }}
+                                                className="w-9 h-9 rounded-xl border border-[#ea580c] text-[#ea580c] hover:bg-orange-50 flex items-center justify-center transition-colors shadow-sm cursor-pointer"
+                                                title="Thêm vào giỏ hàng"
+                                            >
+                                                <SvgShoppingCart size={16} />
+                                            </button>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                showToast({ type: 'success', message: `Đã thêm ${p.name} vào giỏ hàng!` })
-                                            }}
-                                            className="w-9 h-9 rounded-xl border border-[#ea580c] text-[#ea580c] hover:bg-orange-50 flex items-center justify-center transition-colors shadow-sm cursor-pointer"
-                                            title="Thêm vào giỏ hàng"
-                                        >
-                                            <SvgShoppingCart size={16} />
-                                        </button>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
                         )}
                     </div>
                 )}
@@ -512,17 +661,32 @@ export function SellerShopView() {
                                         onClick={() => navigate('auction-detail', { id: auc.id })}
                                         className="border border-slate-200 rounded-2xl p-4 hover:border-orange-400 cursor-pointer transition-all space-y-3"
                                     >
-                                        <img src={auc.product?.images?.[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80'} alt={auc.product?.name || 'Sản phẩm đấu giá'} className="w-full h-44 object-cover rounded-xl" />
-                                        <h4 className="font-bold text-sm text-slate-900 line-clamp-1">{auc.product?.name || 'Sản phẩm đấu giá'}</h4>
+                                        <img
+                                            src={
+                                                auc.product?.images?.[0] ||
+                                                'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80'
+                                            }
+                                            alt={auc.product?.name || 'Sản phẩm đấu giá'}
+                                            className="w-full h-44 object-cover rounded-xl"
+                                        />
+                                        <h4 className="font-bold text-sm text-slate-900 line-clamp-1">
+                                            {auc.product?.name || 'Sản phẩm đấu giá'}
+                                        </h4>
                                         <div className="flex justify-between items-baseline">
-                                            <span className="text-xs text-slate-500">Giá hiện tại:</span>
-                                            <span className="font-black text-[#ea580c] text-base">{auc.currentBid?.toLocaleString('vi-VN')} đ</span>
+                                            <span className="text-xs text-slate-500">
+                                                Giá hiện tại:
+                                            </span>
+                                            <span className="font-black text-[#ea580c] text-base">
+                                                {auc.currentBid?.toLocaleString('vi-VN')} đ
+                                            </span>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <p className="text-sm text-slate-500 py-6 text-center">Shop hiện chưa có phiên đấu giá nào đang diễn ra.</p>
+                            <p className="text-sm text-slate-500 py-6 text-center">
+                                Shop hiện chưa có phiên đấu giá nào đang diễn ra.
+                            </p>
                         )}
                     </div>
                 )}
@@ -535,45 +699,87 @@ export function SellerShopView() {
                                 <span className="text-3xl font-black text-amber-600">4.8</span>
                                 <span className="text-base text-slate-600 font-bold"> / 5.0</span>
                                 <div className="text-amber-500 text-lg mt-1">★★★★★</div>
-                                <p className="text-xs text-slate-500 mt-1">Dựa trên {reputation?.score ? (ratings.length || 521) : 521} lượt đánh giá từ người mua thực tế</p>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Dựa trên {reputation?.score ? ratings.length || 521 : 521} lượt
+                                    đánh giá từ người mua thực tế
+                                </p>
                             </div>
                             <div className="flex flex-wrap gap-2 text-xs">
-                                <span className="px-3 py-1.5 rounded-full bg-white font-bold text-slate-800 border border-slate-200 shadow-sm">Tất cả (521)</span>
-                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">5 Sao (490)</span>
-                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">4 Sao (25)</span>
-                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">Có Hình Ảnh/Video (310)</span>
+                                <span className="px-3 py-1.5 rounded-full bg-white font-bold text-slate-800 border border-slate-200 shadow-sm">
+                                    Tất cả (521)
+                                </span>
+                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
+                                    5 Sao (490)
+                                </span>
+                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
+                                    4 Sao (25)
+                                </span>
+                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
+                                    Có Hình Ảnh/Video (310)
+                                </span>
                             </div>
                         </div>
 
                         {/* Danh sách review */}
                         <div className="divide-y divide-slate-100">
-                            {ratings.length > 0 ? (
-                                ratings.map((rev) => (
-                                    <div key={rev.id} className="py-4 space-y-1.5">
-                                        <div className="flex items-center gap-2 text-xs">
-                                            <span className="font-bold text-slate-900">{rev.raterName || 'Người mua'}</span>
-                                            <span className="text-amber-500">{'★'.repeat(rev.score)}</span>
-                                            <span className="text-slate-400">· {new Date(rev.createdAt).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}</span>
-                                        </div>
-                                        <p className="text-sm text-slate-700">{rev.comment || 'Đánh giá 5 sao hài lòng'}</p>
-                                    </div>
-                                ))
-                            ) : (
-                                [
-                                    { user: 'buyer_pro_01', rating: 5, date: '10-11-2026', comment: 'Sản phẩm tai nghe Sony WH-1000XM5 chính hãng, cách âm đỉnh chóp, đóng gói chắc chắn giao siêu nhanh trong 1 ngày!' },
-                                    { user: 'nguyenvana_cpl', rating: 5, date: '08-11-2026', comment: 'Shop phục vụ rất nhiệt tình, giải đáp chi tiết, hàng chuẩn Apple nguyên seal.' },
-                                    { user: 'quocbao_hcm', rating: 4, date: '02-11-2026', comment: 'Đóng gói cẩn thận, hàng đúng mô tả, chất âm ấm.' },
-                                ].map((rev, i) => (
-                                    <div key={i} className="py-4 space-y-1.5">
-                                        <div className="flex items-center gap-2 text-xs">
-                                            <span className="font-bold text-slate-900">{rev.user}</span>
-                                            <span className="text-amber-500">{'★'.repeat(rev.rating)}</span>
-                                            <span className="text-slate-400">· {rev.date}</span>
-                                        </div>
-                                        <p className="text-sm text-slate-700">{rev.comment}</p>
-                                    </div>
-                                ))
-                            )}
+                            {ratings.length > 0
+                                ? ratings.map((rev) => (
+                                      <div key={rev.id} className="py-4 space-y-1.5">
+                                          <div className="flex items-center gap-2 text-xs">
+                                              <span className="font-bold text-slate-900">
+                                                  {rev.raterName || 'Người mua'}
+                                              </span>
+                                              <span className="text-amber-500">
+                                                  {'★'.repeat(rev.score)}
+                                              </span>
+                                              <span className="text-slate-400">
+                                                  ·{' '}
+                                                  {new Date(rev.createdAt).toLocaleDateString(
+                                                      lang === 'vi' ? 'vi-VN' : 'en-US',
+                                                  )}
+                                              </span>
+                                          </div>
+                                          <p className="text-sm text-slate-700">
+                                              {rev.comment || 'Đánh giá 5 sao hài lòng'}
+                                          </p>
+                                      </div>
+                                  ))
+                                : [
+                                      {
+                                          user: 'buyer_pro_01',
+                                          rating: 5,
+                                          date: '10-11-2026',
+                                          comment:
+                                              'Sản phẩm tai nghe Sony WH-1000XM5 chính hãng, cách âm đỉnh chóp, đóng gói chắc chắn giao siêu nhanh trong 1 ngày!',
+                                      },
+                                      {
+                                          user: 'nguyenvana_cpl',
+                                          rating: 5,
+                                          date: '08-11-2026',
+                                          comment:
+                                              'Shop phục vụ rất nhiệt tình, giải đáp chi tiết, hàng chuẩn Apple nguyên seal.',
+                                      },
+                                      {
+                                          user: 'quocbao_hcm',
+                                          rating: 4,
+                                          date: '02-11-2026',
+                                          comment:
+                                              'Đóng gói cẩn thận, hàng đúng mô tả, chất âm ấm.',
+                                      },
+                                  ].map((rev, i) => (
+                                      <div key={i} className="py-4 space-y-1.5">
+                                          <div className="flex items-center gap-2 text-xs">
+                                              <span className="font-bold text-slate-900">
+                                                  {rev.user}
+                                              </span>
+                                              <span className="text-amber-500">
+                                                  {'★'.repeat(rev.rating)}
+                                              </span>
+                                              <span className="text-slate-400">· {rev.date}</span>
+                                          </div>
+                                          <p className="text-sm text-slate-700">{rev.comment}</p>
+                                      </div>
+                                  ))}
                         </div>
                     </div>
                 )}

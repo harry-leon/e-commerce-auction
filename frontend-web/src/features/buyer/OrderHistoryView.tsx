@@ -33,20 +33,48 @@ import { Modal, Textarea, Button } from '../../components/UI'
 
 // SVG Icons tự định nghĩa
 const SvgSearch = ({ size = 16 }: { size?: number }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400">
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="text-gray-400"
+    >
         <circle cx="11" cy="11" r="8" />
         <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
 )
 
 const SvgChevronRight = ({ size = 14 }: { size?: number }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+    >
         <polyline points="9 18 15 12 9 6" />
     </svg>
 )
 
 const SvgStore = ({ size = 15 }: { size?: number }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+    >
         <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" />
         <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
         <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" />
@@ -55,7 +83,16 @@ const SvgStore = ({ size = 15 }: { size?: number }) => (
 )
 
 const SvgMessage = ({ size = 14 }: { size?: number }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+    >
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
 )
@@ -98,7 +135,40 @@ export function OrderHistoryView() {
                 status: statusFilter === 'all' ? undefined : statusFilter,
                 search: searchQuery,
             })
-            setOrders(Array.isArray(data) ? data : [])
+            const list = Array.isArray(data) ? data : []
+            setOrders(list)
+            // Tải chi tiết các mặt hàng cho các đơn tóm tắt để hiển thị đúng ảnh và giá sản phẩm trúng thầu/đơn hàng
+            const needEnrich = list.filter(
+                (o) => (!o.items || o.items.length === 0) && (o.itemCount || 0) > 0,
+            )
+            if (needEnrich.length > 0) {
+                void Promise.allSettled(
+                    needEnrich.map((o) => ordersApi.getOrderById(o.id)),
+                ).then((results) => {
+                    setOrders((prev) =>
+                        prev.map((order) => {
+                            const idx = needEnrich.findIndex((n) => n.id === order.id)
+                            if (idx !== -1 && results[idx]?.status === 'fulfilled') {
+                                const det = (
+                                    results[idx] as PromiseFulfilledResult<Order | null>
+                                ).value
+                                if (det && det.items && det.items.length > 0) {
+                                    return {
+                                        ...order,
+                                        items: det.items,
+                                        sellerName: det.sellerName || order.sellerName,
+                                        total:
+                                            det.total && det.total > 0
+                                                ? det.total
+                                                : order.total,
+                                    }
+                                }
+                            }
+                            return order
+                        }),
+                    )
+                })
+            }
         } catch {
             setOrders([])
         } finally {
@@ -117,7 +187,8 @@ export function OrderHistoryView() {
             await ordersApi.cancelOrder(cancelOrderId, cancelReason)
             showToast({
                 type: 'success',
-                message: lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
+                message:
+                    lang === 'en' ? 'Order cancelled successfully.' : 'Đã hủy đơn hàng thành công.',
             })
             setCancelOrderId(null)
             setCancelReason('')
@@ -125,7 +196,9 @@ export function OrderHistoryView() {
         } catch (err: any) {
             showToast({
                 type: 'error',
-                message: err?.message || (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
+                message:
+                    err?.message ||
+                    (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
             })
         }
     }
@@ -186,7 +259,11 @@ export function OrderHistoryView() {
                         </span>
                         <input
                             type="text"
-                            placeholder={lang === 'vi' ? 'Tìm mã đơn hoặc tên sản phẩm...' : 'Search order ID or item...'}
+                            placeholder={
+                                lang === 'vi'
+                                    ? 'Tìm mã đơn hoặc tên sản phẩm...'
+                                    : 'Search order ID or item...'
+                            }
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm outline-none transition-all bg-white"
@@ -224,17 +301,29 @@ export function OrderHistoryView() {
                 ) : orders.length === 0 ? (
                     <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
                         <p className="font-bold text-base text-gray-800">No orders found</p>
-                        <p className="text-xs text-gray-400 mt-1">Try selecting a different filter tab or search query.</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                            Try selecting a different filter tab or search query.
+                        </p>
                     </div>
                 ) : (
                     <div className="space-y-4">
                         {orders.map((order) => {
                             const canCancel = ['PENDING_PAYMENT', 'PAID'].includes(order.status)
-                            const isAuction = order.orderNo?.startsWith('AUC') || (order as any).isAuctionOrder || (order as any).sourceType === 'AUCTION'
+                            const isAuction =
+                                order.orderNo?.startsWith('AUC') ||
+                                (order as any).isAuctionOrder ||
+                                (order as any).sourceType === 'AUCTION'
                             const displayItems = Array.isArray(order.items) ? order.items : []
-                            const sellerDisplayName = resolveSellerName(order.sellerId, order.sellerName)
+                            const sellerDisplayName = resolveSellerName(
+                                order.sellerId,
+                                order.sellerName,
+                            )
                             const orderTotal = typeof order.total === 'number' ? order.total : 0
-                            const formattedDate = order.createdAt ? new Date(order.createdAt).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US') : ''
+                            const formattedDate = order.createdAt
+                                ? new Date(order.createdAt).toLocaleString(
+                                      lang === 'vi' ? 'vi-VN' : 'en-US',
+                                  )
+                                : ''
 
                             return (
                                 <div
@@ -272,7 +361,9 @@ export function OrderHistoryView() {
                                             )}
                                             <button
                                                 type="button"
-                                                onClick={() => navigate('order-detail', { id: order.id })}
+                                                onClick={() =>
+                                                    navigate('order-detail', { id: order.id })
+                                                }
                                                 className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-gray-700 hover:text-primary bg-gray-50 hover:bg-gray-100 border border-gray-200 flex items-center gap-1.5 transition-colors cursor-pointer"
                                             >
                                                 <span>Order Detail</span>
@@ -294,7 +385,12 @@ export function OrderHistoryView() {
                                         <div className="flex items-center gap-2">
                                             <button
                                                 type="button"
-                                                onClick={() => showToast({ type: 'info', message: 'Connecting chat...' })}
+                                                onClick={() =>
+                                                    showToast({
+                                                        type: 'info',
+                                                        message: 'Connecting chat...',
+                                                    })
+                                                }
                                                 className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-gray-600 bg-gray-50 hover:bg-gray-100 border border-gray-200 flex items-center gap-1 transition-colors cursor-pointer"
                                             >
                                                 <SvgMessage size={12} />
@@ -303,7 +399,13 @@ export function OrderHistoryView() {
                                             {order.sellerId && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => navigate('seller-shop', { sellerId: order.sellerId, id: order.sellerId, sellerName: sellerDisplayName })}
+                                                    onClick={() =>
+                                                        navigate('seller-shop', {
+                                                            sellerId: order.sellerId,
+                                                            id: order.sellerId,
+                                                            sellerName: sellerDisplayName,
+                                                        })
+                                                    }
                                                     className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#ee4d2d] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors cursor-pointer"
                                                 >
                                                     Xem Shop
@@ -318,16 +420,25 @@ export function OrderHistoryView() {
                                             <div className="flex items-center justify-between gap-4 py-1">
                                                 <div className="flex items-center gap-3.5 min-w-0">
                                                     <img
-                                                        src={resolveProductImage(order.id, isAuction ? 'Tai nghe Gaming Razer BlackShark V2' : 'Sản phẩm')}
+                                                        src={resolveProductImage(
+                                                            order.id,
+                                                            isAuction
+                                                                ? 'Tai nghe Gaming Razer BlackShark V2'
+                                                                : 'Sản phẩm',
+                                                        )}
                                                         alt={order.orderNo || order.id}
                                                         className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
                                                     />
                                                     <div className="min-w-0">
                                                         <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
-                                                            {isAuction ? 'Sản phẩm trúng thầu đấu giá' : `Sản phẩm đơn hàng #${order.orderNo || order.id}`}
+                                                            {isAuction
+                                                                ? 'Sản phẩm trúng thầu đấu giá'
+                                                                : `Sản phẩm đơn hàng #${order.orderNo || order.id}`}
                                                         </h4>
                                                         <p className="text-[11px] text-gray-500 mt-0.5">
-                                                            {order.shippingAddress && order.shippingAddress !== 'AUCTION_PENDING_BUYER_ADDRESS' ? order.shippingAddress : (isAuction ? 'Chờ thanh toán & nhận hàng' : 'Chi tiết đơn hàng')}
+                                                            {lang === 'vi'
+                                                                ? 'Mở chi tiết đơn để xem sản phẩm.'
+                                                                : 'Open order details to view products.'}
                                                         </p>
                                                         <p className="text-[11px] text-gray-400 mt-0.5">
                                                             x1
@@ -342,46 +453,60 @@ export function OrderHistoryView() {
                                             </div>
                                         ) : (
                                             displayItems.map((item: any, idx: number) => {
-                                                const itemImage = resolveProductImage(item.productId || item.skuId, item.productName, item.image)
-                                                const itemPrice = (typeof item.unitPrice === 'number' && item.unitPrice > 0)
-                                                    ? item.unitPrice
-                                                    : (Number(item.estimatedUnitPrice) || orderTotal || 0)
+                                                const itemImage = resolveProductImage(
+                                                    item.productId || item.skuId,
+                                                    item.productName,
+                                                    item.image,
+                                                )
+                                                const itemPrice =
+                                                    typeof item.unitPrice === 'number' &&
+                                                    item.unitPrice > 0
+                                                        ? item.unitPrice
+                                                        : Number(item.estimatedUnitPrice) ||
+                                                          orderTotal ||
+                                                          0
                                                 return (
-                                                <div key={item.productId || idx} className="flex items-center justify-between gap-4">
-                                                    <div className="flex items-center gap-3.5 min-w-0">
-                                                        <img
-                                                            src={itemImage}
-                                                            alt={item.productName}
-                                                            className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
-                                                        />
-                                                        <div className="min-w-0">
-                                                            <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
-                                                                {item.productName}
-                                                            </h4>
-                                                            {item.attribute && (
-                                                                <p className="text-[11px] text-gray-500 mt-0.5">
-                                                                    Phân loại: {item.attribute}
+                                                    <div
+                                                        key={item.productId || idx}
+                                                        className="flex items-center justify-between gap-4"
+                                                    >
+                                                        <div className="flex items-center gap-3.5 min-w-0">
+                                                            <img
+                                                                src={itemImage}
+                                                                alt={item.productName}
+                                                                className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
+                                                            />
+                                                            <div className="min-w-0">
+                                                                <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
+                                                                    {item.productName}
+                                                                </h4>
+                                                                {item.attribute && (
+                                                                    <p className="text-[11px] text-gray-500 mt-0.5">
+                                                                        Phân loại: {item.attribute}
+                                                                    </p>
+                                                                )}
+                                                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                                                    x{item.quantity}
                                                                 </p>
-                                                            )}
-                                                            <p className="text-[11px] text-gray-400 mt-0.5">
-                                                                x{item.quantity}
+                                                            </div>
+                                                        </div>
+                                                        <div className="text-right shrink-0">
+                                                            <p className="text-sm font-bold text-gray-900">
+                                                                {formatCurrency(itemPrice, lang)}
                                                             </p>
                                                         </div>
                                                     </div>
-                                                    <div className="text-right shrink-0">
-                                                        <p className="text-sm font-bold text-gray-900">
-                                                            {formatCurrency(itemPrice, lang)}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            )})
+                                                )
+                                            })
                                         )}
                                     </div>
 
                                     {/* Dòng Footer của Card */}
                                     <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-100 text-xs">
                                         <div className="text-gray-500 flex flex-wrap items-center gap-1.5">
-                                            <span>💬 {displayItems.length} product(s) in this order</span>
+                                            <span>
+                                                💬 {displayItems.length} product(s) in this order
+                                            </span>
                                             {sellerDisplayName && (
                                                 <>
                                                     <span>·</span>
@@ -391,12 +516,16 @@ export function OrderHistoryView() {
                                             {order.shippingAddress && (
                                                 <>
                                                     <span>·</span>
-                                                    <span className="text-gray-400 line-clamp-1 max-w-xs">{order.shippingAddress}</span>
+                                                    <span className="text-gray-400 line-clamp-1 max-w-xs">
+                                                        {order.shippingAddress}
+                                                    </span>
                                                 </>
                                             )}
                                         </div>
                                         <div className="flex items-baseline gap-2">
-                                            <span className="text-gray-500 text-xs">Total payable:</span>
+                                            <span className="text-gray-500 text-xs">
+                                                Total payable:
+                                            </span>
                                             <span className="text-lg sm:text-xl font-black text-[#ee4d2d]">
                                                 {formatCurrency(orderTotal, lang)}
                                             </span>

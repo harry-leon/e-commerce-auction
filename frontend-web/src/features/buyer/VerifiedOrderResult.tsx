@@ -94,7 +94,11 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                                 : 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white shadow-blue-500/25 ring-8 ring-blue-50'
                         }`}
                     >
-                        {isPaid ? <CheckCircle size={40} className="stroke-[2.5]" /> : <Package size={40} className="stroke-[2.5]" />}
+                        {isPaid ? (
+                            <CheckCircle size={40} className="stroke-[2.5]" />
+                        ) : (
+                            <Package size={40} className="stroke-[2.5]" />
+                        )}
                     </div>
                 </div>
             )}
@@ -115,7 +119,11 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
 
             {current && (
                 <div className="text-sm font-medium text-gray-600 mb-6 font-mono bg-gray-50 py-2.5 px-4 rounded-xl border border-gray-200 inline-block">
-                    {current.orderNo || (current.id.length > 8 ? '#' + current.id.slice(0, 8).toUpperCase() : current.id)} ·{' '}
+                    {current.orderNo ||
+                        (current.id.length > 8
+                            ? '#' + current.id.slice(0, 8).toUpperCase()
+                            : current.id)}{' '}
+                    ·{' '}
                     <span
                         className={
                             isPaid

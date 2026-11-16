@@ -1,6 +1,6 @@
 /**
  * Client API Quản lý thông báo và cấu hình nhận thông báo (Sprint 3 - HA-S3-2).
- * 
+ *
  * 1. Chức năng:
  *    - Lấy danh sách thông báo IN_APP theo trang (GET /api/v1/notifications).
  *    - Đánh dấu đã đọc một thông báo hoặc tất cả thông báo (POST /api/v1/notifications/{id}/read, read-all).

@@ -84,7 +84,12 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
         sessionStorage.setItem(
             'nexus.session',
             JSON.stringify({
-                user: { id: 'user-buyer-1', email: 'buyer@nexus.vn', name: 'Minh Tran', role: 'buyer' },
+                user: {
+                    id: 'user-buyer-1',
+                    email: 'buyer@nexus.vn',
+                    name: 'Minh Tran',
+                    role: 'buyer',
+                },
                 token: 'mock-jwt-token',
                 remember: false,
             }),
@@ -249,7 +254,9 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             await goToShippingMethodStep()
 
             // Kiểm tra nhãn Free Shipping xuất hiện
-            const freeBadges = await screen.findAllByText(/FREESHIP|FREE|Miễn phí vận chuyển|Free Shipping/i)
+            const freeBadges = await screen.findAllByText(
+                /FREESHIP|FREE|Miễn phí vận chuyển|Free Shipping/i,
+            )
             expect(freeBadges.length).toBeGreaterThanOrEqual(1)
         })
 
@@ -346,12 +353,18 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             expect(await screen.findByText('GHN99887766VN')).toBeInTheDocument()
             expect(screen.getByText('IN_TRANSIT')).toBeInTheDocument()
             // Kiểm tra timeline mốc hành trình
-            expect(screen.getByText('Đang luân chuyển qua bưu cục trung chuyển')).toBeInTheDocument()
+            expect(
+                screen.getByText('Đang luân chuyển qua bưu cục trung chuyển'),
+            ).toBeInTheDocument()
             expect(screen.getByText('Đã lấy hàng từ người bán')).toBeInTheDocument()
         })
 
         it('hiển thị trạng thái rỗng thân thiện khi đơn hàng chưa phát sinh vận đơn (AC 11)', async () => {
-            const pendingOrder: Order = { ...mockTestOrder, status: 'PROCESSING', shipment: undefined }
+            const pendingOrder: Order = {
+                ...mockTestOrder,
+                status: 'PROCESSING',
+                shipment: undefined,
+            }
             vi.spyOn(ordersApi, 'getOrderById').mockResolvedValue(pendingOrder)
             vi.spyOn(shippingApi, 'getShipmentByOrderId').mockResolvedValue(null)
 
@@ -361,7 +374,9 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
                 </AppProvider>,
             )
 
-            expect(await screen.findByText(/Đang chuẩn bị hàng|Preparing for shipment/i)).toBeInTheDocument()
+            expect(
+                await screen.findByText(/Đang chuẩn bị hàng|Preparing for shipment/i),
+            ).toBeInTheDocument()
         })
     })
 
@@ -427,7 +442,9 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             fireEvent.click(viewButton)
 
             // Modal mở ra có thông tin vận chuyển & đơn vị giao
-            expect(await screen.findByText(/Thông tin vận chuyển & Đơn vị giao|Shipment Information/i)).toBeInTheDocument()
+            expect(
+                await screen.findByText(/Thông tin vận chuyển & Đơn vị giao|Shipment Information/i),
+            ).toBeInTheDocument()
             expect(screen.getAllByText('GHTK112233VN').length).toBeGreaterThanOrEqual(1)
         })
     })

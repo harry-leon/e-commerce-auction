@@ -349,7 +349,8 @@ function canFallbackToMock(error: unknown): boolean {
     if (error instanceof TypeError) return true
     if (typeof error === 'object' && error !== null) {
         const err = error as any
-        if (err.status === 503 || err.status === 502 || err.status === 504 || err.status === 404) return true
+        if (err.status === 503 || err.status === 502 || err.status === 504 || err.status === 404)
+            return true
         if (err.code === 'NETWORK_ERROR' || err.code === 'INTERNAL_SERVER_ERROR') return true
     }
     return false
@@ -424,45 +425,18 @@ export const ordersApi = {
         try {
             const envelope = await api<ApiResponse<OrderPayload[]>>(path)
             const list = Array.isArray(envelope?.data) ? envelope.data : []
-            // Nạp chi tiết các mặt hàng từ database thật nếu danh sách tóm tắt chưa có items
-            const enriched = await Promise.all(
-                list.map(async (raw) => {
-                    const o = normalizeOrder(raw)
-                    if (!o.items || o.items.length === 0) {
-                        try {
-                            const detail = await ordersApi.getOrderById(o.id)
-                            if (detail?.items && detail.items.length > 0) {
-                                return {
-                                    ...o,
-                                    items: detail.items,
-                                    sellerId: detail.sellerId || o.sellerId,
-                                    sellerName: detail.sellerName || o.sellerName,
-                                    subtotal: (detail.subtotal && detail.subtotal > 0) ? detail.subtotal : (o.subtotal || Number((detail as any).estimatedSubtotal) || 0),
-                                    shipping: detail.shipping ?? o.shipping ?? 0,
-                                    discount: detail.discount ?? o.discount ?? 0,
-                                    total: (detail.total && detail.total > 0) ? detail.total : (o.total || Number((detail as any).estimatedTotal) || Number((o as any).estimatedTotal) || 0),
-                                    shippingAddress: detail.shippingAddress || o.shippingAddress,
-                                }
-                            }
-                        } catch {
-                            // Bỏ qua lỗi nạp chi tiết đơn lẻ
-                        }
-                    }
-                    if (!o.sellerName || o.sellerName === 'Cửa hàng đối tác') {
-                        o.sellerName = resolveSellerName(o.sellerId)
-                    }
-                    return o
-                }),
+            const orders = list.map(normalizeOrder)
+            if (!params?.search?.trim()) return orders
+            const term = params.search.trim().toLowerCase()
+            return orders.filter((order) =>
+                [
+                    order.id,
+                    order.orderNo,
+                    order.buyerName,
+                    order.sellerName,
+                    ...order.items.map((item) => item.productName),
+                ].some((value) => value?.toLowerCase().includes(term)),
             )
-            let result = enriched
-            if (params?.search?.trim()) {
-                const term = params.search.trim().toLowerCase()
-                result = result.filter((order) =>
-                    [order.id, order.orderNo, order.buyerName, order.sellerName, ...order.items.map((item) => item.productName)]
-                        .some((value) => value?.toLowerCase().includes(term)),
-                )
-            }
-            return result
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             const local = readLocalMockOrders()
@@ -478,8 +452,13 @@ export const ordersApi = {
             if (params?.search?.trim()) {
                 const term = params.search.trim().toLowerCase()
                 filtered = filtered.filter((order) =>
-                    [order.id, order.orderNo, order.buyerName, order.sellerName, ...order.items.map((item) => item.productName)]
-                        .some((value) => value?.toLowerCase().includes(term)),
+                    [
+                        order.id,
+                        order.orderNo,
+                        order.buyerName,
+                        order.sellerName,
+                        ...order.items.map((item) => item.productName),
+                    ].some((value) => value?.toLowerCase().includes(term)),
                 )
             }
             return filtered
@@ -507,7 +486,9 @@ export const ordersApi = {
             return found ? normalizeOrder(found) : null
         }
         try {
-            const envelope = await api<ApiResponse<OrderPayload>>(`/orders/${encodeURIComponent(id)}`)
+            const envelope = await api<ApiResponse<OrderPayload>>(
+                `/orders/${encodeURIComponent(id)}`,
+            )
             const order = envelope?.data
             if (order?.id) {
                 const normalized = normalizeOrder(order)
@@ -536,11 +517,15 @@ export const ordersApi = {
      */
     async checkoutPreview(data: CheckoutPreviewRequest): Promise<CheckoutPreviewResponse> {
         try {
-            const response = await api<{ success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse>(
-                '/orders/checkout/preview', { method: 'POST', body: JSON.stringify(data) },
-            )
-            const result = 'data' in response && response.data ? response.data : response as CheckoutPreviewResponse
-            if (!result || typeof result.totalAmount !== 'number') throw new Error('Checkout preview response is invalid')
+            const response = await api<
+                { success?: boolean; data?: CheckoutPreviewResponse } | CheckoutPreviewResponse
+            >('/orders/checkout/preview', { method: 'POST', body: JSON.stringify(data) })
+            const result =
+                'data' in response && response.data
+                    ? response.data
+                    : (response as CheckoutPreviewResponse)
+            if (!result || typeof result.totalAmount !== 'number')
+                throw new Error('Checkout preview response is invalid')
             return result
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
@@ -858,105 +843,6 @@ export const ordersApi = {
 
     /**
      * Buyer mở khiếu nại đơn hàng -> chuyển khoản tiền sang trạng thái 'on_hold' (tạm giữ) để Admin xử lý.
-     */
-    async submitOrderDispute(id: string, reason: string): Promise<Order> {
-        try {
-            await api(`/orders/${id}/dispute`, {
-                method: 'POST',
-                body: JSON.stringify({ reason }),
-            })
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Fallback
-        }
-
-        const orders = readLocalMockOrders()
-        const index = orders.findIndex((o) => o.id === id)
-        if (index !== -1) {
-            orders[index] = {
-                ...orders[index],
-                disputeStatus: 'open',
-                disputeReason: reason,
-                paymentStatus: 'on_hold',
-                updatedAt: new Date().toISOString(),
-            }
-            writeLocalMockOrders(orders)
-            return orders[index]
-        }
-        throw new Error('Order not found')
-    },
-
-    /**
-     * Admin ra quyết định giải quyết khiếu nại và giải phóng tiền ký quỹ:
-     * - 'released': Chuyển tiền cho người bán.
-     * - 'refunded': Hoàn tiền 100% cho người mua.
-     * - 'partial_refund': Hoàn một phần tiền cho người mua, phần còn lại chuyển cho người bán.
-     */
-    async resolveOrderDispute(
-        id: string,
-        resolution: 'released' | 'refunded' | 'partial_refund',
-        note?: string,
-    ): Promise<Order> {
-        try {
-            await api(`/orders/${id}/resolve-dispute`, {
-                method: 'POST',
-                body: JSON.stringify({ resolution, note }),
-            })
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Fallback
-        }
-
-        const orders = readLocalMockOrders()
-        const index = orders.findIndex((o) => o.id === id)
-        if (index !== -1) {
-            orders[index] = {
-                ...orders[index],
-                paymentStatus: resolution,
-                disputeStatus: 'resolved',
-                // Đổi sang REFUNDED nếu Admin quyết định hoàn tiền toàn bộ cho Buyer
-                status: resolution === 'refunded' ? 'REFUNDED' : orders[index].status,
-                updatedAt: new Date().toISOString(),
-            }
-            writeLocalMockOrders(orders)
-            return orders[index]
-        }
-        throw new Error('Order not found')
-    },
-
-    /**
-     * Đặt lại toàn bộ dữ liệu mock về cấu hình ban đầu (phục vụ test).
-     */
-    resetOrdersToDefault(): void {
-        writeLocalMockOrders(SEED_ORDERS)
-        writeLocalMockWithdrawals(SEED_WITHDRAWALS)
-    },
-
-    async confirmOrderDelivery(id: string): Promise<Order> {
-        try {
-            await api(`/orders/${id}/confirm-delivery`, { method: 'POST' })
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Fallback
-        }
-
-        const orders = readLocalMockOrders()
-        const index = orders.findIndex((o) => o.id === id)
-        if (index !== -1) {
-            orders[index] = {
-                ...orders[index],
-                status: 'COMPLETED',
-                paymentStatus: 'released',
-                updatedAt: new Date().toISOString(),
-            }
-            writeLocalMockOrders(orders)
-            return orders[index]
-        }
-        throw new Error('Order not found')
-    },
-
-    /**
-     * Buyer mở khiếu nại đơn hàng -> chuyển khoản tiền sang trạng thái 'on_hold' (tạm giữ) để Admin xử lý.
      * Luồng: Gọi POST /orders/{id}/dispute lên backend; nếu thành công trả về đơn hàng đã cập nhật; fallback mock khi mất mạng.
      */
     async submitOrderDispute(id: string, reason: string): Promise<Order> {
@@ -1049,8 +935,6 @@ export const ordersApi = {
      * Luồng: Đọc từ localStorage thông qua readLocalMockWithdrawals().
      */
     getWithdrawalRequests(): WithdrawalRequest[] {
-        return readLocalMockWithdrawals()
-    },
         return readLocalMockWithdrawals()
     },
 

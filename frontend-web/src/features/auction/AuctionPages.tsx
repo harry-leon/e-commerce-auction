@@ -26,7 +26,17 @@ import {
 } from '../../components/UI'
 import { CelebrationCanvas, WinnerCelebrationModal } from './CelebrationFireworks'
 const SvgSparkles = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
         <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
     </svg>
 )
@@ -849,7 +859,8 @@ export function AuctionDetailPage() {
                                     </span>
                                 </div>
                                 <span className="text-xs font-bold text-amber-900 bg-amber-100/90 px-3 py-1 rounded-full border border-amber-300">
-                                    🔥 {auction.bidCount} {lang === 'en' ? 'bids placed' : 'lượt đã đặt'}
+                                    🔥 {auction.bidCount}{' '}
+                                    {lang === 'en' ? 'bids placed' : 'lượt đã đặt'}
                                 </span>
                             </div>
 
@@ -892,7 +903,9 @@ export function AuctionDetailPage() {
                                     <Trophy size={18} className="text-amber-600 shrink-0" />
                                     <div className="flex-1">
                                         <span className="font-semibold">
-                                            {lang === 'en' ? 'Top Bidder:' : 'Dẫn đầu hiện tại:'}{' '}
+                                            {lang === 'en'
+                                                ? 'Top Bidder:'
+                                                : 'Dẫn đầu hiện tại:'}{' '}
                                         </span>
                                         <span className="font-bold text-amber-800">
                                             {isHighestBidder
@@ -1377,18 +1390,20 @@ export function AuctionPaymentPage() {
     }, [])
 
     // Dữ liệu fallback chuẩn xác khi kiểm thử giao diện
-    const effectiveSettlement: AuctionSettlement | null = settlement || (
-        (!auctionId || loadError || pageParams?.demo === 'buyer' || !settlement) ? {
-            id: 'settlement-demo-1',
-            auctionId: auctionId || 'auc-101',
-            winnerId: user?.id || 'u1',
-            finalPrice: 150000,
-            result: 'SUCCESS',
-            paymentDeadline: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-            orderId: null,
-            settledAt: new Date().toISOString(),
-        } : null
-    )
+    const effectiveSettlement: AuctionSettlement | null =
+        settlement ||
+        (!auctionId || loadError || pageParams?.demo === 'buyer' || !settlement
+            ? {
+                  id: 'settlement-demo-1',
+                  auctionId: auctionId || 'auc-101',
+                  winnerId: user?.id || 'u1',
+                  finalPrice: 150000,
+                  result: 'SUCCESS',
+                  paymentDeadline: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+                  orderId: null,
+                  settledAt: new Date().toISOString(),
+              }
+            : null)
     const effectiveDetails: WinnerAuctionDetails = auctionDetails || {
         auctionId: auctionId || 'auc-101',
         productId: 'prod-101',
@@ -1399,9 +1414,14 @@ export function AuctionPaymentPage() {
     const deadline = effectiveSettlement?.paymentDeadline || ''
     const expired = !deadline || new Date(deadline).getTime() <= now
     // Kiểm tra quyền winner: khớp ID người dùng hoặc tài khoản Buyer demo ('u1') để hỗ trợ test luồng UI.
-    const isWinner = !!user?.id && (effectiveSettlement?.winnerId === user.id || user.id === 'u1' || !effectiveSettlement?.winnerId)
+    const isWinner =
+        !!user?.id &&
+        (effectiveSettlement?.winnerId === user.id ||
+            user.id === 'u1' ||
+            !effectiveSettlement?.winnerId)
     // Cho phép sửa shipping khi: settlement hợp lệ, đúng winner, chưa quá hạn và chưa có orderId.
-    const canEditShipping = !!effectiveSettlement && isWinner && !expired && !effectiveSettlement.orderId
+    const canEditShipping =
+        !!effectiveSettlement && isWinner && !expired && !effectiveSettlement.orderId
 
     /**
      * Luồng checkout hoàn chỉnh cho winner (One Settlement = One Order):
@@ -1411,7 +1431,13 @@ export function AuctionPaymentPage() {
      */
     async function handleCheckout() {
         if (checkoutBusy) return
-        if (!effectiveSettlement || expired || !isWinner || effectiveSettlement.result === 'DEFAULTED') return
+        if (
+            !effectiveSettlement ||
+            expired ||
+            !isWinner ||
+            effectiveSettlement.result === 'DEFAULTED'
+        )
+            return
 
         let orderId: string | null = effectiveSettlement.orderId || null
         const trimmedName = recipientName.trim()
@@ -1438,11 +1464,15 @@ export function AuctionPaymentPage() {
                         orderId = freshSettlement.orderId
                         setSettlement(freshSettlement)
                     } else {
-                        setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
+                        setCheckoutError(
+                            'Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.',
+                        )
                         return
                     }
                 } catch {
-                    setCheckoutError('Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.')
+                    setCheckoutError(
+                        'Đơn hàng đang được hệ thống tạo tự động từ kết quả phiên đấu giá. Vui lòng đợi trong giây lát rồi thử lại.',
+                    )
                     return
                 }
             }
@@ -1539,10 +1569,18 @@ export function AuctionPaymentPage() {
                                     <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
                                             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                                                🏆 {lang === 'vi' ? 'Bạn đã thắng đấu giá' : 'You Won!'}
+                                                🏆{' '}
+                                                {lang === 'vi'
+                                                    ? 'Bạn đã thắng đấu giá'
+                                                    : 'You Won!'}
                                             </span>
                                             <span className="text-xs text-gray-500 font-mono">
-                                                #{effectiveSettlement.auctionId.length > 8 ? effectiveSettlement.auctionId.slice(0, 8).toUpperCase() : effectiveSettlement.auctionId}
+                                                #
+                                                {effectiveSettlement.auctionId.length > 8
+                                                    ? effectiveSettlement.auctionId
+                                                          .slice(0, 8)
+                                                          .toUpperCase()
+                                                    : effectiveSettlement.auctionId}
                                             </span>
                                         </div>
                                         <h2 className="text-xl sm:text-2xl font-black text-gray-900 mt-1">
@@ -1550,7 +1588,11 @@ export function AuctionPaymentPage() {
                                         </h2>
                                         <p className="text-xs text-gray-600 mt-0.5">
                                             {lang === 'vi' ? 'Người chiến thắng:' : 'Winner:'}{' '}
-                                            <span className="font-bold text-gray-900">{recipientName || user?.fullName || 'Nguyễn Văn Buyer'}</span>
+                                            <span className="font-bold text-gray-900">
+                                                {recipientName ||
+                                                    user?.fullName ||
+                                                    'Nguyễn Văn Buyer'}
+                                            </span>
                                         </p>
                                     </div>
                                 </div>
@@ -1563,7 +1605,11 @@ export function AuctionPaymentPage() {
                                     className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-100/90 hover:bg-amber-200 border border-amber-300/80 flex items-center gap-1.5 shadow-sm transition-all cursor-pointer self-start sm:self-auto"
                                 >
                                     <SvgSparkles size={14} className="text-amber-600" />
-                                    <span>{lang === 'vi' ? '🎉 Bắn pháo hoa ăn mừng' : '🎉 Re-celebrate'}</span>
+                                    <span>
+                                        {lang === 'vi'
+                                            ? '🎉 Bắn pháo hoa ăn mừng'
+                                            : '🎉 Re-celebrate'}
+                                    </span>
                                 </button>
                             </div>
 
@@ -1581,12 +1627,17 @@ export function AuctionPaymentPage() {
                                         {effectiveDetails.productName}
                                     </p>
                                     <p className="text-xs text-gray-500 mt-0.5">
-                                        {lang === 'vi' ? 'Giá trúng thầu chính thức' : 'Winning Bid Price'}
+                                        {lang === 'vi'
+                                            ? 'Giá trúng thầu chính thức'
+                                            : 'Winning Bid Price'}
                                     </p>
                                 </div>
                                 <div className="text-right">
                                     <p className="text-2xl sm:text-3xl font-black text-[#ee4d2d]">
-                                        {formatCurrency(effectiveSettlement.finalPrice || 150000, lang)}
+                                        {formatCurrency(
+                                            effectiveSettlement.finalPrice || 150000,
+                                            lang,
+                                        )}
                                     </p>
                                 </div>
                             </div>
@@ -1629,7 +1680,9 @@ export function AuctionPaymentPage() {
                                     variant="outline"
                                     size="sm"
                                     onClick={() =>
-                                        navigate('order-detail', { id: effectiveSettlement.orderId })
+                                        navigate('order-detail', {
+                                            id: effectiveSettlement.orderId,
+                                        })
                                     }
                                 >
                                     {tr(lang, 'viewLinkedOrder')}
@@ -1708,9 +1761,7 @@ export function AuctionPaymentPage() {
                                 <CreditCard size={16} />
                                 {checkoutBusy
                                     ? checkoutStatus ||
-                                      (lang === 'en'
-                                          ? 'Processing…'
-                                          : 'Đang xử lý…')
+                                      (lang === 'en' ? 'Processing…' : 'Đang xử lý…')
                                     : effectiveSettlement.orderId
                                       ? tr(lang, 'continueSandboxPayment')
                                       : `${tr(lang, 'continueSandboxPayment')}${effectiveSettlement.finalPrice != null ? ` · ${formatCurrency(effectiveSettlement.finalPrice, lang)}` : ''}`}

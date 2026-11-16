@@ -1,6 +1,6 @@
 /**
  * Các thành phần giao diện hiển thị Điểm Uy tín, Trust Level và Biểu mẫu Đánh giá (Sprint 3 - HA-S3-2).
- * 
+ *
  * 1. Chức năng:
  *    - TrustLevelBadge: Huy hiệu cấp độ uy tín (VIP, HIGH, STANDARD, LOW) với màu sắc và icon phân biệt.
  *    - RatingStars: Hiển thị số sao đánh giá (chế độ xem hoặc chế độ chọn tương tác 1..5 sao).
@@ -36,7 +36,12 @@ interface TrustLevelBadgeProps {
  * - STANDARD: Xanh lam tiêu chuẩn (60..109 điểm).
  * - LOW: Xám / Cảnh báo cần cải thiện (<60 điểm).
  */
-export function TrustLevelBadge({ level, score, size = 'md', className = '' }: TrustLevelBadgeProps) {
+export function TrustLevelBadge({
+    level,
+    score,
+    size = 'md',
+    className = '',
+}: TrustLevelBadgeProps) {
     const sizeClasses = {
         sm: 'text-[11px] px-2 py-0.5 gap-1',
         md: 'text-xs px-2.5 py-1 gap-1.5 font-semibold',
@@ -90,7 +95,9 @@ export function TrustLevelBadge({ level, score, size = 'md', className = '' }: T
         >
             {config.icon}
             <span>{config.label}</span>
-            {score !== undefined && <span className="opacity-90 font-mono text-[10px]">({score})</span>}
+            {score !== undefined && (
+                <span className="opacity-90 font-mono text-[10px]">({score})</span>
+            )}
         </span>
     )
 }
@@ -135,11 +142,7 @@ export function RatingStars({
                     >
                         <Star
                             size={size}
-                            className={
-                                isFilled
-                                    ? 'text-amber-400 fill-amber-400'
-                                    : 'text-gray-300'
-                            }
+                            className={isFilled ? 'text-amber-400 fill-amber-400' : 'text-gray-300'}
                         />
                     </button>
                 )
@@ -193,7 +196,9 @@ export function RatingModal({
         }
 
         if (score < 1 || score > 5) {
-            setError(lang === 'vi' ? 'Vui lòng chọn từ 1 đến 5 sao.' : 'Please select 1 to 5 stars.')
+            setError(
+                lang === 'vi' ? 'Vui lòng chọn từ 1 đến 5 sao.' : 'Please select 1 to 5 stars.',
+            )
             return
         }
 
@@ -282,7 +287,9 @@ export function RatingModal({
 
                         <div>
                             <label className="block text-xs font-semibold text-gray-700 mb-1">
-                                {lang === 'vi' ? 'Nhận xét chi tiết (tùy chọn)' : 'Feedback (optional)'}
+                                {lang === 'vi'
+                                    ? 'Nhận xét chi tiết (tùy chọn)'
+                                    : 'Feedback (optional)'}
                             </label>
                             <textarea
                                 value={comment}
@@ -297,7 +304,9 @@ export function RatingModal({
                                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-hidden"
                             />
                             <div className="flex justify-between text-[11px] text-gray-400 mt-1">
-                                <span>{lang === 'vi' ? 'Tối đa 1000 ký tự' : 'Max 1000 characters'}</span>
+                                <span>
+                                    {lang === 'vi' ? 'Tối đa 1000 ký tự' : 'Max 1000 characters'}
+                                </span>
                                 <span>{comment.length}/1000</span>
                             </div>
                         </div>
@@ -309,7 +318,13 @@ export function RatingModal({
                         )}
 
                         <div className="flex justify-end gap-2 pt-2">
-                            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={loading}>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={onClose}
+                                disabled={loading}
+                            >
                                 {lang === 'vi' ? 'Hủy' : 'Cancel'}
                             </Button>
                             <Button type="submit" variant="primary" size="sm" disabled={loading}>
@@ -378,8 +393,7 @@ export function RatingsList({
             <div className="p-8 text-center text-gray-400 bg-gray-50 rounded-xl">
                 <Star size={32} className="mx-auto text-gray-300 mb-2" />
                 <p className="text-sm font-medium">
-                    {emptyMessage ||
-                        (lang === 'vi' ? 'Chưa có đánh giá nào.' : 'No ratings yet.')}
+                    {emptyMessage || (lang === 'vi' ? 'Chưa có đánh giá nào.' : 'No ratings yet.')}
                 </p>
             </div>
         )
