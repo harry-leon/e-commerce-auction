@@ -1407,7 +1407,7 @@ export function CheckoutPage() {
     const [shipping, setShipping] = useState<string>('GHN')
     const [shippingQuoteLoading, setShippingQuoteLoading] = useState<boolean>(false)
     const [shippingQuoteError, setShippingQuoteError] = useState<string | null>(null)
-    const [shippingQuoteResponse, setShippingQuoteResponse] =
+    const [_shippingQuoteResponse, setShippingQuoteResponse] =
         useState<ShippingQuoteResponse | null>(null)
     const [shippingOptions, setShippingOptions] = useState<ShippingQuoteOption[]>([])
     const [loading, setLoading] = useState(false)
@@ -1792,15 +1792,32 @@ export function CheckoutPage() {
         return null
     }, [shippingOptions, shipping])
 
+    /**
+     * Chức năng: Tính cước phí vận chuyển thực tế cho đơn hàng tại bước Checkout.
+     * Đầu vào và kết quả:
+     *   - Đầu vào: selectedShippingOption (gói hãng chọn), shipping ('GHN' | 'GHTK'), appliedCheckoutVoucher, lang.
+     *   - Kết quả: Số tiền cước phí vận chuyển (number) áp dụng vào tổng thanh toán.
+     * Luồng xử lý:
+     *   1. Kiểm tra voucher: BẮT BUỘC chỉ miễn phí khi người mua đã nhập và áp dụng thành công mã voucher FREESHIP.
+     *   2. Nếu không có voucher FREESHIP: Lấy phí gốc originalFee của hãng vận chuyển đã chọn (hoặc shippingFee nếu > 0).
+     *   3. Nếu không có option từ API: Dùng cước phí chuẩn (GHN 22.000 / GHTK 35.000 đ) thay vì 0 đ.
+     * Quy tắc nghiệp vụ: Loại bỏ hoàn toàn chính sách tự động miễn phí vận chuyển theo orderTotal >= 500k.
+     */
     const currentShippingFee = useMemo(() => {
         // Chỉ miễn phí vận chuyển khi có voucher FREESHIP hợp lệ
         if (appliedCheckoutVoucher?.trim().toUpperCase() === 'FREESHIP') {
             return 0
         }
         if (selectedShippingOption) {
-            return selectedShippingOption.shippingFee
+            const effectiveFee =
+                selectedShippingOption.originalFee && selectedShippingOption.originalFee > 0
+                    ? selectedShippingOption.originalFee
+                    : selectedShippingOption.shippingFee
+            if (effectiveFee > 0) {
+                return effectiveFee
+            }
         }
-        return shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : lang === 'vi' ? 35000 : 2.49
+        return shipping === 'GHN' ? (lang === 'vi' ? 22000 : 3.99) : lang === 'vi' ? 35000 : 2.49
     }, [selectedShippingOption, shipping, appliedCheckoutVoucher, lang])
 
     /**
@@ -2787,7 +2804,8 @@ export function CheckoutPage() {
                                 <h2 className="font-bold text-gray-900 text-lg">
                                     {tr(lang, 'shippingMethod')}
                                 </h2>
-                                {shippingQuoteResponse?.freeShippingApplied && (
+                                {/* Chỉ hiển thị badge Free Shipping Applied khi áp dụng mã voucher FREESHIP hợp lệ */}
+                                {appliedCheckoutVoucher?.trim().toUpperCase() === 'FREESHIP' && (
                                     <span className="text-xs font-semibold px-2.5 py-1 bg-green-100 text-green-700 rounded-full flex items-center gap-1">
                                         <CheckCircle size={12} />
                                         {lang === 'vi'
@@ -2869,7 +2887,8 @@ export function CheckoutPage() {
                                                             <p className="font-semibold text-gray-900">
                                                                 {carrierDisplayName}
                                                             </p>
-                                                            {opt.freeShippingApplied && (
+                                                            {/* Nhãn FREESHIP chỉ hiển thị khi đã kích hoạt voucher FREESHIP */}
+                                                            {appliedCheckoutVoucher?.trim().toUpperCase() === 'FREESHIP' && (
                                                                 <span className="text-[11px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded">
                                                                     {lang === 'vi'
                                                                         ? 'FREESHIP'
@@ -2896,7 +2915,7 @@ export function CheckoutPage() {
                                                         </p>
                                                     </div>
                                                     <div className="text-right">
-                                                        {opt.freeShippingApplied ? (
+                                                        {appliedCheckoutVoucher?.trim().toUpperCase() === 'FREESHIP' ? (
                                                             <div className="flex flex-col items-end">
                                                                 {opt.originalFee !== undefined &&
                                                                     opt.originalFee > 0 && (
@@ -2916,7 +2935,9 @@ export function CheckoutPage() {
                                                         ) : (
                                                             <span className="font-bold text-primary text-base">
                                                                 {formatCurrency(
-                                                                    opt.shippingFee,
+                                                                    opt.originalFee && opt.originalFee > 0
+                                                                        ? opt.originalFee
+                                                                        : opt.shippingFee,
                                                                     lang,
                                                                 )}
                                                             </span>
@@ -3273,7 +3294,7 @@ export function CheckoutPage() {
                                                 ? ` (${selectedShippingOption.serviceType})`
                                                 : ''
                                         } - ${
-                                            selectedShippingOption?.freeShippingApplied
+                                            appliedCheckoutVoucher?.trim().toUpperCase() === 'FREESHIP'
                                                 ? lang === 'vi'
                                                     ? 'Miễn phí'
                                                     : 'Free'

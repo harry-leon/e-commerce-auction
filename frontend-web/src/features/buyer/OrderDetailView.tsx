@@ -389,7 +389,7 @@ export function OrderDetailView() {
                     setReviewed(true)
                     setSubmittedReview({
                         score: r.score,
-                        comment: r.comment,
+                        comment: r.comment || '',
                         createdAt: r.createdAt,
                     })
                     try {
@@ -397,7 +397,7 @@ export function OrderDetailView() {
                             `nexus.order-review.${targetId}`,
                             JSON.stringify({
                                 score: r.score,
-                                comment: r.comment,
+                                comment: r.comment || '',
                                 createdAt: r.createdAt,
                             }),
                         )
@@ -732,7 +732,7 @@ export function OrderDetailView() {
                         productId: item.productId || (item as any).skuId,
                         productName: item.productName,
                         userName: user?.fullName || (user?.email ? user.email.split('@')[0] : 'User ***2414'),
-                        userAvatar: user?.avatarUrl || null,
+                        userAvatar: (user as any)?.avatarUrl || user?.avatar || null,
                         score: rating,
                         comment: comment.trim(),
                         createdAt: newReview.createdAt,

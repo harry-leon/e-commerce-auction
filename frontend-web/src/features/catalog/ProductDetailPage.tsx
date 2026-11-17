@@ -147,7 +147,7 @@ function getInitialProductReviews(productName: string, lang: 'vi' | 'en'): Produ
  *  - Tương thích 100% với các test kiểm thử tự động của Sprint 0 (nút 'Quay lại sản phẩm', aria-label 'Ảnh X', SKU).
  */
 export function ProductDetailPage() {
-    const { lang, navigate, pageParams, setCartCount, showToast } = useApp()
+    const { lang, navigate, pageParams, setCartCount, showToast, user } = useApp()
     const rawId = String(pageParams?.id || '')
 
     // Gọi API Catalog thật qua hook useLoad
@@ -318,7 +318,7 @@ export function ProductDetailPage() {
                 userName:
                     user?.fullName ||
                     (user?.email ? user.email.split('@')[0] : 'User ***2414'),
-                userAvatar: user?.avatarUrl || null,
+                userAvatar: (user as any)?.avatarUrl || user?.avatar || null,
                 score: reviewRatingInput,
                 comment: reviewCommentInput.trim(),
                 createdAt: new Date().toISOString(),

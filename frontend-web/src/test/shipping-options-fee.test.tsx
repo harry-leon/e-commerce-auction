@@ -220,31 +220,56 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             })
         })
 
-        it('hiển thị nhãn FREESHIP khi đơn hàng đủ điều kiện miễn phí vận chuyển', async () => {
+        /**
+         * Tình huống nghiệp vụ:
+         * 1. Khi KHÔNG có voucher FREESHIP: các hãng vận chuyển phải hiển thị đúng cước phí gốc (55.000 đ, 35.000 đ),
+         *    tuyệt đối không hiển thị nhãn Miễn phí vận chuyển hay gạch ngang cước phí.
+         * 2. Khi người mua áp dụng voucher FREESHIP: cước phí chuyển thành 'Miễn phí' kèm nhãn 'FREESHIP'.
+         */
+        it('chỉ miễn phí vận chuyển khi người mua áp dụng mã voucher FREESHIP hợp lệ', async () => {
+            // Bước 1: Mock getShippingQuotes trả về báo giá tiêu chuẩn
             vi.spyOn(shippingApi, 'getShippingQuotes').mockResolvedValue({
                 defaultCarrier: 'GHN',
                 freeShippingThreshold: 500000,
-                freeShippingApplied: true,
+                freeShippingApplied: false,
                 options: [
                     {
                         carrier: 'GHN',
                         serviceType: 'EXPRESS',
-                        shippingFee: 0,
+                        shippingFee: 55000,
                         originalFee: 55000,
-                        freeShippingApplied: true,
+                        freeShippingApplied: false,
                         estimatedDeliveryDays: 3,
                     },
                     {
                         carrier: 'GHTK',
                         serviceType: 'STANDARD',
-                        shippingFee: 0,
+                        shippingFee: 35000,
                         originalFee: 35000,
-                        freeShippingApplied: true,
+                        freeShippingApplied: false,
                         estimatedDeliveryDays: 5,
                     },
                 ],
             })
 
+            const { unmount } = render(
+                <AppProvider>
+                    <CheckoutPage />
+                </AppProvider>,
+            )
+
+            await goToShippingMethodStep()
+
+            // Khi chưa nhập voucher FREESHIP: Hiển thị cước phí chuẩn 55.000 đ và 35.000 đ
+            expect(await screen.findByText('GHN Express')).toBeInTheDocument()
+            expect(screen.getByText('GHTK Standard')).toBeInTheDocument()
+            expect(screen.queryByText('Free Shipping Applied')).not.toBeInTheDocument()
+            expect(screen.queryByText('Miễn phí vận chuyển')).not.toBeInTheDocument()
+
+            unmount()
+
+            // Bước 2: Khi đã kích hoạt mã voucher FREESHIP trong session
+            sessionStorage.setItem('nexus.applied-voucher', 'FREESHIP')
             render(
                 <AppProvider>
                     <CheckoutPage />
@@ -253,11 +278,12 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
 
             await goToShippingMethodStep()
 
-            // Kiểm tra nhãn Free Shipping xuất hiện
+            // Kiểm tra nhãn Free Shipping và Miễn phí xuất hiện
             const freeBadges = await screen.findAllByText(
-                /FREESHIP|FREE|Miễn phí vận chuyển|Free Shipping/i,
+                /FREESHIP|Free Shipping Applied|Miễn phí vận chuyển/i,
             )
             expect(freeBadges.length).toBeGreaterThanOrEqual(1)
+            expect(screen.getAllByText(/Miễn phí|Free/i).length).toBeGreaterThanOrEqual(1)
         })
 
         it('xử lý trạng thái lỗi khi gọi API và cho phép Thử lại (AC 11)', async () => {
