@@ -8,6 +8,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import { createIamFixture, createFlowFixture, literal as q } from "./shipping-flow/fixtures.mjs";
+import { createCarrierFixture, exerciseDispatch, exerciseCarrierLifecycle } from "./shipping-flow/dispatch.mjs";
 
 /**
  * Ba JVM + PostgreSQL tạm + Keycloak container riêng: kiểm tra HTTP/JWT/ACK/replay/restart, không đọc .env hoặc dùng provider.
@@ -21,12 +22,20 @@ const { values: args } = parseArgs({ options: {
     "skip-build": { type: "boolean", default: false },
     // Kiểm chứng JWT và cờ đóng/mở dispatch trên JVM thật; không bật worker hoặc gọi carrier.
     "dispatch-security": { type: "boolean", default: false },
+    // Bao gồm security, sau đó bật worker với carrier HTTP local; không dùng merchant/provider thật.
+    "dispatch": { type: "boolean", default: false },
+    // Chạy thêm scheduler polling thật sau khi đã hoàn thành create/recovery để không ảnh hưởng fixture cũ.
+    "carrier-lifecycle": { type: "boolean", default: false },
 } });
+if (args["carrier-lifecycle"]) { args.dispatch = true; }
+if (args.dispatch) { args["dispatch-security"] = true; }
 assert(args["pg-bin"] && args.maven, "Cần --pg-bin và --maven; không đọc cấu hình kết nối thật");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-shipping-flow-"));
 // fetch/AbortSignal có thể chỉ giữ handle unref khi IAM đang boot; giữ event loop đến khi finally dọn tài nguyên.
 const keepAlive = setInterval(() => {}, 1000);
-const report = { scope: "isolated-real-keycloak-http-no-carrier", cases: [], sources: {}, cleanup: false };
+// Report phân biệt rõ carrier HTTP giả lập và transport-only; không biến fixture thành bằng chứng sandbox.
+const report = { scope: args.dispatch ? "isolated-real-keycloak-http-fixture-carrier" : "isolated-real-keycloak-http-no-carrier",
+    cases: [], sources: {}, cleanup: false };
 const children = new Map(); const proxies = []; const logs = [];
 let container; let pgStarted = false;
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
@@ -69,16 +78,24 @@ async function request(url, { token, body, key, method = body === undefined ? "G
 
 /** Proxy chỉ fault-inject response sau khi consumer thật commit; không thay body/JWT và không giả xử lý nghiệp vụ. */
 async function faultProxy(target, field, loseType) {
-    const state = { calls: new Map(), lost: false, holdId: null, held: false, release: null };
+    const state = { calls: new Map(), lost: false, holdId: null, held: false, release: null, loseClaim: false, claimKeys: [] };
     const server = http.createServer(async (incoming, outgoing) => {
         try {
             const chunks = []; for await (const chunk of incoming) { chunks.push(chunk); }
             const raw = Buffer.concat(chunks); const event = raw.length ? JSON.parse(raw.toString()) : {};
             const kind = event[field]; state.calls.set(kind, (state.calls.get(kind) ?? 0) + 1);
             const response = await fetch(target + incoming.url, { method: incoming.method, redirect: "manual", signal: AbortSignal.timeout(10000),
-                headers: { "Content-Type": "application/json", ...(incoming.headers.authorization ? { Authorization: incoming.headers.authorization } : {}) },
+                headers: { "Content-Type": "application/json", ...(incoming.headers.authorization ? { Authorization: incoming.headers.authorization } : {}),
+                    ...(incoming.headers["idempotency-key"] ? { "Idempotency-Key": incoming.headers["idempotency-key"] } : {}) },
                 body: raw.length ? raw : undefined });
             const body = await response.text();
+            // Làm mất ACK sau khi Commerce đã commit claim thật; giữ key qua proxy để retry không tạo claim mới.
+            if (incoming.url === "/api/v1/internal/commerce/shipping-dispatch-claims") {
+                state.claimKeys.push(incoming.headers["idempotency-key"]);
+                if (state.loseClaim && response.status === 201) {
+                    state.loseClaim = false; outgoing.writeHead(503); outgoing.end(); return;
+                }
+            }
             if (response.status === 204 && event.id === state.holdId) {
                 state.held = true; await new Promise((resolve) => { state.release = resolve; });
             }
@@ -181,6 +198,17 @@ try {
     Object.assign(configs.fulfillment, { "app.shipping.commerce.url": commerceProxy.url, "app.shipping.commerce.token-url": `${issuer}/protocol/openid-connect/token`,
         "app.shipping.commerce.client-id": "nexus-fulfillment-service", "app.shipping.commerce.client-secret": iam.secrets["nexus-fulfillment-service"],
         "app.shipping.commerce.events-enabled": true, "app.shipping.commerce.events-delay-ms": 250, "app.shipping.commerce.backlog-max-age-seconds": 3600 });
+    let carrier;
+    if (args.dispatch) {
+        carrier = await createCarrierFixture(); proxies.push(carrier);
+        // Token giả không rỗng ép adapter dùng HTTP, tránh fallback local che mất lỗi contract/network.
+        // Mọi endpoint carrier đều trỏ loopback; tắt polling để tập trung vào create/ACK/recovery.
+        Object.assign(configs.fulfillment, { "app.shipping.dispatch-worker-enabled": true, "app.shipping.dispatch-worker-delay-ms": 250,
+            "app.fulfillment.shipping.ghn.base-url": carrier.state.url, "app.fulfillment.shipping.ghn.token": carrier.state.token,
+            "app.fulfillment.shipping.ghn.shop-id": "1", "app.fulfillment.shipping.ghn.read-timeout-ms": 60000,
+            "app.fulfillment.shipping.ghtk.base-url": carrier.state.url, "app.fulfillment.shipping.ghtk.token": carrier.state.token,
+            "app.fulfillment.shipping.api-timeout-ms": 60000, "app.fulfillment.shipping.free-shipping-threshold": 1000000 });
+    }
     /** JAR thật dùng config JSON tạm trên loopback; worker Shipping bật, mọi merchant/refund/email provider bị tắt. */
     async function start(service) {
         const log = fs.openSync(path.join(directory, `${service}-${Date.now()}.log`), "w"); logs.push(log);
@@ -283,6 +311,18 @@ try {
         assert.equal(sql("e2e_commerce", "SELECT count(*) FROM shipping_dispatch_claims"), "0");
         assert.equal(sql("e2e_commerce", "SELECT count(*) FROM payments"), "0");
         pass("real_dispatch_enabled_missing_records_do_not_create_financial_state");
+    }
+    if (args.dispatch) {
+        const fixture = await exerciseDispatch({ sql, q, request, pass, waitFor, start, stop, urls, admin, buyer, buyerSubject,
+            carrier: carrier.state, commerceProxy });
+        if (args["carrier-lifecycle"]) {
+            // Restart để Spring thực sự đăng ký scheduler; không gọi service polling bằng mock hoặc sửa trạng thái DB.
+            await stop("fulfillment");
+            configs.fulfillment["app.fulfillment.shipping-polling-scheduler.enabled"] = true;
+            // Bean validation yêu cầu tối thiểu 1000ms; giữ đúng giới hạn production khi tăng tốc lượt test.
+            configs.fulfillment["app.fulfillment.shipping.polling-interval-ms"] = 1000;
+            await exerciseCarrierLifecycle({ sql, q, request, pass, waitFor, start, stop, urls, buyer, fixture, carrier: carrier.state });
+        }
     }
     report.result = "PASS";
 } catch (error) {

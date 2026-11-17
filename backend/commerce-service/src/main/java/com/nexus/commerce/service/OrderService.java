@@ -244,6 +244,19 @@ public interface OrderService {
     );
 
     /**
+     * Xác nhận người mua đã nhận hàng thành công.
+     * <p>Chức năng: Chuyển trạng thái đơn sang DELIVERED (hoặc COMPLETED) khi người mua nhận được hàng.
+     * <p>Đầu vào: orderId, currentUserId, userRoles.
+     * <p>Kết quả: OrderDetailResponse sau khi cập nhật.
+     * <p>Quy tắc và lý do: Chỉ cho phép người mua sở hữu đơn hoặc Quản trị viên thực hiện khi đơn ở SHIPPED hoặc DELIVERED.
+     */
+    OrderDetailResponse confirmDelivery(
+            UUID orderId,
+            UUID currentUserId,
+            List<String> userRoles
+    );
+
+    /**
      * Khởi tạo đơn hàng từ kết quả quyết toán phiên đấu giá thành công (SRS §3.5.3 & §3.4.3).
      *
      * <p>Chức năng:
@@ -267,11 +280,11 @@ public interface OrderService {
      *
      * <p>Đầu vào và kết quả:
      * Nhận orderId, ResolveOrderDisputeRequest, ID Admin và danh sách roles.
-     * Trả về OrderDetailResponse sau khi cập nhật.
+     * Trả về OrderDetailResponse sau khi cập nhật; refunded/partial_refund hiện bị từ chối vì thiếu bằng chứng tài chính.
      *
      * <p>Luồng xử lý:
-     * Kiểm tra quyền ADMIN -> khóa dòng order -> kiểm tra đơn đã thanh toán -> cập nhật trạng thái (REFUNDED hoặc COMPLETED) ->
-     * hoàn trả tồn kho nếu refund -> ghi OrderStatusHistory với [ADMIN] [DISPUTE:<RESOLUTION>].
+     * Kiểm tra quyền ADMIN -> khóa Order -> kiểm tra trạng thái -> chặn refund/partial refund ->
+     * ghi COMPLETED/history cho released. Không gửi tiền hoặc hoàn trả tồn kho qua endpoint tranh chấp.
      *
      * <p>Quy tắc và lý do:
      * Chỉ ADMIN mới có quyền can thiệp vào quỹ ký quỹ và phán quyết tranh chấp.

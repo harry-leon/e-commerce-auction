@@ -70,21 +70,29 @@ public class RsaCryptoService {
      * Giải mã chuỗi mật khẩu được mã hóa từ Frontend bằng RSA-OAEP.
      *
      * @param encryptedBase64 chuỗi Base64 ciphertext từ Frontend
-     * @return mật khẩu gốc dạng chuỗi, hoặc chính encryptedBase64 nếu giải mã thất bại (fallback)
+     * @return mật khẩu gốc dạng chuỗi, hoặc null nếu là RSA ciphertext nhưng giải mã thất bại (do khóa cũ),
+     *         hoặc chính encryptedBase64 nếu là plain text thông thường (không phải 256-byte Base64)
      */
     public String decrypt(final String encryptedBase64) {
         if (encryptedBase64 == null || encryptedBase64.isBlank()) {
             return encryptedBase64;
         }
 
+        byte[] cipherBytes;
         try {
-            byte[] cipherBytes = Base64.getDecoder().decode(encryptedBase64.trim());
-            // RSA-2048 sinh ciphertext có kích thước đúng 256 bytes.
-            if (cipherBytes.length != 256) {
-                // Không phải độ dài chuẩn RSA-2048 -> fallback mật khẩu thông thường.
-                return encryptedBase64;
-            }
+            cipherBytes = Base64.getDecoder().decode(encryptedBase64.trim());
+        } catch (IllegalArgumentException e) {
+            // Không phải định dạng Base64 -> đây là mật khẩu plain text thông thường
+            return encryptedBase64;
+        }
 
+        // RSA-2048 sinh ciphertext có kích thước đúng 256 bytes.
+        // Nếu không đúng 256 bytes thì chắc chắn không phải RSA-2048 ciphertext -> fallback plain text.
+        if (cipherBytes == null || cipherBytes.length != 256) {
+            return encryptedBase64;
+        }
+
+        try {
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             OAEPParameterSpec oaepParams = new OAEPParameterSpec(
                     "SHA-256",
@@ -96,9 +104,10 @@ public class RsaCryptoService {
             byte[] plainBytes = cipher.doFinal(cipherBytes);
             return new String(plainBytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
-            // Trường hợp không phải RSA ciphertext (hoặc plain-text từ client cũ): fallback trả về mật khẩu gốc
-            LOG.debug("Không thể giải mã RSA (fallback sang plain text): {}", e.getMessage());
-            return encryptedBase64;
+            // Khi không giải mã được RSA (do client dùng Public Key cũ trước khi Gateway restart):
+            // Tuyệt đối không trả về chuỗi Base64 344 ký tự vì sẽ làm sai lệch độ dài mật khẩu khi validate
+            LOG.warn("Không thể giải mã RSA ciphertext 256-byte (khóa client có thể đã cũ do Gateway vừa khởi động lại): {}", e.getMessage());
+            return null;
         }
     }
 }

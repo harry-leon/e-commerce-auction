@@ -438,10 +438,54 @@ public class OrderController {
     }
 
     /**
+     * Xác nhận người mua đã nhận hàng thành công.
+     *
+     * <p>Chức năng: Chuyển trạng thái đơn sang DELIVERED hoặc COMPLETED khi người mua nhận được hàng.
+     *
+     * <p>Đầu vào và kết quả:
+     * Nhận orderId. Trả về OrderDetailResponse sau khi xác nhận nhận hàng.
+     *
+     * <p>Luồng xử lý:
+     * Xác thực người dùng có quyền BUYER hoặc ADMIN -> OrderService xác thực quyền sở hữu và trạng thái đơn ->
+     * cập nhật trạng thái đơn và ghi vết lịch sử kiểm toán.
+     *
+     * <p>Quy tắc và lý do:
+     * Chỉ cho phép khi đơn ở trạng thái SHIPPED hoặc DELIVERED.
+     *
+     * <p>Lỗi và giới hạn:
+     * Trả về HTTP 403 nếu không phải chủ đơn; HTTP 409 nếu trạng thái đơn không hợp lệ.
+     */
+    @Operation(
+            summary = "Xác nhận nhận hàng",
+            description = "Người mua sở hữu đơn hoặc Quản trị viên xác nhận đã nhận hàng thành công"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Xác nhận nhận hàng thành công"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Mã định danh orderId sai định dạng"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "Chưa xác thực danh tính"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "Không có quyền xác nhận đơn hàng của người khác"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Không tìm thấy đơn hàng"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "Trạng thái đơn hàng không hợp lệ để xác nhận nhận hàng")
+    })
+    @PostMapping("/{orderId}/confirm-delivery")
+    @PreAuthorize("hasAnyRole('BUYER', 'ADMIN')")
+    public ApiResponse<OrderDetailResponse> confirmDelivery(
+            @Parameter(description = "Mã định danh duy nhất của đơn hàng (UUID)")
+            @PathVariable UUID orderId,
+            @AuthenticationPrincipal Jwt jwt,
+            Authentication authentication
+    ) {
+        UUID currentUserId = resolveUserId(jwt);
+        List<String> userRoles = extractRoles(authentication, jwt);
+        OrderDetailResponse response = orderService.confirmDelivery(orderId, currentUserId, userRoles);
+        return ApiResponse.ok(response);
+    }
+
+    /**
      * Admin giải quyết tranh chấp ký quỹ đơn hàng (Escrow Dispute Resolution).
      *
      * <p>Chức năng: Tiếp nhận phán quyết của Admin đối với đơn hàng đang có khiếu nại hoặc giữ tiền ký quỹ
-     * (hoàn 100% cho người mua, giải ngân cho người bán, hoặc hoàn một phần).
+     * qua lựa chọn released hiện có. refunded/partial_refund bị service chặn vì request không có bằng chứng provider.
      *
      * <p>Đầu vào và kết quả:
      * Nhận orderId từ URL path và request body chứa resolution ('refunded', 'released', 'partial_refund') cùng note (tùy chọn).
@@ -464,7 +508,7 @@ public class OrderController {
      */
     @Operation(
             summary = "Giải quyết tranh chấp ký quỹ đơn hàng",
-            description = "Quản trị viên thực hiện phán quyết tranh chấp: hoàn tiền người mua, giải ngân người bán hoặc hoàn một phần"
+            description = "Ghi nhận released; refunded/partial_refund bị từ chối, cần workflow refund đã xác minh riêng; không gửi tiền hoặc hoàn kho"
     )
     @io.swagger.v3.oas.annotations.responses.ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Giải quyết tranh chấp thành công"),

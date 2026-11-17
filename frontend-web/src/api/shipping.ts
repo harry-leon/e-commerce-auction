@@ -49,6 +49,7 @@ export interface ShippingQuoteRequest {
     toWardCode?: string
     weightGrams?: number
     orderTotal?: number
+    voucherCode?: string | null
 }
 
 /** Một phương án báo giá vận chuyển từ từng hãng vận chuyển đối tác */
@@ -138,10 +139,21 @@ export interface CreateShipmentRequest {
 
 // ─── Dữ liệu Fallback dự phòng khi Backend Offline ──────────────────────────
 
-/** Báo giá mặc định dự phòng theo tiêu chuẩn Nexus SRS §3.6.2 */
-export function getFallbackShippingQuotes(orderTotal: number = 0): ShippingQuoteResponse {
-    const freeShippingThreshold = 500000 // 500.000 VNĐ
-    const isFree = orderTotal >= freeShippingThreshold
+/**
+ * Báo giá mặc định dự phòng theo tiêu chuẩn Nexus SRS §3.6.2.
+ * Chức năng: Trả về các phương án vận chuyển GHN Express và GHTK Standard khi backend fulfillment offline.
+ * Đầu vào: orderTotal (tổng tiền hàng), voucherCode (mã voucher ưu đãi nếu có).
+ * Kết quả: ShippingQuoteResponse với cước phí được chuẩn hóa.
+ * Quy tắc nghiệp vụ mới:
+ * - KHÔNG tự động miễn phí vận chuyển theo giá trị đơn hàng (bỏ chính sách tự động free ship khi >= 500.000 đ).
+ * - Phí vận chuyển chuẩn: GHN 55.000 đ, GHTK 35.000 đ.
+ * - Chỉ được miễn phí vận chuyển khi người mua có và áp dụng mã voucher hợp lệ (FREESHIP).
+ */
+export function getFallbackShippingQuotes(
+    _orderTotal: number = 0,
+    voucherCode?: string | null,
+): ShippingQuoteResponse {
+    const isFree = voucherCode?.trim().toUpperCase() === 'FREESHIP'
 
     const now = Date.now()
     const ghnDate = new Date(now + 3 * 24 * 3600 * 1000).toISOString()
@@ -149,7 +161,7 @@ export function getFallbackShippingQuotes(orderTotal: number = 0): ShippingQuote
 
     return {
         defaultCarrier: 'GHN',
-        freeShippingThreshold,
+        freeShippingThreshold: 0,
         freeShippingApplied: isFree,
         options: [
             {
@@ -193,9 +205,12 @@ export const shippingApi = {
             }
         } catch (error) {
             // Log cảnh báo dev và kích hoạt fallback
-            console.warn('[shippingApi] Backend quote unavailable, using resilient fallback:', error)
+            console.warn(
+                '[shippingApi] Backend quote unavailable, using resilient fallback:',
+                error,
+            )
         }
-        return getFallbackShippingQuotes(request.orderTotal || 0)
+        return getFallbackShippingQuotes(request.orderTotal || 0, request.voucherCode)
     },
 
     /**
@@ -211,8 +226,18 @@ export const shippingApi = {
             // Fallback danh sách hãng tiêu chuẩn
         }
         return [
-            { code: 'GHN', name: 'Giao Hàng Nhanh (GHN Express)', active: true, serviceTypes: ['EXPRESS'] },
-            { code: 'GHTK', name: 'Giao Hàng Tiết Kiệm (GHTK)', active: true, serviceTypes: ['STANDARD'] },
+            {
+                code: 'GHN',
+                name: 'Giao Hàng Nhanh (GHN Express)',
+                active: true,
+                serviceTypes: ['EXPRESS'],
+            },
+            {
+                code: 'GHTK',
+                name: 'Giao Hàng Tiết Kiệm (GHTK)',
+                active: true,
+                serviceTypes: ['STANDARD'],
+            },
         ]
     },
 
@@ -222,7 +247,9 @@ export const shippingApi = {
      */
     async getShipmentByOrderId(orderId: string): Promise<ShipmentResponse | null> {
         try {
-            const envelope = await api<ApiResponse<ShipmentResponse>>(`/shipments/order/${encodeURIComponent(orderId)}`)
+            const envelope = await api<ApiResponse<ShipmentResponse>>(
+                `/shipments/order/${encodeURIComponent(orderId)}`,
+            )
             return envelope?.data || null
         } catch (error) {
             if (error instanceof ApiClientError && error.status === 404) {
@@ -239,7 +266,9 @@ export const shippingApi = {
      */
     async getShipmentById(shipmentId: string): Promise<ShipmentResponse | null> {
         try {
-            const envelope = await api<ApiResponse<ShipmentResponse>>(`/shipments/${encodeURIComponent(shipmentId)}`)
+            const envelope = await api<ApiResponse<ShipmentResponse>>(
+                `/shipments/${encodeURIComponent(shipmentId)}`,
+            )
             return envelope?.data || null
         } catch {
             return null
@@ -251,7 +280,9 @@ export const shippingApi = {
      */
     async getShipmentTracking(shipmentId: string): Promise<ShipmentTrackingResponse | null> {
         try {
-            const envelope = await api<ApiResponse<ShipmentTrackingResponse>>(`/shipments/${encodeURIComponent(shipmentId)}/tracking`)
+            const envelope = await api<ApiResponse<ShipmentTrackingResponse>>(
+                `/shipments/${encodeURIComponent(shipmentId)}/tracking`,
+            )
             return envelope?.data || null
         } catch (error) {
             console.warn(`[shippingApi] Could not load tracking for shipment ${shipmentId}:`, error)
@@ -264,7 +295,9 @@ export const shippingApi = {
      */
     async trackByTrackingNumber(trackingNumber: string): Promise<ShipmentTrackingResponse | null> {
         try {
-            const envelope = await api<ApiResponse<ShipmentTrackingResponse>>(`/shipments/tracking/${encodeURIComponent(trackingNumber)}`)
+            const envelope = await api<ApiResponse<ShipmentTrackingResponse>>(
+                `/shipments/tracking/${encodeURIComponent(trackingNumber)}`,
+            )
             return envelope?.data || null
         } catch {
             return null
@@ -274,7 +307,10 @@ export const shippingApi = {
     /**
      * Tạo vận đơn mới cho đơn hàng (POST /api/v1/shipments).
      */
-    async createShipment(request: CreateShipmentRequest, idempotencyKey?: string): Promise<ShipmentResponse> {
+    async createShipment(
+        request: CreateShipmentRequest,
+        idempotencyKey?: string,
+    ): Promise<ShipmentResponse> {
         const headers: Record<string, string> = {}
         if (idempotencyKey) {
             headers['Idempotency-Key'] = idempotencyKey
@@ -290,4 +326,3 @@ export const shippingApi = {
         return envelope.data
     },
 }
-

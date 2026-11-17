@@ -163,6 +163,8 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: commerce-service
+      # Chốt Order sau refund là thao tác Admin riêng, mặc định tắt; không bật merchant/worker hoặc hoàn kho.
+      APP_PAYMENT_REFUND_FINALIZATION_ENABLED: ${APP_PAYMENT_REFUND_FINALIZATION_ENABLED:-false}
       # Cart đọc dữ liệu sản phẩm thật; mock chỉ dùng khi bật profile catalog-mock.
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Commerce gọi API kho nội bộ để reserve/release; không truy cập DB Fulfillment.
@@ -235,6 +237,10 @@ services:
     environment:
       <<: *cloud-env
       SERVICE_NAME: fulfillment-service
+      # Ngưỡng miễn phí vận chuyển theo tiền Việt Nam Đồng (VND): 500.000₫ cho môi trường chạy thật
+      FREE_SHIPPING_THRESHOLD: ${FREE_SHIPPING_THRESHOLD:-500000}
+      # Đóng đường legacy trên toàn fleet trong rollout claimed dispatch; worker bật cũng luôn chặn legacy dù flag này false.
+      SHIPPING_CLAIMED_DISPATCH_REQUIRED: ${SHIPPING_CLAIMED_DISPATCH_REQUIRED:-false}
       # Fulfillment tra cứu snapshot SKU qua HTTP Catalog để kiểm tra quyền sở hữu seller, không đọc chéo DB Catalog.
       CATALOG_SERVICE_URL: http://catalog-service:8080
       # Dùng Supabase khi cấu hình FULFILLMENT_DB_*; để trống thì dùng PostgreSQL local.
@@ -291,6 +297,8 @@ services:
       <<: *cloud-env
       SERVICE_NAME: reputation-service
       SERVER_PORT: 8080
+      # Review xác thực chủ đơn và trạng thái giao hàng qua Commerce trong mạng Compose, tránh gọi localhost của chính container.
+      COMMERCE_SERVICE_URL: http://commerce-service:8080
       # Dùng Supabase khi cấu hình REPUTATION_DB_*; để trống thì dùng PostgreSQL local.
       DB_URL: ${REPUTATION_DB_URL:-jdbc:postgresql://postgres:5432/nexus_reputation}
       DB_USERNAME: ${REPUTATION_DB_USERNAME:-${LOCAL_DB_USERNAME:-nexus}}

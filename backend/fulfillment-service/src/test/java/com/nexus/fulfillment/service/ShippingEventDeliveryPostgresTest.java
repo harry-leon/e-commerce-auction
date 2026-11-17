@@ -131,9 +131,14 @@ class ShippingEventDeliveryPostgresTest {
     /** Snapshot fixture đúng envelope hiện tại của Fulfillment; không chứa PII/credential. */
     private UUID fixture(String aggregateType, String type) throws Exception {
         UUID id = UUID.randomUUID(); UUID shipment = UUID.randomUUID();
-        String payload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of("eventId", id, "eventType", type,
-                "shipmentId", shipment, "orderId", UUID.randomUUID(), "occurredAt", "2026-11-13T00:00:00Z", "carrier", "GHN",
-                "trackingNumber", "TRACK", "status", "DELIVERED"));
+        // Envelope đầy đủ như FulfillmentEventOutboxService phát: schemaVersion/aggregateId/correlationId.
+        var body = new java.util.LinkedHashMap<String, Object>();
+        body.put("eventId", id); body.put("eventType", type); body.put("schemaVersion", 1);
+        body.put("aggregateType", "SHIPMENT"); body.put("aggregateId", shipment); body.put("correlationId", id);
+        body.put("shipmentId", shipment); body.put("orderId", UUID.randomUUID());
+        body.put("occurredAt", "2026-11-13T00:00:00Z"); body.put("carrier", "GHN"); body.put("trackingNumber", "TRACK");
+        body.put("status", "DELIVERED");
+        String payload = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(body);
         jdbc.update("INSERT INTO fulfillment_event_outbox(id,aggregate_type,aggregate_id,event_type,payload,done,attempts,next_attempt_at) "
                 + "VALUES (?,?,?,?,?::jsonb,false,0,CURRENT_TIMESTAMP-interval '1 second')", id, aggregateType, shipment, type, payload);
         return id;

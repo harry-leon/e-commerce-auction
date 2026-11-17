@@ -53,6 +53,8 @@ app:
   shipping:
     # Mặc định không seed job/call Commerce/carrier; claim/preflight và recovery phải được review trước bật.
     dispatch-worker-enabled: ${SHIPPING_DISPATCH_WORKER_ENABLED:false}
+    # Ép tất cả instance chặn legacy create ngay cả khi chỉ một instance chạy worker; không tự bật worker hoặc gửi carrier.
+    claimed-dispatch-required: ${SHIPPING_CLAIMED_DISPATCH_REQUIRED:false}
     dispatch-worker-delay-ms: ${SHIPPING_DISPATCH_WORKER_DELAY_MS:5000}
   # Cấu hình dự phòng cục bộ cho fulfillment-service khi chưa kết nối Config Server
   fulfillment:
@@ -74,6 +76,7 @@ app:
       polling-interval-ms: ${SHIPPING_POLLING_INTERVAL_MS:60000}
       supported-carriers: ${SUPPORTED_CARRIERS:GHN,GHTK}
       default-carrier: ${DEFAULT_CARRIER:GHN}
+      # Ngưỡng miễn phí vận chuyển (mặc định 100 cho unit test, môi trường thực tế cấu hình FREE_SHIPPING_THRESHOLD=500000)
       free-shipping-threshold: ${FREE_SHIPPING_THRESHOLD:100}
       ghn:
         base-url: ${GHN_API_URL:https://dev-online-gateway.ghn.vn}

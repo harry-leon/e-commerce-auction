@@ -7,7 +7,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Digits;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
@@ -35,7 +34,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Nhận sự kiện từ service account Commerce; tạo nội dung IN_APP + WebSocket PUSH (khi bật PUSH_NOTIFICATION_ENABLED)
+ * Nhận sự kiện từ service account Commerce hoặc Auction; tạo nội dung IN_APP + WebSocket PUSH (khi bật PUSH_NOTIFICATION_ENABLED)
  * tại server và lưu idempotent theo eventId.
  */
 @RestController
@@ -66,13 +65,13 @@ public class CommerceNotificationController {
 
     /**
      * Snapshot không chứa địa chỉ, điện thoại, JWT; buyer lấy từ đơn bởi Commerce.
-     * Ngữ cảnh đấu giá nullable giữ tương thích cũ; refundId bắt buộc cho event refund, không phải provider reference.
+* Bổ sung auctionId, paymentDeadline, paymentLink, penaltyScore, auctionTitle và refundId phục vụ cả đấu giá và hoàn tiền.
      */
     public record Event(
             @NotNull UUID id,
             @NotNull UUID userId,
-            @NotNull UUID orderId,
-            @NotBlank @Size(max = 100) String orderNo,
+            UUID orderId,
+            @Size(max = 100) String orderNo,
             @NotNull Type type,
             @NotNull @DecimalMin("0.00") @Digits(integer = 13, fraction = 2) BigDecimal amount,
             @NotNull Instant occurredAt,
@@ -80,17 +79,37 @@ public class CommerceNotificationController {
             Instant paymentDeadline,
             @Size(max = 500) String paymentLink,
             Integer penaltyScore,
-            UUID refundId
+            UUID refundId,
+            String auctionTitle
     ) {
-        /** Giữ constructor Sprint 2 để caller Java cũ không phải khai báo ngữ cảnh refund. */
+        /**
+         * Giữ constructor Sprint 2 (11 tham số) cho caller Java cũ không khai báo refundId và auctionTitle.
+         * Đầu vào: các trường thông tin sự kiện giao thương/đấu giá cơ bản.
+         * Kết quả: Khởi tạo Event với refundId=null và auctionTitle=null.
+         */
         public Event(UUID id, UUID userId, UUID orderId, String orderNo, Type type, BigDecimal amount,
                 Instant occurredAt, UUID auctionId, Instant paymentDeadline, String paymentLink, Integer penaltyScore) {
-            this(id, userId, orderId, orderNo, type, amount, occurredAt, auctionId, paymentDeadline, paymentLink, penaltyScore, null);
+            this(id, userId, orderId, orderNo, type, amount, occurredAt, auctionId, paymentDeadline, paymentLink, penaltyScore, null, null);
         }
-        /** Constructor tương thích ngược với 7 tham số Sprint 1. */
+
+        /**
+         * Giữ constructor 12 tham số có refundId cho các luồng xử lý khiếu nại/hoàn tiền.
+         * Đầu vào: thông tin sự kiện kèm refundId.
+         * Kết quả: Khởi tạo Event với auctionTitle=null.
+         */
+        public Event(UUID id, UUID userId, UUID orderId, String orderNo, Type type, BigDecimal amount,
+                Instant occurredAt, UUID auctionId, Instant paymentDeadline, String paymentLink, Integer penaltyScore, UUID refundId) {
+            this(id, userId, orderId, orderNo, type, amount, occurredAt, auctionId, paymentDeadline, paymentLink, penaltyScore, refundId, null);
+        }
+
+        /**
+         * Constructor tương thích ngược với 7 tham số Sprint 1.
+         * Đầu vào: id, userId, orderId, orderNo, type, amount, occurredAt.
+         * Kết quả: Khởi tạo Event với các trường mở rộng mang giá trị null.
+         */
         public Event(UUID id, UUID userId, UUID orderId, String orderNo,
                      Type type, BigDecimal amount, Instant occurredAt) {
-            this(id, userId, orderId, orderNo, type, amount, occurredAt, null, null, null, null);
+            this(id, userId, orderId, orderNo, type, amount, occurredAt, null, null, null, null, null, null);
         }
 
         /** Refund bắt buộc có UUID riêng và số tiền VND nguyên dương; không gắn refundId vào sự kiện khác. */
@@ -103,7 +122,7 @@ public class CommerceNotificationController {
         }
     }
 
-    /** Inbox/push tách trạng thái giao hàng khỏi thu tiền/refund; ORDER_DELIVERED không có nghĩa hoàn tất thanh toán COD. */
+    /** Các loại sự kiện thông báo: đơn hàng, giao hàng, thanh toán, đấu giá, outbid và hoàn tiền (refund). ORDER_DELIVERED không có nghĩa hoàn tất thanh toán COD. */
     public enum Type {
         ORDER_CREATED,
         ORDER_SHIPPED,
@@ -116,15 +135,16 @@ public class CommerceNotificationController {
         REFUND_REQUESTED,
         REFUND_SUCCEEDED,
         REFUND_FAILED,
-        REFUND_REQUIRES_REVIEW
+        REFUND_REQUIRES_REVIEW,
+        AUCTION_OUTBID
     }
 
     /** Ghi thông báo IN_APP/PUSH và attempt cùng transaction; retry cùng payload trả 204, đổi payload cùng UUID trả 409. */
     @PostMapping("/internal/commerce-notifications")
-    @PreAuthorize("hasRole('NOTIFICATION_WRITER')")
+    @PreAuthorize("hasRole('NOTIFICATION_WRITER') or hasAuthority('COMMERCE.AUCTION')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Transactional
-    @Operation(summary = "Nhận sự kiện đơn/thanh toán/đấu giá idempotent từ Commerce")
+    @Operation(summary = "Nhận sự kiện đơn/thanh toán/đấu giá idempotent từ Commerce hoặc Auction")
     public void receive(@Valid @RequestBody Event event) {
         String title = buildTitle(event.type());
         String resolvedLink = resolvePaymentLink(event);
@@ -147,22 +167,45 @@ public class CommerceNotificationController {
         if (inserted == 1) {
             jdbc.update("INSERT INTO notification_attempts(id,notification_id,attempt_no,result) VALUES (?,?,1,'SUCCESS')",
                     UUID.randomUUID(), event.id());
-            if (isPushEnabled()) {
+            if (isPushEnabled() && pushAllowed(event.userId(), event.type())) {
                 recordAndDispatchPush(event, title, content, resolvedLink, createdAtUtc, deadlineTs);
             }
         } else {
             // Không cho replay UUID đổi người nhận/nội dung; READ vẫn được giữ nguyên khi worker retry sau mất ACK.
             Integer matches = jdbc.queryForObject("""
-                    SELECT count(*) FROM notifications WHERE event_id=? AND user_id=? AND order_id=?
-                    AND event_type=? AND title=? AND content=? AND created_at=? AND refund_id IS NOT DISTINCT FROM ?
+                    SELECT count(*) FROM notifications WHERE event_id=? AND user_id=?
+                    AND (order_id=? OR (order_id IS NULL AND ?::uuid IS NULL))
+                    AND event_type=? AND title=? AND content=? AND created_at=?
+                    AND refund_id IS NOT DISTINCT FROM ?
                     AND auction_id IS NOT DISTINCT FROM ? AND payment_link IS NOT DISTINCT FROM ?
                     AND payment_deadline IS NOT DISTINCT FROM ?
-                    """, Integer.class, event.id().toString(), event.userId(), event.orderId(), event.type().name(),
-                    title, content, createdAtUtc, event.refundId(), event.auctionId(), resolvedLink, deadlineTs);
+                    """, Integer.class, event.id().toString(), event.userId(), event.orderId(), event.orderId(),
+                    event.type().name(), title, content, createdAtUtc, event.refundId(), event.auctionId(), resolvedLink, deadlineTs);
             if (matches == null || matches != 1) {
                 throw new ApiException("NOTIFICATION_EVENT_CONFLICT", HttpStatus.CONFLICT,
                         "UUID sự kiện đã có nội dung khác", null);
             }
+        }
+    }
+
+    /**
+     * Chỉ chặn kênh PUSH khi người dùng đã tắt rõ ràng trong notification_preferences.
+     *
+     * <p>Đầu vào: userId và loại sự kiện của snapshot Commerce. Kết quả: true nếu không có cấu hình
+     * (mặc định bật) hoặc cấu hình đang bật, false khi có dòng enabled=false.
+     *
+     * <p>Lý do: IN_APP vẫn được ghi để giữ nguồn resync; quyết định này chỉ ảnh hưởng bản ghi PUSH và
+     * WebSocket, không thay đổi nội dung inbox hay trạng thái tài chính. Lỗi đọc cấu hình không làm mất
+     * thông báo: trả true để push tiếp tục như hành vi trước khi có preferences.
+     */
+    private boolean pushAllowed(UUID userId, Type type) {
+        try {
+            Boolean enabled = jdbc.queryForObject(
+                    "SELECT enabled FROM notification_preferences WHERE user_id=? AND notification_type=? AND channel='PUSH'",
+                    Boolean.class, userId, type.name());
+            return enabled == null || enabled;
+        } catch (RuntimeException error) {
+            return true;
         }
     }
 
@@ -196,6 +239,7 @@ public class CommerceNotificationController {
             payload.put("refundId", event.refundId());
             payload.put("orderNo", event.orderNo());
             payload.put("auctionId", event.auctionId());
+            payload.put("auctionTitle", event.auctionTitle());
             payload.put("type", event.type().name());
             payload.put("channel", "PUSH");
             payload.put("title", title);
@@ -241,12 +285,13 @@ public class CommerceNotificationController {
             case REFUND_SUCCEEDED -> "Đã xác nhận hoàn tiền";
             case REFUND_FAILED -> "Yêu cầu hoàn tiền không thành công";
             case REFUND_REQUIRES_REVIEW -> "Yêu cầu hoàn tiền cần đối soát";
+            case AUCTION_OUTBID -> "Bạn đã bị trả giá cao hơn!";
         };
     }
 
     private String buildContent(Event event, String resolvedLink) {
         String amountText = event.amount().setScale(2, RoundingMode.HALF_UP).toPlainString();
-        String base = "Đơn " + event.orderNo() + " • " + amountText + " VND";
+        String base = (event.orderNo() != null ? ("Đơn " + event.orderNo() + " • ") : "") + amountText + " VND";
         return switch (event.type()) {
             case ORDER_CREATED, PAYMENT_SUCCESS, PAYMENT_FAILED -> base;
             // Chỉ phản ánh trạng thái Order đã được Commerce xác nhận, không hướng dẫn thanh toán hoặc xác nhận refund.
@@ -264,6 +309,13 @@ public class CommerceNotificationController {
             // Hoàn kho và trừ điểm uy tín chạy qua outbox bất đồng bộ khi quá hạn, nên chỉ báo trạng thái đang xử lý.
             case AUCTION_PAYMENT_TIMEOUT -> base + " • Quá hạn thanh toán 24h • Đang xử lý hoàn kho và áp dụng mức trừ "
                     + resolvePenalty(event) + " điểm uy tín";
+            case AUCTION_OUTBID -> {
+                String title = event.auctionTitle() != null && !event.auctionTitle().isBlank()
+                        ? event.auctionTitle()
+                        : "phiên đấu giá";
+                yield "Phiên \"" + title + "\" đã có người đặt mức giá cao hơn: " + amountText
+                        + " VND. Hãy đặt lại giá để giữ vị trí dẫn đầu!";
+            }
         };
     }
 
@@ -279,6 +331,12 @@ public class CommerceNotificationController {
     }
 
     private String resolvePaymentLink(Event event) {
+        if (event.type() == Type.AUCTION_OUTBID) {
+            if (event.paymentLink() != null && !event.paymentLink().isBlank()) {
+                return event.paymentLink();
+            }
+            return event.auctionId() != null ? "/auction-detail?id=" + event.auctionId() : null;
+        }
         if (event.type() != Type.AUCTION_WON && event.type() != Type.AUCTION_PAYMENT_REMINDER) {
             return null;
         }

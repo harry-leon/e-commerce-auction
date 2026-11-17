@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type SVGProps } from 'react'
+import { useEffect, useState, useCallback, type ReactNode, type SVGProps } from 'react'
 import { useApp } from '../context'
 import type { Page } from '../types'
 import { tr } from '../i18n'
@@ -26,9 +26,9 @@ import {
     HeartHandshake,
     CreditCard,
 } from './UI'
-import { NOTIFICATIONS } from '../mockData'
-// Giữ cả phiên đăng nhập cho menu quản trị và tìm kiếm/lọc tồn kho từ nhánh dev.
 import { api, errorMessage, type Envelope, type ApiCategory, type ApiProduct } from '../api/client'
+import { getNotifications, readNotification, type NotificationItem } from '../api/notifications'
+import { NOTIFICATIONS_CHANGED } from '../api/notificationStream'
 import { useSessionStore } from '../features/auth/sessionStore'
 import { getBatchStock } from '../api/inventory'
 import { filterInStockProducts } from '../features/catalog/catalog'
@@ -165,6 +165,228 @@ export const CATEGORY_ICONS: Record<string, (p: SVGProps<SVGSVGElement>) => Reac
     '66666666-6666-6666-6666-666666666666': IconCollectibles,
 }
 
+// ─── Notification Bell ────────────────────────────────────────────────────────
+/**
+ * Component chuông thông báo hiển thị số lượng chưa đọc realtime và popup danh sách thông báo.
+ * Tự động cập nhật khi nhận sự kiện NOTIFICATIONS_CHANGED qua WebSocket STOMP hoặc sau khi thao tác.
+ * Hỗ trợ các nút điều hướng nghiệp vụ:
+ * - AUCTION_WON / AUCTION_PAYMENT_REMINDER: nút "Thanh toán ngay" dẫn tới đơn hàng/link thanh toán.
+ * - AUCTION_OUTBID: nút "Đấu giá lại" dẫn tới chi tiết phiên đấu giá.
+ */
+function NotificationBell({
+    iconSize = 20,
+    targetPage = 'notifications',
+}: {
+    iconSize?: number
+    targetPage?: 'notifications' | 'seller-notifications'
+}) {
+    const { lang, navigate, user } = useApp()
+    const [open, setOpen] = useState(false)
+    const [items, setItems] = useState<NotificationItem[]>([])
+    const [unreadCount, setUnreadCount] = useState(0)
+    const [loading, setLoading] = useState(false)
+
+    const load = useCallback(() => {
+        if (!user?.id || !/^[0-9a-f-]{36}$/i.test(user.id)) {
+            setItems([])
+            setUnreadCount(0)
+            return
+        }
+        setLoading(true)
+        getNotifications(0)
+            .then((inbox) => {
+                setItems(inbox.content || [])
+                setUnreadCount(inbox.unreadCount || 0)
+            })
+            .catch(() => {
+                // Giữ nguyên dữ liệu hiện tại nếu mạng chập chờn
+            })
+            .finally(() => setLoading(false))
+    }, [user?.id])
+
+    useEffect(() => {
+        load()
+        const onUpdate = () => load()
+        window.addEventListener(NOTIFICATIONS_CHANGED, onUpdate)
+        return () => window.removeEventListener(NOTIFICATIONS_CHANGED, onUpdate)
+    }, [load])
+
+    const markAll = async (e: React.MouseEvent) => {
+        e.stopPropagation()
+        try {
+            await readNotification()
+            window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED))
+        } catch {
+            // Không chặn giao diện khi lỗi mạng
+        }
+    }
+
+    if (!user) return null
+
+    return (
+        <div
+            className="relative"
+            onMouseEnter={() => setOpen(true)}
+            onMouseLeave={() => setOpen(false)}
+        >
+            <button
+                onClick={() => navigate(targetPage as any)}
+                className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                title={lang === 'en' ? 'Notifications' : 'Thông báo'}
+            >
+                <Bell size={iconSize} />
+                {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 bg-[#ee4d2d] text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                )}
+            </button>
+            {open && (
+                <div className="absolute right-0 top-full pt-2 w-96 z-50">
+                    <div className="bg-white border border-border rounded-xl shadow-lg overflow-hidden">
+                        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                            <p className="font-semibold text-sm text-gray-900">
+                                {lang === 'en' ? 'Notifications' : 'Thông báo'}
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-400">
+                                    {unreadCount} {lang === 'en' ? 'unread' : 'chưa đọc'}
+                                </span>
+                                {unreadCount > 0 && (
+                                    <button
+                                        onClick={markAll}
+                                        className="text-xs text-[#ee4d2d] hover:underline"
+                                    >
+                                        {lang === 'en' ? 'Mark all read' : 'Đọc tất cả'}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto">
+                            {loading && items.length === 0 && (
+                                <div className="p-4 text-center text-xs text-gray-400">
+                                    {lang === 'en' ? 'Loading…' : 'Đang tải…'}
+                                </div>
+                            )}
+                            {!loading && items.length === 0 && (
+                                <div className="p-4 text-center text-xs text-gray-400">
+                                    {lang === 'en'
+                                        ? 'No notifications yet'
+                                        : 'Chưa có thông báo nào'}
+                                </div>
+                            )}
+                            {items.slice(0, 5).map((n) => {
+                                const isWon = n.type === 'AUCTION_WON'
+                                const isOutbid = n.type === 'AUCTION_OUTBID'
+                                const isReminder = n.type === 'AUCTION_PAYMENT_REMINDER'
+                                return (
+                                    <div
+                                        key={n.id}
+                                        onClick={() => {
+                                            setOpen(false)
+                                            if (n.orderId) {
+                                                navigate('order-detail' as any, { id: n.orderId })
+                                            } else if (n.auctionId) {
+                                                navigate('auction-detail' as any, {
+                                                    id: n.auctionId,
+                                                })
+                                            } else {
+                                                navigate(targetPage as any)
+                                            }
+                                        }}
+                                        className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-border last:border-0 hover:bg-gray-50 cursor-pointer ${
+                                            n.read ? '' : 'bg-orange-50/40'
+                                        }`}
+                                    >
+                                        <span
+                                            className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                                isWon
+                                                    ? 'bg-green-100 text-green-600'
+                                                    : isOutbid
+                                                      ? 'bg-amber-100 text-amber-600'
+                                                      : isReminder
+                                                        ? 'bg-blue-100 text-blue-600'
+                                                        : 'bg-gray-100 text-gray-500'
+                                            }`}
+                                        >
+                                            <Bell size={14} />
+                                        </span>
+                                        <span className="flex-1 min-w-0">
+                                            <span className="flex items-center gap-2">
+                                                <span className="text-sm font-semibold text-gray-800 truncate">
+                                                    {n.title}
+                                                </span>
+                                                {!n.read && (
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-[#ee4d2d] shrink-0" />
+                                                )}
+                                            </span>
+                                            <span className="block text-xs text-gray-500 mt-0.5 line-clamp-2">
+                                                {n.content}
+                                            </span>
+                                            <span className="block text-[11px] text-gray-400 mt-1">
+                                                {new Date(n.createdAt).toLocaleString()}
+                                            </span>
+
+                                            {/* Nút điều hướng thanh toán nếu trúng đấu giá hoặc nhắc hạn */}
+                                            {(isWon || isReminder) && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        setOpen(false)
+                                                        if (n.orderId) {
+                                                            navigate('order-detail' as any, {
+                                                                id: n.orderId,
+                                                            })
+                                                        } else if (n.paymentLink) {
+                                                            window.location.href = n.paymentLink
+                                                        }
+                                                    }}
+                                                    className="mt-2 inline-block px-2.5 py-1 bg-[#ee4d2d] text-white text-[11px] font-semibold rounded hover:bg-[#d03e20] transition-colors"
+                                                >
+                                                    {lang === 'en' ? 'Pay Now' : 'Thanh toán ngay'}
+                                                </button>
+                                            )}
+
+                                            {/* Nút đấu giá lại khi bị trả giá cao hơn (Outbid) */}
+                                            {isOutbid && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        setOpen(false)
+                                                        if (n.auctionId) {
+                                                            navigate('auction-detail' as any, {
+                                                                id: n.auctionId,
+                                                            })
+                                                        } else {
+                                                            navigate('auction-list')
+                                                        }
+                                                    }}
+                                                    className="mt-2 inline-block px-2.5 py-1 bg-amber-600 text-white text-[11px] font-semibold rounded hover:bg-amber-700 transition-colors"
+                                                >
+                                                    {lang === 'en' ? 'Re-bid' : 'Đấu giá lại'}
+                                                </button>
+                                            )}
+                                        </span>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                        <button
+                            onClick={() => {
+                                setOpen(false)
+                                navigate(targetPage as any)
+                            }}
+                            className="w-full px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 border-t border-border"
+                        >
+                            {lang === 'en' ? 'View all notifications' : 'Xem tất cả thông báo'}
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ─── Public Header ─────────────────────────────────────────────────────────────
 export function PublicHeader() {
     // Danh mục trên thanh điều hướng lấy UUID thật từ Catalog; ID mock sẽ khiến bộ lọc backend không hợp lệ.
@@ -193,7 +415,6 @@ export function PublicHeader() {
     const [suggestionsLoading, setSuggestionsLoading] = useState(false)
     const [suggestionsError, setSuggestionsError] = useState('')
     const [userOpen, setUserOpen] = useState(false)
-    const [notifOpen, setNotifOpen] = useState(false)
 
     // Đồng bộ từ khóa từ URL để thanh tìm kiếm không bị xóa khi chuyển sang trang kết quả.
     useEffect(() => {
@@ -392,87 +613,9 @@ export function PublicHeader() {
 
                 {/* Right controls */}
                 <div className="flex items-center gap-2 shrink-0 ml-auto">
-                    {/* Notifications */}
+                    {/* Notifications realtime */}
                     {sessionReady && user && (
-                        <div
-                            className="relative"
-                            onMouseEnter={() => setNotifOpen(true)}
-                            onMouseLeave={() => setNotifOpen(false)}
-                        >
-                            <button
-                                onClick={() => navigate('notifications')}
-                                className="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
-                            >
-                                <Bell size={20} />
-                                {0 > 0 && (
-                                    <span className="absolute top-1 right-1 w-4 h-4 bg-gray-800 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                                        0
-                                    </span>
-                                )}
-                            </button>
-                            {notifOpen && (
-                                <div className="absolute right-0 top-full pt-2 w-96 z-50">
-                                    <div className="bg-white border border-border rounded-xl shadow-lg overflow-hidden">
-                                        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                                            <p className="font-semibold text-sm text-gray-900">
-                                                {lang === 'en' ? 'Notifications' : 'Thông báo'}
-                                            </p>
-                                            <span className="text-xs text-gray-400">
-                                                {
-                                                    NOTIFICATIONS.filter(
-                                                        (notification) => !notification.read,
-                                                    ).length
-                                                }{' '}
-                                                {lang === 'en' ? 'unread' : 'chưa đọc'}
-                                            </span>
-                                        </div>
-                                        <div className="max-h-80 overflow-y-auto">
-                                            {NOTIFICATIONS.slice(0, 4).map((notification) => (
-                                                <button
-                                                    key={notification.id}
-                                                    onClick={() => navigate('notifications')}
-                                                    className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-border last:border-0 hover:bg-gray-50 ${notification.read ? '' : 'bg-gray-50/70'}`}
-                                                >
-                                                    <span className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
-                                                        <Bell size={14} />
-                                                    </span>
-                                                    <span className="flex-1 min-w-0">
-                                                        <span className="flex items-center gap-2">
-                                                            <span className="text-sm font-semibold text-gray-800 truncate">
-                                                                {lang === 'vi'
-                                                                    ? notification.titleVi
-                                                                    : notification.title}
-                                                            </span>
-                                                            {!notification.read && (
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0" />
-                                                            )}
-                                                        </span>
-                                                        <span className="block text-xs text-gray-500 mt-0.5 line-clamp-2">
-                                                            {lang === 'vi'
-                                                                ? notification.bodyVi
-                                                                : notification.body}
-                                                        </span>
-                                                        <span className="block text-[11px] text-gray-400 mt-1">
-                                                            {new Date(
-                                                                notification.timestamp,
-                                                            ).toLocaleString()}
-                                                        </span>
-                                                    </span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                        <button
-                                            onClick={() => navigate('notifications')}
-                                            className="w-full px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                        >
-                                            {lang === 'en'
-                                                ? 'View all notifications'
-                                                : 'Xem tất cả thông báo'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        <NotificationBell iconSize={20} targetPage="notifications" />
                     )}
 
                     {/* Cart */}
@@ -514,8 +657,12 @@ export function PublicHeader() {
                             {userOpen && (
                                 <div className="absolute right-0 top-full mt-2 bg-white border border-gray-100 rounded-2xl shadow-xl py-2 w-56 z-50 animate-in fade-in zoom-in-95 duration-150">
                                     <div className="px-4 py-2 border-b border-gray-100 mb-1">
-                                        <p className="font-semibold text-sm text-gray-900">{user.fullName}</p>
-                                        <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                                        <p className="font-semibold text-sm text-gray-900">
+                                            {user.fullName}
+                                        </p>
+                                        <p className="text-xs text-gray-500 truncate">
+                                            {user.email}
+                                        </p>
                                     </div>
                                     {[
                                         {
@@ -780,7 +927,6 @@ const SELLER_NAV = [
  */
 export function SellerLayout({ children, title }: { children: ReactNode; title: string }) {
     const { lang, page, navigate, user, setUser } = useApp()
-    const [notifOpen, setNotifOpen] = useState(false)
 
     useEffect(() => {
         if (title && typeof document !== 'undefined') {
@@ -795,7 +941,10 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                 style={{ background: '#0F172A' }}
             >
                 <div className="p-5 border-b border-white/10">
-                    <button onClick={() => navigate('seller-dashboard')} className="flex items-center gap-2">
+                    <button
+                        onClick={() => navigate('seller-dashboard')}
+                        className="flex items-center gap-2"
+                    >
                         <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                             <Gavel size={14} className="text-white" />
                         </div>
@@ -822,7 +971,11 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                         // Chức năng: Bấm vào thẻ Seller Nexus để truy cập trang Profile (Hồ sơ người bán)
                         <button
                             type="button"
-                            aria-label={lang === 'en' ? 'Open Seller Nexus profile' : 'Mở hồ sơ Seller Nexus'}
+                            aria-label={
+                                lang === 'en'
+                                    ? 'Open Seller Nexus profile'
+                                    : 'Mở hồ sơ Seller Nexus'
+                            }
                             onClick={() => navigate('seller-profile')}
                             className="sidebar-link w-full flex items-center gap-2 px-3 py-2 mb-2 text-left"
                         >
@@ -861,91 +1014,12 @@ export function SellerLayout({ children, title }: { children: ReactNode; title: 
                     <h1 className="text-lg font-bold text-gray-900">{title}</h1>
                     <div className="flex items-center gap-3">
                         <LanguageSwitcher />
-                        <div
-                            className="relative"
-                            onMouseEnter={() => setNotifOpen(true)}
-                            onMouseLeave={() => setNotifOpen(false)}
-                        >
-                            <button
-                                onClick={() => navigate('seller-notifications')}
-                                className="relative p-2 rounded-lg text-gray-500 hover:bg-gray-100"
-                            >
-                                <Bell size={18} />
-                                <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-gray-800 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                                    {
-                                        NOTIFICATIONS.filter((notification) => !notification.read)
-                                            .length
-                                    }
-                                </span>
-                            </button>
-                            {notifOpen && (
-                                <div className="absolute right-0 top-full pt-2 w-96 z-50">
-                                    <div className="bg-white border border-border rounded-xl shadow-lg overflow-hidden">
-                                        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                                            <p className="font-semibold text-sm text-gray-900">
-                                                {lang === 'en'
-                                                    ? 'Seller notifications'
-                                                    : 'Thông báo người bán'}
-                                            </p>
-                                            <span className="text-xs text-gray-400">
-                                                {
-                                                    NOTIFICATIONS.filter(
-                                                        (notification) => !notification.read,
-                                                    ).length
-                                                }{' '}
-                                                {lang === 'en' ? 'unread' : 'chưa đọc'}
-                                            </span>
-                                        </div>
-                                        <div className="max-h-80 overflow-y-auto">
-                                            {NOTIFICATIONS.slice(0, 4).map((notification) => (
-                                                <button
-                                                    key={notification.id}
-                                                    onClick={() => navigate('seller-notifications')}
-                                                    className={`w-full flex items-start gap-3 px-4 py-3 text-left border-b border-border last:border-0 hover:bg-gray-50 ${notification.read ? '' : 'bg-gray-50/70'}`}
-                                                >
-                                                    <span className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
-                                                        <Bell size={14} />
-                                                    </span>
-                                                    <span className="flex-1 min-w-0">
-                                                        <span className="flex items-center gap-2">
-                                                            <span className="text-sm font-semibold text-gray-800 truncate">
-                                                                {lang === 'vi'
-                                                                    ? notification.titleVi
-                                                                    : notification.title}
-                                                            </span>
-                                                            {!notification.read && (
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-gray-600 shrink-0" />
-                                                            )}
-                                                        </span>
-                                                        <span className="block text-xs text-gray-500 mt-0.5 line-clamp-2">
-                                                            {lang === 'vi'
-                                                                ? notification.bodyVi
-                                                                : notification.body}
-                                                        </span>
-                                                        <span className="block text-[11px] text-gray-400 mt-1">
-                                                            {new Date(
-                                                                notification.timestamp,
-                                                            ).toLocaleString()}
-                                                        </span>
-                                                    </span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                        <button
-                                            onClick={() => navigate('seller-notifications')}
-                                            className="w-full px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                        >
-                                            {lang === 'en'
-                                                ? 'View all notifications'
-                                                : 'Xem tất cả thông báo'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        <NotificationBell iconSize={18} targetPage="seller-notifications" />
                     </div>
                 </div>
-                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">{children}</main>
+                <main className="flex-1 min-h-0 p-8 overflow-y-auto overflow-x-hidden">
+                    {children}
+                </main>
             </div>
         </div>
     )

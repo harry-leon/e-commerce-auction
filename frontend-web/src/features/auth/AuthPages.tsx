@@ -11,6 +11,7 @@ import {
     CheckCircle,
 } from '../../components/UI'
 import {
+    api,
     post,
     saveSession,
     mapUser,
@@ -25,7 +26,8 @@ import {
     PasswordRequirementsChecklist,
     PasswordConfirmIndicator,
 } from './PasswordValidation'
-import { encryptPassword } from '../../utils/crypto'
+import { encryptPassword, clearCryptoKeyCache } from '../../utils/crypto'
+import { AddressSelector } from '../../components/AddressSelector'
 import type { Page } from '../../types'
 import { Gavel } from '../../components/UI'
 
@@ -107,6 +109,7 @@ export function LoginPage() {
                     : pages[user.role]
             navigate(targetPage)
         } catch (error) {
+            clearCryptoKeyCache()
             setError(errorMessage(error))
             setAttempts((value) => value + 1)
         } finally {
@@ -244,6 +247,7 @@ export function RegisterPage() {
     const { lang, navigate, showToast } = useApp()
     const [step, setStep] = useState(1)
     const [loading, setLoading] = useState(false)
+    const [checkingEmail, setCheckingEmail] = useState(false)
     const [form, setForm] = useState({
         email: '',
         phone: '',
@@ -268,12 +272,94 @@ export function RegisterPage() {
         setErrors(e)
         return Object.keys(e).length === 0
     }
+
+    /**
+     * Kiểm tra tính khả dụng của email trước khi cho phép chuyển sang Bước 2.
+     * Chức năng: Ngăn chặn tình trạng người dùng điền đầy đủ thông tin đến bước cuối mới bị báo trùng email.
+     * Đầu vào: form.email người dùng nhập ở Bước 1.
+     * Kết quả: Chuyển sang Bước 2 nếu email khả dụng; hoặc báo lỗi đỏ nếu email đã tồn tại.
+     * Luồng: Validate cú pháp email/SĐT → gọi GET /auth/check-email → nếu available=false, gán lỗi ô Email.
+     */
+    const handleStep1Next = async () => {
+        if (!validate1()) return
+        setCheckingEmail(true)
+        try {
+            const res = await api<{ available: boolean } | { data: { available: boolean } }>(
+                `/auth/check-email?email=${encodeURIComponent(form.email.trim())}`,
+                { method: 'GET' },
+                false,
+            )
+            const data = (res as any)?.data || res
+            if (data?.available === false) {
+                setErrors((prev) => ({
+                    ...prev,
+                    email:
+                        lang === 'en'
+                            ? 'Email is already registered in the system'
+                            : 'Email đã được đăng ký trong hệ thống',
+                }))
+                return
+            }
+            setStep(2)
+        } catch {
+            // Lỗi mạng hoặc server không phản hồi thì vẫn cho phép qua bước tiếp để backend xác thực cuối cùng
+            setStep(2)
+        } finally {
+            setCheckingEmail(false)
+        }
+    }
+
+    /**
+     * Xác thực thông tin cá nhân (Bước 2):
+     * 1. Họ và tên: Bắt buộc, chỉ chứa chữ cái Unicode (có dấu tiếng Việt) và khoảng trắng, không chứa số/ký tự đặc biệt,
+     *    phải có ít nhất 2 từ (cả họ và tên) để phân tách firstName/lastName cho Keycloak IAM.
+     * 2. CCCD: Bắt buộc đúng 12 chữ số.
+     * 3. Ngày sinh: Bắt buộc, chuẩn định dạng YYYY-MM-DD.
+     */
     const validate2 = () => {
         const e: Partial<typeof form> = {}
-        if (!form.fullName) e.fullName = tr(lang, 'required')
+        const trimmedName = form.fullName.trim()
+        if (!trimmedName) {
+            e.fullName = tr(lang, 'required')
+        } else if (!/^[\p{L}\s']{2,100}$/u.test(trimmedName)) {
+            e.fullName =
+                lang === 'en'
+                    ? 'Full name must contain only letters and spaces (2–100 characters)'
+                    : 'Họ và tên chỉ được chứa chữ cái và khoảng trắng (2–100 ký tự)'
+        } else if (trimmedName.split(/\s+/).filter(Boolean).length < 2) {
+            e.fullName =
+                lang === 'en'
+                    ? 'Full name must include both first and last name (at least 2 words)'
+                    : 'Họ và tên phải bao gồm cả họ và tên (ít nhất 2 từ)'
+        }
+
         if (!form.idNumber) e.idNumber = tr(lang, 'required')
         else if (!/^\d{12}$/.test(form.idNumber)) e.idNumber = tr(lang, 'cccdFormat')
-        if (!form.dateOfBirth) e.dateOfBirth = tr(lang, 'required')
+
+        if (!form.dateOfBirth) {
+            e.dateOfBirth = tr(lang, 'required')
+        } else if (!/^\d{4}-\d{2}-\d{2}$/.test(form.dateOfBirth)) {
+            e.dateOfBirth =
+                lang === 'en'
+                    ? 'Date of birth must be in YYYY-MM-DD format'
+                    : 'Ngày sinh phải đúng định dạng YYYY-MM-DD'
+        } else {
+            // Chức năng: Ngăn chặn người dùng nhập ngày sinh ở tương lai hoặc ngày không hợp lệ.
+            // Quy tắc: Ngày sinh bắt buộc phải trước ngày hôm nay.
+            const dob = new Date(form.dateOfBirth + 'T00:00:00')
+            const today = new Date()
+            today.setHours(0, 0, 0, 0)
+            if (isNaN(dob.getTime())) {
+                e.dateOfBirth =
+                    lang === 'en' ? 'Invalid date' : 'Ngày sinh không tồn tại trong lịch'
+            } else if (dob >= today) {
+                e.dateOfBirth =
+                    lang === 'en'
+                        ? 'Date of birth must be in the past'
+                        : 'Ngày sinh phải ở trong quá khứ'
+            }
+        }
+
         setErrors(e)
         return Object.keys(e).length === 0
     }
@@ -292,7 +378,6 @@ export function RegisterPage() {
                 lang === 'en'
                     ? 'Password must be 8–100 characters, include at least 1 uppercase letter (A-Z), 1 number, and 1 special character'
                     : 'Mật khẩu mới từ 8 đến 100 ký tự, có ít nhất 1 chữ in hoa (A-Z), 1 chữ số, 1 ký tự đặc biệt'
-            4
         }
         if (form.password !== form.confirmPassword) {
             e.confirmPassword = tr(lang, 'passwordMismatch')
@@ -322,6 +407,7 @@ export function RegisterPage() {
                 gender: form.gender.toUpperCase(),
             })
         } catch (error) {
+            clearCryptoKeyCache()
             // Khi BE trả 422, đọc error.details[], dùng field và message để hiển thị từng lỗi
             const fieldErrors = extractFieldErrors(error)
             if (Object.keys(fieldErrors).length > 0) {
@@ -416,9 +502,8 @@ export function RegisterPage() {
                         variant="primary"
                         size="lg"
                         className="w-full"
-                        onClick={() => {
-                            if (validate1()) setStep(2)
-                        }}
+                        loading={checkingEmail}
+                        onClick={handleStep1Next}
                     >
                         {tr(lang, 'next')}
                     </Button>
@@ -461,15 +546,17 @@ export function RegisterPage() {
                         <Input
                             label={tr(lang, 'dateOfBirth')}
                             type="date"
+                            max={new Date().toISOString().split('T')[0]}
                             value={form.dateOfBirth}
                             onChange={set('dateOfBirth')}
                             error={errors.dateOfBirth}
                         />
                     </div>
-                    <Input
-                        label={tr(lang, 'address')}
+                    <AddressSelector
                         value={form.address}
-                        onChange={set('address')}
+                        onChange={(addr) => setForm((prev) => ({ ...prev, address: addr }))}
+                        lang={lang}
+                        error={errors.address}
                     />
                     <div className="flex gap-3">
                         <Button
@@ -593,11 +680,6 @@ export function ForgotPasswordPage() {
                         {lang === 'en'
                             ? 'If the account exists, follow the link in your email to set a new password on Keycloak.'
                             : 'Nếu tài khoản tồn tại, hãy mở liên kết trong email để đặt mật khẩu mới tại trang quản lý tài khoản Keycloak.'}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                        {lang === 'en'
-                            ? 'Notice: Legacy reset password tokens (/auth/reset-password) are no longer supported (HTTP 410). Password updates are handled securely via Keycloak.'
-                            : 'Lưu ý: Endpoint đặt lại mật khẩu cũ (/auth/reset-password) đã ngừng hỗ trợ (HTTP 410). Quá trình đặt lại được thực hiện an toàn qua Keycloak.'}
                     </p>
                 </div>
             ) : (

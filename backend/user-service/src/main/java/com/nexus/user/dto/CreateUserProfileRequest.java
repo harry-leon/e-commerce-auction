@@ -3,6 +3,7 @@ package com.nexus.user.dto;
 import com.nexus.user.validation.ValidPhoneNumber;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
@@ -17,8 +18,16 @@ public class CreateUserProfileRequest {
     @Email(message = "Email không đúng định dạng")
     private String email;
 
+    /**
+     * Chức năng: Họ và tên người dùng khi tạo hồ sơ cá nhân mới.
+     * Quy tắc và lý do: Bắt buộc không để trống, chỉ chứa chữ cái Unicode (tiếng Việt có dấu)
+     * và khoảng trắng (2 đến 100 ký tự). Chặn ký tự đặc biệt và chữ số để đồng bộ đúng định danh IAM.
+     */
     @NotBlank(message = "Họ và tên không được để trống")
-    @Size(max = 255, message = "Họ và tên tối đa 255 ký tự")
+    @Pattern(
+        regexp = "^[\\p{L}\\s']{2,100}$",
+        message = "Họ và tên chỉ được chứa chữ cái và khoảng trắng (2–100 ký tự)"
+    )
     private String fullName;
 
     // Dùng chung quy tắc di động Việt Nam với API cập nhật; bỏ trống được phép vì phone chưa bắt buộc ở BE.
@@ -33,6 +42,8 @@ public class CreateUserProfileRequest {
     @Pattern(regexp = "^$|MALE|FEMALE|OTHER", message = "Giới tính phải là MALE, FEMALE hoặc OTHER")
     private String gender;
 
+    // Ngày sinh không bắt buộc; nếu có bắt buộc phải ở trong quá khứ.
+    @Past(message = "Ngày sinh phải ở trong quá khứ")
     private LocalDate dateOfBirth;
 
     @Size(max = 500, message = "Địa chỉ tối đa 500 ký tự")

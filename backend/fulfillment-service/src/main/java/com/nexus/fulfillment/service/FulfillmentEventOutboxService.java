@@ -132,10 +132,21 @@ public class FulfillmentEventOutboxService {
         saveOutboxEvent(eventId, "SHIPMENT", shipment.getId(), EVENT_SHIPMENT_RETURNED, body, now);
     }
 
+    /**
+     * Dựng envelope chung cho sự kiện shipment: định danh, phiên bản schema, aggregate và correlation.
+     *
+     * <p>Quy tắc: {@code aggregateId} bằng shipmentId để consumer kiểm tra chéo với cột aggregate_id của outbox.
+     * {@code correlationId} giữ chuỗi nhân quả; sự kiện phát sinh trực tiếp dùng chính eventId làm gốc.
+     * {@code schemaVersion} cố định 1 cho contract hiện tại; consumer từ chối phiên bản lạ thay vì đoán trường thiếu.
+     */
     private Map<String, Object> buildShipmentBasePayload(UUID eventId, String eventType, Shipment shipment, Instant now) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("eventId", eventId);
         body.put("eventType", eventType);
+        body.put("schemaVersion", 1);
+        body.put("aggregateType", "SHIPMENT");
+        body.put("aggregateId", shipment.getId());
+        body.put("correlationId", eventId);
         body.put("occurredAt", now.toString());
         body.put("shipmentId", shipment.getId());
         body.put("orderId", shipment.getOrderId());

@@ -186,10 +186,21 @@ export function calculateEstimatedPricing(
     const categoryDiscount = 0
 
     // 4. Giảm giá từ Voucher
+    // Chức năng: Áp dụng mã ưu đãi (NEXUS10, WELCOME20, VIP50, FREESHIP).
+    // Quy tắc: Không còn chính sách tự động miễn phí vận chuyển theo giá trị đơn hàng.
+    // Muốn được miễn phí vận chuyển, người mua bắt buộc phải áp dụng voucher hợp lệ (ví dụ: FREESHIP).
     let voucherDiscount = 0
+    let freeShippingVoucherApplied = false
     if (voucherCode) {
         const cleanVoucher = voucherCode.trim().toUpperCase()
-        if (cleanVoucher === 'NEXUS10') {
+        if (cleanVoucher === 'FREESHIP') {
+            freeShippingVoucherApplied = true
+            appliedPromotions.push({
+                code: cleanVoucher,
+                title: 'Voucher FREESHIP: Miễn phí vận chuyển toàn quốc',
+                amount: 35000,
+            })
+        } else if (cleanVoucher === 'NEXUS10') {
             voucherDiscount = Math.round(baseSubtotal * 0.1)
             appliedPromotions.push({
                 code: cleanVoucher,
@@ -218,10 +229,11 @@ export function calculateEstimatedPricing(
     const peakHourFee = peakInfo.isPeak ? peakInfo.surcharge : 0
 
     // 6. Phí vận chuyển ước tính
-    // [P2-FIX] Ngưỡng miễn phí ship dùng đơn vị VND (500.000đ), không phải 100 (nhầm USD).
-    // BE đang coi giá đã gồm VAT nên FE không cộng thêm VAT — xóa bước tính thuế 8%.
-    const FREE_SHIP_THRESHOLD_VND = 500_000
-    const estimatedShipping = baseSubtotal >= FREE_SHIP_THRESHOLD_VND ? 0 : 35_000
+    // Chức năng: Tính phí ship ước tính cho giỏ hàng / đặt hàng.
+    // Quy tắc: Mặc định luôn thu phí vận chuyển chuẩn (35.000 đ), loại bỏ hoàn toàn ngưỡng tự động free ship 500k.
+    // Chỉ miễn phí vận chuyển khi người mua có và áp dụng voucher FREESHIP.
+    const defaultShippingFee = 35_000
+    const estimatedShipping = freeShippingVoucherApplied ? 0 : defaultShippingFee
 
     // 7. Thuế ước tính: BE coi giá đã gồm VAT → FE không cộng thêm thuế (estimatedTax = 0)
     const netSubtotal = Math.max(

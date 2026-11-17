@@ -108,7 +108,9 @@ export function ProductDetailPage() {
     )
     const foundCategory = flatCategories.find((c) => c.id === apiProduct?.categoryId)
     const categoryName = foundCategory
-        ? (lang === 'vi' ? foundCategory.nameVi || foundCategory.name : foundCategory.name)
+        ? lang === 'vi'
+            ? foundCategory.nameVi || foundCategory.name
+            : foundCategory.name
         : ''
     const productWeight = (apiProduct as any)?.weight || null
 
@@ -432,20 +434,31 @@ export function ProductDetailPage() {
                 setAddingToCart(false)
             }
         }
-        const guestCart = addGuestCartItem({
-            skuId: skuId || product.id,
-            skuCode: formatSkuDisplay(targetSku?.id, targetSku?.skuCode) || `SKU-${product.id}`,
-            productName: lang === 'en' ? product.name : product.nameVi || product.name,
-            thumbnailUrl: productImages[0],
-            unitPrice: currentPrice,
-            quantity: qty,
-        })
-        setCartCount(guestCart.totalQuantity)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en' ? `Added ${qty}x to cart!` : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
-        })
+        try {
+            const guestCart = addGuestCartItem({
+                skuId: skuId || product.id,
+                skuCode: formatSkuDisplay(targetSku?.id, targetSku?.skuCode) || `SKU-${product.id}`,
+                productName: lang === 'en' ? product.name : product.nameVi || product.name,
+                thumbnailUrl: productImages[0],
+                unitPrice: currentPrice,
+                quantity: qty,
+                stockAvailable: availableStock,
+            })
+            setCartCount(guestCart.totalQuantity)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en' ? `Added ${qty}x to cart!` : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
+            })
+        } catch (err) {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? `Failed to add to cart: ${err instanceof Error ? err.message : String(err)}`
+                        : `Thêm vào giỏ hàng thất bại: ${err instanceof Error ? err.message : String(err)}`,
+            })
+        }
     }
 
     /**
@@ -629,7 +642,10 @@ export function ProductDetailPage() {
                 <Breadcrumb
                     items={[
                         { label: lang === 'en' ? 'Home' : 'Trang chủ', page: 'home' },
-                        { label: product.category || (lang === 'en' ? 'Products' : 'Sản phẩm'), page: 'search' },
+                        {
+                            label: product.category || (lang === 'en' ? 'Products' : 'Sản phẩm'),
+                            page: 'search',
+                        },
                         { label: lang === 'vi' ? product.nameVi : product.name },
                     ]}
                 />
@@ -834,26 +850,35 @@ export function ProductDetailPage() {
                                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-600 text-white font-black text-xs tracking-wider uppercase shadow-md animate-pulse">
                                             <span className="w-2 h-2 rounded-full bg-white"></span>
                                             <span>
-                                                {lang === 'en' ? 'LIVE AUCTION' : 'ĐANG ĐẤU GIÁ TRỰC TIẾP'}
+                                                {lang === 'en'
+                                                    ? 'LIVE AUCTION'
+                                                    : 'ĐANG ĐẤU GIÁ TRỰC TIẾP'}
                                             </span>
                                         </div>
                                     ) : (
                                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-600 text-white font-bold text-xs tracking-wider uppercase shadow-md">
                                             <Clock size={14} />
                                             <span>
-                                                {lang === 'en' ? 'UPCOMING AUCTION' : 'ĐẤU GIÁ SẮP DIỄN RA'}
+                                                {lang === 'en'
+                                                    ? 'UPCOMING AUCTION'
+                                                    : 'ĐẤU GIÁ SẮP DIỄN RA'}
                                             </span>
                                         </div>
                                     )}
                                     <span className="text-xs font-bold text-amber-900 bg-amber-100/90 px-3 py-1 rounded-full border border-amber-300">
-                                        ⚡ {lang === 'en' ? 'Interactive Bidding Room' : 'Phòng đấu giá trực tiếp'}
+                                        ⚡{' '}
+                                        {lang === 'en'
+                                            ? 'Interactive Bidding Room'
+                                            : 'Phòng đấu giá trực tiếp'}
                                     </span>
                                 </div>
 
                                 <div className="bg-white/95 backdrop-blur-md rounded-xl p-4 border border-amber-200 shadow-sm">
                                     <div className="flex items-center justify-between mb-1">
                                         <span className="text-xs font-bold uppercase tracking-wider text-amber-800">
-                                            {lang === 'en' ? 'Current Highest Bid' : 'Giá đấu cao nhất hiện tại'}
+                                            {lang === 'en'
+                                                ? 'Current Highest Bid'
+                                                : 'Giá đấu cao nhất hiện tại'}
                                         </span>
                                         {linkedAuction?.startPrice && (
                                             <span className="text-xs text-gray-500">
@@ -875,7 +900,9 @@ export function ProductDetailPage() {
                                     {linkedAuction?.bidIncrement && (
                                         <div className="text-xs text-gray-600 mt-1 flex items-center gap-1.5">
                                             <span className="font-medium">
-                                                {lang === 'en' ? 'Minimum Increment:' : 'Bước giá tối thiểu:'}
+                                                {lang === 'en'
+                                                    ? 'Minimum Increment:'
+                                                    : 'Bước giá tối thiểu:'}
                                             </span>
                                             <span className="font-bold text-amber-700">
                                                 +{formatCurrency(linkedAuction.bidIncrement, lang)}
@@ -963,8 +990,11 @@ export function ProductDetailPage() {
                                         {formatCurrency(currentOriginalPrice, lang)}
                                     </span>
                                     <span className="bg-red-500 text-white font-extrabold text-xs px-2.5 py-1 rounded-lg shadow-sm">
-                                        -{Math.round((1 - currentPrice / currentOriginalPrice) * 100)}%{' '}
-                                        {lang === 'en' ? 'OFF' : 'GIẢM'}
+                                        -
+                                        {Math.round(
+                                            (1 - currentPrice / currentOriginalPrice) * 100,
+                                        )}
+                                        % {lang === 'en' ? 'OFF' : 'GIẢM'}
                                     </span>
                                 </>
                             )}
@@ -976,9 +1006,7 @@ export function ProductDetailPage() {
                         <div className="nexus-card p-4 bg-gray-50/80 mb-5 space-y-2 border border-gray-200/80">
                             <div className="flex items-center justify-between">
                                 <span className="text-sm font-semibold text-gray-800">
-                                    {lang === 'en'
-                                        ? 'Select variant:'
-                                        : 'Chọn phiên bản:'}
+                                    {lang === 'en' ? 'Select variant:' : 'Chọn phiên bản:'}
                                 </span>
                             </div>
                             <div
@@ -1003,7 +1031,11 @@ export function ProductDetailPage() {
                                             role="radio"
                                         >
                                             <span className="font-semibold">
-                                                {formatVariantLabel(s.attributes, formatSkuDisplay(s.id, s.skuCode), lang)}
+                                                {formatVariantLabel(
+                                                    s.attributes,
+                                                    formatSkuDisplay(s.id, s.skuCode),
+                                                    lang,
+                                                )}
                                             </span>
                                             <span
                                                 className={`text-[11px] ${isSelected ? 'text-white/90' : 'text-gray-500'}`}
@@ -1072,7 +1104,9 @@ export function ProductDetailPage() {
                                     {lang === 'en' ? '100% Genuine' : '100% Chính hãng'}
                                 </h4>
                                 <p className="text-[11px] text-gray-500 leading-tight">
-                                    {lang === 'en' ? 'Double refund if fake' : 'Đền bù gấp đôi nếu giả'}
+                                    {lang === 'en'
+                                        ? 'Double refund if fake'
+                                        : 'Đền bù gấp đôi nếu giả'}
                                 </p>
                             </div>
                         </div>
@@ -1083,7 +1117,9 @@ export function ProductDetailPage() {
                                     {lang === 'en' ? 'Fast Delivery' : 'Giao hỏa tốc'}
                                 </h4>
                                 <p className="text-[11px] text-gray-500 leading-tight">
-                                    {lang === 'en' ? 'Within 2-4 hours' : 'Nhận hàng 2-4h nội thành'}
+                                    {lang === 'en'
+                                        ? 'Within 2-4 hours'
+                                        : 'Nhận hàng 2-4h nội thành'}
                                 </p>
                             </div>
                         </div>
@@ -1094,7 +1130,9 @@ export function ProductDetailPage() {
                                     {lang === 'en' ? '7-Day Return' : 'Đổi trả 7 ngày'}
                                 </h4>
                                 <p className="text-[11px] text-gray-500 leading-tight">
-                                    {lang === 'en' ? 'Free exchange for defects' : 'Miễn phí nếu có lỗi NSX'}
+                                    {lang === 'en'
+                                        ? 'Free exchange for defects'
+                                        : 'Miễn phí nếu có lỗi NSX'}
                                 </p>
                             </div>
                         </div>
@@ -1105,7 +1143,9 @@ export function ProductDetailPage() {
                                     {lang === 'en' ? 'Secure Payment' : 'Bảo mật 100%'}
                                 </h4>
                                 <p className="text-[11px] text-gray-500 leading-tight">
-                                    {lang === 'en' ? 'SSL 256-bit encryption' : 'Mã hóa chuẩn PCI-DSS'}
+                                    {lang === 'en'
+                                        ? 'SSL 256-bit encryption'
+                                        : 'Mã hóa chuẩn PCI-DSS'}
                                 </p>
                             </div>
                         </div>
@@ -1302,13 +1342,21 @@ export function ProductDetailPage() {
                                                 className="text-xs text-gray-600"
                                             >
                                                 <span className="font-semibold text-gray-800">
-                                                    {formatVariantLabel(sku.attributes, formatSkuDisplay(sku.id, sku.skuCode), lang)}
+                                                    {formatVariantLabel(
+                                                        sku.attributes,
+                                                        formatSkuDisplay(sku.id, sku.skuCode),
+                                                        lang,
+                                                    )}
                                                 </span>{' '}
                                                 · {Number(sku.price).toLocaleString('vi-VN')} ₫ ·{' '}
                                                 <span className="badge badge-green text-[10px]">
                                                     {sku.status === 'ACTIVE'
-                                                        ? lang === 'vi' ? 'Còn hàng' : 'Active'
-                                                        : lang === 'vi' ? 'Tạm ngưng' : sku.status}
+                                                        ? lang === 'vi'
+                                                            ? 'Còn hàng'
+                                                            : 'Active'
+                                                        : lang === 'vi'
+                                                          ? 'Tạm ngưng'
+                                                          : sku.status}
                                                 </span>
                                             </li>
                                         ))}

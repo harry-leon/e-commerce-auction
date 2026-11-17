@@ -17,11 +17,40 @@ import { ORDERS, USERS } from '../../mockData'
 
 function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'order' | 'user' }) {
     const { lang, showToast, navigate, pageParams } = useApp()
-    const initialOrderId = typeof pageParams?.id === 'string' ? pageParams.id : ''
+    const initialOrderId = typeof pageParams?.id === 'string' ? pageParams.id.trim() : ''
     const [lookupOrderId, setLookupOrderId] = useState(initialOrderId)
     const [lookupUserId, setLookupUserId] = useState('')
-    const [foundOrder, setFoundOrder] = useState<(typeof ORDERS)[0] | null>(
-        () => ORDERS.find((order) => order.id === initialOrderId) || null,
+
+    // Tìm kiếm đơn hàng theo UUID id hoặc mã orderNo (không phân biệt hoa thường)
+    const findOrder = (queryStr: string) => {
+        const q = queryStr.trim().toLowerCase()
+        if (!q) return null
+        return (
+            ORDERS.find(
+                (order) =>
+                    order.id.toLowerCase() === q ||
+                    (order.orderNo && order.orderNo.toLowerCase() === q),
+            ) || null
+        )
+    }
+
+    // Tìm kiếm người dùng theo email, UUID id, số điện thoại hoặc họ tên
+    const findUser = (queryStr: string) => {
+        const q = queryStr.trim().toLowerCase()
+        if (!q) return null
+        return (
+            USERS.find(
+                (u) =>
+                    u.email.toLowerCase() === q ||
+                    u.id.toLowerCase() === q ||
+                    (u.phone && u.phone.toLowerCase() === q) ||
+                    u.fullName.toLowerCase().includes(q),
+            ) || null
+        )
+    }
+
+    const [foundOrder, setFoundOrder] = useState<(typeof ORDERS)[0] | null>(() =>
+        findOrder(initialOrderId),
     )
     const [foundUser, setFoundUser] = useState<(typeof USERS)[0] | null>(null)
     const [caseOpen, setCaseOpen] = useState(false)
@@ -205,10 +234,15 @@ function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'ord
                         <Input
                             value={lookupOrderId}
                             onChange={(e) => setLookupOrderId(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    setFoundOrder(findOrder(lookupOrderId))
+                                }
+                            }}
                             placeholder={
                                 lang === 'en'
-                                    ? 'Enter Order ID (e.g. ORD-20240215-001)'
-                                    : 'Nhập mã đơn hàng'
+                                    ? 'Enter Order ID (e.g. ORD-2026-001 or ORD-20240215-001)'
+                                    : 'Nhập mã đơn hàng (VD: ORD-2026-001)'
                             }
                             className="flex-1"
                             icon={<Search size={14} />}
@@ -216,8 +250,7 @@ function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'ord
                         <Button
                             variant="primary"
                             onClick={() => {
-                                const o = ORDERS.find((o) => o.id === lookupOrderId)
-                                setFoundOrder(o || null)
+                                setFoundOrder(findOrder(lookupOrderId))
                             }}
                         >
                             {lang === 'en' ? 'Lookup' : 'Tra cứu'}
@@ -363,10 +396,15 @@ function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'ord
                         <Input
                             value={lookupUserId}
                             onChange={(e) => setLookupUserId(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    setFoundUser(findUser(lookupUserId))
+                                }
+                            }}
                             placeholder={
                                 lang === 'en'
-                                    ? 'Enter email or user ID...'
-                                    : 'Nhập email hoặc mã người dùng...'
+                                    ? 'Enter email or user ID (e.g. buyer@nexus.vn)...'
+                                    : 'Nhập email hoặc mã người dùng (VD: buyer@nexus.vn)...'
                             }
                             className="flex-1"
                             icon={<Search size={14} />}
@@ -374,10 +412,7 @@ function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'ord
                         <Button
                             variant="primary"
                             onClick={() => {
-                                const u = USERS.find(
-                                    (u) => u.email === lookupUserId || u.id === lookupUserId,
-                                )
-                                setFoundUser(u || USERS[0])
+                                setFoundUser(findUser(lookupUserId))
                             }}
                         >
                             {lang === 'en' ? 'Lookup' : 'Tra cứu'}

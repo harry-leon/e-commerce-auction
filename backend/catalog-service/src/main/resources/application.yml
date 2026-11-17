@@ -53,6 +53,11 @@ app:
     pagination:
       default-page-size: ${CATALOG_DEFAULT_PAGE_SIZE:20}
       max-page-size: ${CATALOG_MAX_PAGE_SIZE:100}
+    cloudinary:
+      cloud-name: ${CLOUDINARY_CLOUD_NAME:f4wgawlg}
+      api-key: ${CLOUDINARY_API_KEY:184937136559179}
+      api-secret: ${CLOUDINARY_API_SECRET:ILrwWU8z2t9uWYqh0MnwtlMeKVo}
+      root-folder: ${CLOUDINARY_ROOT_FOLDER:Nexus}
 
 # Trong Compose, service đăng ký địa chỉ để Gateway tra cứu bằng lb://<service-name>.
 # Mặc định tắt discovery khi chạy độc lập; EUREKA_ENABLED và EUREKA_URL được Compose cấp.

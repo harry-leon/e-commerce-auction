@@ -7,6 +7,16 @@ demo-fixture:test:
   rules:
     - changes: [scripts/demo/**/*, scripts/seed-demo.mjs, backend/**/db/migration/**/*, .ci/**/*, .gitlab-ci.yml]
 
+# Chỉ chạy fixture Node trên loopback, không cần Docker/merchant; integration ba JVM vẫn chạy riêng theo runbook.
+shipping-flow:fixtures:
+  extends: .fe-base
+  stage: test
+  script:
+    - node --test scripts/shipping-flow/fixtures.test.mjs scripts/shipping-flow/dispatch.test.mjs
+    - node --check scripts/check-shipping-flow.mjs
+  rules:
+    - changes: [scripts/shipping-flow/**/*, scripts/check-shipping-flow.mjs, .ci/**/*, .gitlab-ci.yml]
+
 # Cluster riêng do initdb tạo, chạy bằng postgres thay vì root; không đọc credential triển khai.
 demo-fixture:postgres:
   image: postgres:16-bookworm

@@ -50,7 +50,10 @@ public class PaymentPricingService {
             return new PaymentPriceSnapshot.Line(item.getId(), item.getSkuId(), item.getQuantity(), price, total);
         }).toList();
         BigDecimal subtotal = lines.stream().map(PaymentPriceSnapshot.Line::itemTotal).reduce(new BigDecimal("0.00"), BigDecimal::add);
-        BigDecimal shipping = auction ? order.getEstimatedShippingFee() : properties.getOrder().getShippingFee();
+        // Ưu tiên phí vận chuyển đã lưu trên đơn hàng (tính từ đơn vị vận chuyển GHN/GHTK), fallback phí cấu hình hệ thống
+        BigDecimal shipping = order.getEstimatedShippingFee() != null && order.getEstimatedShippingFee().compareTo(BigDecimal.ZERO) >= 0
+                ? order.getEstimatedShippingFee()
+                : properties.getOrder().getShippingFee();
         if (shipping == null || shipping.signum() < 0) { throw invalid("Phí vận chuyển không hợp lệ"); }
         shipping = shipping.setScale(2, RoundingMode.HALF_UP);
         BigDecimal total = subtotal.add(shipping);
