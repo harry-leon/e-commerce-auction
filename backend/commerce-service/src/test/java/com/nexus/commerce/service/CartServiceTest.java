@@ -276,4 +276,87 @@ class CartServiceTest {
 
         assertThrows(BusinessException.class, () -> limitedCartService.addItem(userId, new AddToCartRequest(skuId, 1)));
     }
+
+    /**
+     * Test case bảo vệ phản hồi lỗi tồn kho từ feedback tester:
+     * Tình huống: Trong giỏ đã có 4 cái, người dùng thêm tiếp 80 cái trong khi tồn khả dụng là 80.
+     * Kỳ vọng: Ném BusinessException INSUFFICIENT_STOCK với câu thông báo chỉ rõ tồn kho còn 80 và đã có 4 trong giỏ.
+     */
+    @Test
+    void addItem_exceedsInventoryStock_withExistingQuantity_throwsInsufficientStock() {
+        com.nexus.commerce.client.InventoryClient mockInventory = org.mockito.Mockito.mock(com.nexus.commerce.client.InventoryClient.class);
+        CartServiceImpl serviceWithInventory = new CartServiceImpl(cartRepository, cartItemRepository, cartMapper, catalogClient, mockInventory, new CommerceProperties());
+
+        Cart cart = Cart.builder().id(cartId).userId(userId).status(CartStatus.ACTIVE).items(new ArrayList<>()).build();
+        CartItem existingItem = CartItem.builder().id(UUID.randomUUID()).cart(cart).skuId(skuId).quantity(4).build();
+        cart.getItems().add(existingItem);
+
+        when(cartRepository.findByUserIdAndStatus(userId, CartStatus.ACTIVE)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByCartIdAndSkuId(cartId, skuId)).thenReturn(Optional.of(existingItem));
+
+        SkuInfo skuInfo = new SkuInfo(skuId, "SKU-AO-THUN", "Áo thun cotton thường ngày", "thumb.jpg", new BigDecimal("150.00"), null, true);
+        when(catalogClient.getSkuInfo(skuId)).thenReturn(skuInfo);
+        when(mockInventory.available(skuId)).thenReturn(80);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> serviceWithInventory.addItem(userId, new AddToCartRequest(skuId, 80)));
+
+        assertEquals("INSUFFICIENT_STOCK", ex.getCode());
+        org.junit.jupiter.api.Assertions.assertTrue(ex.getMessage().contains("chỉ còn 80 sản phẩm"));
+        org.junit.jupiter.api.Assertions.assertTrue(ex.getMessage().contains("đã có 4 sản phẩm"));
+    }
+
+    /**
+     * Test case kiểm tra tăng số lượng trong giỏ vượt quá tồn kho khả dụng từ Fulfillment:
+     * Kỳ vọng: Ném BusinessException INSUFFICIENT_STOCK khi sửa số lượng vượt tồn kho.
+     */
+    @Test
+    void updateItemQuantity_exceedsInventoryStock_throwsInsufficientStock() {
+        com.nexus.commerce.client.InventoryClient mockInventory = org.mockito.Mockito.mock(com.nexus.commerce.client.InventoryClient.class);
+        CartServiceImpl serviceWithInventory = new CartServiceImpl(cartRepository, cartItemRepository, cartMapper, catalogClient, mockInventory, new CommerceProperties());
+
+        Cart cart = Cart.builder().id(cartId).userId(userId).status(CartStatus.ACTIVE).items(new ArrayList<>()).build();
+        UUID itemId = UUID.randomUUID();
+        CartItem existingItem = CartItem.builder().id(itemId).cart(cart).skuId(skuId).quantity(4).build();
+        cart.getItems().add(existingItem);
+
+        when(cartRepository.findByUserIdAndStatus(userId, CartStatus.ACTIVE)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findById(itemId)).thenReturn(Optional.of(existingItem));
+
+        SkuInfo skuInfo = new SkuInfo(skuId, "SKU-AO-THUN", "Áo thun cotton thường ngày", "thumb.jpg", new BigDecimal("150.00"), null, true);
+        when(catalogClient.getSkuInfo(skuId)).thenReturn(skuInfo);
+        when(mockInventory.available(skuId)).thenReturn(80);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> serviceWithInventory.updateItemQuantity(userId, itemId, new UpdateCartItemRequest(85)));
+
+        assertEquals("INSUFFICIENT_STOCK", ex.getCode());
+        org.junit.jupiter.api.Assertions.assertTrue(ex.getMessage().contains("chỉ còn 80 sản phẩm"));
+    }
+
+    /**
+     * Test case kiểm tra hiển thị giỏ hàng tích hợp tồn kho thật từ Fulfillment:
+     * Kỳ vọng: CartResponse trả về stockAvailable=80 và isAvailable=true khi quantity <= stock.
+     */
+    @Test
+    void getActiveCart_includesRealInventoryAvailability() {
+        com.nexus.commerce.client.InventoryClient mockInventory = org.mockito.Mockito.mock(com.nexus.commerce.client.InventoryClient.class);
+        CartServiceImpl serviceWithInventory = new CartServiceImpl(cartRepository, cartItemRepository, cartMapper, catalogClient, mockInventory, new CommerceProperties());
+
+        Cart cart = Cart.builder().id(cartId).userId(userId).status(CartStatus.ACTIVE).items(new ArrayList<>()).build();
+        CartItem item = CartItem.builder().id(UUID.randomUUID()).cart(cart).skuId(skuId).quantity(4).unitPrice(new BigDecimal("150.00")).build();
+        cart.getItems().add(item);
+
+        when(cartRepository.findByUserIdAndStatus(userId, CartStatus.ACTIVE)).thenReturn(Optional.of(cart));
+        SkuInfo skuInfo = new SkuInfo(skuId, "SKU-AO-THUN", "Áo thun cotton thường ngày", "thumb.jpg", new BigDecimal("150.00"), null, true);
+        when(catalogClient.getSkuDetails(any())).thenReturn(Map.of(skuId, skuInfo));
+        when(mockInventory.availability(any())).thenReturn(Map.of(skuId, 80));
+
+        CartResponse response = serviceWithInventory.getActiveCart(userId);
+
+        assertNotNull(response);
+        assertEquals(1, response.items().size());
+        assertEquals(80, response.items().get(0).stockAvailable());
+        assertEquals(true, response.items().get(0).isAvailable());
+    }
 }

@@ -102,16 +102,19 @@ describe('Shipping API Service', () => {
             expect(result.options[1].shippingFee).toBe(35000)
         })
 
-        it('áp dụng miễn phí vận chuyển khi tổng đơn hàng đạt hoặc vượt ngưỡng freeShippingThreshold', () => {
-            const fallbackUnder = getFallbackShippingQuotes(400000)
-            expect(fallbackUnder.freeShippingApplied).toBe(false)
-            expect(fallbackUnder.options[0].shippingFee).toBe(55000)
+        it('không tự động miễn phí vận chuyển theo tổng tiền hàng; chỉ miễn phí khi có voucher FREESHIP', () => {
+            // Đơn hàng giá trị cao (600.000 đ) nhưng không có voucher thì vẫn phải trả phí vận chuyển chuẩn
+            const fallbackNoVoucher = getFallbackShippingQuotes(600000)
+            expect(fallbackNoVoucher.freeShippingApplied).toBe(false)
+            expect(fallbackNoVoucher.options[0].shippingFee).toBe(55000)
+            expect(fallbackNoVoucher.options[1].shippingFee).toBe(35000)
 
-            const fallbackOver = getFallbackShippingQuotes(600000)
-            expect(fallbackOver.freeShippingApplied).toBe(true)
-            expect(fallbackOver.options[0].shippingFee).toBe(0)
-            expect(fallbackOver.options[1].shippingFee).toBe(0)
-            expect(fallbackOver.options[0].originalFee).toBe(55000)
+            // Khi áp dụng voucher FREESHIP hợp lệ, phí vận chuyển được giảm về 0 đ
+            const fallbackWithVoucher = getFallbackShippingQuotes(200000, 'FREESHIP')
+            expect(fallbackWithVoucher.freeShippingApplied).toBe(true)
+            expect(fallbackWithVoucher.options[0].shippingFee).toBe(0)
+            expect(fallbackWithVoucher.options[1].shippingFee).toBe(0)
+            expect(fallbackWithVoucher.options[0].originalFee).toBe(55000)
         })
     })
 

@@ -311,11 +311,17 @@ const STATUS_BADGE: Record<string, string> = {
     up: 'badge-green',
     down: 'badge-red',
     // PaymentStatus (lowercase, không đổi)
+    // Chức năng: Ánh xạ màu sắc trạng thái thanh toán và bảo vệ ký quỹ người mua/bán.
+    // Đầu vào: status string; Kết quả: class CSS tương ứng.
+    // Quy tắc: Đơn chờ thu tiền/chưa thanh toán dùng badge vàng; đã quyết toán vào ví người bán dùng badge xanh.
     held: 'badge-slate',
     protection_period: 'badge-blue',
     released: 'badge-green',
     on_hold: 'badge-yellow',
     partial_refund: 'badge-yellow',
+    pending: 'badge-yellow',
+    unpaid: 'badge-yellow',
+    unknown: 'badge-yellow',
 }
 
 export function StatusBadge({ status, label }: { status: string; label: string }) {

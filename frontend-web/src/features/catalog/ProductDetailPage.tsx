@@ -421,20 +421,31 @@ export function ProductDetailPage() {
                 setAddingToCart(false)
             }
         }
-        const guestCart = addGuestCartItem({
-            skuId: skuId || product.id,
-            skuCode: formatSkuDisplay(targetSku?.id, targetSku?.skuCode) || `SKU-${product.id}`,
-            productName: lang === 'en' ? product.name : product.nameVi || product.name,
-            thumbnailUrl: productImages[0],
-            unitPrice: currentPrice,
-            quantity: qty,
-        })
-        setCartCount(guestCart.totalQuantity)
-        showToast({
-            type: 'success',
-            message:
-                lang === 'en' ? `Added ${qty}x to cart!` : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
-        })
+        try {
+            const guestCart = addGuestCartItem({
+                skuId: skuId || product.id,
+                skuCode: formatSkuDisplay(targetSku?.id, targetSku?.skuCode) || `SKU-${product.id}`,
+                productName: lang === 'en' ? product.name : product.nameVi || product.name,
+                thumbnailUrl: productImages[0],
+                unitPrice: currentPrice,
+                quantity: qty,
+                stockAvailable: availableStock,
+            })
+            setCartCount(guestCart.totalQuantity)
+            showToast({
+                type: 'success',
+                message:
+                    lang === 'en' ? `Added ${qty}x to cart!` : `Đã thêm ${qty} sản phẩm vào giỏ hàng!`,
+            })
+        } catch (err) {
+            showToast({
+                type: 'error',
+                message:
+                    lang === 'en'
+                        ? `Failed to add to cart: ${err instanceof Error ? err.message : String(err)}`
+                        : `Thêm vào giỏ hàng thất bại: ${err instanceof Error ? err.message : String(err)}`,
+            })
+        }
     }
 
     /**

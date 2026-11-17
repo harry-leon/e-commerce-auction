@@ -86,9 +86,10 @@ public class GhtkCarrierAdapter implements ShippingCarrierAdapter {
     public CarrierQuoteResult quote(CarrierQuoteRequest request) {
         String serviceType = normalizeServiceType(request.serviceType());
         if (isLocalSandboxFallback()) {
-            BigDecimal baseFee = "EXPRESS".equals(serviceType) ? new BigDecimal("30.00") : new BigDecimal("18.00");
+            // Cước sandbox chuẩn VNĐ: Gói Hỏa tốc = 30.000₫, Gói Tiêu chuẩn = 18.000₫ (thay vì 30.00 và 18.00)
+            BigDecimal baseFee = "EXPRESS".equals(serviceType) ? new BigDecimal("30000") : new BigDecimal("18000");
             int weight = request.weightGrams() != null && request.weightGrams() > 0 ? request.weightGrams() : 500;
-            BigDecimal extra = BigDecimal.valueOf(Math.max(0, (weight - 500) / 500) * 2L);
+            BigDecimal extra = BigDecimal.valueOf(Math.max(0, (weight - 500) / 500) * 3000L);
             int days = "EXPRESS".equals(serviceType) ? 2 : defaultDeliveryDays;
             return new CarrierQuoteResult(
                     CARRIER_CODE,

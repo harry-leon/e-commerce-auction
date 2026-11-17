@@ -48,6 +48,12 @@ import { purchaseAvailabilityMessage } from './purchaseAvailability'
 import { VerifiedOrderResult } from './VerifiedOrderResult'
 import { createPaymentAttempt, redirectToGateway } from '../../api/payments'
 import {
+    getProvinces,
+    getDistricts,
+    getWards,
+    type AdministrativeDivision,
+} from '../../components/AddressSelector'
+import {
     readCheckoutCommand,
     recoverOrCreateOrder,
     checkoutAttemptKey,
@@ -650,19 +656,75 @@ export function CartPage() {
     const [voucherError, setVoucherError] = useState('')
     const [showClearConfirm, setShowClearConfirm] = useState(false)
     const [checkingCheckout, setCheckingCheckout] = useState(false)
+    // State lưu tập hợp ID các dòng sản phẩm bị người dùng bỏ tick chọn (mặc định rỗng = chọn tất cả)
+    const [unselectedItemIds, setUnselectedItemIds] = useState<Set<string>>(new Set())
 
-    /** Chặn hết hàng ngay tại giỏ trước điều hướng; không cho lỗi kết nối vượt qua bước kiểm tra kho. */
+    // Toggle tick chọn / bỏ chọn từng sản phẩm lẻ
+    const handleToggleItem = (itemId: string) => {
+        setUnselectedItemIds((prev) => {
+            const next = new Set(prev)
+            if (next.has(itemId)) {
+                next.delete(itemId)
+            } else {
+                next.add(itemId)
+            }
+            return next
+        })
+    }
+
+    /**
+     * Bắt đầu luồng thanh toán (Checkout):
+     * - Chức năng: Kiểm tra tồn kho khả dụng cho các sản phẩm được chọn và lưu ID đã chọn trước khi điều hướng.
+     * - Đầu vào: selectedItems (các sản phẩm được tick chọn trong giỏ hàng).
+     * - Luồng xử lý: Kiểm tra số lượng đã chọn > 0 -> kiểm tra tồn kho tại chỗ -> gọi purchaseAvailabilityMessage -> lưu sessionStorage -> navigate.
+     * - Quy tắc: Không cho checkout nếu chưa chọn sản phẩm nào hoặc sản phẩm vượt tồn kho khả dụng.
+     */
     const beginCheckout = async () => {
         if (!cart || checkingCheckout) return
+        const currentSelectedItems = (cart.items || []).filter((it) => !unselectedItemIds.has(it.id))
+        if (currentSelectedItems.length === 0) {
+            setError(
+                lang === 'vi'
+                    ? 'Vui lòng chọn ít nhất một sản phẩm để thanh toán.'
+                    : 'Please select at least one item to checkout.',
+            )
+            return
+        }
+
+        // Kiểm tra sớm tồn kho ngay tại các item được chọn
+        for (const item of currentSelectedItems) {
+            if (
+                item.stockAvailable !== null &&
+                item.stockAvailable !== undefined &&
+                item.quantity > item.stockAvailable
+            ) {
+                setError(
+                    lang === 'vi'
+                        ? `Sản phẩm "${item.productName}" ${item.stockAvailable <= 0 ? 'đã hết hàng' : `chỉ còn ${item.stockAvailable} sản phẩm`}. Vui lòng cập nhật giỏ hàng.`
+                        : `"${item.productName}" ${item.stockAvailable <= 0 ? 'is out of stock' : `only has ${item.stockAvailable} items available`}. Please update your cart.`,
+                )
+                return
+            }
+        }
+
         setCheckingCheckout(true)
         try {
-            // Khi đi từ Giỏ hàng, mục tiêu là thanh toán toàn bộ giỏ; dọn dẹp mục tiêu "Mua ngay" lẻ nếu có
+            // Khi đi từ Giỏ hàng, lưu danh sách các item được tick chọn vào sessionStorage
             try {
                 sessionStorage.removeItem('nexus.buy-now-target')
+                sessionStorage.setItem(
+                    'nexus.selected-cart-items',
+                    JSON.stringify(currentSelectedItems.map((it) => it.id)),
+                )
+                if (appliedVoucher) {
+                    sessionStorage.setItem('nexus.applied-voucher', appliedVoucher)
+                } else {
+                    sessionStorage.removeItem('nexus.applied-voucher')
+                }
             } catch {
                 // Bỏ qua lỗi storage
             }
-            const message = await purchaseAvailabilityMessage(cart.items, lang)
+            const message = await purchaseAvailabilityMessage(currentSelectedItems, lang)
             if (message) {
                 setError(message)
                 return
@@ -771,6 +833,11 @@ export function CartPage() {
 
     // Xóa sản phẩm khỏi giỏ hàng (Accept Criteria 2)
     const handleRemoveItem = async (itemId: string) => {
+        setUnselectedItemIds((prev) => {
+            const next = new Set(prev)
+            next.delete(itemId)
+            return next
+        })
         setActionLoadingId(itemId)
         try {
             const session = readSession()
@@ -817,6 +884,7 @@ export function CartPage() {
 
     // Xóa toàn bộ giỏ hàng
     const handleClearCart = async () => {
+        setUnselectedItemIds(new Set())
         setActionLoadingId('all')
         try {
             const session = readSession()
@@ -839,11 +907,19 @@ export function CartPage() {
     }
 
     // Áp dụng mã giảm giá voucher
+    // Chức năng: Cho phép Buyer áp dụng các mã ưu đãi hợp lệ (NEXUS10, FREESHIP, WELCOME20, VIP50).
+    // Quy tắc: Chỉ khi áp dụng voucher FREESHIP thì đơn hàng mới được miễn phí vận chuyển.
     const applyVoucher = () => {
-        if (voucher === 'NEXUS10') {
-            setAppliedVoucher(voucher)
+        const clean = voucher.trim().toUpperCase()
+        if (['NEXUS10', 'FREESHIP', 'WELCOME20', 'VIP50'].includes(clean)) {
+            setAppliedVoucher(clean)
             setVoucherError('')
             showToast({ type: 'success', message: tr(lang, 'voucherApplied') })
+            try {
+                sessionStorage.setItem('nexus.applied-voucher', clean)
+            } catch {
+                // Bỏ qua lỗi storage
+            }
         } else {
             setVoucherError(tr(lang, 'invalidVoucher'))
         }
@@ -918,23 +994,40 @@ export function CartPage() {
     }
 
     // Chức năng: Động cơ tính giá tạm tính phía Frontend (Client-side Estimated Pricing)
+    // - Tính trên tập hợp sản phẩm được tick chọn (selectedItems).
     // - Tính chiết khấu mua số lượng cùng một nhà bán/nhà sản xuất (Merchant Bulk Discount)
     // - Tính khuyến mãi nhóm ngành hàng (ví dụ: mua cua giảm 10%, tôm giảm 15%)
     // - Kiểm tra phụ phí / điều phối giờ cao điểm (Peak-hour surcharge)
     // - Áp dụng Voucher toàn sàn
-    // Quy tắc: FE chỉ tính tạm để hiển thị, BE sẽ tính toán độc lập tại thời điểm thanh toán
+    // Quy tắc: FE chỉ tính tạm trên các sản phẩm được chọn để hiển thị; BE tính toán độc lập tại thời điểm thanh toán
     const items = cart?.items || []
-    const pricing = calculateEstimatedPricing(items, appliedVoucher)
-    const subtotal = pricing.baseSubtotal || cart?.subtotal || 0
+    const selectedItems = items.filter((it) => !unselectedItemIds.has(it.id))
+    const allSelected = items.length > 0 && selectedItems.length === items.length
+    const isIndeterminate = selectedItems.length > 0 && selectedItems.length < items.length
+
+    const handleToggleSelectAll = () => {
+        if (allSelected) {
+            setUnselectedItemIds(new Set(items.map((it) => it.id)))
+        } else {
+            setUnselectedItemIds(new Set())
+        }
+    }
+
+    const pricing = calculateEstimatedPricing(selectedItems, appliedVoucher)
+    const subtotal = selectedItems.length > 0 ? (pricing.baseSubtotal || 0) : 0
     const discount =
-        pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
+        selectedItems.length > 0
+            ? pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
+            : 0
     const shipping =
-        cart?.shippingFee !== undefined && cart.shippingFee > 0
-            ? cart.shippingFee
-            : pricing.estimatedShipping
-    const tax = pricing.estimatedTax
-    const peakHourFee = pricing.peakHourFee
-    const total = Math.max(0, subtotal - discount + shipping + tax + peakHourFee)
+        selectedItems.length > 0
+            ? (cart?.shippingFee !== undefined && cart.shippingFee > 0
+                  ? cart.shippingFee
+                  : pricing.estimatedShipping)
+            : 0
+    const tax = selectedItems.length > 0 ? pricing.estimatedTax : 0
+    const peakHourFee = selectedItems.length > 0 ? pricing.peakHourFee : 0
+    const total = selectedItems.length > 0 ? Math.max(0, subtotal - discount + shipping + tax + peakHourFee) : 0
 
     return (
         <BuyerLayout>
@@ -956,40 +1049,106 @@ export function CartPage() {
                 </Button>
             </div>
 
-            {/* Thông báo miễn phí vận chuyển: tự động nhận diện đơn vị VND (ngưỡng 500.000đ) hoặc USD (ngưỡng 100) */}
-            {(() => {
-                const freeShippingThreshold = subtotal > 1000 ? 500_000 : 100
-                if (subtotal >= freeShippingThreshold) return null
-                const diff = freeShippingThreshold - subtotal
-                return (
-                    <>
-                        <AlertBanner
-                            type="info"
-                            message={
-                                lang === 'en'
-                                    ? `Add ${formatCurrency(diff, lang)} more to get free shipping!`
-                                    : `Thêm ${formatCurrency(diff, lang)} để được miễn phí vận chuyển!`
-                            }
-                        />
-                        <div className="mt-3 mb-5">
-                            <ProgressBar value={subtotal} max={freeShippingThreshold} />
-                        </div>
-                    </>
-                )
-            })()}
+            {/* Thông báo chính sách vận chuyển: Phí ship chuẩn, miễn phí khi áp dụng voucher FREESHIP */}
+            {appliedVoucher === 'FREESHIP' ? (
+                <div className="mb-4">
+                    <AlertBanner
+                        type="success"
+                        message={
+                            lang === 'en'
+                                ? 'Voucher FREESHIP applied: Free shipping on this order!'
+                                : 'Đã áp dụng mã FREESHIP: Đơn hàng của bạn được miễn phí vận chuyển!'
+                        }
+                    />
+                </div>
+            ) : (
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <Truck size={16} className="text-primary shrink-0" />
+                        <span>
+                            {lang === 'en'
+                                ? 'Shipping fee applies to all orders. Enter voucher code '
+                                : 'Phí vận chuyển được tính cho mọi đơn hàng. Nhập mã voucher '}
+                            <span className="font-bold text-primary bg-orange-100 px-1.5 py-0.5 rounded font-mono">
+                                FREESHIP
+                            </span>
+                            {lang === 'en' ? ' for free shipping.' : ' để được miễn phí vận chuyển.'}
+                        </span>
+                    </div>
+                    {!appliedVoucher && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setVoucher('FREESHIP')
+                                setAppliedVoucher('FREESHIP')
+                                setVoucherError('')
+                                showToast({
+                                    type: 'success',
+                                    message: tr(lang, 'voucherApplied'),
+                                })
+                                try {
+                                    sessionStorage.setItem('nexus.applied-voucher', 'FREESHIP')
+                                } catch {
+                                    // Bỏ qua lỗi storage
+                                }
+                            }}
+                            className="text-primary font-bold hover:underline shrink-0 text-xs ml-2 cursor-pointer"
+                        >
+                            {lang === 'en' ? 'Apply FREESHIP' : 'Áp dụng ngay'}
+                        </button>
+                    )}
+                </div>
+            )}
 
             {error && <AlertBanner type="error" message={error} />}
             <div className="grid grid-cols-[1fr_360px] gap-8 mt-4">
-                {/* Danh sách sản phẩm từ Backend (Accept Criteria 1) */}
+                {/* Danh sách sản phẩm từ Backend kèm Checkbox Chọn tất cả / Chọn từng sản phẩm (Accept Criteria 1) */}
                 <div className="space-y-3">
+                    {/* Thanh Chọn tất cả sản phẩm */}
+                    <div className="nexus-card p-3 flex items-center justify-between bg-white border border-border">
+                        <label className="flex items-center gap-3 cursor-pointer text-sm font-semibold text-gray-800 select-none">
+                            <input
+                                type="checkbox"
+                                checked={allSelected}
+                                ref={(el) => {
+                                    if (el) el.indeterminate = isIndeterminate
+                                }}
+                                onChange={handleToggleSelectAll}
+                                className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                                aria-label={lang === 'vi' ? 'Chọn tất cả' : 'Select all'}
+                            />
+                            <span>
+                                {lang === 'vi' ? 'Chọn tất cả' : 'Select all'} ({selectedItems.length}/{items.length} {lang === 'vi' ? 'sản phẩm' : 'items'})
+                            </span>
+                        </label>
+                        {selectedItems.length > 0 && (
+                            <span className="text-xs text-primary font-medium">
+                                {lang === 'vi'
+                                    ? `Đã chọn ${selectedItems.length} sản phẩm`
+                                    : `${selectedItems.length} items selected`}
+                            </span>
+                        )}
+                    </div>
+
                     {items.map((item) => {
                         const displayImage =
                             item.thumbnailUrl ||
                             'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200'
                         const isActing = actionLoadingId === item.id
+                        const isSelected = !unselectedItemIds.has(item.id)
 
                         return (
-                            <div key={item.id} className="nexus-card p-4 flex gap-4 relative">
+                            <div
+                                key={item.id}
+                                className={`nexus-card p-4 flex gap-4 relative items-center transition-all ${isSelected ? 'border-primary/40 bg-orange-50/10' : 'opacity-75'}`}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => handleToggleItem(item.id)}
+                                    className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer shrink-0"
+                                    aria-label={`Select ${item.productName}`}
+                                />
                                 <img
                                     src={displayImage}
                                     alt={item.productName}
@@ -1022,11 +1181,23 @@ export function CartPage() {
                                         </button>
                                     </div>
 
-                                    {!item.isAvailable && (
+                                    {item.stockAvailable !== null && item.stockAvailable !== undefined ? (
+                                        item.stockAvailable <= 0 ? (
+                                            <span className="inline-block text-xs bg-red-100 text-danger px-2 py-0.5 rounded-full font-medium mt-1">
+                                                {tr(lang, 'outOfStock')}
+                                            </span>
+                                        ) : item.quantity > item.stockAvailable ? (
+                                            <span className="inline-block text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-medium mt-1">
+                                                {lang === 'vi'
+                                                    ? `Chỉ còn ${item.stockAvailable} sản phẩm (vượt tồn kho)`
+                                                    : `Only ${item.stockAvailable} in stock (exceeds stock)`}
+                                            </span>
+                                        ) : null
+                                    ) : !item.isAvailable ? (
                                         <span className="inline-block text-xs bg-danger-light text-danger px-2 py-0.5 rounded-full font-medium mt-1">
                                             {tr(lang, 'outOfStock')}
                                         </span>
-                                    )}
+                                    ) : null}
 
                                     <div className="flex items-center justify-between mt-3">
                                         {/* Điều chỉnh số lượng sản phẩm; khi đang gọi API thì làm mờ và chặn tương tác */}
@@ -1145,8 +1316,8 @@ export function CartPage() {
                             <input
                                 value={voucher}
                                 onChange={(e) => setVoucher(e.target.value)}
-                                placeholder="NEXUS10"
-                                className="nexus-input flex-1 py-2"
+                                placeholder="FREESHIP, NEXUS10"
+                                className="nexus-input flex-1 py-2 font-mono uppercase text-xs"
                             />
                             <Button variant="outline" onClick={applyVoucher}>
                                 {tr(lang, 'applyVoucher')}
@@ -1169,8 +1340,9 @@ export function CartPage() {
                         className="w-full"
                         onClick={beginCheckout}
                         loading={checkingCheckout}
+                        disabled={selectedItems.length === 0}
                     >
-                        {tr(lang, 'checkout')} →
+                        {tr(lang, 'checkout')} {selectedItems.length > 0 ? `(${selectedItems.length})` : ''} →
                     </Button>
                 </div>
             </div>
@@ -1300,6 +1472,18 @@ export function CheckoutPage() {
     const [priceMismatchNotice, setPriceMismatchNotice] = useState<string | null>(null)
     const [cartReloadTrigger, setCartReloadTrigger] = useState(0)
 
+    // Quản lý đơn vị hành chính chuẩn hóa qua Open API (provinces.open-api.vn)
+    const [provinces, setProvinces] = useState<AdministrativeDivision[]>([])
+    const [districts, setDistricts] = useState<AdministrativeDivision[]>([])
+    const [wards, setWards] = useState<AdministrativeDivision[]>([])
+    const [selectedProvinceCode, setSelectedProvinceCode] = useState<number | ''>('')
+    const [selectedDistrictCode, setSelectedDistrictCode] = useState<number | ''>('')
+    const [selectedWardCode, setSelectedWardCode] = useState<number | ''>('')
+    const [loadingProvinces, setLoadingProvinces] = useState<boolean>(false)
+    const [loadingDistricts, setLoadingDistricts] = useState<boolean>(false)
+    const [loadingWards, setLoadingWards] = useState<boolean>(false)
+    const [manualAddressMode, setManualAddressMode] = useState<boolean>(false)
+
     // State lưu mục tiêu "Mua ngay" độc lập (nếu có) từ ProductDetailPage.
     // Nếu buyNowTarget có dữ liệu, CheckoutPage chỉ xử lý và thanh toán riêng mặt hàng này.
     const [buyNowTarget, setBuyNowTarget] = useState<{ skuId: string; quantity: number } | null>(
@@ -1321,11 +1505,43 @@ export function CheckoutPage() {
     const [orderSnapshot, setOrderSnapshot] = useState<CheckoutOrderSnapshot | null>(null)
     const [orderSnapshotError, setOrderSnapshotError] = useState<string | null>(null)
 
+    // Quản lý mã Voucher ưu đãi tại màn hình Checkout (ví dụ: FREESHIP để miễn phí vận chuyển)
+    const [checkoutVoucherInput, setCheckoutVoucherInput] = useState(() => {
+        try {
+            return sessionStorage.getItem('nexus.applied-voucher') || ''
+        } catch {
+            return ''
+        }
+    })
+    const [appliedCheckoutVoucher, setAppliedCheckoutVoucher] = useState<string | null>(() => {
+        try {
+            return sessionStorage.getItem('nexus.applied-voucher') || null
+        } catch {
+            return null
+        }
+    })
+    const [checkoutVoucherError, setCheckoutVoucherError] = useState('')
+
     // Danh sách sản phẩm thực sự tham gia đơn checkout:
     // - Nếu người dùng bấm "Mua ngay" tại trang chi tiết sản phẩm, chỉ checkout riêng SKU đó.
-    // - Nếu người dùng đi từ Giỏ hàng, checkout toàn bộ các mặt hàng trong giỏ.
+    // - Nếu người dùng đi từ Giỏ hàng, checkout các mặt hàng được tick chọn (hoặc toàn bộ nếu không có danh sách chọn riêng).
     const activeCheckoutItems: CartItemResponse[] = useMemo(() => {
-        if (!buyNowTarget?.skuId) return cartItems
+        if (!buyNowTarget?.skuId) {
+            try {
+                const rawSelected = sessionStorage.getItem('nexus.selected-cart-items')
+                if (rawSelected) {
+                    const ids: string[] = JSON.parse(rawSelected)
+                    if (Array.isArray(ids) && ids.length > 0) {
+                        const selectedSet = new Set(ids)
+                        const filtered = cartItems.filter((it) => selectedSet.has(it.id))
+                        if (filtered.length > 0) return filtered
+                    }
+                }
+            } catch {
+                // Bỏ qua lỗi parse storage
+            }
+            return cartItems
+        }
         // Dòng Mua ngay độc lập với giỏ: chỉ dùng snapshot UI và số lượng vừa chọn; không fallback cả giỏ.
         const target = buyNowTarget as typeof buyNowTarget & { item?: CartItemResponse }
         return target.item
@@ -1526,6 +1742,9 @@ export function CheckoutPage() {
      * 4. Quy tắc & lý do: Đảm bảo khách hàng thấy được phí ship minh bạch trước khi chốt đơn.
      * 5. Lỗi & giới hạn: Quản lý loading, empty và error state rõ ràng với nút Thử lại.
      */
+    const shippingRef = useRef(shipping)
+    shippingRef.current = shipping
+
     const fetchShippingQuotes = useCallback(async () => {
         setShippingQuoteLoading(true)
         setShippingQuoteError(null)
@@ -1538,12 +1757,13 @@ export function CheckoutPage() {
             const quote = await shippingApi.getShippingQuotes({
                 shippingAddress: fullAddress || 'Ho Chi Minh City',
                 orderTotal: subtotal,
+                voucherCode: appliedCheckoutVoucher,
             })
             setShippingQuoteResponse(quote)
             const opts = quote.options || []
             setShippingOptions(opts)
             if (opts.length > 0) {
-                const found = opts.find((o) => o.carrier === shipping)
+                const found = opts.find((o) => o.carrier === shippingRef.current)
                 if (!found) {
                     setShipping(quote.defaultCarrier || opts[0].carrier)
                 }
@@ -1558,13 +1778,13 @@ export function CheckoutPage() {
         } finally {
             setShippingQuoteLoading(false)
         }
-    }, [shippingData, activeCheckoutItems, shipping, lang])
+    }, [shippingData, activeCheckoutItems, appliedCheckoutVoucher, lang])
 
     useEffect(() => {
         if (step === 2) {
             void fetchShippingQuotes()
         }
-    }, [step, fetchShippingQuotes])
+    }, [step, fetchShippingQuotes, appliedCheckoutVoucher])
 
     const selectedShippingOption = useMemo(() => {
         if (shippingOptions.length > 0) {
@@ -1574,11 +1794,15 @@ export function CheckoutPage() {
     }, [shippingOptions, shipping])
 
     const currentShippingFee = useMemo(() => {
+        // Chỉ miễn phí vận chuyển khi có voucher FREESHIP hợp lệ
+        if (appliedCheckoutVoucher?.trim().toUpperCase() === 'FREESHIP') {
+            return 0
+        }
         if (selectedShippingOption) {
             return selectedShippingOption.shippingFee
         }
         return shipping === 'GHN' ? (lang === 'vi' ? 55000 : 3.99) : lang === 'vi' ? 35000 : 2.49
-    }, [selectedShippingOption, shipping, lang])
+    }, [selectedShippingOption, shipping, appliedCheckoutVoucher, lang])
 
     /**
      * Chức năng: Nạp và tự động đồng bộ giỏ hàng trước khi thực hiện Checkout.
@@ -1658,21 +1882,199 @@ export function CheckoutPage() {
         tr(lang, 'confirmation'),
     ]
 
+    // Tải danh sách 63 Tỉnh/Thành từ Open API và tự động khớp mã hành chính theo shippingData ban đầu
+    useEffect(() => {
+        let isMounted = true
+        setLoadingProvinces(true)
+        getProvinces()
+            .then(async (provs) => {
+                if (!isMounted) return
+                setProvinces(provs)
+
+                // Tìm tỉnh/thành khớp với city hiện tại (nếu có dữ liệu nháp)
+                const currentCity = shippingData.city.trim().toLowerCase()
+                if (!currentCity) return
+                const matchedProv = provs.find(
+                    (p) =>
+                        p.name.toLowerCase() === currentCity ||
+                        p.name.toLowerCase().includes(currentCity) ||
+                        (currentCity.includes('ho chi minh') && p.code === 79) ||
+                        (currentCity.includes('ha noi') && p.code === 1),
+                )
+
+                if (matchedProv) {
+                    setSelectedProvinceCode(matchedProv.code)
+                    setLoadingDistricts(true)
+                    try {
+                        const dists = await getDistricts(matchedProv.code)
+                        if (!isMounted) return
+                        setDistricts(dists)
+
+                        const currentDist = shippingData.district.trim().toLowerCase()
+                        if (!currentDist) return
+                        const matchedDist = dists.find(
+                            (d) =>
+                                d.name.toLowerCase() === currentDist ||
+                                d.name.toLowerCase().includes(currentDist) ||
+                                (currentDist.includes('district 1') && d.name.includes('Quận 1')),
+                        )
+
+                        if (matchedDist) {
+                            setSelectedDistrictCode(matchedDist.code)
+                            setLoadingWards(true)
+                            try {
+                                const wds = await getWards(matchedDist.code)
+                                if (!isMounted) return
+                                setWards(wds)
+
+                                const currentWard = shippingData.ward.trim().toLowerCase()
+                                if (!currentWard) return
+                                const matchedWard = wds.find(
+                                    (w) =>
+                                        w.name.toLowerCase() === currentWard ||
+                                        w.name.toLowerCase().includes(currentWard) ||
+                                        (currentWard.includes('ben nghe') && w.name.includes('Bến Nghé')),
+                                )
+                                if (matchedWard) {
+                                    setSelectedWardCode(matchedWard.code)
+                                }
+                            } finally {
+                                if (isMounted) setLoadingWards(false)
+                            }
+                        }
+                    } finally {
+                        if (isMounted) setLoadingDistricts(false)
+                    }
+                }
+            })
+            .catch(() => {
+                // Khi không kết nối được Open API bên ngoài, tự động chuyển sang chế độ nhập tự do
+                if (isMounted) setManualAddressMode(true)
+            })
+            .finally(() => {
+                if (isMounted) setLoadingProvinces(false)
+            })
+
+        return () => {
+            isMounted = false
+        }
+    }, [])
+
+    /**
+     * Xử lý khi người dùng chọn Tỉnh / Thành phố:
+     * - Chức năng: Lưu tên Tỉnh vào shippingData, xóa Quận/Xã cũ và tải danh sách Quận/Huyện từ API.
+     * - Đầu vào: code (mã tỉnh thành Open API).
+     * - Kết quả: Cập nhật shippingData.city, selectedProvinceCode và tải districts.
+     */
+    const handleProvinceChange = async (code: number | '') => {
+        setSelectedProvinceCode(code)
+        setSelectedDistrictCode('')
+        setSelectedWardCode('')
+        setDistricts([])
+        setWards([])
+        const provName = provinces.find((p) => p.code === code)?.name || ''
+        setShippingData((prev) => ({
+            ...prev,
+            city: provName,
+            district: '',
+            ward: '',
+        }))
+        setShippingErrors((prev) => ({
+            ...prev,
+            city: undefined,
+            district: undefined,
+            ward: undefined,
+        }))
+
+        if (code) {
+            setLoadingDistricts(true)
+            try {
+                const list = await getDistricts(code)
+                setDistricts(list)
+            } catch {
+                setDistricts([])
+            } finally {
+                setLoadingDistricts(false)
+            }
+        }
+    }
+
+    /**
+     * Xử lý khi người dùng chọn Quận / Huyện:
+     * - Chức năng: Lưu tên Quận vào shippingData, xóa Xã cũ và tải danh sách Phường/Xã từ API.
+     * - Đầu vào: code (mã quận huyện Open API).
+     * - Kết quả: Cập nhật shippingData.district, selectedDistrictCode và tải wards.
+     */
+    const handleDistrictChange = async (code: number | '') => {
+        setSelectedDistrictCode(code)
+        setSelectedWardCode('')
+        setWards([])
+        const distName = districts.find((d) => d.code === code)?.name || ''
+        setShippingData((prev) => ({
+            ...prev,
+            district: distName,
+            ward: '',
+        }))
+        setShippingErrors((prev) => ({
+            ...prev,
+            district: undefined,
+            ward: undefined,
+        }))
+
+        if (code) {
+            setLoadingWards(true)
+            try {
+                const list = await getWards(code)
+                setWards(list)
+            } catch {
+                setWards([])
+            } finally {
+                setLoadingWards(false)
+            }
+        }
+    }
+
+    /**
+     * Xử lý khi người dùng chọn Phường / Xã:
+     * - Chức năng: Lưu tên Phường/Xã vào shippingData và xóa lỗi validation tương ứng.
+     * - Đầu vào: code (mã phường xã Open API).
+     * - Kết quả: Cập nhật shippingData.ward và selectedWardCode.
+     */
+    const handleWardChange = (code: number | '') => {
+        setSelectedWardCode(code)
+        const wardName = wards.find((w) => w.code === code)?.name || ''
+        setShippingData((prev) => ({
+            ...prev,
+            ward: wardName,
+        }))
+        setShippingErrors((prev) => ({
+            ...prev,
+            ward: undefined,
+        }))
+    }
+
     // Hàm kiểm tra tính hợp lệ dữ liệu biểu mẫu giao hàng (Accept Criteria 4)
     const validateStep1 = (): boolean => {
         const errors: Partial<Record<keyof ShippingFormData, string>> = {}
 
-        // Họ và tên
-        if (!shippingData.fullName.trim()) {
+        // Họ và tên: bắt buộc, 2-100 ký tự, chỉ gồm chữ cái Unicode và khoảng trắng
+        const nameClean = shippingData.fullName.trim()
+        const nameRegex = /^[\p{L}\s]{2,100}$/u
+        if (!nameClean) {
             errors.fullName = lang === 'en' ? 'Full name is required.' : 'Họ và tên là bắt buộc.'
-        } else if (shippingData.fullName.trim().length < 2) {
+        } else if (nameClean.length < 2) {
             errors.fullName =
                 lang === 'en'
                     ? 'Name must be at least 2 characters.'
                     : 'Họ và tên phải có ít nhất 2 ký tự.'
+        } else if (!nameRegex.test(nameClean)) {
+            errors.fullName =
+                lang === 'en'
+                    ? 'Full name must contain letters and spaces only.'
+                    : 'Họ và tên chỉ được chứa chữ cái và khoảng trắng (không chứa số hoặc ký tự đặc biệt).'
         }
 
-        // Số điện thoại Việt Nam (10 số, bắt đầu bằng 0)
+        // Số điện thoại Việt Nam (10 số, bắt đầu bằng 03, 05, 07, 08, 09)
         const phoneClean = shippingData.phone.replace(/[\s-]/g, '')
         const phoneRegex = /^0(3|5|7|8|9)\d{8}$/
         if (!phoneClean) {
@@ -1681,11 +2083,11 @@ export function CheckoutPage() {
         } else if (!phoneRegex.test(phoneClean)) {
             errors.phone =
                 lang === 'en'
-                    ? 'Invalid phone number (10 digits starting with 0).'
-                    : 'Số điện thoại không hợp lệ (gồm 10 số, bắt đầu bằng 0).'
+                    ? 'Invalid phone number (10 digits starting with 03, 05, 07, 08, 09).'
+                    : 'Số điện thoại không hợp lệ (gồm 10 chữ số, bắt đầu bằng 03, 05, 07, 08, 09).'
         }
 
-        // Địa chỉ cụ thể
+        // Địa chỉ cụ thể (số nhà, tên đường): tối thiểu 5 ký tự
         if (!shippingData.street.trim()) {
             errors.street =
                 lang === 'en' ? 'Street address is required.' : 'Địa chỉ cụ thể là bắt buộc.'
@@ -1693,24 +2095,25 @@ export function CheckoutPage() {
             errors.street =
                 lang === 'en'
                     ? 'Address must be at least 5 characters.'
-                    : 'Địa chỉ phải có ít nhất 5 ký tự.'
+                    : 'Địa chỉ cụ thể phải có ít nhất 5 ký tự.'
         }
 
         // Tỉnh / Thành phố
         if (!shippingData.city.trim()) {
             errors.city =
-                lang === 'en' ? 'City is required.' : 'Vui lòng chọn hoặc nhập Tỉnh/Thành phố.'
+                lang === 'en' ? 'Please select a City / Province.' : 'Vui lòng chọn Tỉnh / Thành phố.'
         }
 
         // Quận / Huyện
         if (!shippingData.district.trim()) {
             errors.district =
-                lang === 'en' ? 'District is required.' : 'Vui lòng chọn hoặc nhập Quận/Huyện.'
+                lang === 'en' ? 'Please select a District.' : 'Vui lòng chọn Quận / Huyện.'
         }
 
         // Phường / Xã
         if (!shippingData.ward.trim()) {
-            errors.ward = lang === 'en' ? 'Ward is required.' : 'Vui lòng chọn hoặc nhập Phường/Xã.'
+            errors.ward =
+                lang === 'en' ? 'Please select a Ward.' : 'Vui lòng chọn Phường / Xã.'
         }
 
         setShippingErrors(errors)
@@ -1843,9 +2246,10 @@ export function CheckoutPage() {
                 return
             }
 
-            // Nếu đang trong chế độ Mua ngay (buyNowTarget), chỉ chọn những item thuộc về target SKU
+            // Nếu đang trong chế độ Mua ngay (buyNowTarget), chỉ chọn item mua ngay;
+            // ngược lại dùng danh sách activeCheckoutItems (đã được lọc theo checkbox từ Giỏ hàng).
             const isBuyNow = !!buyNowTarget?.skuId
-            const checkoutItems = isBuyNow ? activeCheckoutItems : cartItems
+            const checkoutItems = activeCheckoutItems
             const hasLocalId = checkoutItems.some(
                 (item) => !item.id || item.id.startsWith('guest-item-'),
             )
@@ -1868,7 +2272,7 @@ export function CheckoutPage() {
                     ? undefined
                     : hasLocalId
                       ? undefined
-                      : cartItems.map((item) => item.id),
+                      : activeCheckoutItems.map((item) => item.id),
             }
 
             // Lưu key/payload trước Create Order; mất ACK/reload không được sinh đơn mới từ giỏ đã rỗng.
@@ -1884,6 +2288,7 @@ export function CheckoutPage() {
                     clearCheckoutCommand(userId)
                     try {
                         sessionStorage.removeItem('nexus.buy-now-target')
+                        sessionStorage.removeItem('nexus.selected-cart-items')
                     } catch {
                         // Bỏ qua lỗi storage
                     }
@@ -1896,11 +2301,28 @@ export function CheckoutPage() {
                 redirectToGateway(attempt.paymentUrl)
                 clearCheckoutCommand(userId)
                 if (!isBuyNow) {
-                    clearGuestCart()
-                    setCartCount(0)
+                    if (session) {
+                        try {
+                            if (cartItems.length > 0 && cartItems.length === activeCheckoutItems.length) {
+                                await clearCart()
+                                setCartCount(0)
+                            } else {
+                                const refreshed = await getActiveCart()
+                                setCartCount(refreshed.totalQuantity)
+                            }
+                        } catch {
+                            // Bỏ qua lỗi dọn giỏ phụ
+                        }
+                    } else {
+                        for (const it of activeCheckoutItems) {
+                            removeGuestCartItem(it.id)
+                        }
+                        setCartCount(getGuestCart().totalQuantity)
+                    }
                 }
                 try {
                     sessionStorage.removeItem('nexus.buy-now-target')
+                    sessionStorage.removeItem('nexus.selected-cart-items')
                 } catch {
                     // Bỏ qua lỗi storage
                 }
@@ -1916,18 +2338,28 @@ export function CheckoutPage() {
             if (!isBuyNow) {
                 if (session) {
                     try {
-                        await clearCart()
+                        if (cartItems.length > 0 && cartItems.length === activeCheckoutItems.length) {
+                            await clearCart()
+                            setCartCount(0)
+                        } else {
+                            const refreshed = await getActiveCart()
+                            setCartCount(refreshed.totalQuantity)
+                        }
                     } catch {
                         // Bỏ qua lỗi dọn giỏ phụ
                     }
+                } else {
+                    for (const it of activeCheckoutItems) {
+                        removeGuestCartItem(it.id)
+                    }
+                    setCartCount(getGuestCart().totalQuantity)
                 }
-                clearGuestCart()
-                setCartCount(0)
             } else {
                 // Mua ngay không thay đổi giỏ backend/local nên giữ nguyên badge hiện tại.
             }
             try {
                 sessionStorage.removeItem('nexus.buy-now-target')
+                sessionStorage.removeItem('nexus.selected-cart-items')
             } catch {
                 // Bỏ qua lỗi storage
             }
@@ -2131,59 +2563,209 @@ export function CheckoutPage() {
                                 error={shippingErrors.street}
                                 placeholder="123 Nguyen Hue Street"
                             />
-                            <div className="grid grid-cols-3 gap-4">
-                                <Input
-                                    label={lang === 'en' ? 'City *' : 'Thành phố *'}
-                                    value={shippingData.city}
-                                    onChange={(e) => {
-                                        setShippingData((prev) => ({
-                                            ...prev,
-                                            city: e.target.value,
-                                        }))
-                                        if (shippingErrors.city)
-                                            setShippingErrors((prev) => ({
-                                                ...prev,
-                                                city: undefined,
-                                            }))
-                                    }}
-                                    error={shippingErrors.city}
-                                    placeholder="Ho Chi Minh City"
-                                />
-                                <Input
-                                    label={lang === 'en' ? 'District *' : 'Quận/Huyện *'}
-                                    value={shippingData.district}
-                                    onChange={(e) => {
-                                        setShippingData((prev) => ({
-                                            ...prev,
-                                            district: e.target.value,
-                                        }))
-                                        if (shippingErrors.district)
-                                            setShippingErrors((prev) => ({
-                                                ...prev,
-                                                district: undefined,
-                                            }))
-                                    }}
-                                    error={shippingErrors.district}
-                                    placeholder="District 1"
-                                />
-                                <Input
-                                    label={lang === 'en' ? 'Ward *' : 'Phường/Xã *'}
-                                    value={shippingData.ward}
-                                    onChange={(e) => {
-                                        setShippingData((prev) => ({
-                                            ...prev,
-                                            ward: e.target.value,
-                                        }))
-                                        if (shippingErrors.ward)
-                                            setShippingErrors((prev) => ({
-                                                ...prev,
-                                                ward: undefined,
-                                            }))
-                                    }}
-                                    error={shippingErrors.ward}
-                                    placeholder="Ben Nghe"
-                                />
+                            {/* Khối lựa chọn địa giới hành chính kết nối Open API Việt Nam */}
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-sm font-semibold text-gray-700">
+                                        {lang === 'en'
+                                            ? 'Administrative Division (Provinces API) *'
+                                            : 'Khu vực hành chính (Tỉnh / Quận / Phường) *'}
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={() => setManualAddressMode(!manualAddressMode)}
+                                        className="text-xs text-primary hover:underline font-medium"
+                                    >
+                                        {manualAddressMode
+                                            ? lang === 'en'
+                                                ? 'Select from list (API)'
+                                                : 'Chọn theo Tỉnh/Quận/Xã (API)'
+                                            : lang === 'en'
+                                              ? 'Type freely (Manual)'
+                                              : 'Nhập tự do (Thủ công)'}
+                                    </button>
+                                </div>
+
+                                {!manualAddressMode ? (
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        {/* Dropdown 1: Tỉnh / Thành phố */}
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-xs font-medium text-gray-600">
+                                                {lang === 'en' ? 'City / Province *' : 'Tỉnh / Thành phố *'}
+                                            </label>
+                                            <select
+                                                aria-label={lang === 'en' ? 'City / Province' : 'Tỉnh / Thành phố'}
+                                                value={selectedProvinceCode}
+                                                disabled={loadingProvinces}
+                                                onChange={(e) =>
+                                                    handleProvinceChange(e.target.value ? Number(e.target.value) : '')
+                                                }
+                                                className={`nexus-input text-sm py-2 px-3 rounded-lg border ${
+                                                    shippingErrors.city ? 'border-danger ring-1 ring-danger' : 'border-gray-300'
+                                                }`}
+                                            >
+                                                <option value="">
+                                                    {loadingProvinces
+                                                        ? lang === 'en'
+                                                            ? 'Loading provinces...'
+                                                            : 'Đang tải tỉnh thành...'
+                                                        : lang === 'en'
+                                                          ? '-- Select City/Province --'
+                                                          : '-- Chọn Tỉnh / Thành phố --'}
+                                                </option>
+                                                {provinces.map((p) => (
+                                                    <option key={p.code} value={p.code}>
+                                                        {p.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {shippingErrors.city && (
+                                                <p className="text-xs text-danger font-medium mt-0.5">{shippingErrors.city}</p>
+                                            )}
+                                        </div>
+
+                                        {/* Dropdown 2: Quận / Huyện */}
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-xs font-medium text-gray-600">
+                                                {lang === 'en' ? 'District *' : 'Quận / Huyện *'}
+                                            </label>
+                                            <select
+                                                aria-label={lang === 'en' ? 'District' : 'Quận / Huyện'}
+                                                value={selectedDistrictCode}
+                                                disabled={!selectedProvinceCode || loadingDistricts}
+                                                onChange={(e) =>
+                                                    handleDistrictChange(e.target.value ? Number(e.target.value) : '')
+                                                }
+                                                className={`nexus-input text-sm py-2 px-3 rounded-lg border ${
+                                                    shippingErrors.district ? 'border-danger ring-1 ring-danger' : 'border-gray-300'
+                                                }`}
+                                            >
+                                                <option value="">
+                                                    {loadingDistricts
+                                                        ? lang === 'en'
+                                                            ? 'Loading districts...'
+                                                            : 'Đang tải quận/huyện...'
+                                                        : lang === 'en'
+                                                          ? '-- Select District --'
+                                                          : '-- Chọn Quận / Huyện --'}
+                                                </option>
+                                                {districts.map((d) => (
+                                                    <option key={d.code} value={d.code}>
+                                                        {d.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {shippingErrors.district && (
+                                                <p className="text-xs text-danger font-medium mt-0.5">{shippingErrors.district}</p>
+                                            )}
+                                        </div>
+
+                                        {/* Dropdown 3: Phường / Xã */}
+                                        <div className="flex flex-col gap-1">
+                                            <label className="text-xs font-medium text-gray-600">
+                                                {lang === 'en' ? 'Ward *' : 'Phường / Xã *'}
+                                            </label>
+                                            <select
+                                                aria-label={lang === 'en' ? 'Ward' : 'Phường / Xã'}
+                                                value={selectedWardCode}
+                                                disabled={!selectedDistrictCode || loadingWards}
+                                                onChange={(e) =>
+                                                    handleWardChange(e.target.value ? Number(e.target.value) : '')
+                                                }
+                                                className={`nexus-input text-sm py-2 px-3 rounded-lg border ${
+                                                    shippingErrors.ward ? 'border-danger ring-1 ring-danger' : 'border-gray-300'
+                                                }`}
+                                            >
+                                                <option value="">
+                                                    {loadingWards
+                                                        ? lang === 'en'
+                                                            ? 'Loading wards...'
+                                                            : 'Đang tải phường/xã...'
+                                                        : lang === 'en'
+                                                          ? '-- Select Ward --'
+                                                          : '-- Chọn Phường / Xã --'}
+                                                </option>
+                                                {wards.map((w) => (
+                                                    <option key={w.code} value={w.code}>
+                                                        {w.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {shippingErrors.ward && (
+                                                <p className="text-xs text-danger font-medium mt-0.5">{shippingErrors.ward}</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <Input
+                                            label={lang === 'en' ? 'City *' : 'Thành phố *'}
+                                            value={shippingData.city}
+                                            onChange={(e) => {
+                                                setShippingData((prev) => ({
+                                                    ...prev,
+                                                    city: e.target.value,
+                                                }))
+                                                if (shippingErrors.city)
+                                                    setShippingErrors((prev) => ({
+                                                        ...prev,
+                                                        city: undefined,
+                                                    }))
+                                            }}
+                                            error={shippingErrors.city}
+                                            placeholder="TP. Hồ Chí Minh"
+                                        />
+                                        <Input
+                                            label={lang === 'en' ? 'District *' : 'Quận/Huyện *'}
+                                            value={shippingData.district}
+                                            onChange={(e) => {
+                                                setShippingData((prev) => ({
+                                                    ...prev,
+                                                    district: e.target.value,
+                                                }))
+                                                if (shippingErrors.district)
+                                                    setShippingErrors((prev) => ({
+                                                        ...prev,
+                                                        district: undefined,
+                                                    }))
+                                            }}
+                                            error={shippingErrors.district}
+                                            placeholder="Quận 1"
+                                        />
+                                        <Input
+                                            label={lang === 'en' ? 'Ward *' : 'Phường/Xã *'}
+                                            value={shippingData.ward}
+                                            onChange={(e) => {
+                                                setShippingData((prev) => ({
+                                                    ...prev,
+                                                    ward: e.target.value,
+                                                }))
+                                                if (shippingErrors.ward)
+                                                    setShippingErrors((prev) => ({
+                                                        ...prev,
+                                                        ward: undefined,
+                                                    }))
+                                            }}
+                                            error={shippingErrors.ward}
+                                            placeholder="Phường Bến Nghé"
+                                        />
+                                    </div>
+                                )}
                             </div>
+
+                            {/* Bản xem trước địa chỉ nhận hàng hoàn chỉnh */}
+                            {(shippingData.street || shippingData.ward || shippingData.district || shippingData.city) && (
+                                <p className="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 flex items-center gap-1.5">
+                                    <span className="font-semibold text-gray-700">
+                                        {lang === 'en' ? 'Delivery address preview:' : 'Xem trước địa chỉ nhận hàng:'}
+                                    </span>
+                                    <span>
+                                        {[shippingData.street, shippingData.ward, shippingData.district, shippingData.city]
+                                            .filter(Boolean)
+                                            .join(', ')}
+                                    </span>
+                                </p>
+                            )}
                             <Button
                                 variant="primary"
                                 size="lg"
@@ -2261,6 +2843,7 @@ export function CheckoutPage() {
                                             return (
                                                 <label
                                                     key={`${opt.carrier}-${opt.serviceType}`}
+                                                    onClick={() => setShipping(opt.carrier)}
                                                     className={`flex items-center gap-4 p-4 border-2 rounded-xl cursor-pointer transition-colors ${
                                                         isSelected
                                                             ? 'border-primary bg-primary-light'
@@ -2915,7 +3498,10 @@ export function CheckoutPage() {
                                     </div>
                                 ))
                             }
-                            const pricing = calculateEstimatedPricing(activeCheckoutItems, null)
+                            const pricing = calculateEstimatedPricing(
+                                activeCheckoutItems,
+                                appliedCheckoutVoucher,
+                            )
                             // Ưu tiên hiển thị giá, phí ship và tổng tiền do Backend tính toán qua checkoutPreview
                             const subtotal = previewData
                                 ? previewData.subtotal
@@ -3002,6 +3588,87 @@ export function CheckoutPage() {
                             ))
                         })()}
                     </div>
+
+                    {/* Khối nhập mã Voucher / Freeship tại Checkout */}
+                    {!createdOrder && (
+                        <div className="border-t border-border pt-4 mt-4">
+                            <label className="text-xs font-semibold text-gray-700 block mb-1.5">
+                                {lang === 'en'
+                                    ? 'Discount / Free shipping voucher'
+                                    : 'Mã giảm giá / Miễn phí vận chuyển'}
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={checkoutVoucherInput}
+                                    onChange={(e) => setCheckoutVoucherInput(e.target.value)}
+                                    placeholder="FREESHIP, NEXUS10"
+                                    className="nexus-input flex-1 py-1.5 text-xs font-mono uppercase"
+                                />
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                        const clean = checkoutVoucherInput.trim().toUpperCase()
+                                        if (
+                                            ['FREESHIP', 'NEXUS10', 'WELCOME20', 'VIP50'].includes(
+                                                clean,
+                                            )
+                                        ) {
+                                            setAppliedCheckoutVoucher(clean)
+                                            setCheckoutVoucherError('')
+                                            showToast({
+                                                type: 'success',
+                                                message: tr(lang, 'voucherApplied'),
+                                            })
+                                            try {
+                                                sessionStorage.setItem(
+                                                    'nexus.applied-voucher',
+                                                    clean,
+                                                )
+                                            } catch {
+                                                // Bỏ qua lỗi storage
+                                            }
+                                        } else {
+                                            setCheckoutVoucherError(tr(lang, 'invalidVoucher'))
+                                        }
+                                    }}
+                                >
+                                    {tr(lang, 'applyVoucher')}
+                                </Button>
+                            </div>
+                            {checkoutVoucherError && (
+                                <p className="text-xs text-danger mt-1.5">{checkoutVoucherError}</p>
+                            )}
+                            {appliedCheckoutVoucher && (
+                                <div className="flex items-center justify-between mt-2 p-2 bg-green-50 rounded-lg text-xs text-green-700">
+                                    <span className="flex items-center gap-1 font-semibold">
+                                        <CheckCircle size={13} />
+                                        {appliedCheckoutVoucher === 'FREESHIP'
+                                            ? lang === 'en'
+                                                ? 'Free shipping voucher applied!'
+                                                : 'Mã FREESHIP: Đã miễn phí ship!'
+                                            : `${tr(lang, 'voucherApplied')}: ${appliedCheckoutVoucher}`}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setAppliedCheckoutVoucher(null)
+                                            setCheckoutVoucherInput('')
+                                            try {
+                                                sessionStorage.removeItem('nexus.applied-voucher')
+                                            } catch {
+                                                // Bỏ qua lỗi storage
+                                            }
+                                        }}
+                                        className="text-gray-400 hover:text-red-500 underline ml-2 cursor-pointer font-medium"
+                                    >
+                                        {lang === 'en' ? 'Remove' : 'Bỏ'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         </BuyerLayout>

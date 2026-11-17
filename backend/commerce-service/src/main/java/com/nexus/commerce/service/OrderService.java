@@ -244,6 +244,19 @@ public interface OrderService {
     );
 
     /**
+     * Xác nhận người mua đã nhận hàng thành công.
+     * <p>Chức năng: Chuyển trạng thái đơn sang DELIVERED (hoặc COMPLETED) khi người mua nhận được hàng.
+     * <p>Đầu vào: orderId, currentUserId, userRoles.
+     * <p>Kết quả: OrderDetailResponse sau khi cập nhật.
+     * <p>Quy tắc và lý do: Chỉ cho phép người mua sở hữu đơn hoặc Quản trị viên thực hiện khi đơn ở SHIPPED hoặc DELIVERED.
+     */
+    OrderDetailResponse confirmDelivery(
+            UUID orderId,
+            UUID currentUserId,
+            List<String> userRoles
+    );
+
+    /**
      * Khởi tạo đơn hàng từ kết quả quyết toán phiên đấu giá thành công (SRS §3.5.3 & §3.4.3).
      *
      * <p>Chức năng:

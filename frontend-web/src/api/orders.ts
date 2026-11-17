@@ -722,12 +722,24 @@ export const ordersApi = {
      * Buyer hủy đơn hàng (khi đơn còn ở trạng thái pending hoặc paid).
      * Luồng: gọi API cancel nếu có -> cập nhật trạng thái đơn thành 'cancelled' và thanh toán thành 'refunded'.
      */
+    /**
+     * Buyer hủy đơn hàng (khi đơn còn ở trạng thái pending hoặc paid).
+     * Chức năng: Gửi yêu cầu hủy đơn lên backend qua POST /orders/{id}/cancel; cập nhật trạng thái đơn thành CANCELLED.
+     * Đầu vào và kết quả: id (mã đơn hàng), reason (lý do hủy tùy chọn). Trả về đối tượng Order đã hủy.
+     * Luồng xử lý: Gọi POST /orders/{id}/cancel -> nếu backend trả kết quả thành công thì normalizeOrder và trả về ngay;
+     * nếu mất kết nối hoặc lỗi được canFallbackToMock cho phép thì fallback cập nhật mock store.
+     * Lỗi và giới hạn: Không tìm thấy đơn sẽ ném lỗi 'Order not found'.
+     */
     async cancelOrder(id: string, reason?: string): Promise<Order> {
         try {
-            await api(`/orders/${id}/cancel`, {
+            const resp = await api<any>(`/orders/${id}/cancel`, {
                 method: 'POST',
                 body: JSON.stringify({ reason }),
             })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             // Bỏ qua lỗi mạng để fallback cập nhật mock
@@ -760,7 +772,10 @@ export const ordersApi = {
 
     /**
      * Seller hoặc Admin cập nhật tiến độ trạng thái đơn hàng (VD: processing -> shipped -> delivered).
-     * Quy tắc: Ghi nhận sự kiện chuyển trạng thái mới nhất vào mock store.
+     * Chức năng: Gọi PATCH /orders/{id}/status lên backend để cập nhật trạng thái đơn theo máy trạng thái.
+     * Đầu vào và kết quả: id (UUID đơn), status (OrderStatus mới), reason (lý do), actor (người thực hiện). Trả về Order đã cập nhật.
+     * Luồng xử lý: Gọi backend API -> nếu thành công trả về normalizeOrder(data); nếu lỗi mạng hoặc môi trường mock thì fallback mock store.
+     * Quy tắc: Không được nuốt kết quả thành công từ backend để tránh ném lỗi 'Order not found' giả mạo.
      */
     async updateOrderStatus(
         id: string,
@@ -769,10 +784,14 @@ export const ordersApi = {
         actor: Extract<UserRole, 'seller' | 'admin'> = 'seller',
     ): Promise<Order> {
         try {
-            await api(`/orders/${id}/status`, {
+            const resp = await api<any>(`/orders/${id}/status`, {
                 method: 'PATCH',
                 body: JSON.stringify({ status, reason, actor }),
             })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             // Fallback cập nhật mock
@@ -817,10 +836,17 @@ export const ordersApi = {
 
     /**
      * Buyer xác nhận đã nhận hàng thành công -> giải ngân tiền ký quỹ (Escrow) cho Seller.
+     * Chức năng: Gửi yêu cầu xác nhận nhận hàng qua POST /orders/{id}/confirm-delivery.
+     * Đầu vào và kết quả: id (UUID đơn hàng). Trả về Order đã cập nhật trạng thái.
+     * Luồng xử lý: Gọi backend API -> nếu thành công trả về normalizeOrder(data); nếu môi trường mock fallback local.
      */
     async confirmOrderDelivery(id: string): Promise<Order> {
         try {
-            await api(`/orders/${id}/confirm-delivery`, { method: 'POST' })
+            const resp = await api<any>(`/orders/${id}/confirm-delivery`, { method: 'POST' })
+            const data = resp?.data ?? resp
+            if (data?.id) {
+                return normalizeOrder(data)
+            }
         } catch (error) {
             if (!canFallbackToMock(error)) throw error
             // Fallback

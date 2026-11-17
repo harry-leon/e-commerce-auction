@@ -30,6 +30,32 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
     const [selected, setSelected] = useState({ route: paymentId, id: paymentId })
     const activeId = selected.route === paymentId ? selected.id : paymentId
 
+    /**
+     * Kích hoạt xử lý IPN VNPAY khi được chuyển hướng về từ cổng Sandbox (Local Dev).
+     * Chức năng: Chuyển tiếp query parameters đã được VNPAY ký bằng HMAC-SHA512 sang endpoint IPN nội bộ.
+     * Đầu vào: window.location.search chứa vnp_SecureHash, vnp_TxnRef, vnp_ResponseCode.
+     * Luồng xử lý: Gọi GET /api/v1/payments/vnpay/ipn?{params} -> Backend xác thực HMAC và cập nhật Payment sang SUCCESS.
+     * Lý do: Máy chủ VNPAY trên internet không thể gửi webhook trực tiếp tới máy phát triển localhost.
+     */
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        const search = window.location.search
+        if (search.includes('vnp_SecureHash') && search.includes('vnp_TxnRef')) {
+            fetch(`/api/v1/payments/vnpay/ipn${search}`, {
+                method: 'GET',
+                headers: { 'X-Nexus-Request': '1' },
+            })
+                .then((res) => res.json())
+                .then(() => {
+                    // Sau khi Backend commit IPN thành công, kích hoạt poll lại kết quả
+                    setRefresh((r) => r + 1)
+                })
+                .catch(() => {
+                    // Bỏ qua lỗi kết nối tạm thời
+                })
+        }
+    }, [])
+
     useEffect(() => {
         let isCancelled = false
         let timer: ReturnType<typeof setTimeout> | undefined
@@ -197,7 +223,24 @@ export function VnpayPaymentResult({ paymentId }: { paymentId: string }) {
             )}
             <div className="flex justify-center gap-3 flex-wrap">
                 {!success && !failed && !cancelled && (
-                    <Button variant="primary" onClick={() => setRefresh((value) => value + 1)}>
+                    <Button
+                        variant="primary"
+                        onClick={() => {
+                            if (
+                                typeof window !== 'undefined' &&
+                                window.location.search.includes('vnp_SecureHash')
+                            ) {
+                                fetch(`/api/v1/payments/vnpay/ipn${window.location.search}`, {
+                                    method: 'GET',
+                                    headers: { 'X-Nexus-Request': '1' },
+                                })
+                                    .catch(() => {})
+                                    .finally(() => setRefresh((value) => value + 1))
+                            } else {
+                                setRefresh((value) => value + 1)
+                            }
+                        }}
+                    >
                         {lang === 'vi' ? 'Kiểm tra lại' : 'Check again'}
                     </Button>
                 )}

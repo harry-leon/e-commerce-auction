@@ -4,12 +4,12 @@ import { Input } from './UI'
 /**
  * Cấu trúc đơn vị hành chính chuẩn trả về từ Open API Tỉnh thành Việt Nam.
  */
-interface AdministrativeDivision {
+export interface AdministrativeDivision {
     code: number
     name: string
 }
 
-interface AddressSelectorProps {
+export interface AddressSelectorProps {
     value: string
     onChange: (fullAddress: string) => void
     lang?: 'vi' | 'en'
@@ -20,6 +20,73 @@ interface AddressSelectorProps {
 const provinceCache: AdministrativeDivision[] = []
 const districtCache = new Map<number, AdministrativeDivision[]>()
 const wardCache = new Map<number, AdministrativeDivision[]>()
+let provincePromise: Promise<AdministrativeDivision[]> | null = null
+
+/**
+ * Tải danh sách 63 Tỉnh / Thành phố từ Open API Việt Nam với bộ nhớ cache RAM.
+ * Chức năng: Cung cấp danh sách tỉnh thành chuẩn hóa cho toàn bộ ứng dụng (Profile, Auth, Checkout).
+ * Đầu vào & kết quả: Không tham số; trả về danh sách AdministrativeDivision[].
+ */
+export async function getProvinces(): Promise<AdministrativeDivision[]> {
+    if (provinceCache.length > 0) return provinceCache
+    if (!provincePromise) {
+        provincePromise = fetch('https://provinces.open-api.vn/api/p/')
+            .then((res) => {
+                if (!res.ok) throw new Error('Không thể tải danh sách Tỉnh/Thành')
+                return res.json()
+            })
+            .then((data) => {
+                if (Array.isArray(data)) {
+                    provinceCache.length = 0
+                    const seen = new Set<number>()
+                    for (const item of data) {
+                        if (item && item.code && !seen.has(item.code)) {
+                            seen.add(item.code)
+                            provinceCache.push(item)
+                        }
+                    }
+                    return provinceCache
+                }
+                return []
+            })
+            .finally(() => {
+                provincePromise = null
+            })
+    }
+    return provincePromise
+}
+
+/**
+ * Tải danh sách Quận / Huyện trực thuộc Tỉnh / Thành phố theo mã provinceCode.
+ * Chức năng: Truy vấn quận/huyện cấp 2 theo tỉnh/thành đã chọn.
+ * Đầu vào & kết quả: provinceCode; trả về danh sách quận/huyện trực thuộc.
+ */
+export async function getDistricts(provinceCode: number): Promise<AdministrativeDivision[]> {
+    if (!provinceCode) return []
+    if (districtCache.has(provinceCode)) return districtCache.get(provinceCode)!
+    const res = await fetch(`https://provinces.open-api.vn/api/p/${provinceCode}?depth=2`)
+    if (!res.ok) throw new Error('Không thể tải danh sách Quận/Huyện')
+    const data = await res.json()
+    const list: AdministrativeDivision[] = data?.districts || []
+    districtCache.set(provinceCode, list)
+    return list
+}
+
+/**
+ * Tải danh sách Phường / Xã trực thuộc Quận / Huyện theo mã districtCode.
+ * Chức năng: Truy vấn phường/xã cấp 3 theo quận/huyện đã chọn.
+ * Đầu vào & kết quả: districtCode; trả về danh sách phường/xã trực thuộc.
+ */
+export async function getWards(districtCode: number): Promise<AdministrativeDivision[]> {
+    if (!districtCode) return []
+    if (wardCache.has(districtCode)) return wardCache.get(districtCode)!
+    const res = await fetch(`https://provinces.open-api.vn/api/d/${districtCode}?depth=2`)
+    if (!res.ok) throw new Error('Không thể tải danh sách Phường/Xã')
+    const data = await res.json()
+    const list: AdministrativeDivision[] = data?.wards || []
+    wardCache.set(districtCode, list)
+    return list
+}
 
 /**
  * Component lựa chọn địa chỉ hành chính phân cấp 3 cấp (Tỉnh/Thành -> Quận/Huyện -> Phường/Xã).
@@ -59,27 +126,13 @@ export function AddressSelector({ value, onChange, lang = 'vi', error }: Address
 
     // Tải danh sách Tỉnh / Thành phố khi khởi chạy component
     useEffect(() => {
-        if (provinceCache.length > 0) {
-            setProvinces(provinceCache)
-            return
-        }
-
         let isMounted = true
         setLoadingProvinces(true)
-        fetch('https://provinces.open-api.vn/api/p/')
-            .then((res) => {
-                if (!res.ok) throw new Error('Không thể tải danh sách Tỉnh/Thành')
-                return res.json()
-            })
+        getProvinces()
             .then((data) => {
-                if (!isMounted) return
-                if (Array.isArray(data)) {
-                    provinceCache.push(...data)
-                    setProvinces(data)
-                }
+                if (isMounted) setProvinces(data)
             })
-            .catch((_err) => {
-                // Khi không gọi được API tỉnh thành bên ngoài, tự động fallback sang chế độ nhập tay
+            .catch(() => {
                 if (isMounted) setManualMode(true)
             })
             .finally(() => {
@@ -101,20 +154,11 @@ export function AddressSelector({ value, onChange, lang = 'vi', error }: Address
             return
         }
 
-        if (districtCache.has(selectedProvinceCode)) {
-            setDistricts(districtCache.get(selectedProvinceCode) || [])
-            return
-        }
-
         let isMounted = true
         setLoadingDistricts(true)
-        fetch(`https://provinces.open-api.vn/api/p/${selectedProvinceCode}?depth=2`)
-            .then((res) => res.json())
-            .then((data) => {
-                if (!isMounted) return
-                const list = data?.districts || []
-                districtCache.set(selectedProvinceCode, list)
-                setDistricts(list)
+        getDistricts(selectedProvinceCode)
+            .then((list) => {
+                if (isMounted) setDistricts(list)
             })
             .catch(() => {
                 if (isMounted) setDistricts([])
@@ -136,20 +180,11 @@ export function AddressSelector({ value, onChange, lang = 'vi', error }: Address
             return
         }
 
-        if (wardCache.has(selectedDistrictCode)) {
-            setWards(wardCache.get(selectedDistrictCode) || [])
-            return
-        }
-
         let isMounted = true
         setLoadingWards(true)
-        fetch(`https://provinces.open-api.vn/api/d/${selectedDistrictCode}?depth=2`)
-            .then((res) => res.json())
-            .then((data) => {
-                if (!isMounted) return
-                const list = data?.wards || []
-                wardCache.set(selectedDistrictCode, list)
-                setWards(list)
+        getWards(selectedDistrictCode)
+            .then((list) => {
+                if (isMounted) setWards(list)
             })
             .catch(() => {
                 if (isMounted) setWards([])

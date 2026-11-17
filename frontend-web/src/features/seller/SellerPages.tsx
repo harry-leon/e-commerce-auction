@@ -3512,7 +3512,10 @@ export function SellerOrdersPage() {
     const visibleOrders = orders.slice((ordersPage - 1) * ordersPerPage, ordersPage * ordersPerPage)
 
     /**
-     * Nạp thông tin uy tín người mua và đánh giá khi Seller xem chi tiết đơn hàng (Sprint 3 - HA-S3-2).
+     * Nạp thông tin uy tín người mua, đánh giá và danh sách chi tiết mặt hàng khi Seller xem chi tiết đơn hàng (Sprint 3 - HA-S3-2).
+     * Chức năng: Nạp profile người mua, rating và bổ sung mảng items từ API chi tiết nếu DTO tóm tắt ban đầu chưa có items.
+     * Đầu vào: selectedOrder (đơn được chọn), user.
+     * Kết quả: Cập nhật buyerReputation, orderRating và selectedOrder.items để hiển thị modal đầy đủ.
      */
     useEffect(() => {
         if (!selectedOrder) {
@@ -3541,10 +3544,26 @@ export function SellerOrdersPage() {
             })
             .catch(() => {})
 
+        // Tải chi tiết sản phẩm nếu đơn hàng tóm tắt chưa nạp mảng items
+        if (selectedOrder.items.length === 0) {
+            ordersApi
+                .getOrderDetailV2(selectedOrder.id)
+                .then((detail) => {
+                    if (active && detail && Array.isArray(detail.items) && detail.items.length > 0) {
+                        setSelectedOrder((current) =>
+                            current && current.id === detail.id
+                                ? { ...current, items: detail.items as any }
+                                : current,
+                        )
+                    }
+                })
+                .catch(() => {})
+        }
+
         return () => {
             active = false
         }
-    }, [selectedOrder, user])
+    }, [selectedOrder?.id, user?.id])
 
     /**
      * Nạp thông tin vận đơn và hành trình thời gian thực khi Seller mở modal đơn hàng (Sprint 3 - HA-S3-1).
@@ -3597,7 +3616,12 @@ export function SellerOrdersPage() {
             REFUNDED: tr(lang, 'statusRefunded'),
         })[s] || s
 
-    // Nhãn hiển thị trạng thái thanh toán — dùng ngôn ngữ tự nhiên, không dùng thuật ngữ kỹ thuật.
+    /**
+     * Nhãn hiển thị trạng thái thanh toán — dùng ngôn ngữ tự nhiên, không dùng thuật ngữ kỹ thuật.
+     * Chức năng: Chuyển đổi mã trạng thái thanh toán (escrow/payment) sang nhãn đa ngôn ngữ thân thiện.
+     * Đầu vào: s (mã paymentStatus hoặc unknown); Kết quả: Chuỗi hiển thị tiếng Việt hoặc tiếng Anh.
+     * Quy tắc: Khi s là unknown hoặc unpaid, hiển thị rõ 'Chưa thanh toán' / 'Unpaid' thay vì chuỗi kỹ thuật 'unknown'.
+     */
     const paymentLabel = (s: string) =>
         ({
             held: lang === 'en' ? 'Holding' : 'Đang giữ',
@@ -3606,6 +3630,9 @@ export function SellerOrdersPage() {
             on_hold: lang === 'en' ? 'On hold' : 'Tạm giữ',
             refunded: lang === 'en' ? 'Refunded' : 'Đã hoàn tiền',
             partial_refund: lang === 'en' ? 'Partial refund' : 'Hoàn một phần',
+            unpaid: lang === 'en' ? 'Unpaid' : 'Chưa thanh toán',
+            pending: lang === 'en' ? 'Pending' : 'Chờ thanh toán',
+            unknown: lang === 'en' ? 'Unpaid' : 'Chưa thanh toán',
         })[s] || s
 
     // Nạp danh sách đơn hàng cho người bán
@@ -3784,28 +3811,46 @@ export function SellerOrdersPage() {
                                 {
                                     key: 'items',
                                     label: lang === 'en' ? 'Items' : 'Sản phẩm',
-                                    render: (r: Order) => (
-                                        <div className="flex items-center gap-2">
-                                            {Boolean(r.items[0]?.image) && (
-                                                <img
-                                                    src={r.items[0].image}
-                                                    alt=""
-                                                    className="w-8 h-8 object-cover rounded border border-border shrink-0"
-                                                />
-                                            )}
-                                            <div className="text-xs">
-                                                <span className="font-medium text-gray-800 line-clamp-1 max-w-[150px]">
-                                                    {r.items[0]?.productName || 'N/A'}
-                                                </span>
-                                                {r.items.length > 1 && (
-                                                    <span className="text-gray-400 text-[11px]">
-                                                        +{r.items.length - 1}{' '}
-                                                        {lang === 'en' ? 'more' : 'khác'}
-                                                    </span>
+                                    /**
+                                     * Chức năng: Hiển thị tóm tắt mặt hàng trong danh sách đơn bán của Seller.
+                                     * Đầu vào: Thực thể Order chứa danh sách items hoặc itemCount từ backend DTO tóm tắt.
+                                     * Kết quả: Hiển thị tên sản phẩm đầu tiên hoặc số lượng sản phẩm (ví dụ '1 sản phẩm' / '2 items').
+                                     * Quy tắc & lý do: API danh sách trả về OrderSummaryResponse tối ưu băng thông (chỉ chứa itemCount),
+                                     * nên nếu mảng items rỗng sẽ fallback hiển thị số lượng mặt hàng thay vì chuỗi 'N/A' vô nghĩa.
+                                     */
+                                    render: (r: Order) => {
+                                        const count = (r as any).itemCount ?? r.items.length
+                                        const firstItem = r.items[0]
+                                        return (
+                                            <div className="flex items-center gap-2">
+                                                {Boolean(firstItem?.image) && (
+                                                    <img
+                                                        src={firstItem.image}
+                                                        alt=""
+                                                        className="w-8 h-8 object-cover rounded border border-border shrink-0"
+                                                    />
                                                 )}
+                                                <div className="text-xs">
+                                                    <span className="font-medium text-gray-800 line-clamp-1 max-w-[150px]">
+                                                        {firstItem?.productName ||
+                                                            (count > 0
+                                                                ? lang === 'en'
+                                                                    ? `${count} item${count > 1 ? 's' : ''}`
+                                                                    : `${count} sản phẩm`
+                                                                : lang === 'en'
+                                                                  ? '1 item'
+                                                                  : '1 sản phẩm')}
+                                                    </span>
+                                                    {r.items.length > 1 && (
+                                                        <span className="text-gray-400 text-[11px]">
+                                                            +{r.items.length - 1}{' '}
+                                                            {lang === 'en' ? 'more' : 'khác'}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </div>
-                                    ),
+                                        )
+                                    },
                                 },
                                 {
                                     key: 'total',
@@ -3927,7 +3972,8 @@ export function SellerOrdersPage() {
                                                                 : 'Sang Đóng gói'}
                                                         </option>
                                                     )}
-                                                    {['PAID', 'PROCESSING'].includes(r.status) && (
+                                                    {/* Chỉ cho phép chuyển sang SHIPPED khi đơn đã qua bước đóng gói PROCESSING */}
+                                                    {r.status === 'PROCESSING' && (
                                                         <option value="SHIPPED">
                                                             {lang === 'en'
                                                                 ? 'To Shipped'

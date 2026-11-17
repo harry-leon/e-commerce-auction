@@ -254,9 +254,11 @@ public class CheckoutService {
         // Enum dùng chung với quản lý đơn; DB vẫn lưu tên trạng thái theo Flyway.
         order.setStatus(OrderStatus.PENDING_PAYMENT);
         order.setEstimatedSubtotal(subtotal(lines));
-        order.setEstimatedShippingFee(shippingFee());
+        // Ưu tiên phí vận chuyển thực tế từ hãng vận chuyển do client gửi lên, fallback phí cấu hình hệ thống
+        BigDecimal resolvedShipping = resolveShippingFee(request);
+        order.setEstimatedShippingFee(resolvedShipping);
         order.setEstimatedDiscount(ZERO);
-        order.setEstimatedTotal(order.getEstimatedSubtotal().add(order.getEstimatedShippingFee()));
+        order.setEstimatedTotal(order.getEstimatedSubtotal().add(resolvedShipping));
         order.setPriceFinalized(false);
         order.setSubtotal(null);
         order.setShippingFee(null);
@@ -303,6 +305,21 @@ public class CheckoutService {
     /** Phí cố định cấu hình (mặc định miễn phí); chưa tính theo khoảng cách/cân nặng, VAT đã gồm trong giá Catalog. */
     private BigDecimal shippingFee() { return properties.getOrder().getShippingFee().setScale(2, RoundingMode.HALF_UP); }
 
+    /**
+     * Xác định phí vận chuyển áp dụng cho đơn hàng:
+     * Chức năng: Ưu tiên sử dụng phí ship thực tế từ hãng vận chuyển (GHN/GHTK) do client gửi lên,
+     *            nếu client không truyền thì fallback về phí cấu hình hệ thống.
+     * Đầu vào: CreateOrderRequest request.
+     * Kết quả: BigDecimal phí vận chuyển đã làm tròn 2 chữ số thập phân (HALF_UP).
+     * Quy tắc: Phí ship không được âm; bảo toàn tính đúng đắn của tổng tiền đơn hàng.
+     */
+    private BigDecimal resolveShippingFee(CreateOrderRequest request) {
+        if (request.shippingFee() != null && request.shippingFee().compareTo(BigDecimal.ZERO) >= 0) {
+            return request.shippingFee().setScale(2, RoundingMode.HALF_UP);
+        }
+        return shippingFee();
+    }
+
     private BigDecimal subtotal(List<CheckoutPreviewResponse.Line> lines) {
         return lines.stream().map(CheckoutPreviewResponse.Line::itemTotal).reduce(ZERO, BigDecimal::add);
     }
@@ -330,11 +347,13 @@ public class CheckoutService {
         var canonical = new CreateOrderRequest(request.shippingAddress(), request.recipientName(), request.recipientPhone(),
                 request.voucherCode(), request.paymentMethod(), Objects.requireNonNullElse(request.sourceType(), "REGULAR"),
                 request.auctionId(), request.selectedItemIds() == null ? null : request.selectedItemIds().stream().sorted().toList(),
-                request.buyNow());
+                request.buyNow(), request.shippingFee(), request.carrier());
         try {
             // Bỏ field mới khi không dùng để key checkout giỏ đã lưu trước nâng cấp vẫn replay đúng hash cũ.
             com.fasterxml.jackson.databind.node.ObjectNode payload = mapper.valueToTree(canonical);
             if (request.buyNow() == null) { payload.remove("buyNow"); }
+            if (request.shippingFee() == null) { payload.remove("shippingFee"); }
+            if (request.carrier() == null) { payload.remove("carrier"); }
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(List.of(buyer, payload))));
         } catch (JsonProcessingException | NoSuchAlgorithmException error) {
             throw new IllegalStateException("Không thể tạo fingerprint checkout", error);

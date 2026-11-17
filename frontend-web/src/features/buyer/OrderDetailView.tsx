@@ -605,6 +605,85 @@ export function OrderDetailView() {
         }
     }
 
+    const isCodOrder = effectiveOrder.paymentMethod === 'COD'
+
+    /**
+     * Xác định nhãn hiển thị và màu sắc của trạng thái đơn hàng trên Header:
+     * Chức năng: Động hóa trạng thái theo đúng OrderStatus từ Backend, thay vì gán cứng "ĐƠN HÀNG ĐÃ HOÀN THÀNH".
+     * Đầu vào: effectiveOrder.status, effectiveOrder.paymentMethod, lang.
+     * Kết quả: { label, color } phản ánh trung thực trạng thái thực tế của đơn hàng.
+     */
+    const statusHeader = (() => {
+        switch (effectiveOrder.status) {
+            case 'PENDING_PAYMENT':
+                return {
+                    label: isCodOrder
+                        ? lang === 'vi'
+                            ? 'ĐƠN HÀNG ĐÃ ĐẶT (CHỜ XÁC NHẬN)'
+                            : 'ORDER PLACED (PENDING)'
+                        : lang === 'vi'
+                          ? 'CHỜ THANH TOÁN'
+                          : 'PENDING PAYMENT',
+                    color: isCodOrder ? 'text-blue-600' : 'text-amber-600',
+                }
+            case 'PAID':
+                return {
+                    label: lang === 'vi' ? 'ĐÃ THANH TOÁN' : 'PAID',
+                    color: 'text-emerald-600',
+                }
+            case 'PROCESSING':
+                return {
+                    label: lang === 'vi' ? 'ĐANG CHUẨN BỊ HÀNG' : 'PROCESSING',
+                    color: 'text-blue-600',
+                }
+            case 'SHIPPED':
+                return {
+                    label: lang === 'vi' ? 'ĐANG VẬN CHUYỂN' : 'SHIPPED',
+                    color: 'text-blue-600',
+                }
+            case 'DELIVERED':
+                return {
+                    label: lang === 'vi' ? 'ĐÃ GIAO HÀNG' : 'DELIVERED',
+                    color: 'text-emerald-600',
+                }
+            case 'COMPLETED':
+                return {
+                    label: lang === 'vi' ? 'ĐƠN HÀNG ĐÃ HOÀN THÀNH' : 'ORDER COMPLETED',
+                    color: 'text-[#ea580c]',
+                }
+            case 'CANCELLED':
+                return {
+                    label: lang === 'vi' ? 'ĐƠN HÀNG ĐÃ HỦY' : 'ORDER CANCELLED',
+                    color: 'text-red-600',
+                }
+            case 'REFUNDED':
+                return {
+                    label: lang === 'vi' ? 'ĐÃ HOÀN TIỀN' : 'REFUNDED',
+                    color: 'text-purple-600',
+                }
+            default:
+                return {
+                    label: effectiveOrder.status,
+                    color: 'text-slate-600',
+                }
+        }
+    })()
+
+    /**
+     * Xác định bước hiện tại trên thanh tiến trình Stepper (1 đến 5):
+     * Chức năng: Tô sáng và kết nối thanh tiến trình chỉ tới bước đã thực sự hoàn thành.
+     * Đầu vào: effectiveOrder.status.
+     * Kết quả: Số thứ tự bước hoàn thành (1 đến 5, hoặc 0 nếu hủy).
+     */
+    const currentStepIndex = (() => {
+        if (effectiveOrder.status === 'CANCELLED' || effectiveOrder.status === 'REFUNDED') return 0
+        if (effectiveOrder.status === 'COMPLETED') return 5
+        if (effectiveOrder.status === 'DELIVERED') return 4
+        if (effectiveOrder.status === 'SHIPPED') return 3
+        if (effectiveOrder.status === 'PAID' || effectiveOrder.status === 'PROCESSING') return 2
+        return 1 // PENDING_PAYMENT
+    })()
+
     return (
         <BuyerLayout>
             <div className="max-w-[1280px] mx-auto space-y-6 py-4">
@@ -624,7 +703,7 @@ export function OrderDetailView() {
                         </span>
                     </button>
 
-                    {/* Mã đơn hàng và Trạng thái in hoa màu cam đỏ */}
+                    {/* Mã đơn hàng và Trạng thái động theo OrderStatus */}
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                         <span className="text-slate-700 font-bold">
                             {lang === 'vi' ? 'Mã đơn hàng:' : 'Order ID:'}
@@ -633,8 +712,8 @@ export function OrderDetailView() {
                             {effectiveOrder.orderNo || '2610313JCYGVA5'}
                         </span>
                         <span className="text-slate-300 font-light mx-1">|</span>
-                        <span className="font-black text-[#ea580c] tracking-wide uppercase">
-                            {lang === 'vi' ? 'ĐƠN HÀNG ĐÃ HOÀN THÀNH' : 'ORDER COMPLETED'}
+                        <span className={`font-black tracking-wide uppercase ${statusHeader.color}`}>
+                            {statusHeader.label}
                         </span>
                     </div>
 
@@ -694,8 +773,17 @@ export function OrderDetailView() {
                 {/* 2. Stepper 5 bước phản ánh tiến trình xử lý đơn hàng */}
                 <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
                     <div className="relative flex items-center justify-between">
-                        {/* Đường kẻ xanh lá liên tục nối các bước */}
-                        <div className="absolute top-5 left-[8%] right-[8%] h-0.5 bg-emerald-500 -z-0" />
+                        {/* Đường kẻ nền màu xám nối các bước */}
+                        <div className="absolute top-5 left-[8%] right-[8%] h-0.5 bg-slate-200 -z-0" />
+                        {/* Đường kẻ tiến trình màu xanh lá động theo bước đã hoàn thành */}
+                        {currentStepIndex > 1 && (
+                            <div
+                                className="absolute top-5 left-[8%] h-0.5 bg-emerald-500 transition-all duration-500 -z-0"
+                                style={{
+                                    width: `${Math.min(84, ((currentStepIndex - 1) / 4) * 84)}%`,
+                                }}
+                            />
+                        )}
 
                         {/* Bước 1: Đơn hàng đã đặt */}
                         <div className="flex flex-col items-center text-center relative z-10 flex-1">
@@ -1107,9 +1195,15 @@ export function OrderDetailView() {
                                 <h3>{lang === 'vi' ? 'Hình thức thanh toán' : 'Payment Method'}</h3>
                             </div>
                             <div className="space-y-2.5">
-                                <p className="text-xs sm:text-sm text-slate-700">
-                                    {effectiveOrder.paymentMethod ||
-                                        'Thanh toán qua Ví điện tử / Thẻ ngân hàng'}
+                                <p className="text-xs sm:text-sm text-slate-700 font-medium">
+                                    {effectiveOrder.paymentMethod === 'COD'
+                                        ? lang === 'vi'
+                                            ? 'Thanh toán tiền mặt khi nhận hàng (COD)'
+                                            : 'Cash on Delivery (COD)'
+                                        : effectiveOrder.paymentMethod === 'VNPAY'
+                                          ? 'VNPAY QR'
+                                          : effectiveOrder.paymentMethod ||
+                                            'Thanh toán qua Ví điện tử / Thẻ ngân hàng'}
                                 </p>
                                 <div>
                                     <span
@@ -1118,7 +1212,9 @@ export function OrderDetailView() {
                                             effectiveOrder.status === 'COMPLETED' ||
                                             effectiveOrder.status === 'DELIVERED'
                                                 ? 'bg-[#dcfce7] text-[#15803d]'
-                                                : 'bg-amber-50 text-amber-700'
+                                                : isCodOrder && effectiveOrder.status === 'PENDING_PAYMENT'
+                                                  ? 'bg-blue-50 text-blue-700'
+                                                  : 'bg-amber-50 text-amber-700'
                                         }`}
                                     >
                                         <SvgCheckSmall size={14} />
@@ -1129,9 +1225,13 @@ export function OrderDetailView() {
                                                 ? lang === 'vi'
                                                     ? 'Đã thanh toán'
                                                     : 'Paid'
-                                                : lang === 'vi'
-                                                  ? 'Chờ thanh toán'
-                                                  : 'Pending Payment'}
+                                                : isCodOrder && effectiveOrder.status === 'PENDING_PAYMENT'
+                                                  ? lang === 'vi'
+                                                      ? 'Đã tiếp nhận (COD)'
+                                                      : 'Order Placed (COD)'
+                                                  : lang === 'vi'
+                                                    ? 'Chờ thanh toán'
+                                                    : 'Pending Payment'}
                                         </span>
                                     </span>
                                 </div>
