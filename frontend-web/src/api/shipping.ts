@@ -150,7 +150,7 @@ export interface CreateShipmentRequest {
  * - Chỉ được miễn phí vận chuyển khi người mua có và áp dụng mã voucher hợp lệ (FREESHIP).
  */
 export function getFallbackShippingQuotes(
-    orderTotal: number = 0,
+    _orderTotal: number = 0,
     voucherCode?: string | null,
 ): ShippingQuoteResponse {
     const isFree = voucherCode?.trim().toUpperCase() === 'FREESHIP'

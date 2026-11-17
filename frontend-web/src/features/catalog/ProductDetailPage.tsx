@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
     api,
     formatSkuDisplay,
@@ -173,8 +174,10 @@ export function ProductDetailPage() {
               status: 'active' as const,
           }
 
-    const MAX_PRODUCT_IMAGES = 5
-    const productImages = (product.images || []).slice(0, MAX_PRODUCT_IMAGES)
+    const MAX_PRODUCT_IMAGES = 12
+    const productImages = (product.images || []).length > 0
+        ? (product.images || []).slice(0, MAX_PRODUCT_IMAGES)
+        : ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600']
 
     const [activeImg, setActiveImg] = useState(0)
     const [lightboxOpen, setLightboxOpen] = useState(false)
@@ -360,15 +363,25 @@ export function ProductDetailPage() {
     // Đóng lightbox khi bấm phím Escape hoặc chuyển ảnh bằng phím mũi tên
     useEffect(() => {
         if (!lightboxOpen) return
+        const originalOverflow = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') setLightboxOpen(false)
-            if (e.key === 'ArrowLeft')
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault()
                 setActiveImg((prev) => (prev === 0 ? productImages.length - 1 : prev - 1))
-            if (e.key === 'ArrowRight')
+            }
+            if (e.key === 'ArrowRight') {
+                e.preventDefault()
                 setActiveImg((prev) => (prev === productImages.length - 1 ? 0 : prev + 1))
+            }
         }
         window.addEventListener('keydown', handler)
-        return () => window.removeEventListener('keydown', handler)
+        return () => {
+            document.body.style.overflow = originalOverflow
+            window.removeEventListener('keydown', handler)
+        }
     }, [lightboxOpen, productImages.length])
 
     const [addingToCart, setAddingToCart] = useState(false)
@@ -639,7 +652,13 @@ export function ProductDetailPage() {
                 <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => navigate('search')}
+                    onClick={() => {
+                        if (window.history.length > 1) {
+                            window.history.back()
+                        } else {
+                            navigate('search')
+                        }
+                    }}
                     className="flex items-center gap-1.5"
                 >
                     <ChevronLeft size={16} />
@@ -1179,68 +1198,119 @@ export function ProductDetailPage() {
                 </div>
             </div>
 
-            {/* Lightbox phóng to ảnh toàn màn hình */}
-            {lightboxOpen && (
-                <div
-                    className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm"
-                    onClick={() => setLightboxOpen(false)}
-                >
-                    <button
-                        type="button"
-                        onClick={() => setLightboxOpen(false)}
-                        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all z-10 cursor-pointer"
-                        aria-label="Close"
-                    >
-                        <CircleX size={22} />
-                    </button>
-
-                    {productImages.length > 1 && (
-                        <button
-                            type="button"
-                            onClick={(e) => {
-                                e.stopPropagation()
-                                setActiveImg((prev) =>
-                                    prev === 0 ? productImages.length - 1 : prev - 1,
-                                )
-                            }}
-                            className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all cursor-pointer z-10"
-                            aria-label="Previous"
-                        >
-                            <ChevronLeft size={28} />
-                        </button>
-                    )}
-
+            {/* Portal giữ lightbox cố định theo viewport, không bị wrapper chuyển trang làm lệch khi cuộn. */}
+            {lightboxOpen &&
+                createPortal(
                     <div
-                        className="flex flex-col items-center gap-5 px-20 w-full max-h-screen"
+                        className="fixed inset-0 z-[9999] flex items-start justify-center bg-black/80 backdrop-blur-xs p-3 sm:p-6 pt-8 sm:pt-12 md:pt-20 overflow-y-auto"
+                        onClick={() => setLightboxOpen(false)}
+                    >
+                    <div
+                        className="relative w-full max-w-4xl lg:max-w-5xl h-[560px] md:h-[600px] bg-[#181818] rounded-xl overflow-hidden shadow-2xl flex flex-col md:flex-row border border-white/10 shrink-0"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <img
-                            src={productImages[activeImg]}
-                            alt={product.name}
-                            className="max-h-[75vh] max-w-[80vw] object-contain rounded-xl shadow-2xl select-none"
-                        />
-                        <p className="text-white/60 text-sm font-medium">
-                            {activeImg + 1} / {productImages.length}
-                        </p>
-                    </div>
-
-                    {productImages.length > 1 && (
+                        {/* Nút đóng modal ở góc trên phải */}
                         <button
                             type="button"
-                            onClick={(e) => {
-                                e.stopPropagation()
-                                setActiveImg((prev) =>
-                                    prev === productImages.length - 1 ? 0 : prev + 1,
-                                )
-                            }}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/25 text-white flex items-center justify-center transition-all cursor-pointer z-10"
-                            aria-label="Next"
+                            onClick={() => setLightboxOpen(false)}
+                            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all z-30 cursor-pointer"
+                            aria-label="Đóng"
                         >
-                            <ChevronRight size={28} />
+                            <CircleX size={20} />
                         </button>
-                    )}
-                </div>
-            )}
+
+                        {/* Cột trái: Khung xem ảnh lớn màu trắng, cố định chiều cao, không bị dịch chuyển khi đổi ảnh */}
+                        <div className="flex-1 bg-white relative flex items-center justify-center p-6 h-full select-none overflow-hidden">
+                            {productImages.length > 1 && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        setActiveImg((prev) =>
+                                            prev === 0 ? productImages.length - 1 : prev - 1,
+                                        )
+                                    }}
+                                    className="absolute left-0 top-1/2 -translate-y-1/2 w-9 sm:w-11 h-16 bg-black/30 hover:bg-black/60 text-white flex items-center justify-center transition-colors cursor-pointer z-20 rounded-r-md"
+                                    aria-label="Ảnh trước"
+                                >
+                                    <ChevronLeft size={30} />
+                                </button>
+                            )}
+
+                            <img
+                                src={productImages[activeImg] || productImages[0]}
+                                alt={product.name}
+                                className="h-full w-full object-contain select-none transition-all duration-150"
+                            />
+
+                            {productImages.length > 1 && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        setActiveImg((prev) =>
+                                            prev === productImages.length - 1 ? 0 : prev + 1,
+                                        )
+                                    }}
+                                    className="absolute right-0 top-1/2 -translate-y-1/2 w-9 sm:w-11 h-16 bg-black/30 hover:bg-black/60 text-white flex items-center justify-center transition-colors cursor-pointer z-20 rounded-l-md"
+                                    aria-label="Ảnh sau"
+                                >
+                                    <ChevronRight size={30} />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Cột phải: Khung nền tối chứa tiêu đề sản phẩm và lưới thumbnails 3 cột viền cam */}
+                        <div className="w-full md:w-80 lg:w-88 bg-[#181818] text-white p-5 flex flex-col shrink-0 border-t md:border-t-0 md:border-l border-white/10 h-full">
+                            <div className="mb-4 pr-8">
+                                <h3 className="text-white text-sm font-normal line-clamp-2 leading-relaxed">
+                                    {lang === 'vi' ? product.nameVi || product.name : product.name}
+                                </h3>
+                            </div>
+
+                            {/* Lưới ảnh thumbnails 3 cột theo phong cách Shopee */}
+                            <div className="grid grid-cols-3 gap-2 overflow-y-auto max-h-[440px] pr-1">
+                                {productImages.map((imgUrl, idx) => {
+                                    const isActive = idx === activeImg
+                                    return (
+                                        <button
+                                            key={idx}
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.preventDefault()
+                                                e.stopPropagation()
+                                                setActiveImg(idx)
+                                            }}
+                                            onMouseEnter={() => setActiveImg(idx)}
+                                            className={`aspect-square w-full rounded-xs overflow-hidden bg-black/50 transition-all cursor-pointer relative ${
+                                                isActive
+                                                    ? 'border-2 border-[#ee4d2d] shadow-sm ring-1 ring-[#ee4d2d]'
+                                                    : 'border-2 border-transparent opacity-70 hover:opacity-100 hover:border-white/40'
+                                            }`}
+                                        >
+                                            <img
+                                                src={imgUrl}
+                                                alt={`Thumbnail ${idx + 1}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                        </button>
+                                    )
+                                })}
+                            </div>
+
+                            <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between text-xs text-gray-400">
+                                <span>
+                                    {activeImg + 1} / {productImages.length} hình ảnh
+                                </span>
+                                <span className="text-white/40 text-[11px]">Nexus Gallery</span>
+                            </div>
+                        </div>
+                    </div>
+                    </div>,
+                    document.body,
+                )}
 
             {/* Hệ thống Tabs: Mô tả, Đánh giá, Thông số kỹ thuật */}
             <div className="mt-10 nexus-card overflow-hidden">

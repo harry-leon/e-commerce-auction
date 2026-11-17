@@ -32,6 +32,7 @@ import { NOTIFICATIONS_CHANGED } from '../api/notificationStream'
 import { useSessionStore } from '../features/auth/sessionStore'
 import { getBatchStock } from '../api/inventory'
 import { filterInStockProducts } from '../features/catalog/catalog'
+import { matchesSearchKeyword, scoreProductSearch } from '../utils/searchMatcher'
 
 // Simple monochrome SVG icons per category
 function IconElectronics(p: SVGProps<SVGSVGElement>) {
@@ -435,23 +436,49 @@ export function PublicHeader() {
             setSuggestionsLoading(true)
             setSuggestionsError('')
             api<Envelope<ApiProduct[]>>(
-                `/products?q=${encodeURIComponent(query)}&page=0&size=6&sort=name,asc`,
+                `/products?q=${encodeURIComponent(query)}&page=0&size=12&sort=name,asc`,
                 { signal: controller.signal },
             )
                 .then(async (response) => {
-                    const products = Array.isArray(response?.data) ? response.data : []
-                    const normalizedQuery = query.toLocaleLowerCase()
-                    const matchingProducts = products.filter((product) =>
-                        [
-                            product.name,
-                            product.description,
-                            ...(product.skus || []).map((sku) => sku.skuCode || ''),
-                        ]
-                            .join(' ')
-                            .toLocaleLowerCase()
-                            .includes(normalizedQuery),
-                    )
-                    const skuIds = matchingProducts.flatMap((product) =>
+                    let products = Array.isArray(response?.data) ? response.data : []
+
+                    // Nếu backend trả về rỗng (ví dụ gõ tiếng Việt không dấu "den led" hoặc từ đồng nghĩa),
+                    // tự động tải danh mục sản phẩm để đối soát từ khóa thông minh phía client
+                    if (products.length === 0) {
+                        try {
+                            const fallbackRes = await api<Envelope<ApiProduct[]>>(
+                                `/products?page=0&size=50&sort=name,asc`,
+                                { signal: controller.signal },
+                            )
+                            if (Array.isArray(fallbackRes?.data)) {
+                                products = fallbackRes.data
+                            }
+                        } catch {}
+                    }
+
+                    // Sử dụng bộ so khớp từ khóa tối ưu (đa từ, không dấu tiếng Việt, đảo từ và xếp hạng)
+                    const scoredProducts = products
+                        .map((product) => {
+                            const searchableText = [
+                                product.name,
+                                (product as any).nameVi,
+                                product.description,
+                                (product as any).descriptionVi,
+                                ...(product.skus || []).map((sku) => sku.skuCode || ''),
+                            ]
+                                .filter(Boolean)
+                                .join(' ')
+
+                            const isMatch = matchesSearchKeyword(searchableText, query)
+                            const score = isMatch ? scoreProductSearch(product, query) : 0
+                            return { product, score }
+                        })
+                        .filter(({ score }) => score > 0)
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, 6)
+                        .map(({ product }) => product)
+
+                    const skuIds = scoredProducts.flatMap((product) =>
                         (product.skus || [])
                             .filter((sku) => sku.status === 'ACTIVE')
                             .map((sku) => sku.id),
@@ -459,7 +486,7 @@ export function PublicHeader() {
                     if (skuIds.length === 0) return []
                     const stocks = await getBatchStock({ skuIds }, controller.signal)
                     return filterInStockProducts(
-                        matchingProducts,
+                        scoredProducts,
                         Object.fromEntries(
                             stocks.map((stock) => [stock.skuId, stock.availableQty]),
                         ),

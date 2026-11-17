@@ -12,7 +12,6 @@ import {
     ConfirmModal,
     AlertBanner,
     EmptyState,
-    ProgressBar,
     AlertTriangle,
     CheckCircle,
     Truck,
