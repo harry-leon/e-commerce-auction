@@ -748,6 +748,22 @@ export function OrderDetailView() {
     }
 
     const isCodOrder = effectiveOrder.paymentMethod === 'COD'
+    const isPendingPayment =
+        effectiveOrder.status === 'PENDING_PAYMENT' && !isCodOrder
+
+    /**
+     * Chức năng: Điều hướng người mua tiếp tục thanh toán đơn hàng đang chờ thanh toán (PENDING_PAYMENT).
+     * Đầu vào: effectiveOrder.id và effectiveTotal.
+     * Kết quả: Chuyển hướng sang màn hình Sandbox Payment để hoàn tất thủ tục thanh toán an toàn.
+     * Luồng xử lý: Gọi navigate('sandbox-payment', { orderId, amount }) tương thích đầy đủ quy trình kiểm thử.
+     * Quy tắc: Tuân thủ AGENTS.md, chỉ áp dụng cho đơn chưa thanh toán online.
+     */
+    const handlePayNow = () => {
+        navigate('sandbox-payment', {
+            orderId: effectiveOrder.id,
+            amount: effectiveTotal,
+        })
+    }
 
     /**
      * Xác định nhãn hiển thị và màu sắc của trạng thái đơn hàng trên Header:
@@ -861,6 +877,16 @@ export function OrderDetailView() {
 
                     {/* Nút hành động góc phải */}
                     <div className="flex items-center gap-2.5">
+                        {isPendingPayment && (
+                            <button
+                                type="button"
+                                onClick={handlePayNow}
+                                className="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold text-white bg-[#ea580c] hover:bg-orange-600 flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
+                            >
+                                <SvgMoneyBill size={16} />
+                                <span>{lang === 'vi' ? 'Thanh toán ngay' : 'Pay Now'}</span>
+                            </button>
+                        )}
                         {canCancel && (
                             <button
                                 type="button"
@@ -921,6 +947,36 @@ export function OrderDetailView() {
                         </button>
                     </div>
                 </div>
+
+                {/* Banner nhắc nhở thanh toán khi đơn hàng đang chờ thanh toán */}
+                {isPendingPayment && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+                                <SvgMoneyBill size={20} />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                                    {lang === 'vi'
+                                        ? 'Đơn hàng đang chờ thanh toán'
+                                        : 'Awaiting Payment'}
+                                </h3>
+                                <p className="text-xs text-slate-600 mt-0.5">
+                                    {lang === 'vi'
+                                        ? `Số tiền cần thanh toán là ${formatCurrency(effectiveTotal, lang)}. Vui lòng thanh toán để người bán có thể tiến hành chuẩn bị và giao hàng.`
+                                        : `Amount due is ${formatCurrency(effectiveTotal, lang)}. Please complete payment so the seller can start dispatching your package.`}
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handlePayNow}
+                            className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-white bg-[#ea580c] hover:bg-orange-600 transition-colors shadow-sm cursor-pointer whitespace-nowrap self-end sm:self-auto"
+                        >
+                            {lang === 'vi' ? 'Thanh toán ngay' : 'Pay Now'}
+                        </button>
+                    </div>
+                )}
 
                 {/* 2. Stepper 5 bước phản ánh tiến trình xử lý đơn hàng */}
                 <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
@@ -1457,6 +1513,16 @@ export function OrderDetailView() {
                                         </span>
                                     </span>
                                 </div>
+                                {isPendingPayment && (
+                                    <button
+                                        type="button"
+                                        onClick={handlePayNow}
+                                        className="w-full mt-3 py-2 px-3 bg-[#ea580c] hover:bg-orange-600 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        <SvgMoneyBill size={14} />
+                                        <span>{lang === 'vi' ? 'Thanh toán ngay' : 'Pay Now'}</span>
+                                    </button>
+                                )}
                             </div>
                         </div>
 
