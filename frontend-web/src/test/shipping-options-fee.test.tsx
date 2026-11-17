@@ -170,8 +170,8 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             // Kiểm tra hiển thị phương thức vận chuyển từ API
             expect(await screen.findByText('GHN Express')).toBeInTheDocument()
             expect(screen.getByText('GHTK Standard')).toBeInTheDocument()
-            expect(screen.getAllByText(/\$55,000|55\.000/).length).toBeGreaterThanOrEqual(1)
-            expect(screen.getAllByText(/\$35,000|35\.000/).length).toBeGreaterThanOrEqual(1)
+            expect(screen.getAllByText(/\$55,000|55[.,]000/).length).toBeGreaterThanOrEqual(1)
+            expect(screen.getAllByText(/\$35,000|35[.,]000/).length).toBeGreaterThanOrEqual(1)
         })
 
         it('cho phép Buyer chọn phương thức vận chuyển và cập nhật tổng tiền tương ứng (AC 3, 4)', async () => {
@@ -216,7 +216,7 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
 
             // Kiểm tra phí ship được cập nhật trên Sidebar
             await waitFor(() => {
-                expect(screen.getAllByText(/\$35,000|35\.000/).length).toBeGreaterThanOrEqual(1)
+                expect(screen.getAllByText(/\$35,000|35[.,]000/).length).toBeGreaterThanOrEqual(1)
             })
         })
 

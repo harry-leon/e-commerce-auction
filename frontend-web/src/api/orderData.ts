@@ -56,12 +56,24 @@ export function normalizeOrder(raw: OrderPayload): Order {
     const resolvedTotal = Number(raw.total ?? raw.estimatedTotal ?? 0)
     const buyerName = raw.buyerName || (raw.buyerId ? `User ***${raw.buyerId.slice(-4)}` : '')
     const sellerName = raw.sellerName || (raw.sellerId ? `Seller ***${raw.sellerId.slice(-4)}` : '')
+    /**
+     * Xác định trạng thái thanh toán mặc định theo máy trạng thái Escrow (API_SPEC_CART_ORDER.md §6):
+     * - COMPLETED: 'released' (tiền đã tất toán giải ngân vào tài khoản người bán).
+     * - DELIVERED: 'protection_period' (đang trong thời gian bảo vệ người mua 3 ngày).
+     * - PAID / PROCESSING / SHIPPED: 'held' hoặc 'released' (người mua đã trả tiền, tiền đang được hệ thống giữ an toàn).
+     * - CANCELLED / REFUNDED: 'refunded' (đã hoàn tiền cho người mua).
+     * - PENDING_PAYMENT / khác: 'unknown' (chưa thanh toán).
+     */
     const defaultPaymentStatus =
-        raw.status === 'PAID'
+        raw.status === 'COMPLETED'
             ? 'released'
-            : raw.status === 'CANCELLED'
-              ? 'refunded'
-              : 'unknown'
+            : raw.status === 'DELIVERED'
+              ? 'protection_period'
+              : ['PAID', 'PROCESSING', 'SHIPPED'].includes(raw.status as string)
+                ? 'released'
+                : raw.status === 'CANCELLED' || raw.status === 'REFUNDED'
+                  ? 'refunded'
+                  : 'unknown'
 
     return {
         ...raw,
@@ -95,10 +107,22 @@ export function normalizeOrder(raw: OrderPayload): Order {
         discount: Number(raw.discount ?? raw.estimatedDiscount ?? 0),
         shipping: Number(raw.shippingFee ?? raw.shipping ?? raw.estimatedShippingFee ?? 0),
         total: resolvedTotal,
-        paymentStatus:
-            raw.paymentStatus && raw.paymentStatus !== 'unknown'
+        paymentStatus: (() => {
+            // Khi đơn hàng đã ở các trạng thái đã thu tiền hoặc hoàn tất, trạng thái thanh toán
+            // luôn được chuẩn hóa theo Escrow ('released', 'protection_period', 'held'),
+            // không để rơi vào 'unknown' hoặc 'unpaid' ('Chưa thanh toán').
+            const isPaidState = ['PAID', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'COMPLETED'].includes(
+                raw.status as string,
+            )
+            if (isPaidState) {
+                if (!raw.paymentStatus || ['unknown', 'unpaid', 'pending'].includes(raw.paymentStatus)) {
+                    return defaultPaymentStatus
+                }
+            }
+            return raw.paymentStatus && raw.paymentStatus !== 'unknown'
                 ? raw.paymentStatus
-                : defaultPaymentStatus,
+                : defaultPaymentStatus
+        })(),
         refundStatus: raw.refundStatus ?? 'none',
         paymentMethod: raw.paymentMethod ?? '',
         shippingAddress: raw.shippingAddress ?? '',

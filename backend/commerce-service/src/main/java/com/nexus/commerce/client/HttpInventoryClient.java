@@ -52,6 +52,47 @@ public class HttpInventoryClient implements InventoryClient {
         }
     }
 
+    /**
+     * Đọc tồn khả dụng hàng loạt bằng endpoint công khai POST /api/v1/inventory/stocks/batch.
+     * Giỏ hàng dùng kết quả này để hiển thị "còn lại" và chặn cộng dồn vượt tồn trước khi checkout.
+     * SKU không có bản ghi tồn kho tại kho mặc định được trả 0 thay vì bỏ khỏi map, tránh hiểu nhầm là chưa kiểm tra.
+     * Lỗi hạ tầng ném INVENTORY_UNAVAILABLE để caller biết chưa xác minh được thay vì coi như còn hàng.
+     */
+    @Override
+    public Map<UUID, Integer> availability(List<UUID> skuIds) {
+        if (skuIds == null || skuIds.isEmpty()) {
+            return Map.of();
+        }
+        List<UUID> distinct = skuIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            var response = client.post().uri("/api/v1/inventory/stocks/batch")
+                    .body(Map.of("skuIds", distinct))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<ApiResponse<List<BatchRow>>>() { });
+            if (response == null || !response.success() || response.data() == null) {
+                throw unavailable();
+            }
+            Map<UUID, Integer> result = new java.util.HashMap<>();
+            for (BatchRow row : response.data()) {
+                if (row != null && row.skuId() != null) {
+                    result.put(row.skuId(), Math.max(0, row.availableQty()));
+                }
+            }
+            for (UUID id : distinct) {
+                result.putIfAbsent(id, 0);
+            }
+            return result;
+        } catch (RestClientException error) {
+            // Chức năng: Xử lý ngoại lệ HTTP / kết nối từ Fulfillment Service khi đọc tồn kho hàng loạt.
+            // Đầu vào: Ngoại lệ RestClientException (bao gồm cả RestClientResponseException).
+            // Kết quả & Lỗi: Ném ngoại lệ ApiException với mã INVENTORY_UNAVAILABLE để caller biết kho tạm thời chưa sẵn sàng.
+            throw unavailable();
+        }
+    }
+
     /** Giữ kho 15 phút theo checkout draft; caller phải bù trừ nếu response mất hoặc transaction Order rollback. */
     @Override
     public List<UUID> reserve(UUID orderId, List<Item> items, String token) {
@@ -151,6 +192,9 @@ public class HttpInventoryClient implements InventoryClient {
 
     /** Chỉ đọc số khả dụng; các trường còn lại thuộc contract Fulfillment và được Jackson bỏ qua. */
     private record Stock(int availableQty) { }
+
+    /** Một dòng của POST /inventory/stocks/batch; chỉ dùng skuId và số khả dụng. */
+    private record BatchRow(UUID skuId, int availableQty) { }
 
     /** Nhận đúng phần contract reserve cần xác minh; warehouse/expiry vẫn do Fulfillment quản lý. */
     private record Receipt(String refType, UUID refId, String status, List<Reserved> items) { }

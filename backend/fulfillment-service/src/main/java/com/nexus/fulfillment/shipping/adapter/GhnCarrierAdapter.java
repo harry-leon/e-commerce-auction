@@ -28,10 +28,14 @@ import org.springframework.web.client.RestClientException;
  * Adapter tích hợp API Giao Hàng Nhanh (GHN) (SRS §3.6.2, KH-S3-1).
  *
  * Chức năng:
- * - Đóng gói hợp đồng HTTP của GHN: header Token/ShopId, endpoint tính phí, tạo đơn và tra cứu hành trình.
- * - Chuẩn hóa trạng thái GHN (ready_to_pick, picking, delivering, delivered, ...) về ShipmentStatus nội bộ.
- * - Khi chưa cấu hình GHN_API_TOKEN (môi trường local/dev), tự động chạy chế độ sandbox mô phỏng xác định
- *   để luồng nghiệp vụ vẫn kiểm thử được; khi có token hoặc inject RestClient (contract test) sẽ gọi HTTP thật.
+ * - Đóng gói hợp đồng HTTP của GHN: header Token/ShopId, endpoint tính phí, tạo
+ * đơn và tra cứu hành trình.
+ * - Chuẩn hóa trạng thái GHN (ready_to_pick, picking, delivering, delivered,
+ * ...) về ShipmentStatus nội bộ.
+ * - Khi chưa cấu hình GHN_API_TOKEN (môi trường local/dev), tự động chạy chế độ
+ * sandbox mô phỏng xác định
+ * để luồng nghiệp vụ vẫn kiểm thử được; khi có token hoặc inject RestClient
+ * (contract test) sẽ gọi HTTP thật.
  */
 @Component
 public class GhnCarrierAdapter implements ShippingCarrierAdapter {
@@ -50,12 +54,12 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
         this(
                 buildRestClient(properties.getShipping().getGhn()),
                 properties.getShipping().getGhn(),
-                properties.getShipping().getDefaultDeliveryDays()
-        );
+                properties.getShipping().getDefaultDeliveryDays());
     }
 
     /**
-     * Constructor phục vụ contract test với MockRestServiceServer gắn trực tiếp vào RestClient.
+     * Constructor phục vụ contract test với MockRestServiceServer gắn trực tiếp vào
+     * RestClient.
      */
     public GhnCarrierAdapter(
             RestClient restClient,
@@ -85,17 +89,18 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
     public CarrierQuoteResult quote(CarrierQuoteRequest request) {
         String serviceType = normalizeServiceType(request.serviceType());
         if (isLocalSandboxFallback()) {
-            BigDecimal baseFee = "EXPRESS".equals(serviceType) ? new BigDecimal("35.00") : new BigDecimal("22.00");
+            // Cước sandbox chuẩn VNĐ: Gói Hỏa tốc = 35.000₫, Gói Tiêu chuẩn = 22.000₫ (thay
+            // vì 35.00 và 22.00)
+            BigDecimal baseFee = "EXPRESS".equals(serviceType) ? new BigDecimal("35000") : new BigDecimal("22000");
             int weight = request.weightGrams() != null && request.weightGrams() > 0 ? request.weightGrams() : 500;
-            BigDecimal extra = BigDecimal.valueOf(Math.max(0, (weight - 500) / 500) * 3L);
+            BigDecimal extra = BigDecimal.valueOf(Math.max(0, (weight - 500) / 500) * 5000L);
             int days = "EXPRESS".equals(serviceType) ? 1 : Math.min(defaultDeliveryDays, 2);
             return new CarrierQuoteResult(
                     CARRIER_CODE,
                     serviceType,
                     baseFee.add(extra),
                     days,
-                    Instant.now().plus(days, ChronoUnit.DAYS)
-            );
+                    Instant.now().plus(days, ChronoUnit.DAYS));
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -108,7 +113,8 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
         GhnEnvelope<GhnFeeData> response = executePost(
                 FEE_PATH,
                 payload,
-                new org.springframework.core.ParameterizedTypeReference<GhnEnvelope<GhnFeeData>>() { });
+                new org.springframework.core.ParameterizedTypeReference<GhnEnvelope<GhnFeeData>>() {
+                });
 
         if (response == null || response.code() == null || response.code() != 200 || response.data() == null) {
             throw mapGhnBusinessError(response);
@@ -120,8 +126,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                 serviceType,
                 fee,
                 days,
-                Instant.now().plus(days, ChronoUnit.DAYS)
-        );
+                Instant.now().plus(days, ChronoUnit.DAYS));
     }
 
     @Override
@@ -137,8 +142,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                     request.toWardCode(),
                     request.weightGrams(),
                     request.insuranceValue(),
-                    serviceType
-            ));
+                    serviceType));
             String suffix = request.orderId() != null
                     ? request.orderId().toString().replace("-", "").substring(0, 8).toUpperCase(Locale.ROOT)
                     : UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT);
@@ -151,8 +155,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                     quote.estimatedDeliveryDays(),
                     quote.estimatedDeliveryAt(),
                     "ready_to_pick",
-                    ShipmentStatus.PENDING
-            );
+                    ShipmentStatus.PENDING);
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -172,7 +175,8 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
         GhnEnvelope<GhnCreateData> response = executePost(
                 CREATE_PATH,
                 payload,
-                new org.springframework.core.ParameterizedTypeReference<GhnEnvelope<GhnCreateData>>() { });
+                new org.springframework.core.ParameterizedTypeReference<GhnEnvelope<GhnCreateData>>() {
+                });
 
         if (response == null || response.code() == null || response.code() != 200 || response.data() == null
                 || response.data().orderCode() == null || response.data().orderCode().isBlank()) {
@@ -180,7 +184,8 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
         }
 
         int days = "EXPRESS".equals(serviceType) ? 1 : Math.min(defaultDeliveryDays, 2);
-        Instant eta = parseInstantOrDefault(response.data().expectedDeliveryTime(), Instant.now().plus(days, ChronoUnit.DAYS));
+        Instant eta = parseInstantOrDefault(response.data().expectedDeliveryTime(),
+                Instant.now().plus(days, ChronoUnit.DAYS));
         BigDecimal fee = response.data().totalFee() != null ? response.data().totalFee() : BigDecimal.ZERO;
         return new CarrierCreateShipmentResult(
                 CARRIER_CODE,
@@ -190,8 +195,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                 days,
                 eta,
                 "ready_to_pick",
-                ShipmentStatus.PENDING
-        );
+                ShipmentStatus.PENDING);
     }
 
     @Override
@@ -205,8 +209,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                     new CarrierTrackingEvent("ready_to_pick", ShipmentStatus.PENDING,
                             "Đơn hàng đã tạo trên GHN Sandbox", "Kho lấy hàng", now.minus(2, ChronoUnit.HOURS)),
                     new CarrierTrackingEvent("picking", ShipmentStatus.PICKING,
-                            "Bưu tá GHN đang đến lấy hàng", "Kho lấy hàng", now.minus(1, ChronoUnit.HOURS))
-            );
+                            "Bưu tá GHN đang đến lấy hàng", "Kho lấy hàng", now.minus(1, ChronoUnit.HOURS)));
             return new CarrierTrackingResult(
                     CARRIER_CODE,
                     trackingNumber,
@@ -214,15 +217,15 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                     ShipmentStatus.PICKING,
                     "Kho lấy hàng",
                     now,
-                    events
-            );
+                    events);
         }
 
         Map<String, Object> payload = Map.of("order_code", trackingNumber);
         GhnEnvelope<GhnDetailData> response = executePost(
                 DETAIL_PATH,
                 payload,
-                new org.springframework.core.ParameterizedTypeReference<GhnEnvelope<GhnDetailData>>() { });
+                new org.springframework.core.ParameterizedTypeReference<GhnEnvelope<GhnDetailData>>() {
+                });
 
         if (response == null || response.code() == null || response.code() != 200 || response.data() == null) {
             throw mapGhnBusinessError(response);
@@ -239,8 +242,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                             mapGhnStatus(item.status()),
                             "GHN status: " + item.status(),
                             null,
-                            parseInstantOrDefault(item.updatedDate(), Instant.now())
-                    ));
+                            parseInstantOrDefault(item.updatedDate(), Instant.now())));
                 }
             }
         }
@@ -251,8 +253,7 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
                 mapped,
                 null,
                 Instant.now(),
-                events
-        );
+                events);
     }
 
     private <T> T executePost(
@@ -272,7 +273,8 @@ public class GhnCarrierAdapter implements ShippingCarrierAdapter {
             if (ex.getCause() instanceof SocketTimeoutException) {
                 throw new ApiException(ErrorCode.SHIPMENT_CARRIER_TIMEOUT, "Hết thời gian chờ phản hồi từ GHN", ex);
             }
-            throw new ApiException(ErrorCode.SHIPMENT_CARRIER_ERROR, "Không kết nối được tới GHN: " + ex.getMessage(), ex);
+            throw new ApiException(ErrorCode.SHIPMENT_CARRIER_ERROR, "Không kết nối được tới GHN: " + ex.getMessage(),
+                    ex);
         } catch (HttpClientErrorException | HttpServerErrorException ex) {
             throw new ApiException(
                     ErrorCode.SHIPMENT_CARRIER_ERROR,

@@ -27,7 +27,14 @@ public class CartMapper {
      * @param skuInfo The real-time SKU details retrieved from Catalog Service
      * @return CartItemResponse with calculated line subtotal and stock availability status
      */
-    public CartItemResponse toItemResponse(CartItem item, SkuInfo skuInfo) {
+    /**
+     * Ánh xạ CartItem entity và SkuInfo kèm tồn kho khả dụng thành CartItemResponse DTO.
+     * Chức năng: Tính toán subtotal dòng hàng, gán số lượng tồn khả dụng từ Fulfillment và xác định isAvailable.
+     * Đầu vào: item (CartItem), skuInfo (SkuInfo từ Catalog), stockAvailable (tồn khả dụng từ Fulfillment, có thể null).
+     * Kết quả: CartItemResponse chứa đầy đủ giá, số lượng, tồn kho khả dụng và trạng thái có thể đặt hàng.
+     * Quy tắc: isAvailable = true khi SKU active và tồn kho khả dụng >= số lượng đặt trong giỏ (nếu đã kiểm tra được kho).
+     */
+    public CartItemResponse toItemResponse(CartItem item, SkuInfo skuInfo, Integer stockAvailable) {
         if (item == null) {
             return null;
         }
@@ -40,10 +47,10 @@ public class CartMapper {
         int quantity = item.getQuantity() != null ? item.getQuantity() : 0;
         BigDecimal itemSubtotal = unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
 
-        // Catalog không sở hữu tồn kho; null giữ nghĩa chưa kiểm tra Fulfillment, không giả thành hết hàng hoặc tồn 100.
-        Integer stock = skuInfo == null ? null : skuInfo.stockQuantity();
+        // Đọc tồn kho từ Fulfillment (stockAvailable), dự phòng từ Catalog nếu có; null là chưa kiểm tra được hạ tầng kho.
+        Integer stock = stockAvailable != null ? stockAvailable : (skuInfo == null ? null : skuInfo.stockQuantity());
         boolean isAvailable = skuInfo != null && Boolean.TRUE.equals(skuInfo.isActive())
-                && (stock == null || stock >= quantity);
+                && (stock == null || (stock > 0 && stock >= quantity));
 
         return new CartItemResponse(
                 item.getId(),
@@ -59,24 +66,32 @@ public class CartMapper {
         );
     }
 
+    public CartItemResponse toItemResponse(CartItem item, SkuInfo skuInfo) {
+        return toItemResponse(item, skuInfo, null);
+    }
+
     /**
      * Maps a Cart entity and a map of SKU details into a complete CartResponse DTO.
      * Computes aggregate metrics including subtotal, discount, tax, shipping, and estimated total.
      *
-     * @param cart   The Cart entity from database
-     * @param skuMap Map of SkuInfo looked up by skuId from Catalog Service
+     * @param cart     The Cart entity from database
+     * @param skuMap   Map of SkuInfo looked up by skuId from Catalog Service
+     * @param stockMap Map of available inventory quantities looked up by skuId from Fulfillment Service
      * @return Aggregated CartResponse conforming to API contract specifications
      */
-    public CartResponse toCartResponse(Cart cart, Map<UUID, SkuInfo> skuMap) {
+    public CartResponse toCartResponse(Cart cart, Map<UUID, SkuInfo> skuMap, Map<UUID, Integer> stockMap) {
         if (cart == null) {
             return null;
         }
 
         List<CartItem> items = cart.getItems() != null ? cart.getItems() : Collections.emptyList();
 
-        // 1. Map individual items
+        // 1. Map individual items kèm tồn kho khả dụng
         List<CartItemResponse> itemResponses = items.stream()
-                .map(item -> toItemResponse(item, skuMap != null ? skuMap.get(item.getSkuId()) : null))
+                .map(item -> toItemResponse(
+                        item,
+                        skuMap != null ? skuMap.get(item.getSkuId()) : null,
+                        stockMap != null ? stockMap.get(item.getSkuId()) : null))
                 .toList();
 
         // 2. Compute aggregate totals
@@ -116,5 +131,9 @@ public class CartMapper {
                 totalAmount,
                 cart.getExpiresAt()
         );
+    }
+
+    public CartResponse toCartResponse(Cart cart, Map<UUID, SkuInfo> skuMap) {
+        return toCartResponse(cart, skuMap, null);
     }
 }

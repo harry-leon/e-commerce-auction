@@ -49,6 +49,7 @@ export interface ShippingQuoteRequest {
     toWardCode?: string
     weightGrams?: number
     orderTotal?: number
+    voucherCode?: string | null
 }
 
 /** Một phương án báo giá vận chuyển từ từng hãng vận chuyển đối tác */
@@ -138,10 +139,21 @@ export interface CreateShipmentRequest {
 
 // ─── Dữ liệu Fallback dự phòng khi Backend Offline ──────────────────────────
 
-/** Báo giá mặc định dự phòng theo tiêu chuẩn Nexus SRS §3.6.2 */
-export function getFallbackShippingQuotes(orderTotal: number = 0): ShippingQuoteResponse {
-    const freeShippingThreshold = 500000 // 500.000 VNĐ
-    const isFree = orderTotal >= freeShippingThreshold
+/**
+ * Báo giá mặc định dự phòng theo tiêu chuẩn Nexus SRS §3.6.2.
+ * Chức năng: Trả về các phương án vận chuyển GHN Express và GHTK Standard khi backend fulfillment offline.
+ * Đầu vào: orderTotal (tổng tiền hàng), voucherCode (mã voucher ưu đãi nếu có).
+ * Kết quả: ShippingQuoteResponse với cước phí được chuẩn hóa.
+ * Quy tắc nghiệp vụ mới:
+ * - KHÔNG tự động miễn phí vận chuyển theo giá trị đơn hàng (bỏ chính sách tự động free ship khi >= 500.000 đ).
+ * - Phí vận chuyển chuẩn: GHN 55.000 đ, GHTK 35.000 đ.
+ * - Chỉ được miễn phí vận chuyển khi người mua có và áp dụng mã voucher hợp lệ (FREESHIP).
+ */
+export function getFallbackShippingQuotes(
+    orderTotal: number = 0,
+    voucherCode?: string | null,
+): ShippingQuoteResponse {
+    const isFree = voucherCode?.trim().toUpperCase() === 'FREESHIP'
 
     const now = Date.now()
     const ghnDate = new Date(now + 3 * 24 * 3600 * 1000).toISOString()
@@ -149,7 +161,7 @@ export function getFallbackShippingQuotes(orderTotal: number = 0): ShippingQuote
 
     return {
         defaultCarrier: 'GHN',
-        freeShippingThreshold,
+        freeShippingThreshold: 0,
         freeShippingApplied: isFree,
         options: [
             {
@@ -198,7 +210,7 @@ export const shippingApi = {
                 error,
             )
         }
-        return getFallbackShippingQuotes(request.orderTotal || 0)
+        return getFallbackShippingQuotes(request.orderTotal || 0, request.voucherCode)
     },
 
     /**

@@ -74,14 +74,16 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
     }, [orderId, queryStatus, user, lang])
 
     const current = order?.id === orderId ? order : null
+    const isCod = current?.paymentMethod === 'COD'
     const isPaid = current && (current.status === 'PAID' || current.status === 'COMPLETED')
+    const isSuccess = isPaid || isCod
     const isUnverified = !orderId || (error && !current)
 
     useEffect(() => {
-        if (isPaid) {
+        if (isSuccess) {
             fireConfetti({ particleCount: 100, spread: 80 })
         }
-    }, [isPaid])
+    }, [isSuccess])
 
     return (
         <div className="max-w-lg mx-auto text-center py-12 px-4 animate-in fade-in zoom-in-95 duration-300">
@@ -89,12 +91,12 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                 <div className="flex justify-center mb-5">
                     <div
                         className={`w-20 h-20 rounded-3xl shadow-lg flex items-center justify-center transition-transform hover:scale-105 duration-300 ${
-                            isPaid
+                            isSuccess
                                 ? 'bg-gradient-to-tr from-emerald-500 to-green-400 text-white shadow-emerald-500/25 ring-8 ring-emerald-50'
                                 : 'bg-gradient-to-tr from-blue-500 to-indigo-400 text-white shadow-blue-500/25 ring-8 ring-blue-50'
                         }`}
                     >
-                        {isPaid ? (
+                        {isSuccess ? (
                             <CheckCircle size={40} className="stroke-[2.5]" />
                         ) : (
                             <Package size={40} className="stroke-[2.5]" />
@@ -109,16 +111,20 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                         ? lang === 'vi'
                             ? 'Thanh toán thành công'
                             : 'Payment successful'
-                        : lang === 'vi'
-                          ? 'Đơn hàng đã được ghi nhận'
-                          : 'Order received'
+                        : isCod
+                          ? lang === 'vi'
+                              ? 'Đặt hàng thành công'
+                              : 'Order placed successfully'
+                          : lang === 'vi'
+                            ? 'Đơn hàng đã được ghi nhận'
+                            : 'Order received'
                     : lang === 'vi'
                       ? 'Chưa xác nhận được đơn hàng'
                       : 'Order not verified'}
             </h1>
 
             {current && (
-                <div className="text-sm font-medium text-gray-600 mb-6 font-mono bg-gray-50 py-2.5 px-4 rounded-xl border border-gray-200 inline-block">
+                <div className="text-sm font-medium text-gray-600 mb-4 font-mono bg-gray-50 py-2.5 px-4 rounded-xl border border-gray-200 inline-block">
                     {current.orderNo ||
                         (current.id.length > 8
                             ? '#' + current.id.slice(0, 8).toUpperCase()
@@ -128,14 +134,28 @@ export function VerifiedOrderResult({ orderId }: { orderId: string }) {
                         className={
                             isPaid
                                 ? 'text-emerald-600 font-semibold'
-                                : current.status === 'CANCELLED'
-                                  ? 'text-red-600 font-semibold'
-                                  : 'text-blue-600 font-semibold'
+                                : isCod && current.status === 'PENDING_PAYMENT'
+                                  ? 'text-emerald-600 font-semibold'
+                                  : current.status === 'CANCELLED'
+                                    ? 'text-red-600 font-semibold'
+                                    : 'text-blue-600 font-semibold'
                         }
                     >
-                        {formatStatusLabel(current.status, lang)}
+                        {isCod && current.status === 'PENDING_PAYMENT'
+                            ? lang === 'vi'
+                                ? 'Đã ghi nhận (Thanh toán khi nhận hàng)'
+                                : 'Order Placed (Cash on Delivery)'
+                            : formatStatusLabel(current.status, lang)}
                     </span>
                 </div>
+            )}
+
+            {isCod && current && (
+                <p className="text-sm text-gray-600 mb-6 bg-emerald-50 p-3.5 rounded-xl border border-emerald-200 text-emerald-800">
+                    {lang === 'vi'
+                        ? 'Cảm ơn quý khách! Đơn hàng đã được tiếp nhận và người bán đang tiến hành chuẩn bị bưu phẩm. Quý khách vui lòng thanh toán tiền mặt cho nhân viên giao hàng khi nhận kiện hàng.'
+                        : 'Thank you! Your order has been placed and the seller is preparing your package. Please pay cash to the courier upon delivery.'}
+                </p>
             )}
 
             {isUnverified && (
