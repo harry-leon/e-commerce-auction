@@ -191,17 +191,44 @@ export function getFallbackShippingQuotes(
 export const shippingApi = {
     /**
      * Lấy báo giá phí vận chuyển từ các hãng đối tác (POST /api/v1/shipping/quotes).
-     * Luồng: Gửi địa chỉ + orderTotal sang Fulfillment Service.
-     * Nếu backend chưa có hoặc gặp lỗi mạng, tự động sử dụng fallback chuẩn để không chặn luồng thanh toán.
+     * 1. Chức năng: Truy vấn cước vận chuyển thực tế từ Backend Fulfillment Service và chuẩn hóa theo chính sách Voucher FREESHIP.
+     * 2. Đầu vào & kết quả: Nhận ShippingQuoteRequest (địa chỉ, orderTotal, voucherCode); trả về ShippingQuoteResponse đã qua chuẩn hóa.
+     * 3. Luồng xử lý: Gửi request tới endpoint /shipping/quotes. Khi nhận dữ liệu, kiểm tra tính hợp lệ của voucher FREESHIP.
+     * 4. Quy tắc & lý do:
+     *    - Không bao giờ tự động miễn phí vận chuyển theo giá trị đơn hàng (bỏ quy tắc auto free ship khi orderTotal >= 500k).
+     *    - Bắt buộc phải có voucher 'FREESHIP' hợp lệ thì mới được áp dụng phí 0 đ và gắn cờ freeShippingApplied.
+     *    - Khi không có voucher FREESHIP, ép toàn bộ cờ freeShippingApplied về false và dùng phí gốc (originalFee) của từng hãng.
+     * 5. Lỗi & giới hạn: Nếu backend offline hoặc lỗi mạng, tự động kích hoạt getFallbackShippingQuotes để bảo vệ trải nghiệm checkout.
      */
     async getShippingQuotes(request: ShippingQuoteRequest): Promise<ShippingQuoteResponse> {
+        const hasFreeShipVoucher = request.voucherCode?.trim().toUpperCase() === 'FREESHIP'
         try {
             const envelope = await api<ApiResponse<ShippingQuoteResponse>>('/shipping/quotes', {
                 method: 'POST',
                 body: JSON.stringify(request),
             })
             if (envelope?.data?.options && envelope.data.options.length > 0) {
-                return envelope.data
+                // Chuẩn hóa danh sách phương thức vận chuyển: bảo đảm chỉ miễn phí khi có voucher FREESHIP
+                const normalizedOptions = envelope.data.options.map((opt) => {
+                    const fallbackCarrierFee = opt.carrier === 'GHN' ? 22000 : 35000
+                    const originalFee =
+                        opt.originalFee && opt.originalFee > 0
+                            ? opt.originalFee
+                            : (opt.shippingFee > 0 ? opt.shippingFee : fallbackCarrierFee)
+                    const effectiveFee = hasFreeShipVoucher ? 0 : originalFee
+                    return {
+                        ...opt,
+                        originalFee,
+                        shippingFee: effectiveFee,
+                        freeShippingApplied: hasFreeShipVoucher,
+                    }
+                })
+
+                return {
+                    ...envelope.data,
+                    freeShippingApplied: hasFreeShipVoucher,
+                    options: normalizedOptions,
+                }
             }
         } catch (error) {
             // Log cảnh báo dev và kích hoạt fallback
