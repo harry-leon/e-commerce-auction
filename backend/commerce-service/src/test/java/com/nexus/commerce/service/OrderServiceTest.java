@@ -1212,7 +1212,7 @@ class OrderServiceTest {
         @DisplayName("Admin giải quyết tranh chấp hoàn tiền (refunded) -> Đơn sang REFUNDED và ghi audit log")
         void test_resolveDispute_refunded_success() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
-            when(orderRepository.findForUpdate(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
             OrderDetailResponse mockResponse = buildMockDetailResponse(order);
@@ -1234,7 +1234,7 @@ class OrderServiceTest {
         @DisplayName("Admin giải quyết tranh chấp giải ngân (released) -> Đơn sang COMPLETED")
         void test_resolveDispute_released_success() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
-            when(orderRepository.findForUpdate(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
             when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
 
             OrderDetailResponse mockResponse = buildMockDetailResponse(order);
@@ -1262,7 +1262,7 @@ class OrderServiceTest {
                     () -> orderService.resolveDispute(orderId, request, buyerId, List.of("ROLE_BUYER"))
             );
             assertEquals(ErrorCode.AUTH_FORBIDDEN.name(), ex.getCode());
-            verify(orderRepository, never()).findForUpdate(any());
+            verify(orderRepository, never()).findForPayment(any());
         }
 
         /**
@@ -1272,7 +1272,7 @@ class OrderServiceTest {
         @DisplayName("Đơn hàng chưa thanh toán (PENDING_PAYMENT) -> Ném ORDER_STATUS_INVALID")
         void test_resolveDispute_pendingPayment_throwsInvalid() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.PENDING_PAYMENT);
-            when(orderRepository.findForUpdate(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
 
             ResolveOrderDisputeRequest request = new ResolveOrderDisputeRequest("refunded", "Chưa thanh toán");
 
@@ -1291,7 +1291,7 @@ class OrderServiceTest {
         @DisplayName("Người mua gửi khiếu nại đơn hàng của mình -> Ghi vết kiểm toán thành công")
         void test_submitDispute_buyer_success() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
-            when(orderRepository.findForUpdate(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
 
             OrderDetailResponse mockResponse = buildMockDetailResponse(order);
             when(orderMapper.toDetailResponse(any(Order.class))).thenReturn(mockResponse);
@@ -1310,7 +1310,7 @@ class OrderServiceTest {
         @DisplayName("Người khác gửi khiếu nại đơn hàng -> Ném AUTH_FORBIDDEN")
         void test_submitDispute_otherUser_throwsForbidden() {
             Order order = buildMockOrder(orderId, buyerId, sellerId, OrderStatus.DELIVERED);
-            when(orderRepository.findForUpdate(orderId)).thenReturn(Optional.of(order));
+            when(orderRepository.findForPayment(orderId)).thenReturn(Optional.of(order));
 
             UUID otherUserId = UUID.randomUUID();
             SubmitOrderDisputeRequest request = new SubmitOrderDisputeRequest("Khiếu nại giùm");

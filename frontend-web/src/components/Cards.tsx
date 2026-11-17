@@ -15,8 +15,9 @@ export function ProductCard({ product }: { product: Product }) {
 
     // ProductCard là lớp bảo vệ cuối: không tạo thẻ cho sản phẩm hết hàng hoặc chưa xác nhận tồn kho.
     if (product.stock <= 0) return null
-    const discount = product.originalPrice
-        ? Math.round((1 - product.price / product.originalPrice) * 100)
+    const hasDiscount = Boolean(product.originalPrice && product.originalPrice > product.price)
+    const discount = hasDiscount
+        ? Math.round((1 - product.price / product.originalPrice!) * 100)
         : 0
     /**
      * Chức năng: Thêm nhanh sản phẩm từ thẻ card vào giỏ hàng mà không cần mở trang chi tiết.
@@ -126,7 +127,7 @@ export function ProductCard({ product }: { product: Product }) {
                         <span className="text-lg font-bold text-primary">
                             {formatCurrency(product.price, lang)}
                         </span>
-                        {product.originalPrice && (
+                        {hasDiscount && product.originalPrice && (
                             <span className="text-xs text-gray-400 line-through ml-2">
                                 {formatCurrency(product.originalPrice, lang)}
                             </span>
@@ -235,9 +236,21 @@ export function AuctionCard({ auction }: { auction: Auction }) {
                     </div>
                 </div>
                 <div className="flex items-center justify-between text-xs text-gray-400 pt-1">
-                    <span className="truncate max-w-[130px]">
-                        {lang === 'en' ? 'By' : 'Bởi'} <strong className="text-gray-600 font-medium">{auction.sellerName}</strong>
-                    </span>
+                    <button
+                        type="button"
+                        className="truncate max-w-[130px] text-left hover:text-primary transition-colors cursor-pointer group/seller flex items-center gap-0.5"
+                        title={lang === 'en' ? 'View seller profile' : 'Xem hồ sơ người bán'}
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            navigate('public-reputation', { id: auction.sellerId || 'seller-1' })
+                        }}
+                    >
+                        <span>{lang === 'en' ? 'By' : 'Bởi'}</span>
+                        <strong className="text-gray-600 font-medium group-hover/seller:text-primary group-hover/seller:underline ml-1">
+                            {auction.sellerName}
+                        </strong>
+                        <span className="text-[10px] opacity-0 group-hover/seller:opacity-100 transition-opacity">↗</span>
+                    </button>
                     <button
                         className="nexus-btn nexus-btn-auction nexus-btn-sm rounded-xl shadow-sm hover:shadow-md transition-all duration-200 active:scale-95"
                         onClick={(e) => {

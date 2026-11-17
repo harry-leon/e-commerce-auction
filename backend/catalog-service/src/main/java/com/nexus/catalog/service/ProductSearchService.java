@@ -70,12 +70,34 @@ public class ProductSearchService {
             List<Predicate> filters = new ArrayList<>();
             filters.add(cb.equal(root.get("status"), status == null ? ProductStatus.ACTIVE : status));
             if (q != null && !q.isBlank()) {
+                String trimmed = q.trim();
                 // Escape ký tự LIKE để tìm dấu %, _ và \ đúng nghĩa văn bản, không biến chúng thành wildcard.
-                String escaped = q.trim().toLowerCase(Locale.ROOT).replace("\\", "\\\\")
+                String escaped = trimmed.toLowerCase(Locale.ROOT).replace("\\", "\\\\")
                         .replace("%", "\\%").replace("_", "\\_");
                 String pattern = "%" + escaped + "%";
-                filters.add(cb.or(cb.like(cb.lower(root.get("name")), pattern, '\\'),
-                        cb.like(cb.lower(root.get("description")), pattern, '\\')));
+                Predicate phraseMatch = cb.or(
+                        cb.like(cb.lower(root.get("name")), pattern, '\\'),
+                        cb.like(cb.lower(root.get("description")), pattern, '\\')
+                );
+
+                // Tách từ khóa tìm kiếm (Multi-token search) để các từ như "đèn led" vẫn tìm ra "Đèn bàn học LED"
+                String[] tokens = trimmed.toLowerCase(Locale.ROOT).split("\\s+");
+                if (tokens.length > 1) {
+                    List<Predicate> tokenPredicates = new ArrayList<>();
+                    for (String token : tokens) {
+                        if (token.isBlank()) continue;
+                        String escapedToken = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+                        String tokenPattern = "%" + escapedToken + "%";
+                        tokenPredicates.add(cb.or(
+                                cb.like(cb.lower(root.get("name")), tokenPattern, '\\'),
+                                cb.like(cb.lower(root.get("description")), tokenPattern, '\\')
+                        ));
+                    }
+                    Predicate allTokensMatch = cb.and(tokenPredicates.toArray(Predicate[]::new));
+                    filters.add(cb.or(phraseMatch, allTokensMatch));
+                } else {
+                    filters.add(phraseMatch);
+                }
             }
             if (categoryId != null) {
                 // Cây tối đa ba cấp: sản phẩm khớp nếu danh mục của nó, cha hoặc ông khớp UUID bộ lọc.

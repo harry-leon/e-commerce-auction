@@ -23,6 +23,7 @@ import {
     type Envelope,
 } from './client'
 import { readSession } from './client'
+import { broadcastAuctionEvent } from './auctionStream'
 import type { Auction, AuctionBid, AuctionStatus, Product } from '../types'
 import { AUCTIONS, PRODUCTS } from '../mockData'
 
@@ -1074,6 +1075,29 @@ export const auctionsApi = {
                 payload,
             )
             if (envelope?.data) {
+                try {
+                    const raw = localStorage.getItem('nexus.my-bids')
+                    const list = raw ? JSON.parse(raw) : []
+                    const updated = [
+                        { auctionId, myBid: amount, timestamp: new Date().toISOString() },
+                        ...list.filter((x: any) => x.auctionId !== auctionId),
+                    ]
+                    localStorage.setItem('nexus.my-bids', JSON.stringify(updated))
+                } catch {}
+
+                // Phát bản tin realtime tới toàn bộ ứng dụng và các tab
+                broadcastAuctionEvent({
+                    type: 'BID_PLACED',
+                    auctionId,
+                    currentPrice: envelope.data.currentBid ?? amount,
+                    amount,
+                    bidCount: envelope.data.bidCount,
+                    endTime: envelope.data.endTime,
+                    bidderId,
+                    bidderName,
+                    timestamp: new Date().toISOString(),
+                })
+
                 return envelope.data
             }
         } catch (error) {
@@ -1121,6 +1145,19 @@ export const auctionsApi = {
             localAuctionsStore[targetIndex] = updatedAuction
             persistStoredAuctions(localAuctionsStore)
         }
+
+        // Phát bản tin realtime tới toàn bộ ứng dụng và các tab
+        broadcastAuctionEvent({
+            type: 'BID_PLACED',
+            auctionId,
+            currentPrice: amount,
+            amount,
+            bidCount: targetAuction ? targetAuction.bidCount : 1,
+            endTime: newEndTime,
+            bidderId,
+            bidderName,
+            timestamp: newBid.timestamp,
+        })
 
         return {
             bid: newBid,
