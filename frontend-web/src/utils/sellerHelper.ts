@@ -17,6 +17,8 @@
  */
 
 export const KNOWN_SELLERS: Record<string, string> = {
+    'b47dab32-e665-4c82-b2fd-44bfb5015447': 'TechZone Store',
+    'd4d9f2d9-e6f3-4e38-8647-b2c4ab29eb52': 'FashionHub Store',
     'b1fb6fd5-936c-439e-994c-f0c5c529b406': 'Cửa hàng Minh An',
     '24dc0205-1ea1-41e8-8f7f-6e4e98732d6e': 'Cửa hàng Thanh Lam',
     '3bd7d904-46b9-4784-a599-de3e19b54f4e': 'Cửa hàng An Nhiên',
