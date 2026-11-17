@@ -17,11 +17,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import reactor.core.publisher.Mono;
 
@@ -127,6 +131,9 @@ public class AuthGatewayController {
         this(webClientBuilder, new RsaCryptoService());
     }
 
+    /** Mapper phân tích JSON từ downstream error payload; tái sử dụng an toàn đa luồng. */
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     /**
      * Cung cấp Public Key RSA của Gateway cho Frontend để mã hóa mật khẩu trước khi gửi request.
      * Cho phép client cache key trong 1 giờ để giảm tải cho Gateway.
@@ -138,6 +145,55 @@ public class AuthGatewayController {
         return ResponseEntity.ok()
             .cacheControl(org.springframework.http.CacheControl.maxAge(Duration.ofHours(1)))
             .body(ApiResponse.ok(Map.of("publicKey", rsaCryptoService.getPublicKeyBase64())));
+    }
+
+    /**
+     * Kiểm tra tính khả dụng của email trước khi tiếp tục các bước đăng ký tiếp theo.
+     *
+     * 1. Chức năng: Kiểm tra email người dùng nhập đã tồn tại trong Keycloak IAM hay chưa.
+     * 2. Đầu vào và kết quả:
+     *    - Đầu vào: Tham số rawEmail từ query param (ví dụ: ?email=buyer@nexus.vn).
+     *    - Kết quả: ApiResponse chứa { "available": boolean, "email": string }.
+     * 3. Luồng xử lý: Chuẩn hóa email về chữ thường → gọi Keycloak Admin token → truy vấn Admin REST API
+     *    tìm kiếm chính xác người dùng theo email → trả về available = true nếu danh sách rỗng, false nếu đã có.
+     * 4. Quy tắc và lý do: Ngăn chặn tình trạng người dùng điền hết Bước 2 và Bước 3 rồi mới bị chặn trùng email.
+     *    Không cache kết quả để đảm bảo thông tin tức thời sau khi có tài khoản mới đăng ký.
+     * 5. Lỗi và giới hạn: Nếu Keycloak lỗi mạng hoặc gián đoạn, fallback trả về available = true để không chặn
+     *    tiến trình đăng ký của người dùng; validation cuối cùng vẫn được Keycloak kiểm soát an toàn.
+     */
+    @GetMapping("/check-email")
+    public Mono<ResponseEntity<ApiResponse<Map<String, Object>>>> checkEmail(
+            @RequestParam("email") final String rawEmail) {
+        if (rawEmail == null || rawEmail.isBlank() || !rawEmail.contains("@")) {
+            return Mono.just(ResponseEntity.badRequest().body(
+                ApiResponse.error("INVALID_ARGUMENT", "Email không đúng định dạng")
+            ));
+        }
+        String normalizedEmail = rawEmail.trim().toLowerCase(java.util.Locale.ROOT);
+        return fetchKeycloakAdminToken()
+            .flatMap(adminToken -> {
+                String uri = baseUrl + "/admin/realms/" + realm + "/users?email=" + normalizedEmail + "&exact=true";
+                return webClient.get()
+                    .uri(uri)
+                    .header("Authorization", "Bearer " + adminToken)
+                    .retrieve()
+                    .bodyToMono(List.class)
+                    .timeout(REQUEST_TIMEOUT)
+                    .map(users -> {
+                        boolean available = users.isEmpty();
+                        Map<String, Object> result = new HashMap<>();
+                        result.put("available", available);
+                        result.put("email", normalizedEmail);
+                        return ResponseEntity.ok(ApiResponse.ok(result));
+                    });
+            })
+            .onErrorResume(ex -> {
+                LOG.warn("Lỗi khi kiểm tra email tại Keycloak: {}", ex.getMessage());
+                Map<String, Object> fallback = new HashMap<>();
+                fallback.put("available", true);
+                fallback.put("email", normalizedEmail);
+                return Mono.just(ResponseEntity.ok(ApiResponse.ok(fallback)));
+            });
     }
 
     /**
@@ -156,6 +212,14 @@ public class AuthGatewayController {
             rawPassword = body.get("password");
         }
         String password = rsaCryptoService.decrypt(rawPassword);
+
+        if (body.get("encryptedPassword") != null && !body.get("encryptedPassword").isBlank() && password == null) {
+            return Mono.just(ResponseEntity.unprocessableEntity().body(
+                ApiResponse.error("VALIDATION_ERROR", "Khóa bảo mật đã hết hạn. Vui lòng tải lại trang (F5) và thử lại.",
+                    List.of(Map.of("field", "password", "code", "ENCRYPTION_EXPIRED",
+                        "message", "Khóa bảo mật đã hết hạn. Vui lòng tải lại trang (F5) và thử lại.")))
+            ));
+        }
 
         if (username == null || password == null) {
             return Mono.just(ResponseEntity.badRequest().body(
@@ -246,6 +310,16 @@ public class AuthGatewayController {
         String passwordRaw = encryptedPwdObj instanceof String s && !s.isBlank() ? s
             : (plainPwdObj instanceof String s2 ? s2 : null);
         String password = rsaCryptoService.decrypt(passwordRaw);
+
+        // Trường hợp Frontend gửi encryptedPassword nhưng giải mã thất bại do Gateway vừa khởi động lại đổi RSA key
+        if (encryptedPwdObj instanceof String s && !s.isBlank() && password == null) {
+            return Mono.just(ResponseEntity.unprocessableEntity().body(
+                ApiResponse.error("VALIDATION_ERROR", "Khóa bảo mật RSA đã hết hạn. Vui lòng tải lại trang (F5) và thử lại.",
+                    List.of(Map.of("field", "password", "code", "ENCRYPTION_EXPIRED",
+                        "message", "Khóa bảo mật đã hết hạn do Gateway vừa cập nhật. Vui lòng tải lại trang (F5) và thử lại.")))
+            ));
+        }
+
         String fullName = body.get("fullName") instanceof String value
             ? value.trim() : null;
 
@@ -255,6 +329,55 @@ public class AuthGatewayController {
                 ApiResponse.error("INVALID_ARGUMENT",
                     "Email hợp lệ và họ tên không được để trống")
             ));
+        }
+
+        // Validate họ và tên: chỉ chứa chữ cái Unicode (có dấu tiếng Việt) và khoảng trắng, không chứa số/ký tự đặc biệt;
+        // bắt buộc gồm cả họ và tên (ít nhất 2 từ) để Keycloak có thể trích xuất firstName và lastName an toàn.
+        String trimmedFullName = fullName.trim();
+        String[] nameParts = trimmedFullName.split("\\s+");
+        if (!trimmedFullName.matches("^[\\p{L}\\s']{2,100}$") || nameParts.length < 2) {
+            return Mono.just(ResponseEntity.unprocessableEntity().body(
+                ApiResponse.error("VALIDATION_ERROR", "Họ và tên không hợp lệ",
+                    List.of(Map.of("field", "fullName", "code", "PATTERN",
+                        "message", "Họ và tên phải bao gồm cả họ và tên (ít nhất 2 từ), không chứa số hay ký tự đặc biệt")))
+            ));
+        }
+
+        // Validate ngày sinh (nếu có): phải theo đúng định dạng chuẩn ISO YYYY-MM-DD,
+        // ngày phải tồn tại trong lịch và bắt buộc phải ở trong quá khứ (không nhận ngày tương lai).
+        Object dobObj = body.get("dateOfBirth");
+        if (dobObj instanceof String dobStr && !dobStr.isBlank()) {
+            if (!dobStr.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
+                return Mono.just(ResponseEntity.unprocessableEntity().body(
+                    ApiResponse.error("VALIDATION_ERROR", "Ngày sinh không hợp lệ",
+                        List.of(Map.of("field", "dateOfBirth", "code", "PATTERN",
+                            "message", "Ngày sinh phải theo định dạng YYYY-MM-DD (Ví dụ: 2000-01-15)")))
+                ));
+            }
+            try {
+                java.time.LocalDate dob = java.time.LocalDate.parse(dobStr);
+                java.time.LocalDate today = java.time.LocalDate.now();
+                if (!dob.isBefore(today)) {
+                    return Mono.just(ResponseEntity.unprocessableEntity().body(
+                        ApiResponse.error("VALIDATION_ERROR", "Ngày sinh không hợp lệ",
+                            List.of(Map.of("field", "dateOfBirth", "code", "PAST_DATE",
+                                "message", "Ngày sinh phải ở trong quá khứ, không được là ngày hiện tại hoặc tương lai")))
+                    ));
+                }
+                if (dob.isBefore(today.minusYears(120))) {
+                    return Mono.just(ResponseEntity.unprocessableEntity().body(
+                        ApiResponse.error("VALIDATION_ERROR", "Ngày sinh không hợp lệ",
+                            List.of(Map.of("field", "dateOfBirth", "code", "MIN_AGE",
+                                "message", "Năm sinh không hợp lệ (không vượt quá 120 tuổi)")))
+                    ));
+                }
+            } catch (java.time.format.DateTimeParseException ex) {
+                return Mono.just(ResponseEntity.unprocessableEntity().body(
+                    ApiResponse.error("VALIDATION_ERROR", "Ngày sinh không hợp lệ",
+                        List.of(Map.of("field", "dateOfBirth", "code", "INVALID_DATE",
+                            "message", "Ngày sinh không hợp lệ hoặc không tồn tại trong lịch")))
+                ));
+            }
         }
 
         // Trả 422 kèm từng điều kiện thiếu trước khi gọi IAM; không tạo tài
@@ -308,17 +431,50 @@ public class AuthGatewayController {
                 ));
             })
             .onErrorResume(WebClientResponseException.class, ex -> {
-                HttpStatus status =
-                    HttpStatus.resolve(ex.getStatusCode().value());
+                HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
+                int statusCode = ex.getStatusCode().value();
                 String message = "Không thể hoàn tất đăng ký";
-                if (status == HttpStatus.CONFLICT || ex.getStatusCode().value()
-                    == HttpStatus.CONFLICT.value()) {
+                Object errorDetails = null;
+
+                if (status == HttpStatus.CONFLICT || statusCode == HttpStatus.CONFLICT.value()) {
                     message = "Email đã được đăng ký trong hệ thống";
+                } else {
+                    /**
+                     * Chức năng: Bóc tách thông điệp và danh sách chi tiết lỗi từ downstream (User Service hoặc Keycloak).
+                     * Đầu vào: ex.getResponseBodyAsString() dưới dạng chuỗi JSON.
+                     * Kết quả: Trích xuất message và details để trả về cho Frontend hiển thị cạnh đúng ô nhập liệu.
+                     * Luồng xử lý: Đọc cấu trúc ApiResponse chuẩn { "error": { "message": "...", "details": [...] } }
+                     *              hoặc error body chuẩn của Spring Web / Keycloak.
+                     * Quy tắc & lý do: Tránh nuốt lỗi thành câu thông báo chung chung, giúp người dùng biết rõ trường bị từ chối.
+                     */
+                    try {
+                        String responseBody = ex.getResponseBodyAsString();
+                        if (responseBody != null && !responseBody.isBlank()) {
+                            JsonNode root = OBJECT_MAPPER.readTree(responseBody);
+                            if (root.has("error") && root.get("error").isObject()) {
+                                JsonNode errNode = root.get("error");
+                                if (errNode.has("message") && !errNode.get("message").asText().isBlank()) {
+                                    message = errNode.get("message").asText();
+                                }
+                                if (errNode.has("details") && !errNode.get("details").isNull()) {
+                                    errorDetails = OBJECT_MAPPER.convertValue(errNode.get("details"), Object.class);
+                                }
+                            } else if (root.has("message") && !root.get("message").asText().isBlank()) {
+                                message = root.get("message").asText();
+                            } else if (root.has("errorMessage") && !root.get("errorMessage").asText().isBlank()) {
+                                message = root.get("errorMessage").asText();
+                            }
+                        }
+                    } catch (Exception parseEx) {
+                        LOG.debug("Không thể bóc tách response body lỗi từ downstream: {}", parseEx.getMessage());
+                    }
                 }
-                return Mono.just(ResponseEntity.status(status != null ? status
-                    : HttpStatus.BAD_REQUEST).body(
-                    ApiResponse.error("REGISTRATION_FAILED", message.isEmpty()
-                        ? "Đăng ký tài khoản thất bại" : message)
+
+                HttpStatus returnStatus = status != null ? status : HttpStatus.BAD_REQUEST;
+                return Mono.just(ResponseEntity.status(returnStatus).body(
+                    errorDetails != null
+                        ? ApiResponse.error("REGISTRATION_FAILED", message, errorDetails)
+                        : ApiResponse.error("REGISTRATION_FAILED", message)
                 ));
             })
             .onErrorResume(Exception.class, ex -> {
@@ -333,10 +489,51 @@ public class AuthGatewayController {
     }
 
     /**
+     * Trích xuất các trường định danh cơ bản cần thiết cho phiên đăng nhập/refresh (Auth context),
+     * loại bỏ các trường nhạy cảm (CCCD/identifyNumber) và các trường chi tiết hồ sơ (địa chỉ,
+     * ngày sinh, giới tính, thời gian tạo/sửa, danh sách quyền privileges chi tiết).
+     *
+     * 1. Chức năng: Tối giản hóa payload user trong response login/refresh, ngăn chặn rò rỉ PII và giảm tải payload.
+     * 2. Đầu vào và kết quả:
+     *    - Đầu vào: Object profile thô (Map) nhận từ User Service (/api/v1/users/me).
+     *    - Kết quả: Map chỉ chứa các thông tin định danh và phân quyền cơ bản: id, email, fullName, phone, roles, status.
+     * 3. Luồng xử lý: Bóc tách object profile (hoặc trường 'data' nếu bọc envelope) → trích lọc các trường an toàn.
+     * 4. Quy tắc và lý do: Bảo vệ quyền riêng tư người dùng (không trả CCCD ở auth response);
+     *    thông tin chi tiết đầy đủ vẫn được phục vụ riêng qua GET /api/v1/users/me khi truy cập trang Profile.
+     */
+    private Map<String, Object> sanitizeUserForAuth(final Object rawUser) {
+        if (!(rawUser instanceof Map<?, ?> userMap)) {
+            return Map.of();
+        }
+        Map<String, Object> cleanUser = new HashMap<>();
+        if (userMap.get("id") != null) {
+            cleanUser.put("id", userMap.get("id"));
+        }
+        if (userMap.get("email") != null) {
+            cleanUser.put("email", userMap.get("email"));
+        }
+        if (userMap.get("fullName") != null) {
+            cleanUser.put("fullName", userMap.get("fullName"));
+        }
+        if (userMap.get("phone") != null) {
+            cleanUser.put("phone", userMap.get("phone"));
+        }
+        if (userMap.get("status") != null) {
+            cleanUser.put("status", userMap.get("status"));
+        }
+        if (userMap.get("roles") != null) {
+            cleanUser.put("roles", userMap.get("roles"));
+        }
+        return cleanUser;
+    }
+
+    /**
      * Đọc profile bằng JWT mới và bọc contract frontend.
      * Hỗ trợ DTO thô hoặc envelope; không tự tạo profile giả.
-     * @param tokens phản hồi token của Keycloak
      * Token chỉ đặt trong cookie HttpOnly sau khi đọc profile thành công.
+     * Payload user được lọc tối giản (loại bỏ CCCD, địa chỉ, ngày sinh) để đảm bảo an toàn.
+     *
+     * @param tokens phản hồi token của Keycloak
      * @return envelope hồ sơ và hạn token; lỗi profile được truyền lên
      */
     private Mono<ResponseEntity<ApiResponse<Map<String, Object>>>>
@@ -346,11 +543,12 @@ public class AuthGatewayController {
             .headers(headers -> headers.setBearerAuth(accessToken))
             .retrieve().bodyToMono(Map.class).timeout(REQUEST_TIMEOUT)
             .map(profile -> {
+                Object rawUser = profile.containsKey("data")
+                    ? profile.get("data") : profile;
                 Map<String, Object> result = new HashMap<>();
                 result.put("expiresIn", tokens.get("expires_in"));
                 result.put("tokenType", "Bearer");
-                result.put("user", profile.containsKey("data")
-                    ? profile.get("data") : profile);
+                result.put("user", sanitizeUserForAuth(rawUser));
                 return ResponseEntity.ok()
                     .header(HttpHeaders.CACHE_CONTROL, "no-store")
                     .header(HttpHeaders.SET_COOKIE,
@@ -570,8 +768,38 @@ public class AuthGatewayController {
     }
 
     /**
+     * Tối giản hóa payload phản hồi đăng ký thành công.
+     * Chỉ trả về thông tin định danh tối thiểu (id, email, fullName),
+     * loại bỏ CCCD (identifyNumber), địa chỉ, ngày sinh, giới tính, trạng thái
+     * và danh sách quyền (privileges) không cần thiết khi người dùng chưa đăng nhập.
+     *
+     * 1. Chức năng: Ngăn chặn rò rỉ dữ liệu cá nhân nhạy cảm (PII) và giảm kích thước response đăng ký.
+     * 2. Đầu vào: Object profile thô từ user-service (/api/v1/users).
+     * 3. Kết quả: Map chỉ chứa thông tin xác nhận tối thiểu: id, email, fullName.
+     * 4. Quy tắc: Người dùng mới tạo chưa có phiên xác thực, không trả về token hay quyền hạn.
+     */
+    private Map<String, Object> sanitizeUserForRegistration(final Object rawUser) {
+        if (!(rawUser instanceof Map<?, ?> userMap)) {
+            return Map.of();
+        }
+        Map<String, Object> cleanUser = new HashMap<>();
+        if (userMap.get("id") != null) {
+            cleanUser.put("id", userMap.get("id"));
+        }
+        if (userMap.get("email") != null) {
+            cleanUser.put("email", userMap.get("email"));
+        }
+        if (userMap.get("fullName") != null) {
+            cleanUser.put("fullName", userMap.get("fullName"));
+        }
+        return cleanUser;
+    }
+
+    /**
      * Lưu profile sau khi IAM đã tạo user/gán role.
      * Lỗi profile được giữ nguyên sau cleanup; lỗi cleanup chỉ ghi log.
+     * Payload phản hồi được lọc tối giản (chỉ giữ id, email, fullName) để bảo mật PII.
+     *
      * @param adminToken JWT service account gọi profile/cleanup IAM
      * @param keycloakId UUID user IAM để liên kết hồ sơ
      * @param payload field hồ sơ đã lọc, không có password
@@ -590,11 +818,13 @@ public class AuthGatewayController {
             .bodyToMono(Map.class)
             .timeout(REQUEST_TIMEOUT)
             .map(profile -> {
-                // Giữ tương thích DTO thô và envelope của user-service.
-                Object data = profile.containsKey("data")
+                // Giữ tương thích DTO thô và envelope của user-service,
+                // chỉ trả về thông tin định danh tối thiểu (id, email, fullName).
+                Object rawUser = profile.containsKey("data")
                         ? profile.get("data") : profile;
+                Object cleanData = sanitizeUserForRegistration(rawUser);
                 return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(ApiResponse.created(data));
+                    .body(ApiResponse.created(cleanData));
             })
             .onErrorResume(error -> {
                 LOG.error("Lỗi khi tạo hồ sơ tại user-service, tiến hành rollb"

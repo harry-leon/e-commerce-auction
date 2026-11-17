@@ -119,11 +119,11 @@ class ShipmentIntegrationTest {
     }
 
     @Test
-    @DisplayName("quoteShipping tích hợp trả về phương án từ GHN & GHTK và áp dụng miễn phí ship >= 100")
+    @DisplayName("quoteShipping tích hợp trả về phương án từ GHN & GHTK và áp dụng miễn phí ship khi có voucher FREESHIP")
     void quoteShipping_integration() {
         ShippingQuoteResponse quote = shippingService.quoteShipping(new ShippingQuoteRequest(
                 UUID.randomUUID(), null, null, "STANDARD", "Q1, TP.HCM", 1454, "21211",
-                600, new BigDecimal("120")));
+                600, new BigDecimal("120"), "FREESHIP"));
 
         assertThat(quote.freeShippingApplied()).isTrue();
         assertThat(quote.options()).hasSize(2);

@@ -29,7 +29,7 @@ function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'ord
             ORDERS.find(
                 (order) =>
                     order.id.toLowerCase() === q ||
-                    (order.orderNo && order.orderNo.toLowerCase() === q)
+                    (order.orderNo && order.orderNo.toLowerCase() === q),
             ) || null
         )
     }
@@ -44,13 +44,13 @@ function SupportWorkspacePage({ activeSection }: { activeSection: 'queue' | 'ord
                     u.email.toLowerCase() === q ||
                     u.id.toLowerCase() === q ||
                     (u.phone && u.phone.toLowerCase() === q) ||
-                    u.fullName.toLowerCase().includes(q)
+                    u.fullName.toLowerCase().includes(q),
             ) || null
         )
     }
 
-    const [foundOrder, setFoundOrder] = useState<(typeof ORDERS)[0] | null>(
-        () => findOrder(initialOrderId),
+    const [foundOrder, setFoundOrder] = useState<(typeof ORDERS)[0] | null>(() =>
+        findOrder(initialOrderId),
     )
     const [foundUser, setFoundUser] = useState<(typeof USERS)[0] | null>(null)
     const [caseOpen, setCaseOpen] = useState(false)

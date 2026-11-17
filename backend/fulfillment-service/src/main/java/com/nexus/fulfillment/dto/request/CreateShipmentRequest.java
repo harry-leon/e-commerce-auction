@@ -8,6 +8,8 @@ import java.util.UUID;
 
 /**
  * Yêu cầu tạo vận đơn thủ công hoặc tự động sau khi đơn hàng đã thanh toán (SRS §3.6.2).
+ * 1. Chức năng: Lưu thông tin người nhận, địa chỉ, đơn vị vận chuyển và mã voucher ưu đãi.
+ * 2. Quy tắc: Chỉ miễn phí vận chuyển cho shipment khi voucherCode hợp lệ ('FREESHIP').
  */
 public record CreateShipmentRequest(
         @NotNull(message = "orderId không được để trống")
@@ -26,6 +28,28 @@ public record CreateShipmentRequest(
         BigDecimal orderTotal,
         @DecimalMin(value = "0", message = "Số tiền thu hộ COD không được âm")
         BigDecimal codAmount,
-        String note
+        String note,
+        String voucherCode
 ) {
+    /**
+     * Constructor tương thích ngược cho các service hoặc test case không truyền voucherCode.
+     */
+    public CreateShipmentRequest(
+            UUID orderId,
+            UUID warehouseId,
+            String carrier,
+            String serviceType,
+            String recipientName,
+            String recipientPhone,
+            String shippingAddress,
+            Integer toDistrictId,
+            String toWardCode,
+            Integer weightGrams,
+            BigDecimal orderTotal,
+            BigDecimal codAmount,
+            String note
+    ) {
+        this(orderId, warehouseId, carrier, serviceType, recipientName, recipientPhone, shippingAddress,
+                toDistrictId, toWardCode, weightGrams, orderTotal, codAmount, note, null);
+    }
 }

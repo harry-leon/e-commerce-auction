@@ -110,6 +110,8 @@ export function AppRouter() {
         'cart',
         'sandbox-payment',
         'payment-result',
+        'seller-shop',
+        'public-reputation',
     ]
     const demoUser = demoUserFor(routeParams.demo)
 
@@ -118,7 +120,13 @@ export function AppRouter() {
     if (!user && !publicPages.includes(page)) return <LoginPage />
     if (page.startsWith('admin-') && user?.role !== 'admin')
         return <p role="alert">Access denied</p>
-    if (page.startsWith('seller-') && user?.role !== 'seller' && user?.role !== 'admin')
+    // Trang quản trị của seller (ngoại trừ seller-shop là gian hàng công khai cho buyer ghé thăm)
+    if (
+        page.startsWith('seller-') &&
+        page !== 'seller-shop' &&
+        user?.role !== 'seller' &&
+        user?.role !== 'admin'
+    )
         return <p role="alert">Access denied</p>
     if (page.startsWith('support-') && user?.role !== 'support' && user?.role !== 'admin')
         return <p role="alert">Access denied</p>

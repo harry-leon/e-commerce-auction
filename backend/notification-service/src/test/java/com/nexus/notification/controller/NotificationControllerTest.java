@@ -70,7 +70,7 @@ class NotificationControllerTest {
     @Test
     @SuppressWarnings("unchecked")
     void listsOwnedInboxWithUtcTimestamp() throws Exception {
-        when(jdbc.query(anyString(), any(RowMapper.class), eq(UUID.fromString(buyer)), eq(20), eq(0L)))
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class)))
                 .thenAnswer(call -> {
                     var rs = org.mockito.Mockito.mock(java.sql.ResultSet.class);
                     when(rs.getObject("id", UUID.class)).thenReturn(UUID.randomUUID());
@@ -79,11 +79,31 @@ class NotificationControllerTest {
                     when(rs.getTimestamp("created_at")).thenReturn(java.sql.Timestamp.valueOf("2026-10-29 01:02:03"));
                     return List.of(((RowMapper<?>) call.getArgument(1)).mapRow(rs, 0));
                 });
-        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(UUID.fromString(buyer)))).thenReturn(1L, 0L);
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L, 0L);
         mvc.perform(get("/api/v1/notifications").with(jwt().jwt(j -> j.subject(buyer))))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.unreadCount").value(0))
                 .andExpect(jsonPath("$.data.content[0].read").value(true))
                 .andExpect(jsonPath("$.data.content[0].createdAt").value("2026-10-29T01:02:03Z"));
+    }
+
+    /**
+     * Lọc lịch sử theo loại/chưa đọc/khoảng thời gian vẫn khóa user_id của JWT.
+     * Giá trị lạ phải bị từ chối trước khi truy vấn để tránh bind lỗi hoặc quét toàn bảng.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void filtersHistoryWithinOwnerScopeAndRejectsBadInput() throws Exception {
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(0L, 0L);
+        mvc.perform(get("/api/v1/notifications?type=REFUND_SUCCEEDED&unreadOnly=true"
+                        + "&from=2026-11-01T00:00:00Z&to=2026-11-30T00:00:00Z")
+                        .with(jwt().jwt(j -> j.subject(buyer))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(0));
+        for (String query : List.of("?type=NOT_A_TYPE", "?from=yesterday", "?to=2026-13-01T00:00:00Z",
+                "?from=2026-11-30T00:00:00Z&to=2026-11-01T00:00:00Z")) {
+            mvc.perform(get("/api/v1/notifications" + query).with(jwt().jwt(j -> j.subject(buyer))))
+                    .andExpect(status().isBadRequest());
+        }
     }
 
     /** READ chỉ thành công khi UPDATE có bản ghi của buyer; 404 tránh tiết lộ ID của người khác. */

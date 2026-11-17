@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
  * - Tự động phục hồi sau restart: ngay khi service khởi động lại, sau initialDelay worker sẽ quét lại toàn bộ settlement tồn đọng.
  * - Kết hợp tính lũy nghiệm (Idempotency) của Commerce và Fulfillment: đảm bảo dù worker có quét lại nhiều lần thì
  *   chỉ duy nhất 1 đơn hàng được tạo và tồn kho không bị reserve kép.
- * - Có thể cấu hình chu kỳ qua 'app.auction.scheduler.handover-interval-ms' (mặc định 10 giây).
+ * - Cấu hình chu kỳ qua 'app.auction.scheduler.handover-interval-ms' (mặc định 30 giây để tránh bắn request retry quá dồn dập).
  */
 @Component
 @ConditionalOnProperty(name = "app.auction.handover-scheduler.enabled", havingValue = "true", matchIfMissing = true)
@@ -43,10 +43,10 @@ public class AuctionOrderHandoverScheduler {
     }
 
     /**
-     * Tự động quét và bàn giao lại các phiên đấu giá thành công chưa có đơn hàng mỗi 10 giây.
+     * Tự động quét và bàn giao lại các phiên đấu giá thành công chưa có đơn hàng mỗi 30 giây.
      */
     @Scheduled(
-            fixedDelayString = "${app.auction.scheduler.handover-interval-ms:10000}",
+            fixedDelayString = "${app.auction.scheduler.handover-interval-ms:30000}",
             initialDelay = 10000
     )
     public void retryPendingHandovers() {

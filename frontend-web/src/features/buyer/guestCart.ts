@@ -77,8 +77,11 @@ export function getGuestCart(): CartResponse {
 }
 
 /**
- * Thêm sản phẩm vào giỏ hàng khách.
- * Nếu SKU đã có trong giỏ, tăng số lượng; nếu chưa có, thêm mới một dòng.
+ * Thêm sản phẩm vào giỏ hàng khách với kiểm tra tồn kho khả dụng.
+ * Chức năng: Lưu sản phẩm vào localStorage giỏ hàng khách, cộng dồn số lượng nếu SKU đã tồn tại.
+ * Đầu vào: params gồm skuId, productName, unitPrice, quantity, stockAvailable (tồn kho từ API kho).
+ * Kết quả: CartResponse mới hoặc ném Error nếu số lượng cộng dồn vượt quá tồn kho khả dụng.
+ * Quy tắc: Chặn cộng dồn vượt tồn kho thực tế, bảo vệ trước khi điều hướng sang thanh toán.
  */
 export function addGuestCartItem(params: {
     skuId: string
@@ -87,6 +90,7 @@ export function addGuestCartItem(params: {
     thumbnailUrl?: string | null
     unitPrice: number
     quantity?: number
+    stockAvailable?: number | null
 }): CartResponse {
     const items = readStorageItems()
     const qty = Math.max(1, params.quantity || 1)
@@ -94,13 +98,30 @@ export function addGuestCartItem(params: {
 
     if (existingIndex >= 0) {
         const current = items[existingIndex]
+        const available = params.stockAvailable ?? current.stockAvailable
+        if (available !== undefined && available !== null && current.quantity + qty > available) {
+            throw new Error(
+                `Sản phẩm "${params.productName}" chỉ còn ${available} sản phẩm. Bạn đã có ${current.quantity} sản phẩm trong giỏ hàng.`,
+            )
+        }
         const newQty = current.quantity + qty
         items[existingIndex] = {
             ...current,
+            stockAvailable: available ?? current.stockAvailable,
+            isAvailable: available == null || available >= newQty,
             quantity: newQty,
             subtotal: current.unitPrice * newQty,
         }
     } else {
+        if (
+            params.stockAvailable !== undefined &&
+            params.stockAvailable !== null &&
+            qty > params.stockAvailable
+        ) {
+            throw new Error(
+                `Sản phẩm "${params.productName}" chỉ còn ${params.stockAvailable} sản phẩm.`,
+            )
+        }
         const id =
             typeof crypto !== 'undefined' && crypto.randomUUID
                 ? crypto.randomUUID()
@@ -113,8 +134,8 @@ export function addGuestCartItem(params: {
             thumbnailUrl: params.thumbnailUrl || null,
             unitPrice: params.unitPrice,
             quantity: qty,
-            stockAvailable: 99,
-            isAvailable: true,
+            stockAvailable: params.stockAvailable ?? 99,
+            isAvailable: params.stockAvailable == null || params.stockAvailable >= qty,
             subtotal: params.unitPrice * qty,
         })
     }

@@ -76,6 +76,7 @@ app:
       polling-interval-ms: ${SHIPPING_POLLING_INTERVAL_MS:60000}
       supported-carriers: ${SUPPORTED_CARRIERS:GHN,GHTK}
       default-carrier: ${DEFAULT_CARRIER:GHN}
+      # Ngưỡng miễn phí vận chuyển (mặc định 100 cho unit test, môi trường thực tế cấu hình FREE_SHIPPING_THRESHOLD=500000)
       free-shipping-threshold: ${FREE_SHIPPING_THRESHOLD:100}
       ghn:
         base-url: ${GHN_API_URL:https://dev-online-gateway.ghn.vn}

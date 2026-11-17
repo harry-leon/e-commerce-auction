@@ -1,6 +1,7 @@
 package com.nexus.commerce.service.impl;
 
 import com.nexus.commerce.client.CatalogClient;
+import com.nexus.commerce.client.InventoryClient;
 import com.nexus.commerce.config.CommerceProperties;
 import com.nexus.commerce.client.dto.SkuInfo;
 import com.nexus.commerce.dto.mapper.CartMapper;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,20 +34,52 @@ import org.springframework.transaction.annotation.Transactional;
  * - BR-CFG-14: At most 1 active cart per user.
  * - BR-CFG-15: 7-day cart expiration window (extended upon each interaction).
  * - BR-CFG-16: Guest cart merging upon authentication.
- * - Giá/trạng thái SKU lấy từ Catalog thật; stock null là chưa kiểm tra Fulfillment, Cart không reserve kho.
+ * - Giá/trạng thái SKU lấy từ Catalog; tồn kho khả dụng lấy từ Fulfillment để chặn cộng dồn vượt tồn.
+ * - Cart không giữ hàng (reserve): số lượng thật vẫn được kiểm tra lại và giữ kho nguyên tử khi checkout.
  */
 @Service
-@RequiredArgsConstructor
 public class CartServiceImpl implements CartService {
-
-
 
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final CartMapper cartMapper;
     private final CatalogClient catalogClient;
+    // Đọc tồn khả dụng thật của Fulfillment để giỏ không hiển thị/chấp nhận số lượng vượt kho.
+    private final InventoryClient inventoryClient;
     // Cấu hình tham số commerce từ Spring Cloud Config Server / application.yml
     private final CommerceProperties properties;
+
+    /**
+     * Constructor chính được Spring IoC container inject dependencies.
+     * Quy tắc & lý do: Đánh dấu @Autowired rõ ràng để Spring Boot nhận diện chính xác constructor
+     * khi khởi tạo bean, tránh lỗi NoSuchMethodException (do có 2 constructors mà thiếu @Autowired).
+     *
+     * @param cartRepository repository truy xuất thông tin giỏ hàng
+     * @param cartItemRepository repository truy xuất các sản phẩm trong giỏ
+     * @param cartMapper mapper chuyển đổi entity giỏ hàng sang DTO response
+     * @param catalogClient Feign/Http client gọi Catalog Service lấy thông tin SKU/giá
+     * @param inventoryClient Http client gọi Fulfillment Service lấy tồn kho thực tế
+     * @param properties cấu hình tham số commerce
+     */
+    @Autowired
+    public CartServiceImpl(CartRepository cartRepository, CartItemRepository cartItemRepository,
+            CartMapper cartMapper, CatalogClient catalogClient, InventoryClient inventoryClient,
+            CommerceProperties properties) {
+        this.cartRepository = cartRepository;
+        this.cartItemRepository = cartItemRepository;
+        this.cartMapper = cartMapper;
+        this.catalogClient = catalogClient;
+        this.inventoryClient = inventoryClient;
+        this.properties = properties;
+    }
+
+    /**
+     * Constructor tương thích ngược cho unit test khi không inject InventoryClient (mặc định null).
+     */
+    public CartServiceImpl(CartRepository cartRepository, CartItemRepository cartItemRepository,
+            CartMapper cartMapper, CatalogClient catalogClient, CommerceProperties properties) {
+        this(cartRepository, cartItemRepository, cartMapper, catalogClient, null, properties);
+    }
 
     @Override
     @Transactional
@@ -76,14 +110,32 @@ public class CartServiceImpl implements CartService {
             throw new BusinessException("UNAUTHORIZED_ACCESS", "Cart item does not belong to the active user cart");
         }
 
-        // SKU phải còn bán khi sửa giỏ; Catalog không sở hữu tồn kho nên chỉ kiểm tra stock nếu nguồn trả số cụ thể.
+        // SKU phải còn bán khi sửa giỏ; Catalog không sở hữu tồn kho nên kiểm tra tồn khả dụng từ Fulfillment.
         SkuInfo skuInfo = catalogClient.getSkuInfo(cartItem.getSkuId());
         if (skuInfo == null || !Boolean.TRUE.equals(skuInfo.isActive())) {
             throw new BusinessException("PRODUCT_UNAVAILABLE", "SKU không tồn tại hoặc đã ngừng bán");
         }
-        if (skuInfo != null && skuInfo.stockQuantity() != null && skuInfo.stockQuantity() < request.quantity()) {
+
+        // Chức năng: Kiểm tra tồn kho khả dụng từ Fulfillment trước khi cập nhật số lượng dòng giỏ.
+        // Đầu vào: cartItem.getSkuId(), request.quantity().
+        // Luồng: Gọi inventoryClient.available() -> nếu lỗi mạng thì fallback sang skuInfo.stockQuantity().
+        // Quy tắc: Chặn không cho cập nhật vượt quá tồn khả dụng thật trong kho.
+        int availableStock = -1;
+        if (inventoryClient != null) {
+            try {
+                availableStock = inventoryClient.available(cartItem.getSkuId());
+            } catch (Exception ex) {
+                // Fulfillment không phản hồi: fallback sang stockQuantity của skuInfo nếu có
+            }
+        }
+        if (availableStock < 0 && skuInfo != null && skuInfo.stockQuantity() != null) {
+            availableStock = skuInfo.stockQuantity();
+        }
+
+        if (availableStock >= 0 && request.quantity() > availableStock) {
+            String name = skuInfo != null && skuInfo.productName() != null ? skuInfo.productName() : "Sản phẩm";
             throw new BusinessException("INSUFFICIENT_STOCK",
-                    "Requested quantity (" + request.quantity() + ") exceeds available stock (" + skuInfo.stockQuantity() + ")");
+                    "Sản phẩm \"" + name + "\" chỉ còn " + availableStock + " sản phẩm. Vui lòng cập nhật giỏ hàng.");
         }
 
         cartItem.setQuantity(request.quantity());
@@ -158,9 +210,32 @@ public class CartServiceImpl implements CartService {
             targetQuantity += cartItem.getQuantity();
         }
 
-        if (skuInfo.stockQuantity() != null && skuInfo.stockQuantity() < targetQuantity) {
-            throw new BusinessException("INSUFFICIENT_STOCK",
-                    "Requested quantity (" + targetQuantity + ") exceeds available stock (" + skuInfo.stockQuantity() + ")");
+        // Chức năng: Đọc tồn kho khả dụng từ Fulfillment để kiểm tra và chặn cộng dồn vượt tồn kho.
+        // Đầu vào: skuId, targetQuantity (số lượng hiện tại trong giỏ + số lượng thêm mới).
+        // Luồng: Gọi inventoryClient.available(skuId) -> nếu Fulfillment không phản hồi thì fallback sang skuInfo.stockQuantity().
+        // Quy tắc: Nếu tổng số lượng yêu cầu > tồn kho khả dụng thì từ chối ngay lập tức với thông báo chi tiết số lượng hiện có trong giỏ.
+        int availableStock = -1;
+        if (inventoryClient != null) {
+            try {
+                availableStock = inventoryClient.available(skuId);
+            } catch (Exception ex) {
+                // Fulfillment không phản hồi: fallback sang stockQuantity của skuInfo nếu có
+            }
+        }
+        if (availableStock < 0 && skuInfo.stockQuantity() != null) {
+            availableStock = skuInfo.stockQuantity();
+        }
+
+        if (availableStock >= 0 && targetQuantity > availableStock) {
+            String name = skuInfo.productName() != null ? skuInfo.productName() : "Sản phẩm";
+            int inCart = cartItem != null ? cartItem.getQuantity() : 0;
+            if (inCart > 0) {
+                throw new BusinessException("INSUFFICIENT_STOCK",
+                        "Sản phẩm \"" + name + "\" chỉ còn " + availableStock + " sản phẩm. Bạn đã có " + inCart + " sản phẩm trong giỏ hàng.");
+            } else {
+                throw new BusinessException("INSUFFICIENT_STOCK",
+                        "Sản phẩm \"" + name + "\" chỉ còn " + availableStock + " sản phẩm (yêu cầu " + targetQuantity + ").");
+            }
         }
 
         if (cartItem == null) {
@@ -214,11 +289,26 @@ public class CartServiceImpl implements CartService {
         cartRepository.save(cart);
     }
 
+    /**
+     * Xây dựng CartResponse hoàn chỉnh kèm chi tiết Catalog và tồn kho khả dụng từ Fulfillment.
+     * Chức năng: Đồng bộ giá mới nhất và số lượng tồn khả dụng cho từng dòng giỏ hàng.
+     * Đầu vào: cart (Cart entity).
+     * Luồng: Lấy danh sách skuIds -> gọi CatalogClient đọc giá/thông tin -> gọi InventoryClient đọc tồn kho hàng loạt -> map qua CartMapper.
+     * Lỗi: Nếu inventoryClient ném ngoại lệ kết nối, bỏ qua để không gián đoạn giao diện xem giỏ hàng của người dùng.
+     */
     private CartResponse buildCartResponse(Cart cart) {
         List<UUID> skuIds = cart.getItems().stream()
                 .map(CartItem::getSkuId)
                 .toList();
         Map<UUID, SkuInfo> skuMap = catalogClient.getSkuDetails(skuIds);
-        return cartMapper.toCartResponse(cart, skuMap);
+        Map<UUID, Integer> stockMap = null;
+        if (inventoryClient != null && !skuIds.isEmpty()) {
+            try {
+                stockMap = inventoryClient.availability(skuIds);
+            } catch (Exception ex) {
+                // Bỏ qua lỗi kho khi hiển thị giỏ hàng để không chặn người dùng xem giỏ oan
+            }
+        }
+        return cartMapper.toCartResponse(cart, skuMap, stockMap);
     }
 }

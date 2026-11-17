@@ -1316,4 +1316,139 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await screen.findByRole('alert')
         expect(screen.queryByText('Thanh toán thành công')).not.toBeInTheDocument()
     })
+
+    /**
+     * Test case kiểm tra chức năng tick chọn từng sản phẩm và chọn tất cả (Feedback Tester AC1):
+     * - Mục đích: Người dùng có thể chọn hoặc bỏ chọn sản phẩm trong giỏ hàng.
+     * - Luồng: Render CartPage với 2 sản phẩm -> bỏ tick sản phẩm 1 -> kiểm tra tổng tiền chỉ tính sản phẩm 2.
+     * - Kiểm tra "Chọn tất cả": Khi bỏ chọn tất cả, nút Checkout bị disable.
+     */
+    it('CartPage: hỗ trợ checkbox chọn từng sản phẩm và chọn tất cả, tính đúng tổng tiền theo sản phẩm được chọn', async () => {
+        const mockCart = {
+            cartId: 'cart-1',
+            userId: DEMO_BUYER.id,
+            status: 'ACTIVE' as const,
+            totalItems: 2,
+            totalQuantity: 2,
+            subtotal: 300,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 24,
+            totalAmount: 324,
+            expiresAt: null,
+            items: [
+                {
+                    id: 'item-1',
+                    skuId: 'sku-1',
+                    skuCode: 'SKU-01',
+                    productName: 'Áo thun trắng',
+                    thumbnailUrl: null,
+                    unitPrice: 100,
+                    quantity: 1,
+                    stockAvailable: 80,
+                    isAvailable: true,
+                    subtotal: 100,
+                },
+                {
+                    id: 'item-2',
+                    skuId: 'sku-2',
+                    skuCode: 'SKU-02',
+                    productName: 'Quần jeans xanh',
+                    thumbnailUrl: null,
+                    unitPrice: 200,
+                    quantity: 1,
+                    stockAvailable: 50,
+                    isAvailable: true,
+                    subtotal: 200,
+                },
+            ],
+        }
+
+        vi.spyOn(cartApi, 'getActiveCart').mockResolvedValue(mockCart)
+        render(<CartPage />)
+
+        await screen.findByText('Áo thun trắng')
+        await screen.findByText('Quần jeans xanh')
+
+        // Kiểm tra checkbox Chọn tất cả hiển thị số lượng 2/2
+        const selectAllCheckbox = screen.getByLabelText(
+            /chọn tất cả|select all/i,
+        ) as HTMLInputElement
+        expect(selectAllCheckbox.checked).toBe(true)
+
+        // Bỏ chọn Áo thun trắng
+        const item1Checkbox = screen.getByLabelText('Select Áo thun trắng') as HTMLInputElement
+        fireEvent.click(item1Checkbox)
+        expect(item1Checkbox.checked).toBe(false)
+        expect(selectAllCheckbox.checked).toBe(false)
+
+        // Nút Checkout cập nhật còn (1)
+        expect(
+            screen.getByRole('button', { name: /thanh toán \(1\)|checkout \(1\)/i }),
+        ).toBeEnabled()
+
+        // Bỏ chọn tất cả bằng nút Chọn tất cả
+        fireEvent.click(selectAllCheckbox)
+        // Khi allSelected đang false, bấm Chọn tất cả sẽ chọn lại cả 2
+        expect(item1Checkbox.checked).toBe(true)
+        // Bấm tiếp lần nữa để bỏ chọn toàn bộ
+        fireEvent.click(selectAllCheckbox)
+        expect(item1Checkbox.checked).toBe(false)
+
+        // Khi không chọn sản phẩm nào, nút Checkout bị disable
+        const checkoutBtn = screen.getByRole('button', { name: /thanh toán|checkout/i })
+        expect(checkoutBtn).toBeDisabled()
+    })
+
+    /**
+     * Test case kiểm tra cảnh báo và chặn thanh toán khi SKU vượt quá số lượng tồn kho (Feedback Tester AC2):
+     * - Tình huống: Trong giỏ có sản phẩm với số lượng 84 nhưng tồn kho khả dụng chỉ còn 80.
+     * - Kỳ vọng: Hiển thị badge cảnh báo vượt tồn kho ngay tại dòng sản phẩm và chặn điều hướng checkout.
+     */
+    it('CartPage: hiển thị cảnh báo và chặn thanh toán khi số lượng SKU trong giỏ vượt quá tồn kho khả dụng', async () => {
+        const mockCartWithOverStock = {
+            cartId: 'cart-1',
+            userId: DEMO_BUYER.id,
+            status: 'ACTIVE' as const,
+            totalItems: 1,
+            totalQuantity: 84,
+            subtotal: 840,
+            discountAmount: 0,
+            shippingFee: 0,
+            taxAmount: 67.2,
+            totalAmount: 907.2,
+            expiresAt: null,
+            items: [
+                {
+                    id: 'item-over',
+                    skuId: 'sku-over',
+                    skuCode: 'SKU-OVER',
+                    productName: 'Áo thun cotton thường ngày',
+                    thumbnailUrl: null,
+                    unitPrice: 10,
+                    quantity: 84,
+                    stockAvailable: 80,
+                    isAvailable: false,
+                    subtotal: 840,
+                },
+            ],
+        }
+
+        vi.spyOn(cartApi, 'getActiveCart').mockResolvedValue(mockCartWithOverStock)
+        render(<CartPage />)
+
+        await screen.findByText('Áo thun cotton thường ngày')
+
+        // Kiểm tra hiển thị cảnh báo vượt tồn kho
+        expect(await screen.findByText(/chỉ còn 80 sản phẩm/i)).toBeInTheDocument()
+
+        // Bấm Checkout phải bị chặn và hiển thị thông báo lỗi
+        const checkoutBtn = screen.getByRole('button', { name: /thanh toán|checkout/i })
+        fireEvent.click(checkoutBtn)
+
+        expect(contextHolder.current.navigate).not.toHaveBeenCalledWith('checkout')
+        expect(
+            await screen.findByText(/Sản phẩm "Áo thun cotton thường ngày" chỉ còn 80 sản phẩm/i),
+        ).toBeInTheDocument()
+    })
 })

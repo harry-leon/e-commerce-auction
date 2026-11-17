@@ -78,9 +78,15 @@ vi.mock('../context', () => ({
 
 // Mock Layout components
 vi.mock('../components/Layout', () => ({
-    BuyerLayout: ({ children }: { children: React.ReactNode }) => <div data-testid="buyer-layout">{children}</div>,
-    SellerLayout: ({ children }: { children: React.ReactNode }) => <div data-testid="seller-layout">{children}</div>,
-    AdminLayout: ({ children }: { children: React.ReactNode }) => <div data-testid="admin-layout">{children}</div>,
+    BuyerLayout: ({ children }: { children: React.ReactNode }) => (
+        <div data-testid="buyer-layout">{children}</div>
+    ),
+    SellerLayout: ({ children }: { children: React.ReactNode }) => (
+        <div data-testid="seller-layout">{children}</div>
+    ),
+    AdminLayout: ({ children }: { children: React.ReactNode }) => (
+        <div data-testid="admin-layout">{children}</div>
+    ),
     CATEGORY_ICONS: {},
 }))
 
@@ -102,7 +108,12 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
         sessionStorage.setItem(
             'nexus.session',
             JSON.stringify({
-                user: { id: 'buyer-user-01', email: 'buyer@nexus.vn', name: 'Nguyễn Văn Mua', role: 'buyer' },
+                user: {
+                    id: 'buyer-user-01',
+                    email: 'buyer@nexus.vn',
+                    name: 'Nguyễn Văn Mua',
+                    role: 'buyer',
+                },
                 token: 'mock-jwt-token',
                 remember: false,
             }),
@@ -141,7 +152,11 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             page: 'home',
             routeParams: {},
             pageParams: {},
-            user: { id: 'buyer-user-01', fullName: 'Nguyễn Văn Mua', role: 'buyer' } as unknown as User,
+            user: {
+                id: 'buyer-user-01',
+                fullName: 'Nguyễn Văn Mua',
+                role: 'buyer',
+            } as unknown as User,
             lang: 'vi',
             cartCount: 1,
             showToast: vi.fn(),
@@ -300,7 +315,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             // Kiểm tra hiển thị thông tin vận chuyển
             expect(await screen.findByText('GHN-VN-987654321')).toBeInTheDocument()
             expect(screen.getByText('IN_TRANSIT')).toBeInTheDocument()
-            expect(screen.getByText('Kiện hàng đang được luân chuyển tới bưu cục phát')).toBeInTheDocument()
+            expect(
+                screen.getByText('Kiện hàng đang được luân chuyển tới bưu cục phát'),
+            ).toBeInTheDocument()
             expect(screen.getByText('Shipper đã lấy kiện hàng từ shop')).toBeInTheDocument()
         })
     })
@@ -375,7 +392,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
 
             // Nhập nhận xét
             const commentInput = screen.getByPlaceholderText(/Chia sẻ trải nghiệm của bạn/i)
-            fireEvent.change(commentInput, { target: { value: 'Sản phẩm đóng gói cẩn thận, dùng rất thích!' } })
+            fireEvent.change(commentInput, {
+                target: { value: 'Sản phẩm đóng gói cẩn thận, dùng rất thích!' },
+            })
 
             // Bấm gửi đánh giá
             const submitBtn = screen.getByRole('button', { name: 'Gửi đánh giá' })
@@ -392,7 +411,11 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
         })
 
         it('Seller đánh giá Buyer thông qua RatingModal trên SellerOrdersPage', async () => {
-            contextHolder.current.user = { id: 'seller-user-02', fullName: 'Shop Đồ Gia Dụng', role: 'seller' } as unknown as User
+            contextHolder.current.user = {
+                id: 'seller-user-02',
+                fullName: 'Shop Đồ Gia Dụng',
+                role: 'seller',
+            } as unknown as User
 
             const mockSellerOrders: Order[] = [
                 {
@@ -463,11 +486,15 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             fireEvent.click(rateBuyerBtn)
 
             // Modal RatingModal xuất hiện
-            expect(await screen.findByText(/Đánh giá người mua: Khách Hàng Thân Thiết/i)).toBeInTheDocument()
+            expect(
+                await screen.findByText(/Đánh giá người mua: Khách Hàng Thân Thiết/i),
+            ).toBeInTheDocument()
 
             // Nhập nhận xét và gửi
             const textarea = screen.getByPlaceholderText(/Chia sẻ trải nghiệm về thái độ/i)
-            fireEvent.change(textarea, { target: { value: 'Khách nhận hàng nhanh và thanh toán chuẩn.' } })
+            fireEvent.change(textarea, {
+                target: { value: 'Khách nhận hàng nhanh và thanh toán chuẩn.' },
+            })
 
             const submitBtn = screen.getByRole('button', { name: 'Gửi đánh giá' })
             fireEvent.click(submitBtn)
@@ -507,7 +534,10 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             }
 
             vi.spyOn(reputationApi, 'getMyReputation').mockResolvedValue(mockSummary)
-            vi.spyOn(reputationApi, 'getRatingsForUser').mockResolvedValue({ content: [], totalElements: 0 })
+            vi.spyOn(reputationApi, 'getRatingsForUser').mockResolvedValue({
+                content: [],
+                totalElements: 0,
+            })
             vi.spyOn(reputationApi, 'checkEligibility').mockResolvedValue({
                 eligible: true,
                 score: 165,
@@ -588,7 +618,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             ]
 
             vi.spyOn(notifApi, 'getNotificationPreferences').mockResolvedValue(mockPrefs)
-            const updateSpy = vi.spyOn(notifApi, 'updateNotificationPreferences').mockResolvedValue(mockPrefs)
+            const updateSpy = vi
+                .spyOn(notifApi, 'updateNotificationPreferences')
+                .mockResolvedValue(mockPrefs)
 
             render(<NotificationInbox />)
 
@@ -612,7 +644,11 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
     describe('AC 6: Kiểm tra phân quyền truy cập và bảo vệ vai trò (RBAC)', () => {
         it('chặn Buyer truy cập vào các trang quản trị của Seller và hiển thị Access denied', () => {
             contextHolder.current.page = 'seller-orders'
-            contextHolder.current.user = { id: 'buyer-01', fullName: 'Buyer User', role: 'buyer' } as unknown as User
+            contextHolder.current.user = {
+                id: 'buyer-01',
+                fullName: 'Buyer User',
+                role: 'buyer',
+            } as unknown as User
 
             render(<AppRouter />)
 
@@ -632,7 +668,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             )
 
             expect(
-                screen.getByText(/Hệ thống không cho phép bạn tự đánh giá chính tài khoản của mình/i),
+                screen.getByText(
+                    /Hệ thống không cho phép bạn tự đánh giá chính tài khoản của mình/i,
+                ),
             ).toBeInTheDocument()
         })
     })
@@ -641,7 +679,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
     describe('AC 7: Xử lý lỗi và cơ chế chịu lỗi (Resilience) khi Shipping Provider timeout/lỗi', () => {
         it('tự động fallback cước phí chuẩn khi backend shipping quotes báo lỗi 503 hoặc timeout', async () => {
             // Giả lập backend lỗi 503
-            vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('503 Service Unavailable / Gateway Timeout'))
+            vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+                new Error('503 Service Unavailable / Gateway Timeout'),
+            )
 
             const fallbackRes = await shippingApi.getShippingQuotes({
                 shippingAddress: 'Ho Chi Minh City',
@@ -680,9 +720,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
                 paymentMethod: 'VNPAY',
             })
 
-            const getShipmentSpy = vi.spyOn(shippingApi, 'getShipmentByOrderId').mockRejectedValueOnce(
-                new Error('Lỗi máy chủ đối tác vận chuyển'),
-            )
+            const getShipmentSpy = vi
+                .spyOn(shippingApi, 'getShipmentByOrderId')
+                .mockRejectedValueOnce(new Error('Lỗi máy chủ đối tác vận chuyển'))
 
             render(<OrderDetailPage />)
 
@@ -744,7 +784,13 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
             expect(screen.getByText('Chưa có đánh giá nào.')).toBeInTheDocument()
 
             // Error state
-            rerender(<RatingsList ratings={[]} error="Không thể tải lịch sử đánh giá" onRetry={vi.fn()} />)
+            rerender(
+                <RatingsList
+                    ratings={[]}
+                    error="Không thể tải lịch sử đánh giá"
+                    onRetry={vi.fn()}
+                />,
+            )
             expect(screen.getByText('Không thể tải lịch sử đánh giá')).toBeInTheDocument()
             expect(screen.getByRole('button', { name: 'Thử lại' })).toBeInTheDocument()
         })
@@ -779,7 +825,9 @@ describe('[HA-S3-3] Frontend Integration & UI Issues Test Suite', () => {
 
             expect(await screen.findByText('Đang chuẩn bị hàng')).toBeInTheDocument()
             expect(
-                screen.getByText(/Đơn hàng đang chờ người bán đóng gói và bàn giao cho đơn vị vận chuyển/i),
+                screen.getByText(
+                    /Đơn hàng đang chờ người bán đóng gói và bàn giao cho đơn vị vận chuyển/i,
+                ),
             ).toBeInTheDocument()
         })
     })

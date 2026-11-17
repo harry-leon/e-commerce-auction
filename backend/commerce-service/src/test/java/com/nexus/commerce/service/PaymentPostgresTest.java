@@ -56,7 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 // Giữ cả receipt và Shipping inbox/replay trong context để kiểm tra hồi quy hai luồng trên cùng schema tích hợp.
-@Import({RefundedOrderFinalizationService.class, RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
+@Import({RefundedOrderFinalizationService.class, RefundReceiptService.class, PaymentReceiptService.class, ShippingNotificationReplayService.class, ShippingEventInboxService.class, RefundNotificationReplayService.class, RefundResolutionService.class, RefundCreditNoteService.class, RefundRequestService.class, PaymentPricingService.class, AuctionPaymentExpiryWorker.class, AuctionPaymentReminderWorker.class,
         AuctionTimeoutSideEffectWorker.class, NotificationWorker.class, NotificationOutbox.class, CheckoutService.class,
         PaymentService.class, PaymentInventoryWorker.class, ShippingHandoffOutbox.class, ShippingDispatchClaimService.class, VnpayGateway.class, CheckoutLock.class,
         CheckoutTransactionConfig.class, PaymentPostgresTest.Config.class,
@@ -395,6 +395,46 @@ class PaymentPostgresTest {
     }
 
     /** JWT fixture có subject/role rõ ràng; quyền ownership vẫn do PaymentReceiptService đọc từ Order thật. */
+    /**
+     * V23 credit note chạy trên PostgreSQL thật: chỉ phát hành khi biên nhận refund hợp lệ, giữ nguyên biên nhận gốc,
+     * chặn bản ghi thứ hai cho cùng refund và không cho refund chưa hoàn tất xuất chứng từ.
+     */
+    @Test
+    void creditNoteBindsVerifiedRefundAndCannotBeDuplicated() {
+        UUID refund = unknownRefundForResolution();
+        UUID admin = UUID.randomUUID();
+        // Chưa có kết quả provider: credit note phải bị từ chối, không tạo dòng trong bảng.
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> creditNotes.issue(refund, admin, UUID.randomUUID(), "Đối soát CASE-1",
+                        receiptActor(admin, "ADMIN"))).getHttpStatus().value());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM refund_credit_notes WHERE refund_id=?",
+                Integer.class, refund));
+
+        resolutions.resolve(refund, admin, UUID.randomUUID(),
+                manualCommand(com.nexus.commerce.enums.RefundStatus.SUCCEEDED, refundProviderRef(), "CREDIT-CASE"));
+        UUID key = UUID.randomUUID();
+        var created = creditNotes.issue(refund, admin, key, "Đối soát CASE-1", receiptActor(admin, "ADMIN"));
+        assertEquals(true, created.created());
+        assertEquals("CN-" + refund, created.note().documentNo());
+        assertEquals("PAY-" + paymentId, created.note().originalReceiptId());
+        assertEquals("REFUND-" + refund, created.note().refundReceiptId());
+        assertEquals("MANUAL", created.note().evidenceSource());
+
+        // Replay cùng key trả bản ghi cũ; key mới cho cùng refund vẫn bị chặn bởi UNIQUE(refund_id).
+        assertEquals(false, creditNotes.issue(refund, admin, key, "Đối soát CASE-1",
+                receiptActor(admin, "ADMIN")).created());
+        assertEquals(409, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> creditNotes.issue(refund, admin, UUID.randomUUID(), "Lần hai",
+                        receiptActor(admin, "ADMIN"))).getHttpStatus().value());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM refund_credit_notes WHERE refund_id=?",
+                Integer.class, refund));
+        // Biên nhận thu gốc không bị credit note sửa.
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM payments WHERE id=? AND status='SUCCESS'",
+                Integer.class, paymentId));
+    }
+
+    /** Bổ sung service credit note vào context kiểm thử để dùng chung đường kiểm tra biên nhận. */
+    @Autowired private RefundCreditNoteService creditNotes;
     private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken receiptActor(UUID actor, String role) {
         return new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
                 org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture").header("alg", "none").subject(actor.toString()).build(),
@@ -628,6 +668,42 @@ class PaymentPostgresTest {
         return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
                 UUID.randomUUID(), order, "GHN", "TRACK-TEST", status);
     }
+    /**
+     * Envelope mới trên PostgreSQL thật: schemaVersion/aggregateId/correlationId hợp lệ vẫn xử lý bình thường,
+     * version lạ hoặc aggregate lệch bị từ chối 422 (poison) và không tạo inbox/không đổi Order.
+     * Event không có envelope (producer cũ) vẫn nhận để giữ tương thích ngược.
+     */
+    @Test
+    void shippingEventEnvelopeIsValidatedWithoutBreakingLegacyProducers() {
+        var legacy = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        shippingInbox.receive(legacy);
+        assertEquals("SHIPPED", orderState(legacy.orderId()));
+
+        var supported = new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.ShipmentDelivered,
+                java.time.Instant.now(), legacy.shipmentId(), legacy.orderId(), legacy.carrier(), legacy.trackingNumber(),
+                "DELIVERED", 1, "SHIPMENT", legacy.shipmentId(), UUID.randomUUID());
+        shippingInbox.receive(supported);
+        assertEquals("DELIVERED", orderState(legacy.orderId()));
+
+        var otherOrder = shippingFixture("ShipmentPickedUp", "PICKED_UP");
+        // Ghi nhận số event đã xử lý trước khi thử poison; poison không được tăng thêm.
+        int before = jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE order_id=?",
+                Integer.class, otherOrder.orderId());
+        var futureVersion = new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.ShipmentPickedUp,
+                java.time.Instant.now(), otherOrder.shipmentId(), otherOrder.orderId(), otherOrder.carrier(),
+                otherOrder.trackingNumber(), "PICKED_UP", 2, "SHIPMENT", otherOrder.shipmentId(), UUID.randomUUID());
+        assertEquals(422, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> shippingInbox.receive(futureVersion)).getHttpStatus().value());
+        var wrongAggregate = new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.ShipmentPickedUp,
+                java.time.Instant.now(), otherOrder.shipmentId(), otherOrder.orderId(), otherOrder.carrier(),
+                otherOrder.trackingNumber(), "PICKED_UP", 1, "SHIPMENT", UUID.randomUUID(), UUID.randomUUID());
+        assertEquals(422, assertThrows(com.nexus.common.exception.ApiException.class,
+                () -> shippingInbox.receive(wrongAggregate)).getHttpStatus().value());
+        // Poison event không được ghi dấu đã xử lý để vận hành thấy rõ khi replay.
+        assertEquals(before, jdbc.queryForObject("SELECT count(*) FROM shipping_event_inbox WHERE order_id=?",
+                Integer.class, otherOrder.orderId()));
+    }
+
     private ShippingEventInboxService.Event shippingEvent(ShippingEventInboxService.Event base, String type, String status) {
         return new ShippingEventInboxService.Event(UUID.randomUUID(), ShippingEventInboxService.Type.valueOf(type), java.time.Instant.now(),
                 base.shipmentId(), base.orderId(), base.carrier(), base.trackingNumber(), status);

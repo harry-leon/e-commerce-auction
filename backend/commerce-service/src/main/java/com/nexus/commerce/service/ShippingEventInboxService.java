@@ -29,6 +29,7 @@ public class ShippingEventInboxService {
     @Transactional
     @PreAuthorize("T(com.nexus.common.security.ServiceIdentity).permits(authentication, 'nexus-fulfillment-service', 'COMMERCE.SHIPPING_EVENTS')")
     public void receive(Event event) {
+        requireEnvelope(event);
         String payload;
         try { payload = new ObjectMapper().findAndRegisterModules().writeValueAsString(event); }
         catch (com.fasterxml.jackson.core.JsonProcessingException error) { throw conflict(); }
@@ -86,6 +87,37 @@ public class ShippingEventInboxService {
                 + "ON CONFLICT(order_id,event_type) DO NOTHING", id, event.orderId(), type, id, order.get("buyer_id"), event.orderId(),
                 order.get("order_no"), type, order.get("total"), event.occurredAt().toString());
     }
+    /**
+     * Kiểm tra envelope chung trước khi chạm DB, đủ chặt để loại poison event nhưng vẫn nhận producer chưa nâng cấp.
+     *
+     * <p>Đầu vào: event đã bind từ JSON. Kết quả: ném 422 khi chắc chắn không thể xử lý đúng; trả bình thường khi
+     * envelope thiếu hoàn toàn (tương thích ngược) hoặc có đủ và hợp lệ.
+     *
+     * <p>Quy tắc: nếu có {@code schemaVersion} thì phải bằng 1 vì consumer hiện chỉ hiểu contract này; nếu vắng
+     * mặt thì coi là contract cũ. Khi có {@code aggregateId} thì phải trùng shipmentId, tránh consumer cập nhật
+     * Order từ một event bị gắn nhãn aggregate khác. {@code aggregateType}, nếu có, phải là SHIPMENT.
+     *
+     * <p>Phân loại 422 (poison) thay vì 409 (retry): 422 khiến Fulfillment dừng retry và giữ dead letter, tránh
+     * vòng lặp vô hạn với event mà bản thân nó sai contract chứ không phải trạng thái tạm thời.
+     */
+    private void requireEnvelope(Event event) {
+        if (event.schemaVersion() != null && event.schemaVersion() != 1) {
+            throw poison("SCHEMA_VERSION_UNSUPPORTED");
+        }
+        if (event.aggregateType() != null && !"SHIPMENT".equals(event.aggregateType())) {
+            throw poison("AGGREGATE_TYPE_MISMATCH");
+        }
+        if (event.aggregateId() != null && !event.aggregateId().equals(event.shipmentId())) {
+            throw poison("AGGREGATE_ID_MISMATCH");
+        }
+    }
+
+    /** Poison event: request đúng định dạng nhưng không thể áp dụng lâu dài, nên không khuyến khích retry. */
+    private ApiException poison(String reason) {
+        return new ApiException("SHIPPING_EVENT_POISON", HttpStatus.UNPROCESSABLE_ENTITY,
+                "Sự kiện shipment không tương thích contract: " + reason, null);
+    }
+
     /** Đối chiếu cả loại event và status gốc, không nhận Delivered mang trạng thái chưa giao. */
     private boolean validStatus(Event event) {
         return switch (event.eventType()) {
@@ -104,5 +136,15 @@ public class ShippingEventInboxService {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Event(@NotNull UUID eventId, @NotNull Type eventType, @NotNull Instant occurredAt, @NotNull UUID shipmentId,
             @NotNull UUID orderId, @NotBlank @Size(max = 30) String carrier, @NotBlank @Size(max = 100) String trackingNumber,
-            @NotBlank String status) { }
+            @NotBlank String status,
+            // Envelope chung: nullable để outbox Fulfillment chưa nâng cấp vẫn gửi được (tương thích ngược).
+            Integer schemaVersion, String aggregateType, UUID aggregateId, UUID correlationId) {
+
+        /** Constructor cũ giữ cho producer chưa phát envelope và cho fixture test hiện có. */
+        public Event(UUID eventId, Type eventType, Instant occurredAt, UUID shipmentId, UUID orderId,
+                String carrier, String trackingNumber, String status) {
+            this(eventId, eventType, occurredAt, shipmentId, orderId, carrier, trackingNumber, status,
+                    null, null, null, null);
+        }
+    }
 }

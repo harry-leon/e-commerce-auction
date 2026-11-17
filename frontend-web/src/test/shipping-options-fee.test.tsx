@@ -84,7 +84,12 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
         sessionStorage.setItem(
             'nexus.session',
             JSON.stringify({
-                user: { id: 'user-buyer-1', email: 'buyer@nexus.vn', name: 'Minh Tran', role: 'buyer' },
+                user: {
+                    id: 'user-buyer-1',
+                    email: 'buyer@nexus.vn',
+                    name: 'Minh Tran',
+                    role: 'buyer',
+                },
                 token: 'mock-jwt-token',
                 remember: false,
             }),
@@ -165,8 +170,8 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             // Kiểm tra hiển thị phương thức vận chuyển từ API
             expect(await screen.findByText('GHN Express')).toBeInTheDocument()
             expect(screen.getByText('GHTK Standard')).toBeInTheDocument()
-            expect(screen.getAllByText(/\$55,000|55\.000/).length).toBeGreaterThanOrEqual(1)
-            expect(screen.getAllByText(/\$35,000|35\.000/).length).toBeGreaterThanOrEqual(1)
+            expect(screen.getAllByText(/\$55,000|55[.,]000/).length).toBeGreaterThanOrEqual(1)
+            expect(screen.getAllByText(/\$35,000|35[.,]000/).length).toBeGreaterThanOrEqual(1)
         })
 
         it('cho phép Buyer chọn phương thức vận chuyển và cập nhật tổng tiền tương ứng (AC 3, 4)', async () => {
@@ -211,35 +216,60 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
 
             // Kiểm tra phí ship được cập nhật trên Sidebar
             await waitFor(() => {
-                expect(screen.getAllByText(/\$35,000|35\.000/).length).toBeGreaterThanOrEqual(1)
+                expect(screen.getAllByText(/\$35,000|35[.,]000/).length).toBeGreaterThanOrEqual(1)
             })
         })
 
-        it('hiển thị nhãn FREESHIP khi đơn hàng đủ điều kiện miễn phí vận chuyển', async () => {
+        /**
+         * Tình huống nghiệp vụ:
+         * 1. Khi KHÔNG có voucher FREESHIP: các hãng vận chuyển phải hiển thị đúng cước phí gốc (55.000 đ, 35.000 đ),
+         *    tuyệt đối không hiển thị nhãn Miễn phí vận chuyển hay gạch ngang cước phí.
+         * 2. Khi người mua áp dụng voucher FREESHIP: cước phí chuyển thành 'Miễn phí' kèm nhãn 'FREESHIP'.
+         */
+        it('chỉ miễn phí vận chuyển khi người mua áp dụng mã voucher FREESHIP hợp lệ', async () => {
+            // Bước 1: Mock getShippingQuotes trả về báo giá tiêu chuẩn
             vi.spyOn(shippingApi, 'getShippingQuotes').mockResolvedValue({
                 defaultCarrier: 'GHN',
                 freeShippingThreshold: 500000,
-                freeShippingApplied: true,
+                freeShippingApplied: false,
                 options: [
                     {
                         carrier: 'GHN',
                         serviceType: 'EXPRESS',
-                        shippingFee: 0,
+                        shippingFee: 55000,
                         originalFee: 55000,
-                        freeShippingApplied: true,
+                        freeShippingApplied: false,
                         estimatedDeliveryDays: 3,
                     },
                     {
                         carrier: 'GHTK',
                         serviceType: 'STANDARD',
-                        shippingFee: 0,
+                        shippingFee: 35000,
                         originalFee: 35000,
-                        freeShippingApplied: true,
+                        freeShippingApplied: false,
                         estimatedDeliveryDays: 5,
                     },
                 ],
             })
 
+            const { unmount } = render(
+                <AppProvider>
+                    <CheckoutPage />
+                </AppProvider>,
+            )
+
+            await goToShippingMethodStep()
+
+            // Khi chưa nhập voucher FREESHIP: Hiển thị cước phí chuẩn 55.000 đ và 35.000 đ
+            expect(await screen.findByText('GHN Express')).toBeInTheDocument()
+            expect(screen.getByText('GHTK Standard')).toBeInTheDocument()
+            expect(screen.queryByText('Free Shipping Applied')).not.toBeInTheDocument()
+            expect(screen.queryByText('Miễn phí vận chuyển')).not.toBeInTheDocument()
+
+            unmount()
+
+            // Bước 2: Khi đã kích hoạt mã voucher FREESHIP trong session
+            sessionStorage.setItem('nexus.applied-voucher', 'FREESHIP')
             render(
                 <AppProvider>
                     <CheckoutPage />
@@ -248,9 +278,12 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
 
             await goToShippingMethodStep()
 
-            // Kiểm tra nhãn Free Shipping xuất hiện
-            const freeBadges = await screen.findAllByText(/FREESHIP|FREE|Miễn phí vận chuyển|Free Shipping/i)
+            // Kiểm tra nhãn Free Shipping và Miễn phí xuất hiện
+            const freeBadges = await screen.findAllByText(
+                /FREESHIP|Free Shipping Applied|Miễn phí vận chuyển/i,
+            )
             expect(freeBadges.length).toBeGreaterThanOrEqual(1)
+            expect(screen.getAllByText(/Miễn phí|Free/i).length).toBeGreaterThanOrEqual(1)
         })
 
         it('xử lý trạng thái lỗi khi gọi API và cho phép Thử lại (AC 11)', async () => {
@@ -346,12 +379,18 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             expect(await screen.findByText('GHN99887766VN')).toBeInTheDocument()
             expect(screen.getByText('IN_TRANSIT')).toBeInTheDocument()
             // Kiểm tra timeline mốc hành trình
-            expect(screen.getByText('Đang luân chuyển qua bưu cục trung chuyển')).toBeInTheDocument()
+            expect(
+                screen.getByText('Đang luân chuyển qua bưu cục trung chuyển'),
+            ).toBeInTheDocument()
             expect(screen.getByText('Đã lấy hàng từ người bán')).toBeInTheDocument()
         })
 
         it('hiển thị trạng thái rỗng thân thiện khi đơn hàng chưa phát sinh vận đơn (AC 11)', async () => {
-            const pendingOrder: Order = { ...mockTestOrder, status: 'PROCESSING', shipment: undefined }
+            const pendingOrder: Order = {
+                ...mockTestOrder,
+                status: 'PROCESSING',
+                shipment: undefined,
+            }
             vi.spyOn(ordersApi, 'getOrderById').mockResolvedValue(pendingOrder)
             vi.spyOn(shippingApi, 'getShipmentByOrderId').mockResolvedValue(null)
 
@@ -361,7 +400,9 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
                 </AppProvider>,
             )
 
-            expect(await screen.findByText(/Đang chuẩn bị hàng|Preparing for shipment/i)).toBeInTheDocument()
+            expect(
+                await screen.findByText(/Đang chuẩn bị hàng|Preparing for shipment/i),
+            ).toBeInTheDocument()
         })
     })
 
@@ -427,7 +468,9 @@ describe('[HA-S3-1] Shipping Options & Fee UI Tests', () => {
             fireEvent.click(viewButton)
 
             // Modal mở ra có thông tin vận chuyển & đơn vị giao
-            expect(await screen.findByText(/Thông tin vận chuyển & Đơn vị giao|Shipment Information/i)).toBeInTheDocument()
+            expect(
+                await screen.findByText(/Thông tin vận chuyển & Đơn vị giao|Shipment Information/i),
+            ).toBeInTheDocument()
             expect(screen.getAllByText('GHTK112233VN').length).toBeGreaterThanOrEqual(1)
         })
     })

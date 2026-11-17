@@ -471,6 +471,72 @@ public class OrderServiceImpl implements OrderService {
         return orderMapper.toDetailResponse(savedOrder);
     }
 
+    /**
+     * Chức năng: Người mua xác nhận đã nhận hàng thành công (hoàn tất giao hàng).
+     * Đầu vào và kết quả: orderId (mã đơn), currentUserId (ID người mua), userRoles. Trả về OrderDetailResponse.
+     * Luồng xử lý: Xác thực chủ đơn -> kiểm tra trạng thái SHIPPED/DELIVERED -> cập nhật DELIVERED/COMPLETED -> ghi audit log.
+     * Quy tắc & lý do: Đơn ở SHIPPED chuyển sang DELIVERED (hoặc COMPLETED); nếu đã COMPLETED trả về idempotent.
+     * Lỗi và giới hạn: Trả về AUTH_FORBIDDEN nếu không phải chủ đơn; ORDER_STATUS_INVALID nếu sai trạng thái.
+     */
+    @Override
+    @Transactional
+    public OrderDetailResponse confirmDelivery(
+            UUID orderId,
+            UUID currentUserId,
+            List<String> userRoles
+    ) {
+        Order order = findOrderForUpdate(orderId);
+        boolean isAdmin = hasRole(userRoles, OrderStatusStateMachine.ROLE_ADMIN);
+        boolean isBuyerOwner = currentUserId != null && currentUserId.equals(order.getBuyerId());
+
+        if (!isAdmin && !isBuyerOwner) {
+            log.warn("Từ chối yêu cầu xác nhận nhận hàng đơn {}: userId={}, buyerId={}",
+                    orderId, currentUserId, order.getBuyerId());
+            throw new BusinessException(
+                    ErrorCode.AUTH_FORBIDDEN,
+                    "Chỉ người mua sở hữu đơn hàng hoặc Quản trị viên mới có quyền xác nhận nhận hàng"
+            );
+        }
+
+        OrderStatus currentStatus = order.getStatus();
+        if (currentStatus == OrderStatus.COMPLETED) {
+            log.info("Đơn hàng {} hiện đã ở trạng thái COMPLETED, xử lý idempotent trả về kết quả hiện tại", orderId);
+            return orderMapper.toDetailResponse(order);
+        }
+
+        if (currentStatus != OrderStatus.SHIPPED && currentStatus != OrderStatus.DELIVERED) {
+            log.warn("Không thể xác nhận nhận hàng cho đơn {} khi đang ở trạng thái {}", orderId, currentStatus);
+            throw new BusinessException(
+                    ErrorCode.ORDER_STATUS_INVALID,
+                    "Chỉ có thể xác nhận nhận hàng khi đơn hàng đang vận chuyển hoặc đã giao"
+            );
+        }
+
+        OrderStatus targetStatus = currentStatus == OrderStatus.DELIVERED
+                ? OrderStatus.COMPLETED
+                : OrderStatus.DELIVERED;
+
+        order.setStatus(targetStatus);
+        Order savedOrder = orderRepository.save(order);
+
+        String primaryActor = resolvePrimaryActor(userRoles);
+        String formattedReason = formatAuditReason(primaryActor, "Người mua xác nhận đã nhận hàng", targetStatus);
+
+        OrderStatusHistory historyRecord = OrderStatusHistory.builder()
+                .order(savedOrder)
+                .fromStatus(currentStatus)
+                .toStatus(targetStatus)
+                .reason(formattedReason)
+                .changedAt(Instant.now())
+                .build();
+        orderStatusHistoryRepository.save(historyRecord);
+        savedOrder.addStatusHistory(historyRecord);
+
+        log.info("Xác nhận nhận hàng thành công đơn hàng {}: {} -> {} bởi actor=[{}]",
+                orderId, currentStatus, targetStatus, primaryActor);
+        return orderMapper.toDetailResponse(savedOrder);
+    }
+
     // =========================================================================
     // Private Helper Methods
     // =========================================================================
