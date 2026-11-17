@@ -161,7 +161,8 @@ public class ShippingServiceImpl implements ShippingService {
         }
 
         BigDecimal threshold = properties.getShipping().getFreeShippingThreshold();
-        boolean freeShipping = isFreeShipping(request.orderTotal(), threshold);
+        // Quy tắc: Chỉ miễn phí vận chuyển khi có voucher FREESHIP hợp lệ, không tự động theo orderTotal
+        boolean freeShipping = isFreeShipping(request.voucherCode());
 
         CarrierQuoteRequest carrierRequest = new CarrierQuoteRequest(
                 request.orderId(),
@@ -253,7 +254,8 @@ public class ShippingServiceImpl implements ShippingService {
         ));
 
         BigDecimal threshold = properties.getShipping().getFreeShippingThreshold();
-        boolean freeShipping = isFreeShipping(request.orderTotal(), threshold);
+        // Quy tắc: Chỉ miễn phí vận chuyển khi có voucher FREESHIP hợp lệ, không tự động theo orderTotal
+        boolean freeShipping = isFreeShipping(request.voucherCode());
         BigDecimal finalFee = freeShipping
                 ? BigDecimal.ZERO
                 : (carrierResult.fee() != null ? carrierResult.fee() : BigDecimal.ZERO);
@@ -748,8 +750,15 @@ public class ShippingServiceImpl implements ShippingService {
                 )));
     }
 
-    private boolean isFreeShipping(BigDecimal orderTotal, BigDecimal threshold) {
-        return orderTotal != null && threshold != null && orderTotal.compareTo(threshold) >= 0;
+    /**
+     * Kiểm tra điều kiện miễn phí vận chuyển.
+     * 1. Chức năng: Xác định xem đơn hàng / báo giá có được hưởng chính sách miễn phí ship hay không.
+     * 2. Đầu vào & kết quả: voucherCode (chuỗi mã voucher từ người dùng); trả về true nếu voucher là 'FREESHIP'.
+     * 3. Quy tắc & lý do: Bỏ hoàn toàn cơ chế tự động miễn phí theo giá trị đơn hàng (orderTotal >= threshold).
+     *    Bắt buộc người mua phải áp dụng mã voucher 'FREESHIP' hợp lệ mới được miễn phí cước.
+     */
+    private boolean isFreeShipping(String voucherCode) {
+        return voucherCode != null && "FREESHIP".equalsIgnoreCase(voucherCode.trim());
     }
 
     private ShipmentResponse toResponse(Shipment s) {

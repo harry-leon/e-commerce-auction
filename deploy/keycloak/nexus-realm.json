@@ -446,6 +446,44 @@
       ]
     },
     {
+      "id": "b47dab32-e665-4c82-b2fd-44bfb5015447",
+      "username": "techzone@nexus.vn",
+      "email": "techzone@nexus.vn",
+      "firstName": "TechZone",
+      "lastName": "Store",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Nexus123@",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_SELLER"
+      ]
+    },
+    {
+      "id": "d4d9f2d9-e6f3-4e38-8647-b2c4ab29eb52",
+      "username": "fashionhub@nexus.vn",
+      "email": "fashionhub@nexus.vn",
+      "firstName": "FashionHub",
+      "lastName": "Store",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Nexus123@",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_SELLER"
+      ]
+    },
+    {
       "id": "c213041d-94d0-421d-8b24-8552faaac017",
       "username": "admin@nexus.vn",
       "email": "admin@nexus.vn",

@@ -129,16 +129,25 @@ class ShippingServiceTest {
     }
 
     @Test
-    @DisplayName("quoteShipping: đơn hàng đạt FREE_SHIPPING_THRESHOLD (>= 100) được miễn phí ship")
+    @DisplayName("quoteShipping: đơn hàng áp dụng voucher FREESHIP được miễn phí ship; không có voucher thì tính phí chuẩn")
     void quoteShipping_appliesFreeShippingThreshold() {
-        ShippingQuoteResponse response = shippingService.quoteShipping(new ShippingQuoteRequest(
+        // Tình huống 1: Có voucher FREESHIP -> freeShippingApplied = true, shippingFee = 0
+        ShippingQuoteResponse responseFree = shippingService.quoteShipping(new ShippingQuoteRequest(
                 UUID.randomUUID(), null, "GHN", "STANDARD", "Q1, TP.HCM", 1454, "21211",
-                500, new BigDecimal("100")));
+                500, new BigDecimal("100"), "FREESHIP"));
 
-        assertThat(response.freeShippingApplied()).isTrue();
-        assertThat(response.options()).hasSize(1);
-        assertThat(response.options().get(0).shippingFee()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(response.options().get(0).originalFee()).isPositive();
+        assertThat(responseFree.freeShippingApplied()).isTrue();
+        assertThat(responseFree.options()).hasSize(1);
+        assertThat(responseFree.options().get(0).shippingFee()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(responseFree.options().get(0).originalFee()).isPositive();
+
+        // Tình huống 2: Không có voucher FREESHIP -> dù orderTotal >= 100 cũng không được miễn phí ship
+        ShippingQuoteResponse responseNoFree = shippingService.quoteShipping(new ShippingQuoteRequest(
+                UUID.randomUUID(), null, "GHN", "STANDARD", "Q1, TP.HCM", 1454, "21211",
+                500, new BigDecimal("100"), null));
+
+        assertThat(responseNoFree.freeShippingApplied()).isFalse();
+        assertThat(responseNoFree.options().get(0).shippingFee()).isPositive();
     }
 
     @Test
@@ -183,7 +192,7 @@ class ShippingServiceTest {
 
         assertThat(response.carrier()).isEqualTo("GHTK");
         assertThat(response.trackingNumber()).startsWith("GHTK-");
-        assertThat(response.freeShippingApplied()).isTrue();
+        assertThat(response.freeShippingApplied()).isFalse();
         assertThat(response.shippingFee()).isEqualByComparingTo(BigDecimal.ZERO);
     }
 
