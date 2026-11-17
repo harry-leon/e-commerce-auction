@@ -358,8 +358,8 @@ export function SellerShopView() {
                             </div>
                         </div>
 
-                        {/* Nút hành động: + Theo dõi & 💬 Chat */}
-                        <div className="relative z-10 flex items-center gap-2.5 mt-5">
+                        {/* Nút hành động: + Theo dõi, 💬 Chat và ⭐ Hồ sơ uy tín */}
+                        <div className="relative z-10 flex flex-wrap items-center gap-2.5 mt-5">
                             <button
                                 type="button"
                                 onClick={handleToggleFollow}
@@ -382,6 +382,20 @@ export function SellerShopView() {
                             >
                                 <SvgChatBubble size={14} />
                                 <span>Chat</span>
+                            </button>
+                            {/* Chức năng: Điều hướng trực tiếp sang trang hồ sơ uy tín công khai của người bán để không bị mồ côi */}
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    navigate('public-reputation', {
+                                        sellerId,
+                                        id: sellerId,
+                                        sellerName,
+                                    })
+                                }
+                                className="px-4 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-400 hover:bg-amber-300 shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                            >
+                                <span>⭐ {lang === 'vi' ? 'Hồ sơ uy tín' : 'Reputation'}</span>
                             </button>
                         </div>
                     </div>
@@ -416,21 +430,32 @@ export function SellerShopView() {
                             <SvgStarOutline size={18} className="text-slate-600" />
                             <span>Đánh giá:</span>
                             <span className="font-bold text-[#ea580c]">
-                                {(
-                                    reputation?.avgRating ||
-                                    (ratings.length > 0
-                                        ? ratings.reduce((s, r) => s + r.score, 0) / ratings.length
-                                        : 5.0)
-                                ).toFixed(1)}{' '}
-                                ({reputation?.totalRatings || ratings.length} đánh giá)
+                                {reputation && reputation.totalRatings > 0
+                                    ? `${(reputation.avgRating || 0).toFixed(1)} (${reputation.totalRatings} đánh giá)`
+                                    : ratings.length > 0
+                                      ? `${(ratings.reduce((s, r) => s + r.score, 0) / ratings.length).toFixed(1)} (${ratings.length} đánh giá)`
+                                      : 'Chưa có đánh giá'}
                             </span>
                         </div>
 
-                        {/* Hàng 3 */}
-                        <div className="flex items-center gap-2.5 text-slate-700">
-                            <SvgChatBubble size={18} className="text-slate-600" />
+                        {/* Hàng 3: Điểm uy tín có link sang hồ sơ uy tín công khai */}
+                        <div
+                            onClick={() =>
+                                navigate('public-reputation', {
+                                    sellerId,
+                                    id: sellerId,
+                                    sellerName,
+                                })
+                            }
+                            className="flex items-center gap-2.5 text-slate-700 cursor-pointer hover:text-orange-600 transition-colors group"
+                            title="Bấm để xem hồ sơ uy tín chi tiết"
+                        >
+                            <SvgChatBubble
+                                size={18}
+                                className="text-slate-600 group-hover:text-orange-600"
+                            />
                             <span>Điểm uy tín:</span>
-                            <span className="font-bold text-[#ea580c]">
+                            <span className="font-bold text-[#ea580c] underline">
                                 {reputation?.score ?? 100} ({reputation?.trustLevel || 'STANDARD'})
                             </span>
                         </div>
@@ -696,90 +721,94 @@ export function SellerShopView() {
                     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 space-y-6">
                         <div className="flex flex-col sm:flex-row items-center justify-between gap-6 p-5 bg-amber-50/60 border border-amber-200/80 rounded-2xl">
                             <div className="text-center sm:text-left">
-                                <span className="text-3xl font-black text-amber-600">4.8</span>
+                                <span className="text-3xl font-black text-amber-600">
+                                    {(reputation && reputation.totalRatings > 0
+                                        ? reputation.avgRating || 0
+                                        : ratings.length > 0
+                                          ? ratings.reduce((s, r) => s + r.score, 0) /
+                                            ratings.length
+                                          : 0
+                                    ).toFixed(1)}
+                                </span>
                                 <span className="text-base text-slate-600 font-bold"> / 5.0</span>
-                                <div className="text-amber-500 text-lg mt-1">★★★★★</div>
+                                <div className="text-amber-500 text-lg mt-1">
+                                    {ratings.length > 0
+                                        ? '★'.repeat(
+                                              Math.round(
+                                                  reputation?.avgRating ||
+                                                      ratings.reduce((s, r) => s + r.score, 0) /
+                                                          ratings.length,
+                                              ),
+                                          )
+                                        : '☆☆☆☆☆'}
+                                </div>
                                 <p className="text-xs text-slate-500 mt-1">
-                                    Dựa trên {reputation?.score ? ratings.length || 521 : 521} lượt
-                                    đánh giá từ người mua thực tế
+                                    {ratings.length > 0 ||
+                                    (reputation && reputation.totalRatings > 0)
+                                        ? `Dựa trên ${reputation?.totalRatings || ratings.length} lượt đánh giá từ người mua thực tế`
+                                        : 'Chưa có lượt đánh giá nào'}
                                 </p>
                             </div>
-                            <div className="flex flex-wrap gap-2 text-xs">
-                                <span className="px-3 py-1.5 rounded-full bg-white font-bold text-slate-800 border border-slate-200 shadow-sm">
-                                    Tất cả (521)
-                                </span>
-                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
-                                    5 Sao (490)
-                                </span>
-                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
-                                    4 Sao (25)
-                                </span>
-                                <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
-                                    Có Hình Ảnh/Video (310)
-                                </span>
+                            <div className="flex flex-col sm:items-end gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        navigate('public-reputation', {
+                                            sellerId,
+                                            id: sellerId,
+                                            sellerName,
+                                        })
+                                    }
+                                    className="px-4 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-200 hover:bg-amber-300 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                                >
+                                    <span>⭐ Xem hồ sơ uy tín chi tiết</span>
+                                    <span>&gt;</span>
+                                </button>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                    <span className="px-3 py-1.5 rounded-full bg-white font-bold text-slate-800 border border-slate-200 shadow-sm">
+                                        Tất cả ({reputation?.totalRatings || ratings.length})
+                                    </span>
+                                    <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
+                                        5 Sao ({ratings.filter((r) => r.score === 5).length})
+                                    </span>
+                                    <span className="px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-200">
+                                        4 Sao ({ratings.filter((r) => r.score === 4).length})
+                                    </span>
+                                </div>
                             </div>
                         </div>
 
-                        {/* Danh sách review */}
+                        {/* Danh sách review: Hoàn toàn lấy từ DB thực tế, không mock ảo */}
                         <div className="divide-y divide-slate-100">
-                            {ratings.length > 0
-                                ? ratings.map((rev) => (
-                                      <div key={rev.id} className="py-4 space-y-1.5">
-                                          <div className="flex items-center gap-2 text-xs">
-                                              <span className="font-bold text-slate-900">
-                                                  {rev.raterName || 'Người mua'}
-                                              </span>
-                                              <span className="text-amber-500">
-                                                  {'★'.repeat(rev.score)}
-                                              </span>
-                                              <span className="text-slate-400">
-                                                  ·{' '}
-                                                  {new Date(rev.createdAt).toLocaleDateString(
-                                                      lang === 'vi' ? 'vi-VN' : 'en-US',
-                                                  )}
-                                              </span>
-                                          </div>
-                                          <p className="text-sm text-slate-700">
-                                              {rev.comment || 'Đánh giá 5 sao hài lòng'}
-                                          </p>
-                                      </div>
-                                  ))
-                                : [
-                                      {
-                                          user: 'buyer_pro_01',
-                                          rating: 5,
-                                          date: '10-11-2026',
-                                          comment:
-                                              'Sản phẩm tai nghe Sony WH-1000XM5 chính hãng, cách âm đỉnh chóp, đóng gói chắc chắn giao siêu nhanh trong 1 ngày!',
-                                      },
-                                      {
-                                          user: 'nguyenvana_cpl',
-                                          rating: 5,
-                                          date: '08-11-2026',
-                                          comment:
-                                              'Shop phục vụ rất nhiệt tình, giải đáp chi tiết, hàng chuẩn Apple nguyên seal.',
-                                      },
-                                      {
-                                          user: 'quocbao_hcm',
-                                          rating: 4,
-                                          date: '02-11-2026',
-                                          comment:
-                                              'Đóng gói cẩn thận, hàng đúng mô tả, chất âm ấm.',
-                                      },
-                                  ].map((rev, i) => (
-                                      <div key={i} className="py-4 space-y-1.5">
-                                          <div className="flex items-center gap-2 text-xs">
-                                              <span className="font-bold text-slate-900">
-                                                  {rev.user}
-                                              </span>
-                                              <span className="text-amber-500">
-                                                  {'★'.repeat(rev.rating)}
-                                              </span>
-                                              <span className="text-slate-400">· {rev.date}</span>
-                                          </div>
-                                          <p className="text-sm text-slate-700">{rev.comment}</p>
-                                      </div>
-                                  ))}
+                            {ratings.length > 0 ? (
+                                ratings.map((rev) => (
+                                    <div key={rev.id} className="py-4 space-y-1.5">
+                                        <div className="flex items-center gap-2 text-xs">
+                                            <span className="font-bold text-slate-900">
+                                                {rev.raterName || 'Người mua'}
+                                            </span>
+                                            <span className="text-amber-500">
+                                                {'★'.repeat(rev.score)}
+                                            </span>
+                                            <span className="text-slate-400">
+                                                ·{' '}
+                                                {new Date(rev.createdAt).toLocaleDateString(
+                                                    lang === 'vi' ? 'vi-VN' : 'en-US',
+                                                )}
+                                            </span>
+                                        </div>
+                                        <p className="text-sm text-slate-700">
+                                            {rev.comment || 'Đánh giá hài lòng'}
+                                        </p>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="py-8 text-center text-slate-500 text-sm">
+                                    {lang === 'vi'
+                                        ? 'Gian hàng chưa có đánh giá nào từ người mua.'
+                                        : 'No reviews for this store yet.'}
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

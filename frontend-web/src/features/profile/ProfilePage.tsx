@@ -50,6 +50,8 @@ export function ProfilePage() {
     const activities = Array.isArray(history.data?.data?.content) ? history.data.data.content : []
     const [saving, setSaving] = useState(false)
     const [failure, setFailure] = useState('')
+    // Lưu trữ lỗi validation chi tiết theo từng trường (fullName, identifyNumber, phone) từ backend trả về
+    const [profileErrors, setProfileErrors] = useState<Record<string, string>>({})
     const [savedProfile, setSavedProfile] = useState<ApiUser | null>(null)
     const [revision, setRevision] = useState(0)
 
@@ -373,7 +375,22 @@ export function ProfilePage() {
 
     const profileBody = (
         <div className="max-w-4xl">
-            <h1 className="text-2xl font-bold mb-5">{title}</h1>
+            {/* Chức năng: Tiêu đề trang hồ sơ kèm nút điều hướng nhanh tới Điểm uy tín của tôi (My Reputation) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                <h1 className="text-2xl font-bold">{title}</h1>
+                <button
+                    type="button"
+                    onClick={() => navigate('my-reputation')}
+                    className="self-start sm:self-auto flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 shadow-sm transition-all cursor-pointer"
+                >
+                    <span>
+                        ⭐{' '}
+                        {lang === 'vi'
+                            ? 'Điểm uy tín & Đánh giá của tôi'
+                            : 'My Reputation & Ratings'}
+                    </span>
+                </button>
+            </div>
             <LoadState error={failure || error} loading={loading && !activeUser} />
             {activeUser && (
                 <form
@@ -394,7 +411,6 @@ export function ProfilePage() {
                         name="phone"
                         defaultValue={activeUser.phone}
                         error={profileErrors.phone}
-                        required
                     />
                     <div>
                         <Input
@@ -415,7 +431,11 @@ export function ProfilePage() {
                         label="Ngày sinh"
                         type="date"
                         name="dateOfBirth"
-                        max={new Date(Date.now() - 15 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                        max={
+                            new Date(Date.now() - 15 * 365.25 * 24 * 60 * 60 * 1000)
+                                .toISOString()
+                                .split('T')[0]
+                        }
                         defaultValue={activeUser.dateOfBirth}
                         error={profileErrors.dateOfBirth}
                     />
@@ -433,11 +453,11 @@ export function ProfilePage() {
                     </label>
 
                     {/*
-                      * Khối Địa chỉ hành chính phân cấp tích hợp Open API (provinces.open-api.vn):
-                      * - Chiếm trọn 2 cột (sm:col-span-2) để hiển thị thoáng 3 dropdown Tỉnh/Quận/Xã và ô số nhà.
-                      * - Có fallback sang chế độ nhập tự do (manualMode) khi API lỗi.
-                      * - Input ẩn name="address" đồng bộ giá trị với FormData khi submit và hỗ trợ DOM queries.
-                      */}
+                     * Khối Địa chỉ hành chính phân cấp tích hợp Open API (provinces.open-api.vn):
+                     * - Chiếm trọn 2 cột (sm:col-span-2) để hiển thị thoáng 3 dropdown Tỉnh/Quận/Xã và ô số nhà.
+                     * - Có fallback sang chế độ nhập tự do (manualMode) khi API lỗi.
+                     * - Input ẩn name="address" đồng bộ giá trị với FormData khi submit và hỗ trợ DOM queries.
+                     */}
                     <div className="sm:col-span-2">
                         <AddressSelector
                             value={currentAddress}
@@ -473,6 +493,32 @@ export function ProfilePage() {
                     </div>
                 </form>
             )}
+
+            {/* Chức năng: Thẻ hiển thị tóm tắt liên kết trực tiếp sang trang Điểm uy tín của tôi, giải quyết hoàn toàn vấn đề trang mồ côi */}
+            <div className="nexus-card p-5 mt-6 bg-gradient-to-r from-amber-50/70 to-orange-50/70 border border-amber-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                    <h2 className="font-bold text-base text-amber-900 flex items-center gap-2">
+                        <span>⭐</span>
+                        <span>
+                            {lang === 'vi'
+                                ? 'Hồ sơ uy tín & Cấp độ tín nhiệm'
+                                : 'Reputation & Trust Level'}
+                        </span>
+                    </h2>
+                    <p className="text-xs text-amber-800/80">
+                        {lang === 'vi'
+                            ? 'Xem cấp độ uy tín (VIP/HIGH/STANDARD), tỷ lệ giao dịch thành công và danh sách nhận xét đánh giá từ cộng đồng.'
+                            : 'View trust level, transaction stats and community feedback.'}
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => navigate('my-reputation')}
+                    className="self-start sm:self-auto px-4 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-300 hover:bg-amber-400 transition-colors shadow-sm cursor-pointer whitespace-nowrap"
+                >
+                    {lang === 'vi' ? 'Xem chi tiết uy tín →' : 'View Reputation →'}
+                </button>
+            </div>
             <form
                 className="nexus-card p-5 mt-6 space-y-3"
                 onSubmit={(event) => submit(event, true)}

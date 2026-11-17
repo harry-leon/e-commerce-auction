@@ -111,11 +111,18 @@ export function normalizeOrder(raw: OrderPayload): Order {
             // Khi đơn hàng đã ở các trạng thái đã thu tiền hoặc hoàn tất, trạng thái thanh toán
             // luôn được chuẩn hóa theo Escrow ('released', 'protection_period', 'held'),
             // không để rơi vào 'unknown' hoặc 'unpaid' ('Chưa thanh toán').
-            const isPaidState = ['PAID', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'COMPLETED'].includes(
-                raw.status as string,
-            )
+            const isPaidState = [
+                'PAID',
+                'PROCESSING',
+                'SHIPPED',
+                'DELIVERED',
+                'COMPLETED',
+            ].includes(raw.status as string)
             if (isPaidState) {
-                if (!raw.paymentStatus || ['unknown', 'unpaid', 'pending'].includes(raw.paymentStatus)) {
+                if (
+                    !raw.paymentStatus ||
+                    ['unknown', 'unpaid', 'pending'].includes(raw.paymentStatus)
+                ) {
                     return defaultPaymentStatus
                 }
             }

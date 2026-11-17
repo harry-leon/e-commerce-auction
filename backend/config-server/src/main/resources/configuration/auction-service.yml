@@ -2,6 +2,12 @@
 # Các thông số nghiệp vụ đấu giá này có thể thay đổi tại runtime và cập nhật qua POST /actuator/refresh.
 app:
   auction:
+    scheduler:
+      enabled: ${AUCTION_SCHEDULER_ENABLED:true}
+      opening-interval-ms: ${AUCTION_SCHEDULER_OPENING_INTERVAL_MS:5000}
+      closing-interval-ms: ${AUCTION_SCHEDULER_CLOSING_INTERVAL_MS:3000}
+      settlement-interval-ms: ${AUCTION_SCHEDULER_SETTLEMENT_INTERVAL_MS:3000}
+      handover-interval-ms: ${AUCTION_SCHEDULER_HANDOVER_INTERVAL_MS:30000}
     bidding:
       min-increment: 1000          # Bước giá tối thiểu khi đặt bid (VND)
       anti-sniping-seconds: 120    # Gia hạn thời gian nếu có bid trong những giây cuối

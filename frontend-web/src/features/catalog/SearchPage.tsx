@@ -39,13 +39,23 @@ export function SearchPage() {
     }, [])
 
     const [q, setQ] = useState(() => String(pageParams.q ?? savedFilters.q ?? ''))
-    const [category, setCategory] = useState(() => String(pageParams.category ?? pageParams.categoryId ?? savedFilters.category ?? ''))
+    const [category, setCategory] = useState(() =>
+        String(pageParams.category ?? pageParams.categoryId ?? savedFilters.category ?? ''),
+    )
     const [min, setMin] = useState(() => String(pageParams.minPrice ?? savedFilters.min ?? ''))
     const [max, setMax] = useState(() => String(pageParams.maxPrice ?? savedFilters.max ?? ''))
-    const [kind, setKind] = useState(() => String(pageParams.auctionEnabled ?? pageParams.kind ?? savedFilters.kind ?? ''))
-    const [onlyDiscount, setOnlyDiscount] = useState(() => Boolean(pageParams.onlyDiscount ?? savedFilters.onlyDiscount ?? false))
-    const [selectedWarehouse, setSelectedWarehouse] = useState(() => String(pageParams.warehouse ?? savedFilters.selectedWarehouse ?? 'all'))
-    const [sort, setSort] = useState(() => String(pageParams.sort ?? savedFilters.sort ?? 'name,asc'))
+    const [kind, setKind] = useState(() =>
+        String(pageParams.auctionEnabled ?? pageParams.kind ?? savedFilters.kind ?? ''),
+    )
+    const [onlyDiscount, setOnlyDiscount] = useState(() =>
+        Boolean(pageParams.onlyDiscount ?? savedFilters.onlyDiscount ?? false),
+    )
+    const [selectedWarehouse, setSelectedWarehouse] = useState(() =>
+        String(pageParams.warehouse ?? savedFilters.selectedWarehouse ?? 'all'),
+    )
+    const [sort, setSort] = useState(() =>
+        String(pageParams.sort ?? savedFilters.sort ?? 'name,asc'),
+    )
     const [page, setCurrentPage] = useState(0)
     const [loadedProducts, setLoadedProducts] = useState<Product[]>([])
 
@@ -90,7 +100,8 @@ export function SearchPage() {
         if (max) params.set('maxPrice', max)
         if (kind) params.set('auctionEnabled', kind)
         if (onlyDiscount) params.set('onlyDiscount', 'true')
-        if (selectedWarehouse && selectedWarehouse !== 'all') params.set('warehouse', selectedWarehouse)
+        if (selectedWarehouse && selectedWarehouse !== 'all')
+            params.set('warehouse', selectedWarehouse)
         if (sort && sort !== 'name,asc') params.set('sort', sort)
 
         const newUrl = `${window.location.pathname}${params.size ? `?${params.toString()}` : ''}`
@@ -202,7 +213,9 @@ export function SearchPage() {
     )
     const responsePage = effectiveData?.meta?.page ?? effectiveData?.meta?.pagination?.page
     const backendTotal =
-        effectiveData?.meta?.total ?? effectiveData?.meta?.pagination?.totalElements ?? inStockProducts.length
+        effectiveData?.meta?.total ??
+        effectiveData?.meta?.pagination?.totalElements ??
+        inStockProducts.length
 
     // Ánh xạ thành danh sách Product hoàn chỉnh với hình ảnh Cloudinary và giá SKU
     const mappedProducts: Product[] = useMemo(() => {
@@ -219,7 +232,7 @@ export function SearchPage() {
                 : lang === 'vi'
                   ? 'Chưa phân loại'
                   : 'Uncategorized'
-            
+
             const rawPrice = sku?.price || 0
             // Xác định originalPrice: chỉ lấy khi giá gốc lớn hơn giá bán thực tế.
             // Nếu sản phẩm bán lẻ đủ điều kiện ưu đãi (không phải đấu giá), bổ sung giá niêm yết chuẩn để tạo ưu đãi SALE OFF chân thực
@@ -271,7 +284,7 @@ export function SearchPage() {
         })
     }, [inStockProducts, availableQtyBySku, flatCategories, lang])
 
-    const loadingProducts = (loading || (needFallback && fallbackData.loading)) || stockLoading
+    const loadingProducts = loading || (needFallback && fallbackData.loading) || stockLoading
     const productError = (needFallback ? fallbackData.error : error) || stockError
     const pageError = productError || categories.error
 
@@ -307,7 +320,9 @@ export function SearchPage() {
             })
         }
         if (onlyDiscount) {
-            list = list.filter((item) => Boolean(item.originalPrice && item.originalPrice > item.price))
+            list = list.filter((item) =>
+                Boolean(item.originalPrice && item.originalPrice > item.price),
+            )
         }
         if (selectedWarehouse !== 'all') {
             list = list.filter((item) => {
@@ -333,7 +348,10 @@ export function SearchPage() {
         } else if (sort === 'name,desc') {
             list.sort((a, b) => (b.nameVi || b.name).localeCompare(a.nameVi || a.name))
         } else if (sort === 'createdAt,desc') {
-            list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+            list.sort(
+                (a, b) =>
+                    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+            )
         }
         return list
     }, [allProducts, onlyDiscount, selectedWarehouse, sort, q])
@@ -342,15 +360,17 @@ export function SearchPage() {
 
     // Số lượng sản phẩm giảm giá đang có
     const discountCount = useMemo(() => {
-        return allProducts.filter(
-            (item) => Boolean(item.originalPrice && item.originalPrice > item.price),
+        return allProducts.filter((item) =>
+            Boolean(item.originalPrice && item.originalPrice > item.price),
         ).length
     }, [allProducts])
 
     // Thống kê số lượng theo từng chi nhánh kho
     const warehouseCounts = useMemo(() => {
         const base = onlyDiscount
-            ? allProducts.filter((item) => Boolean(item.originalPrice && item.originalPrice > item.price))
+            ? allProducts.filter((item) =>
+                  Boolean(item.originalPrice && item.originalPrice > item.price),
+              )
             : allProducts
         return {
             all: base.length,
@@ -713,8 +733,16 @@ export function SearchPage() {
                             </h3>
                             <div className="space-y-2 text-sm text-gray-700">
                                 {[
-                                    { id: 'all', label: 'Tất cả chi nhánh', count: warehouseCounts.all },
-                                    { id: 'tphcm', label: 'Kho Trung Tâm - TP.HCM', count: warehouseCounts.tphcm },
+                                    {
+                                        id: 'all',
+                                        label: 'Tất cả chi nhánh',
+                                        count: warehouseCounts.all,
+                                    },
+                                    {
+                                        id: 'tphcm',
+                                        label: 'Kho Trung Tâm - TP.HCM',
+                                        count: warehouseCounts.tphcm,
+                                    },
                                     {
                                         id: 'hanoi',
                                         label: 'Kho Miền Bắc - Hà Nội',

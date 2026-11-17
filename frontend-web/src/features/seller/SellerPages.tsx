@@ -3549,7 +3549,12 @@ export function SellerOrdersPage() {
             ordersApi
                 .getOrderDetailV2(selectedOrder.id)
                 .then((detail) => {
-                    if (active && detail && Array.isArray(detail.items) && detail.items.length > 0) {
+                    if (
+                        active &&
+                        detail &&
+                        Array.isArray(detail.items) &&
+                        detail.items.length > 0
+                    ) {
                         setSelectedOrder((current) =>
                             current && current.id === detail.id
                                 ? { ...current, items: detail.items as any }

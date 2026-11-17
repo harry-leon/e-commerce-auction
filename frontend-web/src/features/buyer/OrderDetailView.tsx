@@ -590,14 +590,8 @@ export function OrderDetailView() {
                       quantity: (effectiveOrder as any).itemCount || 1,
                       unitPrice: effectiveSubtotal || effectiveTotal || 0,
                       subtotal: effectiveSubtotal || effectiveTotal || 0,
-                      image: resolveProductImage(
-                          effectiveOrder.id,
-                          'Sản phẩm',
-                      ),
-                      attribute:
-                          lang === 'vi'
-                              ? 'Phân loại: Tiêu chuẩn'
-                              : 'Standard',
+                      image: resolveProductImage(effectiveOrder.id, 'Sản phẩm'),
+                      attribute: lang === 'vi' ? 'Phân loại: Tiêu chuẩn' : 'Standard',
                   },
               ]
 
@@ -731,7 +725,9 @@ export function OrderDetailView() {
                         orderId: effectiveOrder.id,
                         productId: item.productId || (item as any).skuId,
                         productName: item.productName,
-                        userName: user?.fullName || (user?.email ? user.email.split('@')[0] : 'User ***2414'),
+                        userName:
+                            user?.fullName ||
+                            (user?.email ? user.email.split('@')[0] : 'User ***2414'),
                         userAvatar: user?.avatarUrl || null,
                         score: rating,
                         comment: comment.trim(),
@@ -764,8 +760,7 @@ export function OrderDetailView() {
     }
 
     const isCodOrder = effectiveOrder.paymentMethod === 'COD'
-    const isPendingPayment =
-        effectiveOrder.status === 'PENDING_PAYMENT' && !isCodOrder
+    const isPendingPayment = effectiveOrder.status === 'PENDING_PAYMENT' && !isCodOrder
 
     /**
      * Chức năng: Điều hướng người mua tiếp tục thanh toán đơn hàng đang chờ thanh toán (PENDING_PAYMENT).
@@ -886,7 +881,9 @@ export function OrderDetailView() {
                             {effectiveOrder.orderNo || '2610313JCYGVA5'}
                         </span>
                         <span className="text-slate-300 font-light mx-1">|</span>
-                        <span className={`font-black tracking-wide uppercase ${statusHeader.color}`}>
+                        <span
+                            className={`font-black tracking-wide uppercase ${statusHeader.color}`}
+                        >
                             {statusHeader.label}
                         </span>
                     </div>
@@ -1300,6 +1297,22 @@ export function OrderDetailView() {
                                         <SvgStore size={14} className="text-slate-500" />
                                         <span>{lang === 'vi' ? 'Xem shop' : 'View shop'}</span>
                                     </button>
+                                    {/* Chức năng: Điều hướng tới hồ sơ uy tín công khai của người bán để xem đánh giá và điểm tín nhiệm */}
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            navigate('public-reputation', {
+                                                sellerId: effectiveOrder.sellerId,
+                                                id: effectiveOrder.sellerId,
+                                                sellerName: sellerDisplayName,
+                                            })
+                                        }
+                                        className="px-3 py-1.5 rounded-xl text-xs font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                                    >
+                                        <span>
+                                            ⭐ {lang === 'vi' ? 'Hồ sơ uy tín' : 'Reputation'}
+                                        </span>
+                                    </button>
                                     <button
                                         type="button"
                                         onClick={() =>
@@ -1458,9 +1471,7 @@ export function OrderDetailView() {
                                         </div>
                                         {submittedReview?.createdAt && (
                                             <span className="text-xs text-slate-500">
-                                                {new Date(
-                                                    submittedReview.createdAt,
-                                                ).toLocaleString(
+                                                {new Date(submittedReview.createdAt).toLocaleString(
                                                     lang === 'vi' ? 'vi-VN' : 'en-US',
                                                 )}
                                             </span>
@@ -1532,7 +1543,8 @@ export function OrderDetailView() {
                                             effectiveOrder.status === 'COMPLETED' ||
                                             effectiveOrder.status === 'DELIVERED'
                                                 ? 'bg-[#dcfce7] text-[#15803d]'
-                                                : isCodOrder && effectiveOrder.status === 'PENDING_PAYMENT'
+                                                : isCodOrder &&
+                                                    effectiveOrder.status === 'PENDING_PAYMENT'
                                                   ? 'bg-blue-50 text-blue-700'
                                                   : 'bg-amber-50 text-amber-700'
                                         }`}
@@ -1545,7 +1557,8 @@ export function OrderDetailView() {
                                                 ? lang === 'vi'
                                                     ? 'Đã thanh toán'
                                                     : 'Paid'
-                                                : isCodOrder && effectiveOrder.status === 'PENDING_PAYMENT'
+                                                : isCodOrder &&
+                                                    effectiveOrder.status === 'PENDING_PAYMENT'
                                                   ? lang === 'vi'
                                                       ? 'Đã tiếp nhận (COD)'
                                                       : 'Order Placed (COD)'
@@ -1595,19 +1608,34 @@ export function OrderDetailView() {
                                     </div>
                                 </div>
                                 {effectiveOrder.sellerId && (
-                                    <button
-                                        type="button"
-                                        onClick={() =>
-                                            navigate('seller-shop', {
-                                                sellerId: effectiveOrder.sellerId,
-                                                id: effectiveOrder.sellerId,
-                                                sellerName: sellerDisplayName,
-                                            })
-                                        }
-                                        className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#ea580c] bg-white hover:bg-orange-50 border border-[#ea580c] transition-colors cursor-pointer shadow-sm"
-                                    >
-                                        {lang === 'vi' ? 'Xem shop' : 'View shop'}
-                                    </button>
+                                    <div className="flex flex-col gap-1.5 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                navigate('seller-shop', {
+                                                    sellerId: effectiveOrder.sellerId,
+                                                    id: effectiveOrder.sellerId,
+                                                    sellerName: sellerDisplayName,
+                                                })
+                                            }
+                                            className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#ea580c] bg-white hover:bg-orange-50 border border-[#ea580c] transition-colors cursor-pointer shadow-sm text-center"
+                                        >
+                                            {lang === 'vi' ? 'Xem shop' : 'View shop'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                navigate('public-reputation', {
+                                                    sellerId: effectiveOrder.sellerId,
+                                                    id: effectiveOrder.sellerId,
+                                                    sellerName: sellerDisplayName,
+                                                })
+                                            }
+                                            className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 transition-colors cursor-pointer shadow-sm text-center"
+                                        >
+                                            ⭐ {lang === 'vi' ? 'Hồ sơ uy tín' : 'Reputation'}
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </div>

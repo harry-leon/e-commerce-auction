@@ -268,7 +268,9 @@ export function AuctionCard({ auction }: { auction: Auction }) {
                         <strong className="text-gray-600 font-medium group-hover/seller:text-primary group-hover/seller:underline ml-1">
                             {auction.sellerName}
                         </strong>
-                        <span className="text-[10px] opacity-0 group-hover/seller:opacity-100 transition-opacity">↗</span>
+                        <span className="text-[10px] opacity-0 group-hover/seller:opacity-100 transition-opacity">
+                            ↗
+                        </span>
                     </button>
                     <button
                         className="nexus-btn nexus-btn-auction nexus-btn-sm rounded-xl shadow-sm hover:shadow-md transition-all duration-200 active:scale-95"

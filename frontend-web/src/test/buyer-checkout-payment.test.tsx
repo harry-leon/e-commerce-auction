@@ -1371,7 +1371,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         await screen.findByText('Quần jeans xanh')
 
         // Kiểm tra checkbox Chọn tất cả hiển thị số lượng 2/2
-        const selectAllCheckbox = screen.getByLabelText(/chọn tất cả|select all/i) as HTMLInputElement
+        const selectAllCheckbox = screen.getByLabelText(
+            /chọn tất cả|select all/i,
+        ) as HTMLInputElement
         expect(selectAllCheckbox.checked).toBe(true)
 
         // Bỏ chọn Áo thun trắng
@@ -1381,7 +1383,9 @@ describe('Buyer, Cart và Checkout - Task Quốc Hào', () => {
         expect(selectAllCheckbox.checked).toBe(false)
 
         // Nút Checkout cập nhật còn (1)
-        expect(screen.getByRole('button', { name: /thanh toán \(1\)|checkout \(1\)/i })).toBeEnabled()
+        expect(
+            screen.getByRole('button', { name: /thanh toán \(1\)|checkout \(1\)/i }),
+        ).toBeEnabled()
 
         // Bỏ chọn tất cả bằng nút Chọn tất cả
         fireEvent.click(selectAllCheckbox)

@@ -148,7 +148,15 @@ export function AuctionListPage() {
             sessionStorage.setItem('nexus.auction-only-bids', String(onlyWithBids))
             sessionStorage.setItem('nexus.auction-ending-soon', String(onlyEndingSoon))
         } catch {}
-    }, [statusFilter, sortBy, searchQuery, minPriceInput, maxPriceInput, onlyWithBids, onlyEndingSoon])
+    }, [
+        statusFilter,
+        sortBy,
+        searchQuery,
+        minPriceInput,
+        maxPriceInput,
+        onlyWithBids,
+        onlyEndingSoon,
+    ])
 
     // 3. Tải danh sách phiên đấu giá (chỉ gọi 1 lần khi mount hoặc khi retry, KHÔNG polling 5s)
     const fetchAuctions = useCallback(async () => {
@@ -903,7 +911,7 @@ export function AuctionDetailPage() {
                     const nextBid =
                         data.bidCount > 0
                             ? data.currentBid + data.minIncrement
-                            : (data.currentBid || data.startingPrice || 0)
+                            : data.currentBid || data.startingPrice || 0
                     setCustomBid(String(nextBid))
                 }
             } catch (err) {
@@ -1085,7 +1093,9 @@ export function AuctionDetailPage() {
                 lang === 'en'
                     ? `Minimum bid must be at least ${formatCurrency(minBid, lang)}`
                     : `Mức giá đặt phải tối thiểu là ${formatCurrency(minBid, lang)}` +
-                          (auction.bidCount > 0 ? ' (Giá hiện tại + Bước giá)' : ' (Giá khởi điểm)'),
+                          (auction.bidCount > 0
+                              ? ' (Giá hiện tại + Bước giá)'
+                              : ' (Giá khởi điểm)'),
             )
             return
         }
@@ -1267,7 +1277,11 @@ export function AuctionDetailPage() {
                                         })
                                     }
                                     className="ml-1 inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-primary-light text-primary hover:bg-primary hover:text-white transition-colors cursor-pointer border border-primary/20"
-                                    title={lang === 'en' ? 'View seller profile' : 'Xem hồ sơ người bán'}
+                                    title={
+                                        lang === 'en'
+                                            ? 'View seller profile'
+                                            : 'Xem hồ sơ người bán'
+                                    }
                                 >
                                     <span>{lang === 'en' ? 'View Profile' : 'Xem hồ sơ'}</span>
                                     <span>↗</span>
@@ -1327,11 +1341,20 @@ export function AuctionDetailPage() {
                                     const isMyBid = Boolean(
                                         (isHighestBidder && i === 0) ||
                                         (user &&
-                                            ((bid.bidderId && (bid.bidderId === user.id || (user as any).sub === bid.bidderId)) ||
-                                                (user.fullName && (bid.bidderName === user.fullName || bid.bidderName.includes(user.fullName))) ||
-                                                (user.email && (bid.bidderName === user.email || bid.bidderName.includes(user.email))) ||
-                                                ((user as any).name && bid.bidderName === (user as any).name))) ||
-                                        (auction.winnerId && bid.bidderId === auction.winnerId && isHighestBidder),
+                                            ((bid.bidderId &&
+                                                (bid.bidderId === user.id ||
+                                                    (user as any).sub === bid.bidderId)) ||
+                                                (user.fullName &&
+                                                    (bid.bidderName === user.fullName ||
+                                                        bid.bidderName.includes(user.fullName))) ||
+                                                (user.email &&
+                                                    (bid.bidderName === user.email ||
+                                                        bid.bidderName.includes(user.email))) ||
+                                                ((user as any).name &&
+                                                    bid.bidderName === (user as any).name))) ||
+                                        (auction.winnerId &&
+                                            bid.bidderId === auction.winnerId &&
+                                            isHighestBidder),
                                     )
                                     return (
                                         <div
@@ -1368,13 +1391,20 @@ export function AuctionDetailPage() {
                                                         )}
                                                         {i === 0 && (
                                                             <span className="badge badge-orange text-[10px] px-1.5 py-0.5">
-                                                                {lang === 'en' ? 'Highest' : 'Cao nhất'}
+                                                                {lang === 'en'
+                                                                    ? 'Highest'
+                                                                    : 'Cao nhất'}
                                                             </span>
                                                         )}
                                                     </p>
                                                     <p className="text-xs text-gray-400">
-                                                        {new Date(bid.timestamp).toLocaleTimeString()} ·{' '}
-                                                        {new Date(bid.timestamp).toLocaleDateString()}
+                                                        {new Date(
+                                                            bid.timestamp,
+                                                        ).toLocaleTimeString()}{' '}
+                                                        ·{' '}
+                                                        {new Date(
+                                                            bid.timestamp,
+                                                        ).toLocaleDateString()}
                                                     </p>
                                                 </div>
                                             </div>
@@ -1683,7 +1713,8 @@ export function AuctionDetailPage() {
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                     <StarRating rating={auction.product.rating || 5} size={11} />
                                     <span className="text-xs text-gray-500 font-medium">
-                                        {auction.product.rating || 5.0} · {lang === 'en' ? 'Gold Trust' : 'Uy tín Vàng'}
+                                        {auction.product.rating || 5.0} ·{' '}
+                                        {lang === 'en' ? 'Gold Trust' : 'Uy tín Vàng'}
                                     </span>
                                 </div>
                             </div>
@@ -1718,105 +1749,105 @@ export function AuctionDetailPage() {
                         }
                         onClick={() => setImageLightboxOpen(false)}
                     >
-                    <div
-                        className="relative w-full max-w-4xl lg:max-w-5xl h-[560px] md:h-[600px] bg-[#181818] rounded-xl overflow-hidden shadow-2xl flex flex-col md:flex-row border border-white/10 shrink-0"
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        <button
-                            type="button"
-                            onClick={() => setImageLightboxOpen(false)}
-                            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all z-30 cursor-pointer"
-                            aria-label={lang === 'en' ? 'Close gallery' : 'Đóng'}
+                        <div
+                            className="relative w-full max-w-4xl lg:max-w-5xl h-[560px] md:h-[600px] bg-[#181818] rounded-xl overflow-hidden shadow-2xl flex flex-col md:flex-row border border-white/10 shrink-0"
+                            onClick={(event) => event.stopPropagation()}
                         >
-                            <CircleX size={20} />
-                        </button>
+                            <button
+                                type="button"
+                                onClick={() => setImageLightboxOpen(false)}
+                                className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all z-30 cursor-pointer"
+                                aria-label={lang === 'en' ? 'Close gallery' : 'Đóng'}
+                            >
+                                <CircleX size={20} />
+                            </button>
 
-                        <div className="flex-1 bg-white relative flex items-center justify-center p-6 h-full select-none overflow-hidden">
-                            {images.length > 1 && (
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setSelectedImageIndex((index) =>
-                                            index === 0 ? images.length - 1 : index - 1,
+                            <div className="flex-1 bg-white relative flex items-center justify-center p-6 h-full select-none overflow-hidden">
+                                {images.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setSelectedImageIndex((index) =>
+                                                index === 0 ? images.length - 1 : index - 1,
+                                            )
+                                        }
+                                        className="absolute left-0 top-1/2 -translate-y-1/2 w-9 sm:w-11 h-16 bg-black/30 hover:bg-black/60 text-white flex items-center justify-center transition-colors cursor-pointer z-20 rounded-r-md"
+                                        aria-label={lang === 'en' ? 'Previous image' : 'Ảnh trước'}
+                                    >
+                                        <ChevronLeft size={30} />
+                                    </button>
+                                )}
+
+                                <img
+                                    src={images[selectedImageIndex] || images[0]}
+                                    alt={auction.product.name}
+                                    className="h-full w-full object-contain select-none transition-all duration-150"
+                                />
+
+                                {images.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setSelectedImageIndex((index) =>
+                                                index === images.length - 1 ? 0 : index + 1,
+                                            )
+                                        }
+                                        className="absolute right-0 top-1/2 -translate-y-1/2 w-9 sm:w-11 h-16 bg-black/30 hover:bg-black/60 text-white flex items-center justify-center transition-colors cursor-pointer z-20 rounded-l-md"
+                                        aria-label={lang === 'en' ? 'Next image' : 'Ảnh sau'}
+                                    >
+                                        <ChevronRight size={30} />
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="w-full md:w-80 lg:w-88 bg-[#181818] text-white p-5 flex flex-col shrink-0 border-t md:border-t-0 md:border-l border-white/10 h-full">
+                                <div className="mb-4 pr-8">
+                                    <h3 className="text-white text-sm font-normal line-clamp-2 leading-relaxed">
+                                        {lang === 'vi'
+                                            ? auction.product.nameVi || auction.product.name
+                                            : auction.product.name}
+                                    </h3>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2 overflow-y-auto max-h-[440px] pr-1">
+                                    {images.map((image, index) => {
+                                        const isActive = index === selectedImageIndex
+                                        return (
+                                            <button
+                                                key={index}
+                                                type="button"
+                                                onClick={() => setSelectedImageIndex(index)}
+                                                onMouseEnter={() => setSelectedImageIndex(index)}
+                                                className={`aspect-square w-full rounded-xs overflow-hidden bg-black/50 transition-all cursor-pointer relative ${
+                                                    isActive
+                                                        ? 'border-2 border-[#ee4d2d] shadow-sm ring-1 ring-[#ee4d2d]'
+                                                        : 'border-2 border-transparent opacity-70 hover:opacity-100 hover:border-white/40'
+                                                }`}
+                                                aria-label={
+                                                    lang === 'en'
+                                                        ? `Show image ${index + 1}`
+                                                        : `Xem ảnh ${index + 1}`
+                                                }
+                                            >
+                                                <img
+                                                    src={image}
+                                                    alt=""
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            </button>
                                         )
-                                    }
-                                    className="absolute left-0 top-1/2 -translate-y-1/2 w-9 sm:w-11 h-16 bg-black/30 hover:bg-black/60 text-white flex items-center justify-center transition-colors cursor-pointer z-20 rounded-r-md"
-                                    aria-label={lang === 'en' ? 'Previous image' : 'Ảnh trước'}
-                                >
-                                    <ChevronLeft size={30} />
-                                </button>
-                            )}
+                                    })}
+                                </div>
 
-                            <img
-                                src={images[selectedImageIndex] || images[0]}
-                                alt={auction.product.name}
-                                className="h-full w-full object-contain select-none transition-all duration-150"
-                            />
-
-                            {images.length > 1 && (
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setSelectedImageIndex((index) =>
-                                            index === images.length - 1 ? 0 : index + 1,
-                                        )
-                                    }
-                                    className="absolute right-0 top-1/2 -translate-y-1/2 w-9 sm:w-11 h-16 bg-black/30 hover:bg-black/60 text-white flex items-center justify-center transition-colors cursor-pointer z-20 rounded-l-md"
-                                    aria-label={lang === 'en' ? 'Next image' : 'Ảnh sau'}
-                                >
-                                    <ChevronRight size={30} />
-                                </button>
-                            )}
-                        </div>
-
-                        <div className="w-full md:w-80 lg:w-88 bg-[#181818] text-white p-5 flex flex-col shrink-0 border-t md:border-t-0 md:border-l border-white/10 h-full">
-                            <div className="mb-4 pr-8">
-                                <h3 className="text-white text-sm font-normal line-clamp-2 leading-relaxed">
-                                    {lang === 'vi'
-                                        ? auction.product.nameVi || auction.product.name
-                                        : auction.product.name}
-                                </h3>
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-2 overflow-y-auto max-h-[440px] pr-1">
-                                {images.map((image, index) => {
-                                    const isActive = index === selectedImageIndex
-                                    return (
-                                        <button
-                                            key={index}
-                                            type="button"
-                                            onClick={() => setSelectedImageIndex(index)}
-                                            onMouseEnter={() => setSelectedImageIndex(index)}
-                                            className={`aspect-square w-full rounded-xs overflow-hidden bg-black/50 transition-all cursor-pointer relative ${
-                                                isActive
-                                                    ? 'border-2 border-[#ee4d2d] shadow-sm ring-1 ring-[#ee4d2d]'
-                                                    : 'border-2 border-transparent opacity-70 hover:opacity-100 hover:border-white/40'
-                                            }`}
-                                            aria-label={
-                                                lang === 'en'
-                                                    ? `Show image ${index + 1}`
-                                                    : `Xem ảnh ${index + 1}`
-                                            }
-                                        >
-                                            <img
-                                                src={image}
-                                                alt=""
-                                                className="w-full h-full object-cover"
-                                            />
-                                        </button>
-                                    )
-                                })}
-                            </div>
-
-                            <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between text-xs text-gray-400">
-                                <span>
-                                    {selectedImageIndex + 1} / {images.length}{' '}
-                                    {lang === 'en' ? 'images' : 'hình ảnh'}
-                                </span>
-                                <span className="text-white/40 text-[11px]">Nexus Gallery</span>
+                                <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between text-xs text-gray-400">
+                                    <span>
+                                        {selectedImageIndex + 1} / {images.length}{' '}
+                                        {lang === 'en' ? 'images' : 'hình ảnh'}
+                                    </span>
+                                    <span className="text-white/40 text-[11px]">Nexus Gallery</span>
+                                </div>
                             </div>
                         </div>
-                    </div>
                     </div>,
                     document.body,
                 )}
@@ -1871,7 +1902,9 @@ export function MyBidsPage() {
                             (b) =>
                                 b.bidderId === currentUserId ||
                                 (currentUser?.fullName &&
-                                    b.bidderName?.toLowerCase().includes(currentUser.fullName.toLowerCase())),
+                                    b.bidderName
+                                        ?.toLowerCase()
+                                        .includes(currentUser.fullName.toLowerCase())),
                         )
                     }
                 } catch {}
@@ -1899,10 +1932,7 @@ export function MyBidsPage() {
                 }
 
                 // Kiểm tra xem người dùng có đang dẫn đầu mức giá cao nhất hay không
-                const isHighest =
-                    isWinner ||
-                    isHighestServer ||
-                    myHighestBid >= auction.currentBid
+                const isHighest = isWinner || isHighestServer || myHighestBid >= auction.currentBid
 
                 const isEnded =
                     auction.status === 'ended' ||
@@ -1920,7 +1950,8 @@ export function MyBidsPage() {
                     myBid: myHighestBid,
                     status,
                     isHighest,
-                    lastBidTime: localRecord?.timestamp || userBids[0]?.timestamp || auction.startTime,
+                    lastBidTime:
+                        localRecord?.timestamp || userBids[0]?.timestamp || auction.startTime,
                 } as UserBidItem
             })
 
@@ -1945,8 +1976,7 @@ export function MyBidsPage() {
     const wonList = bids.filter((b) => b.status === 'won')
     const lostList = bids.filter((b) => b.status === 'lost')
 
-    const filtered =
-        tab === 'active' ? activeList : tab === 'won' ? wonList : lostList
+    const filtered = tab === 'active' ? activeList : tab === 'won' ? wonList : lostList
 
     const session = readSession()
     const currentUser = user || session?.user
@@ -1968,7 +1998,9 @@ export function MyBidsPage() {
                             <Gavel size={32} />
                         </div>
                         <h2 className="text-xl font-bold text-gray-900 mb-2">
-                            {lang === 'en' ? 'Sign in to view your bids' : 'Đăng nhập để xem các phiên bạn đã tham gia'}
+                            {lang === 'en'
+                                ? 'Sign in to view your bids'
+                                : 'Đăng nhập để xem các phiên bạn đã tham gia'}
                         </h2>
                         <p className="text-sm text-gray-500 max-w-md mb-6 leading-relaxed">
                             {lang === 'en'
@@ -2086,7 +2118,10 @@ export function MyBidsPage() {
                                         : 'Tham gia các phiên đấu giá trực tiếp hấp dẫn và đặt giá để sở hữu sản phẩm giá trị.'
                                 }
                                 action={
-                                    <Button variant="primary" onClick={() => navigate('auction-list')}>
+                                    <Button
+                                        variant="primary"
+                                        onClick={() => navigate('auction-list')}
+                                    >
                                         {lang === 'en' ? 'Browse Auctions' : 'Duyệt sàn đấu giá'}
                                     </Button>
                                 }
@@ -2108,7 +2143,9 @@ export function MyBidsPage() {
                                                     alt=""
                                                     className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-xl border border-gray-100 shrink-0 select-none bg-slate-50 cursor-pointer"
                                                     onClick={() =>
-                                                        navigate('auction-detail', { id: b.auction.id })
+                                                        navigate('auction-detail', {
+                                                            id: b.auction.id,
+                                                        })
                                                     }
                                                 />
                                                 <div className="min-w-0 flex-1">
@@ -2116,31 +2153,47 @@ export function MyBidsPage() {
                                                         <h3
                                                             className="font-bold text-gray-900 text-sm sm:text-base hover:text-auction transition-colors cursor-pointer truncate max-w-md"
                                                             onClick={() =>
-                                                                navigate('auction-detail', { id: b.auction.id })
+                                                                navigate('auction-detail', {
+                                                                    id: b.auction.id,
+                                                                })
                                                             }
                                                         >
                                                             {lang === 'vi'
-                                                                ? b.auction.product.nameVi || b.auction.product.name
+                                                                ? b.auction.product.nameVi ||
+                                                                  b.auction.product.name
                                                                 : b.auction.product.name}
                                                         </h3>
 
                                                         {/* Huy hiệu trạng thái chuẩn theo đề bài */}
                                                         {b.status === 'won' && (
                                                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                                                <Trophy size={12} className="text-amber-600" />
+                                                                <Trophy
+                                                                    size={12}
+                                                                    className="text-amber-600"
+                                                                />
                                                                 {lang === 'en' ? 'Won' : 'Đã thắng'}
                                                             </span>
                                                         )}
                                                         {b.status === 'active' && b.isHighest && (
                                                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                                <CheckCircle size={12} className="text-emerald-600" />
-                                                                {lang === 'en' ? 'Winning (Leading)' : 'Đang dẫn đầu'}
+                                                                <CheckCircle
+                                                                    size={12}
+                                                                    className="text-emerald-600"
+                                                                />
+                                                                {lang === 'en'
+                                                                    ? 'Winning (Leading)'
+                                                                    : 'Đang dẫn đầu'}
                                                             </span>
                                                         )}
                                                         {b.status === 'active' && !b.isHighest && (
                                                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                                                <AlertTriangle size={12} className="text-rose-500" />
-                                                                {lang === 'en' ? 'Outbid' : 'Bị vượt qua'}
+                                                                <AlertTriangle
+                                                                    size={12}
+                                                                    className="text-rose-500"
+                                                                />
+                                                                {lang === 'en'
+                                                                    ? 'Outbid'
+                                                                    : 'Bị vượt qua'}
                                                             </span>
                                                         )}
                                                         {b.status === 'lost' && (
@@ -2152,7 +2205,9 @@ export function MyBidsPage() {
 
                                                     <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs sm:text-sm text-gray-600 mt-2">
                                                         <span>
-                                                            {lang === 'en' ? 'My bid:' : 'Giá của tôi:'}{' '}
+                                                            {lang === 'en'
+                                                                ? 'My bid:'
+                                                                : 'Giá của tôi:'}{' '}
                                                             <span className="font-bold text-gray-900">
                                                                 {formatCurrency(b.myBid, lang)}
                                                             </span>
@@ -2161,16 +2216,26 @@ export function MyBidsPage() {
                                                         <span>
                                                             {tr(lang, 'currentBid')}:{' '}
                                                             <span className="font-black text-auction">
-                                                                {formatCurrency(b.auction.currentBid, lang)}
+                                                                {formatCurrency(
+                                                                    b.auction.currentBid,
+                                                                    lang,
+                                                                )}
                                                             </span>
                                                         </span>
 
                                                         {b.status === 'active' && (
                                                             <>
-                                                                <span className="text-gray-300">|</span>
+                                                                <span className="text-gray-300">
+                                                                    |
+                                                                </span>
                                                                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                                                                    <Clock size={13} className="text-amber-600" />
-                                                                    <CountdownTimer endTime={b.auction.endTime} />
+                                                                    <Clock
+                                                                        size={13}
+                                                                        className="text-amber-600"
+                                                                    />
+                                                                    <CountdownTimer
+                                                                        endTime={b.auction.endTime}
+                                                                    />
                                                                 </div>
                                                             </>
                                                         )}
@@ -2179,12 +2244,16 @@ export function MyBidsPage() {
                                                             type="button"
                                                             onClick={() =>
                                                                 navigate('public-reputation', {
-                                                                    id: b.auction.sellerId || 'seller-1',
+                                                                    id:
+                                                                        b.auction.sellerId ||
+                                                                        'seller-1',
                                                                 })
                                                             }
                                                             className="text-xs text-primary hover:underline font-medium cursor-pointer ml-auto sm:ml-2"
                                                         >
-                                                            {lang === 'en' ? 'Seller profile ↗' : 'Hồ sơ người bán ↗'}
+                                                            {lang === 'en'
+                                                                ? 'Seller profile ↗'
+                                                                : 'Hồ sơ người bán ↗'}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -2202,7 +2271,9 @@ export function MyBidsPage() {
                                                         }
                                                         className="font-bold bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
                                                     >
-                                                        {lang === 'en' ? 'Pay Now' : 'Thanh toán ngay'}
+                                                        {lang === 'en'
+                                                            ? 'Pay Now'
+                                                            : 'Thanh toán ngay'}
                                                     </Button>
                                                 )}
                                                 {b.status === 'active' && !b.isHighest && (
@@ -2210,7 +2281,9 @@ export function MyBidsPage() {
                                                         variant="auction"
                                                         size="sm"
                                                         onClick={() =>
-                                                            navigate('auction-detail', { id: b.auction.id })
+                                                            navigate('auction-detail', {
+                                                                id: b.auction.id,
+                                                            })
                                                         }
                                                         className="font-bold cursor-pointer"
                                                     >
@@ -2221,11 +2294,15 @@ export function MyBidsPage() {
                                                     variant="outline"
                                                     size="sm"
                                                     onClick={() =>
-                                                        navigate('auction-detail', { id: b.auction.id })
+                                                        navigate('auction-detail', {
+                                                            id: b.auction.id,
+                                                        })
                                                     }
                                                     className="cursor-pointer"
                                                 >
-                                                    {lang === 'en' ? 'View Auction' : 'Xem chi tiết'}
+                                                    {lang === 'en'
+                                                        ? 'View Auction'
+                                                        : 'Xem chi tiết'}
                                                 </Button>
                                             </div>
                                         </div>

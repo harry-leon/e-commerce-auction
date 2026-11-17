@@ -717,7 +717,7 @@ export const USERS: User[] = [
         createdAt: '2024-01-01',
     },
     {
-        id: '80ebf6f1-69c6-4a0d-afa1-c8f5de63b7f2',
+        id: '573fad8c-ee8d-46c3-be0d-58992a290c88',
         fullName: 'Support Staff',
         email: 'support@nexus.vn',
         phone: '0988888888',
@@ -798,12 +798,12 @@ export const USERS: User[] = [
     },
 ]
 
-export const DEMO_BUYER: User = USERS.find((u) => u.id === 'u1') || USERS[0]
-export const DEMO_SELLER: User = USERS.find((u) => u.id === 'u2') || USERS[1]
+export const DEMO_BUYER: User = USERS.find((u) => u.role === 'buyer') || USERS[0]
+export const DEMO_SELLER: User = USERS.find((u) => u.role === 'seller') || USERS[1]
 export const DEMO_ADMIN: User = USERS.find((u) => u.role === 'admin') || USERS[6]
-export const DEMO_SUPPORT: User = {
-    id: 'u8',
-    fullName: 'Support Agent',
+export const DEMO_SUPPORT: User = USERS.find((u) => u.role === 'support') || {
+    id: '573fad8c-ee8d-46c3-be0d-58992a290c88',
+    fullName: 'Support Staff',
     email: 'support@nexus.vn',
     phone: '0900000002',
     idNumber: '079200000002',

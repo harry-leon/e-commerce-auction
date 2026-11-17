@@ -500,6 +500,26 @@
         "AUCTION.SETTLEMENT_SYNC",
         "USER.INTERNAL_READ"
       ]
+    },
+    {
+      "id": "573fad8c-ee8d-46c3-be0d-58992a290c88",
+      "username": "support@nexus.vn",
+      "email": "support@nexus.vn",
+      "firstName": "Support",
+      "lastName": "Staff",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Nexus123@",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ROLE_SUPPORT",
+        "ROLE_BUYER"
+      ]
     }
   ],
   "smtpServer": {

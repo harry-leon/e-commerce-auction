@@ -110,6 +110,15 @@ export const KNOWN_SKU_IMAGES: Record<string, string> = {
         'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542386/Nexus/collectibles/tranh-in-nghe-thuat-a4/tranh-in-nghe-thuat-a4-main.jpg',
     '884a9674-d058-5321-a0b7-3f2357e83fbc':
         'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542386/Nexus/collectibles/tranh-in-nghe-thuat-a4/tranh-in-nghe-thuat-a4-main.jpg',
+    // HG-S2-5 Ultrabook Studio Pro
+    '66db68be-d091-4721-8c9a-476e07ba0ded':
+        'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542339/Nexus/electronics/laptop-msi-modern-15/laptop-msi-modern-15-main.jpg',
+    '1d58c8ac-7a55-4ae9-96fc-4c139332268b':
+        'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542339/Nexus/electronics/laptop-msi-modern-15/laptop-msi-modern-15-main.jpg',
+    'fefbf57d-f1d4-4a31-8a20-9ef7c35ad943':
+        'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542339/Nexus/electronics/laptop-msi-modern-15/laptop-msi-modern-15-main.jpg',
+    '06298642-4a87-4fe3-a53a-6a9b14ee72a4':
+        'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542339/Nexus/electronics/laptop-msi-modern-15/laptop-msi-modern-15-main.jpg',
     // Bộ thiệp thủ công 6 mẫu
     '1b47b818-b783-55f7-8257-a1c34b59d694':
         'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542389/Nexus/collectibles/bo-thiep-thu-cong-6-mau/bo-thiep-thu-cong-6-mau-main.jpg',
@@ -214,6 +223,18 @@ export const KNOWN_NAME_PATTERNS: Array<{ pattern: RegExp; url: string }> = [
     {
         pattern: /giày chạy bộ|kipcore/i,
         url: 'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542369/Nexus/sports/giay-chay-bo-nam-kipcore/giay-chay-bo-nam-kipcore-main.jpg',
+    },
+    {
+        pattern: /ultrabook|studio pro/i,
+        url: 'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542339/Nexus/electronics/laptop-msi-modern-15/laptop-msi-modern-15-main.jpg',
+    },
+    {
+        pattern: /mô hình|gỗ lắp ghép/i,
+        url: 'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542384/Nexus/collectibles/mo-hinh-go-lap-ghep/mo-hinh-go-lap-ghep-main.jpg',
+    },
+    {
+        pattern: /đèn bàn|đèn led/i,
+        url: 'https://res.cloudinary.com/f4wgawlg/image/upload/v1794542353/Nexus/home-living/den-ban-hoc-led/den-ban-hoc-led-main.jpg',
     },
 ]
 

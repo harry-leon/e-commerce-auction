@@ -205,7 +205,9 @@ export function connectAuctionStream(
 
                             // Chuẩn hóa bản tin nhận được từ backend
                             const eventObj: AuctionRealtimeEvent = {
-                                type: payload.type || (payload.amount ? 'BID_PLACED' : 'PRICE_UPDATE'),
+                                type:
+                                    payload.type ||
+                                    (payload.amount ? 'BID_PLACED' : 'PRICE_UPDATE'),
                                 auctionId: payload.auctionId || payload.id || '',
                                 currentPrice:
                                     payload.currentPrice ?? payload.amount ?? payload.price,
@@ -216,7 +218,10 @@ export function connectAuctionStream(
                                 endTime: payload.endTime || payload.newEndTime,
                                 status: payload.status,
                                 message: payload.message,
-                                timestamp: payload.timestamp || payload.placedAt || new Date().toISOString(),
+                                timestamp:
+                                    payload.timestamp ||
+                                    payload.placedAt ||
+                                    new Date().toISOString(),
                             }
 
                             if (eventObj.auctionId) {

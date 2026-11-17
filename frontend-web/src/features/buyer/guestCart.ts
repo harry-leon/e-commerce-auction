@@ -101,7 +101,7 @@ export function addGuestCartItem(params: {
         const available = params.stockAvailable ?? current.stockAvailable
         if (available !== undefined && available !== null && current.quantity + qty > available) {
             throw new Error(
-                `Sản phẩm "${params.productName}" chỉ còn ${available} sản phẩm. Bạn đã có ${current.quantity} sản phẩm trong giỏ hàng.`
+                `Sản phẩm "${params.productName}" chỉ còn ${available} sản phẩm. Bạn đã có ${current.quantity} sản phẩm trong giỏ hàng.`,
             )
         }
         const newQty = current.quantity + qty
@@ -113,9 +113,13 @@ export function addGuestCartItem(params: {
             subtotal: current.unitPrice * newQty,
         }
     } else {
-        if (params.stockAvailable !== undefined && params.stockAvailable !== null && qty > params.stockAvailable) {
+        if (
+            params.stockAvailable !== undefined &&
+            params.stockAvailable !== null &&
+            qty > params.stockAvailable
+        ) {
             throw new Error(
-                `Sản phẩm "${params.productName}" chỉ còn ${params.stockAvailable} sản phẩm.`
+                `Sản phẩm "${params.productName}" chỉ còn ${params.stockAvailable} sản phẩm.`,
             )
         }
         const id =

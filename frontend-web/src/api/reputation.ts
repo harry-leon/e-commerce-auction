@@ -85,19 +85,24 @@ export function calculateTrustLevel(score: number): TrustLevel {
     return 'LOW'
 }
 
-/** Fallback tóm tắt uy tín chuẩn khi backend offline */
+/**
+ * Chức năng: Giá trị mặc định điểm tín nhiệm khi tài khoản mới khởi tạo hoặc backend trả về dữ liệu rỗng.
+ * Đầu vào: userId (UUID tài khoản).
+ * Kết quả: ReputationSummary với các chỉ số khởi điểm chuẩn (100 điểm, STANDARD, 0 giao dịch, 0 đánh giá).
+ * Lý do: Tuyệt đối không hardcode số liệu ảo (12 giao dịch, 4.8 sao) để đảm bảo tính trung thực của dữ liệu hệ thống.
+ */
 export function getFallbackReputationSummary(userId: string): ReputationSummary {
     return {
         userId,
         score: 100,
         trustLevel: 'STANDARD',
-        totalTx: 12,
-        successTx: 12,
+        totalTx: 0,
+        successTx: 0,
         failedTx: 0,
-        auctionWon: 2,
+        auctionWon: 0,
         auctionFailed: 0,
-        avgRating: 4.8,
-        totalRatings: 10,
+        avgRating: 0,
+        totalRatings: 0,
     }
 }
 

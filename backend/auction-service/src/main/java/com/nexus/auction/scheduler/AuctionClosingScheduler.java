@@ -29,11 +29,13 @@ public class AuctionClosingScheduler {
     }
 
     /**
-     * Tự động quét và đóng phiên định kỳ mỗi 10 giây (initialDelay = 5 giây sau khi khởi động service).
+     * Tự động quét và đóng phiên định kỳ mỗi 3 giây (initialDelay = 2 giây sau khi khởi động service).
+     * Chu kỳ 3 giây bảo đảm phiên được chốt gần với thời gian thực trên DB ngay khi hết hạn,
+     * kết hợp với ThreadPoolTaskScheduler đa luồng để không bị nghẽn bởi các worker khác.
      */
     @Scheduled(
-            fixedDelayString = "${app.auction.scheduler.closing-interval-ms:${app.auction.scheduler.settlement-interval-ms:10000}}",
-            initialDelay = 5000
+            fixedDelayString = "${app.auction.scheduler.closing-interval-ms:${app.auction.scheduler.settlement-interval-ms:3000}}",
+            initialDelay = 2000
     )
     public void runClosingJob() {
         try {
@@ -46,4 +48,3 @@ public class AuctionClosingScheduler {
         }
     }
 }
-

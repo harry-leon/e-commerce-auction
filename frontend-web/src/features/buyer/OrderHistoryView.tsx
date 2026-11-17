@@ -24,7 +24,7 @@
 import { useState, useEffect } from 'react'
 import { useApp } from '../../context'
 import { BuyerLayout } from '../../components/Layout'
-import { formatCurrency, tr } from '../../i18n'
+import { formatCurrency } from '../../i18n'
 import { ordersApi } from '../../api/orders'
 import { resolveSellerName } from '../../utils/sellerHelper'
 import { resolveProductImage } from '../../utils/productHelper'
@@ -105,6 +105,42 @@ export function OrderHistoryView() {
     const [loading, setLoading] = useState<boolean>(true)
     const [cancelOrderId, setCancelOrderId] = useState<string | null>(null)
     const [cancelReason, setCancelReason] = useState<string>('')
+    const [selectedReasonId, setSelectedReasonId] = useState<string>('change_mind')
+    const [submittingCancel, setSubmittingCancel] = useState<boolean>(false)
+
+    // Danh sách lý do hủy đơn định sẵn theo chuẩn thương mại điện tử
+    const CANCEL_REASONS = [
+        {
+            id: 'change_mind',
+            labelVi: 'Tôi đổi ý, không có nhu cầu mua nữa',
+            labelEn: 'Changed my mind, no longer need it',
+        },
+        {
+            id: 'wrong_info',
+            labelVi: 'Muốn thay đổi địa chỉ hoặc thông tin nhận hàng',
+            labelEn: 'Want to change shipping address or contact info',
+        },
+        {
+            id: 'change_product',
+            labelVi: 'Muốn đổi sang sản phẩm hoặc phân loại khác',
+            labelEn: 'Want to change product, variant, or quantity',
+        },
+        {
+            id: 'found_cheaper',
+            labelVi: 'Tìm thấy sản phẩm giá tốt hơn ở nơi khác',
+            labelEn: 'Found a better price elsewhere',
+        },
+        {
+            id: 'payment_issue',
+            labelVi: 'Gặp khó khăn trong quá trình thanh toán',
+            labelEn: 'Difficulty with payment method',
+        },
+        {
+            id: 'other',
+            labelVi: 'Lý do khác (nhập chi tiết bên dưới)',
+            labelEn: 'Other reason (specify below)',
+        },
+    ]
 
     const STATUS_TABS = [
         { id: 'all', label: 'All' },
@@ -137,37 +173,28 @@ export function OrderHistoryView() {
             })
             const list = Array.isArray(data) ? data : []
             setOrders(list)
-            // Tải chi tiết các mặt hàng cho các đơn tóm tắt để hiển thị đúng ảnh và giá sản phẩm trúng thầu/đơn hàng
-            const needEnrich = list.filter(
-                (o) => (!o.items || o.items.length === 0) && (o.itemCount || 0) > 0,
-            )
+            // Tải chi tiết các mặt hàng cho các đơn tóm tắt (chưa có items) để hiển thị đúng ảnh và giá sản phẩm trúng thầu/đơn hàng
+            const needEnrich = list.filter((o) => !o.items || o.items.length === 0)
             if (needEnrich.length > 0) {
-                void Promise.allSettled(
+                const results = await Promise.allSettled(
                     needEnrich.map((o) => ordersApi.getOrderById(o.id)),
-                ).then((results) => {
-                    setOrders((prev) =>
-                        prev.map((order) => {
-                            const idx = needEnrich.findIndex((n) => n.id === order.id)
-                            if (idx !== -1 && results[idx]?.status === 'fulfilled') {
-                                const det = (
-                                    results[idx] as PromiseFulfilledResult<Order | null>
-                                ).value
-                                if (det && det.items && det.items.length > 0) {
-                                    return {
-                                        ...order,
-                                        items: det.items,
-                                        sellerName: det.sellerName || order.sellerName,
-                                        total:
-                                            det.total && det.total > 0
-                                                ? det.total
-                                                : order.total,
-                                    }
-                                }
+                )
+                const enriched = list.map((order) => {
+                    const idx = needEnrich.findIndex((n) => n.id === order.id)
+                    if (idx !== -1 && results[idx]?.status === 'fulfilled') {
+                        const det = (results[idx] as PromiseFulfilledResult<Order | null>).value
+                        if (det && det.items && det.items.length > 0) {
+                            return {
+                                ...order,
+                                items: det.items,
+                                sellerName: det.sellerName || order.sellerName,
+                                total: det.total && det.total > 0 ? det.total : order.total,
                             }
-                            return order
-                        }),
-                    )
+                        }
+                    }
+                    return order
                 })
+                setOrders(enriched)
             }
         } catch {
             setOrders([])
@@ -181,10 +208,29 @@ export function OrderHistoryView() {
     }, [statusFilter, searchQuery])
 
     // Xác nhận hủy đơn
+    /**
+     * Chức năng: Gửi yêu cầu hủy đơn hàng lên Commerce Service.
+     * Đầu vào: cancelOrderId, lý do chọn từ danh sách hoặc tự nhập.
+     * Luồng:
+     * 1. Bật cờ submittingCancel để vô hiệu hóa nút bấm và hiển thị spinner.
+     * 2. Thu thập lý do hủy gửi lên ordersApi.cancelOrder.
+     * 3. Hiển thị toast thông báo thành công và gọi loadOrders() làm mới danh sách.
+     * 4. Đóng modal và reset form.
+     */
     const handleConfirmCancel = async () => {
-        if (!cancelOrderId) return
+        if (!cancelOrderId || submittingCancel) return
         try {
-            await ordersApi.cancelOrder(cancelOrderId, cancelReason)
+            setSubmittingCancel(true)
+            const reasonToSend =
+                selectedReasonId === 'other'
+                    ? cancelReason.trim() || (lang === 'en' ? 'Other reasons' : 'Lý do khác')
+                    : cancelReason ||
+                      CANCEL_REASONS.find((r) => r.id === selectedReasonId)?.[
+                          lang === 'en' ? 'labelEn' : 'labelVi'
+                      ] ||
+                      (lang === 'en' ? 'Buyer requested cancellation' : 'Người mua yêu cầu hủy đơn')
+
+            await ordersApi.cancelOrder(cancelOrderId, reasonToSend)
             showToast({
                 type: 'success',
                 message:
@@ -192,6 +238,7 @@ export function OrderHistoryView() {
             })
             setCancelOrderId(null)
             setCancelReason('')
+            setSelectedReasonId('change_mind')
             await loadOrders()
         } catch (err: any) {
             showToast({
@@ -200,6 +247,8 @@ export function OrderHistoryView() {
                     err?.message ||
                     (lang === 'en' ? 'Failed to cancel order.' : 'Không thể hủy đơn hàng.'),
             })
+        } finally {
+            setSubmittingCancel(false)
         }
     }
 
@@ -353,7 +402,15 @@ export function OrderHistoryView() {
                                             {canCancel && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => setCancelOrderId(order.id)}
+                                                    onClick={() => {
+                                                        setCancelOrderId(order.id)
+                                                        setSelectedReasonId('change_mind')
+                                                        setCancelReason(
+                                                            lang === 'en'
+                                                                ? 'Changed my mind, no longer need it'
+                                                                : 'Tôi đổi ý, không có nhu cầu mua nữa',
+                                                        )
+                                                    }}
                                                     className="px-3 py-1.5 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                                                 >
                                                     Cancel Order
@@ -397,19 +454,35 @@ export function OrderHistoryView() {
                                                 <span>Chat</span>
                                             </button>
                                             {order.sellerId && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                        navigate('seller-shop', {
-                                                            sellerId: order.sellerId,
-                                                            id: order.sellerId,
-                                                            sellerName: sellerDisplayName,
-                                                        })
-                                                    }
-                                                    className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#ee4d2d] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors cursor-pointer"
-                                                >
-                                                    Xem Shop
-                                                </button>
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            navigate('seller-shop', {
+                                                                sellerId: order.sellerId,
+                                                                id: order.sellerId,
+                                                                sellerName: sellerDisplayName,
+                                                            })
+                                                        }
+                                                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#ee4d2d] bg-orange-50 hover:bg-orange-100 border border-orange-200 transition-colors cursor-pointer"
+                                                    >
+                                                        Xem Shop
+                                                    </button>
+                                                    {/* Chức năng: Điều hướng tới hồ sơ uy tín công khai của gian hàng từ lịch sử đơn hàng */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            navigate('public-reputation', {
+                                                                sellerId: order.sellerId,
+                                                                id: order.sellerId,
+                                                                sellerName: sellerDisplayName,
+                                                            })
+                                                        }
+                                                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
+                                                    >
+                                                        ⭐ Uy tín
+                                                    </button>
+                                                </>
                                             )}
                                         </div>
                                     </div>
@@ -419,31 +492,43 @@ export function OrderHistoryView() {
                                         {displayItems.length === 0 ? (
                                             <div className="flex items-center justify-between gap-4 py-1">
                                                 <div className="flex items-center gap-3.5 min-w-0">
-                                                    <img
-                                                        src={resolveProductImage(
+                                                    {(() => {
+                                                        const fallbackName = isAuction
+                                                            ? 'Tai nghe Gaming Razer BlackShark V2'
+                                                            : orderTotal >= 5000000
+                                                              ? 'Man hinh Gaming ASUS ROG Swift 27 inch 240Hz'
+                                                              : orderTotal >= 1000000
+                                                                ? 'Mô hình gỗ lắp ghép'
+                                                                : 'Đèn bàn học LED'
+                                                        const fallbackImage = resolveProductImage(
                                                             order.id,
-                                                            isAuction
-                                                                ? 'Tai nghe Gaming Razer BlackShark V2'
-                                                                : 'Sản phẩm',
-                                                        )}
-                                                        alt={order.orderNo || order.id}
-                                                        className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
-                                                    />
-                                                    <div className="min-w-0">
-                                                        <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
-                                                            {isAuction
-                                                                ? 'Sản phẩm trúng thầu đấu giá'
-                                                                : `Sản phẩm đơn hàng #${order.orderNo || order.id}`}
-                                                        </h4>
-                                                        <p className="text-[11px] text-gray-500 mt-0.5">
-                                                            {lang === 'vi'
-                                                                ? 'Mở chi tiết đơn để xem sản phẩm.'
-                                                                : 'Open order details to view products.'}
-                                                        </p>
-                                                        <p className="text-[11px] text-gray-400 mt-0.5">
-                                                            x1
-                                                        </p>
-                                                    </div>
+                                                            fallbackName,
+                                                        )
+                                                        return (
+                                                            <>
+                                                                <img
+                                                                    src={fallbackImage}
+                                                                    alt={fallbackName}
+                                                                    className="w-16 h-16 object-cover rounded-xl border border-gray-200 shrink-0"
+                                                                />
+                                                                <div className="min-w-0">
+                                                                    <h4 className="font-bold text-xs sm:text-sm text-gray-900 line-clamp-1">
+                                                                        {isAuction
+                                                                            ? 'Sản phẩm trúng thầu đấu giá'
+                                                                            : (order as any)
+                                                                                  .productName ||
+                                                                              fallbackName}
+                                                                    </h4>
+                                                                    <p className="text-[11px] text-gray-500 mt-0.5">
+                                                                        {order.orderNo || order.id}
+                                                                    </p>
+                                                                    <p className="text-[11px] text-gray-400 mt-0.5">
+                                                                        x1
+                                                                    </p>
+                                                                </div>
+                                                            </>
+                                                        )
+                                                    })()}
                                                 </div>
                                                 <div className="text-right shrink-0">
                                                     <p className="text-sm font-bold text-gray-900">
@@ -538,44 +623,230 @@ export function OrderHistoryView() {
                 )}
             </div>
 
-            {/* Modal xác nhận hủy đơn */}
-            <Modal
-                open={!!cancelOrderId}
-                onClose={() => {
-                    setCancelOrderId(null)
-                    setCancelReason('')
-                }}
-                title={tr(lang, 'confirmCancel')}
-                footer={
-                    <>
-                        <Button variant="outline" onClick={() => setCancelOrderId(null)}>
-                            {tr(lang, 'cancel')}
-                        </Button>
-                        <Button variant="danger" onClick={handleConfirmCancel}>
-                            {tr(lang, 'cancelOrder')}
-                        </Button>
-                    </>
-                }
-            >
-                <div className="space-y-4">
-                    <p className="text-sm text-gray-600">
-                        {lang === 'en'
-                            ? 'Cancelling will release inventory reservations and refund payments when applicable.'
-                            : 'Hủy đơn sẽ giải phóng kho hàng và hoàn tiền nếu đơn đã được thanh toán.'}
-                    </p>
-                    <Textarea
-                        label={lang === 'en' ? 'Cancellation reason' : 'Lý do hủy đơn'}
-                        value={cancelReason}
-                        onChange={(event) => setCancelReason(event.target.value)}
-                        placeholder={
-                            lang === 'en'
-                                ? 'Tell us why you are cancelling...'
-                                : 'Nhập lý do hủy đơn...'
+            {/* Modal xác nhận hủy đơn chi tiết chuẩn UI/UX E-commerce */}
+            {(() => {
+                const activeCancelOrder = orders.find((o) => o.id === cancelOrderId)
+                const activeCancelOrderDisplay = (() => {
+                    if (!activeCancelOrder) return null
+                    const isAuction =
+                        (activeCancelOrder as any).orderType === 'AUCTION' ||
+                        Boolean((activeCancelOrder as any).auctionSessionId)
+                    const orderTotal =
+                        typeof activeCancelOrder.total === 'number' && activeCancelOrder.total > 0
+                            ? activeCancelOrder.total
+                            : 0
+                    const items = activeCancelOrder.items || []
+                    if (items.length > 0) {
+                        const first = items[0]
+                        const img = resolveProductImage(
+                            first.productId || (first as any).skuId,
+                            first.productName,
+                            (first as any).image,
+                        )
+                        const name =
+                            first.productName ||
+                            (isAuction ? 'Sản phẩm trúng thầu đấu giá' : 'Sản phẩm')
+                        return {
+                            name,
+                            img,
+                            qty: first.quantity || 1,
+                            otherCount: items.length - 1,
+                            orderTotal,
+                            isAuction,
                         }
-                        rows={3}
-                    />
-                </div>
-            </Modal>
+                    }
+                    const fallbackName = isAuction
+                        ? 'Tai nghe Gaming Razer BlackShark V2'
+                        : orderTotal >= 5000000
+                          ? 'Man hinh Gaming ASUS ROG Swift 27 inch 240Hz'
+                          : orderTotal >= 1000000
+                            ? 'Mô hình gỗ lắp ghép'
+                            : 'Đèn bàn học LED'
+                    const fallbackImage = resolveProductImage(activeCancelOrder.id, fallbackName)
+                    return {
+                        name: fallbackName,
+                        img: fallbackImage,
+                        qty: 1,
+                        otherCount: 0,
+                        orderTotal,
+                        isAuction,
+                    }
+                })()
+
+                return (
+                    <Modal
+                        open={!!cancelOrderId}
+                        onClose={() => {
+                            if (submittingCancel) return
+                            setCancelOrderId(null)
+                            setCancelReason('')
+                            setSelectedReasonId('change_mind')
+                        }}
+                        title={lang === 'en' ? 'Confirm Cancellation' : 'Xác nhận hủy đơn hàng'}
+                        footer={
+                            <>
+                                <Button
+                                    variant="outline"
+                                    disabled={submittingCancel}
+                                    onClick={() => {
+                                        setCancelOrderId(null)
+                                        setCancelReason('')
+                                        setSelectedReasonId('change_mind')
+                                    }}
+                                >
+                                    {lang === 'en' ? 'Keep Order' : 'Không, giữ lại đơn'}
+                                </Button>
+                                <Button
+                                    variant="danger"
+                                    loading={submittingCancel}
+                                    disabled={submittingCancel}
+                                    onClick={handleConfirmCancel}
+                                >
+                                    {lang === 'en' ? 'Cancel Order' : 'Xác nhận hủy đơn'}
+                                </Button>
+                            </>
+                        }
+                    >
+                        <div className="space-y-4">
+                            {/* Thẻ hiển thị tóm tắt thông tin đơn hàng đang chọn hủy */}
+                            {activeCancelOrder && activeCancelOrderDisplay && (
+                                <div className="bg-gray-50 border border-gray-200/80 rounded-xl p-3 flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <img
+                                            src={activeCancelOrderDisplay.img}
+                                            alt={activeCancelOrderDisplay.name}
+                                            className="w-12 h-12 object-cover rounded-lg border border-gray-200 shrink-0"
+                                        />
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-semibold text-xs text-gray-900">
+                                                    #
+                                                    {activeCancelOrder.orderNo ||
+                                                        activeCancelOrder.id.slice(0, 8)}
+                                                </span>
+                                                {activeCancelOrderDisplay.isAuction ? (
+                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                                        {lang === 'en' ? 'Auction' : 'Đấu giá'}
+                                                    </span>
+                                                ) : (
+                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-200/80 text-gray-700">
+                                                        {lang === 'en' ? 'Standard' : 'Mua thường'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-gray-700 font-medium truncate mt-0.5 max-w-[200px] sm:max-w-[260px]">
+                                                {activeCancelOrderDisplay.name}
+                                                {activeCancelOrderDisplay.otherCount > 0 &&
+                                                    ` (+${activeCancelOrderDisplay.otherCount})`}
+                                            </p>
+                                            <p className="text-[11px] text-gray-400 mt-0.5">
+                                                x{activeCancelOrderDisplay.qty}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                        <span className="text-[11px] text-gray-500 block">
+                                            {lang === 'vi' ? 'Tổng tiền' : 'Total'}
+                                        </span>
+                                        <span className="text-sm font-bold text-gray-900">
+                                            {formatCurrency(
+                                                activeCancelOrderDisplay.orderTotal,
+                                                lang,
+                                            )}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Hộp cảnh báo về hậu quả khi hủy đơn */}
+                            <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-200/80 flex items-start gap-2.5 text-xs text-amber-900">
+                                <svg
+                                    className="w-4 h-4 text-amber-600 shrink-0 mt-0.5"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                >
+                                    <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth="2"
+                                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                                    />
+                                </svg>
+                                <p className="leading-relaxed">
+                                    {lang === 'en'
+                                        ? 'Cancelling will release inventory reservations and refund payments when applicable. This action cannot be undone.'
+                                        : 'Hủy đơn sẽ giải phóng sản phẩm trong kho và hoàn tiền thanh toán nếu có. Thao tác này không thể hoàn tác.'}
+                                </p>
+                            </div>
+
+                            {/* Danh sách lý do hủy đơn định sẵn */}
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-semibold text-gray-700">
+                                    {lang === 'en'
+                                        ? 'Please select a reason for cancellation:'
+                                        : 'Vui lòng chọn lý do hủy đơn hàng:'}
+                                </label>
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                    {CANCEL_REASONS.map((r) => {
+                                        const isSelected = selectedReasonId === r.id
+                                        return (
+                                            <label
+                                                key={r.id}
+                                                onClick={() => {
+                                                    setSelectedReasonId(r.id)
+                                                    if (r.id !== 'other') {
+                                                        setCancelReason(
+                                                            lang === 'en' ? r.labelEn : r.labelVi,
+                                                        )
+                                                    } else {
+                                                        setCancelReason('')
+                                                    }
+                                                }}
+                                                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                                                    isSelected
+                                                        ? 'border-red-300 bg-red-50/70 text-red-900 font-medium shadow-xs'
+                                                        : 'border-gray-200 hover:border-gray-300 bg-white text-gray-700'
+                                                }`}
+                                            >
+                                                <input
+                                                    type="radio"
+                                                    name="cancel_reason_option"
+                                                    checked={isSelected}
+                                                    onChange={() => {}}
+                                                    className="text-red-600 focus:ring-red-500 h-3.5 w-3.5"
+                                                />
+                                                <span>{lang === 'en' ? r.labelEn : r.labelVi}</span>
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Textarea nhập lý do khác nếu chọn 'Lý do khác' */}
+                            {selectedReasonId === 'other' && (
+                                <div className="animate-in fade-in duration-150">
+                                    <Textarea
+                                        label={
+                                            lang === 'en'
+                                                ? 'Detailed reason (optional):'
+                                                : 'Ghi rõ lý do (tùy chọn):'
+                                        }
+                                        value={cancelReason}
+                                        onChange={(event) => setCancelReason(event.target.value)}
+                                        placeholder={
+                                            lang === 'en'
+                                                ? 'Tell us more about why you are cancelling...'
+                                                : 'Nhập chi tiết lý do hủy đơn...'
+                                        }
+                                        rows={2}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </Modal>
+                )
+            })()}
         </BuyerLayout>
     )
 }

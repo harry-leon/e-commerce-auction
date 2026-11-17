@@ -1011,7 +1011,7 @@ export const auctionsApi = {
                 if (
                     import.meta.env.MODE !== 'test' &&
                     (validated.product.name === 'Auction Product' ||
-                    !auctionProductCache.has(validated.productId))
+                        !auctionProductCache.has(validated.productId))
                 ) {
                     try {
                         const prodRes = await api<ApiResponse<ApiProduct> | ApiProduct>(

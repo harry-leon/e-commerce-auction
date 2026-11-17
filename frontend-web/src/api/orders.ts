@@ -720,7 +720,10 @@ export const ordersApi = {
 
     /**
      * Buyer hủy đơn hàng (khi đơn còn ở trạng thái pending hoặc paid).
-     * Luồng: gọi API cancel nếu có -> cập nhật trạng thái đơn thành 'cancelled' và thanh toán thành 'refunded'.
+     * Luồng:
+     * 1. Nếu id là UUID hợp lệ, gọi POST /orders/{id}/cancel lên backend Commerce Service.
+     * 2. Nếu backend hủy thành công, trả về ngay Order đã chuẩn hóa qua normalizeOrder và cập nhật local cache.
+     * 3. Nếu là đơn mock hoặc mất kết nối mạng, fallback cập nhật trạng thái trong localStorage mock store.
      */
     /**
      * Buyer hủy đơn hàng (khi đơn còn ở trạng thái pending hoặc paid).
@@ -731,22 +734,41 @@ export const ordersApi = {
      * Lỗi và giới hạn: Không tìm thấy đơn sẽ ném lỗi 'Order not found'.
      */
     async cancelOrder(id: string, reason?: string): Promise<Order> {
-        try {
-            const resp = await api<any>(`/orders/${id}/cancel`, {
-                method: 'POST',
-                body: JSON.stringify({ reason }),
-            })
-            const data = resp?.data ?? resp
-            if (data?.id) {
-                return normalizeOrder(data)
+        const isUuid =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+        if (isUuid) {
+            try {
+                const envelope = await api<ApiResponse<OrderPayload> | OrderPayload>(
+                    `/orders/${encodeURIComponent(id)}/cancel`,
+                    {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            reason: reason?.trim() || 'Người dùng yêu cầu hủy đơn',
+                        }),
+                    },
+                )
+                const data =
+                    envelope && 'data' in envelope && envelope.data ? envelope.data : envelope
+                if (data && (data as any).id) {
+                    const normalized = normalizeOrder(data as OrderPayload)
+                    const localOrders = readLocalMockOrders()
+                    const idx = localOrders.findIndex(
+                        (o) => o.id === id || (o as any).orderNo === id,
+                    )
+                    if (idx !== -1) {
+                        localOrders[idx] = normalized
+                        writeLocalMockOrders(localOrders)
+                    }
+                    return normalized
+                }
+            } catch (error) {
+                if (!canFallbackToMock(error)) throw error
+                // Bỏ qua lỗi mạng hoặc 404 để fallback sang kho mock
             }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Bỏ qua lỗi mạng để fallback cập nhật mock
         }
 
         const orders = readLocalMockOrders()
-        const index = orders.findIndex((o) => o.id === id)
+        const index = orders.findIndex((o) => o.id === id || (o as any).orderNo === id)
         if (index !== -1) {
             orders[index] = {
                 ...orders[index],
@@ -772,10 +794,7 @@ export const ordersApi = {
 
     /**
      * Seller hoặc Admin cập nhật tiến độ trạng thái đơn hàng (VD: processing -> shipped -> delivered).
-     * Chức năng: Gọi PATCH /orders/{id}/status lên backend để cập nhật trạng thái đơn theo máy trạng thái.
-     * Đầu vào và kết quả: id (UUID đơn), status (OrderStatus mới), reason (lý do), actor (người thực hiện). Trả về Order đã cập nhật.
-     * Luồng xử lý: Gọi backend API -> nếu thành công trả về normalizeOrder(data); nếu lỗi mạng hoặc môi trường mock thì fallback mock store.
-     * Quy tắc: Không được nuốt kết quả thành công từ backend để tránh ném lỗi 'Order not found' giả mạo.
+     * Quy tắc: Gọi backend nếu là UUID, sau đó ghi nhận sự kiện chuyển trạng thái mới nhất vào mock store.
      */
     async updateOrderStatus(
         id: string,
@@ -783,22 +802,38 @@ export const ordersApi = {
         reason?: string,
         actor: Extract<UserRole, 'seller' | 'admin'> = 'seller',
     ): Promise<Order> {
-        try {
-            const resp = await api<any>(`/orders/${id}/status`, {
-                method: 'PATCH',
-                body: JSON.stringify({ status, reason, actor }),
-            })
-            const data = resp?.data ?? resp
-            if (data?.id) {
-                return normalizeOrder(data)
+        const isUuid =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+        if (isUuid) {
+            try {
+                const resp = await api<ApiResponse<OrderPayload> | OrderPayload>(
+                    `/orders/${encodeURIComponent(id)}/status`,
+                    {
+                        method: 'PATCH',
+                        body: JSON.stringify({ status, reason, actor }),
+                    },
+                )
+                const data = resp && 'data' in resp && resp.data ? resp.data : resp
+                if (data && (data as any).id) {
+                    const normalized = normalizeOrder(data as OrderPayload)
+                    const localOrders = readLocalMockOrders()
+                    const idx = localOrders.findIndex(
+                        (o) => o.id === id || (o as any).orderNo === id,
+                    )
+                    if (idx !== -1) {
+                        localOrders[idx] = normalized
+                        writeLocalMockOrders(localOrders)
+                    }
+                    return normalized
+                }
+            } catch (error) {
+                if (!canFallbackToMock(error)) throw error
+                // Fallback cập nhật mock
             }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Fallback cập nhật mock
         }
 
         const orders = readLocalMockOrders()
-        const index = orders.findIndex((o) => o.id === id)
+        const index = orders.findIndex((o) => o.id === id || (o as any).orderNo === id)
         if (index !== -1) {
             if (!ALLOWED_STATUS_TRANSITIONS[orders[index].status].includes(status)) {
                 throw new Error('Invalid order status transition')
@@ -841,19 +876,35 @@ export const ordersApi = {
      * Luồng xử lý: Gọi backend API -> nếu thành công trả về normalizeOrder(data); nếu môi trường mock fallback local.
      */
     async confirmOrderDelivery(id: string): Promise<Order> {
-        try {
-            const resp = await api<any>(`/orders/${id}/confirm-delivery`, { method: 'POST' })
-            const data = resp?.data ?? resp
-            if (data?.id) {
-                return normalizeOrder(data)
+        const isUuid =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+        if (isUuid) {
+            try {
+                const resp = await api<ApiResponse<OrderPayload> | OrderPayload>(
+                    `/orders/${encodeURIComponent(id)}/confirm-delivery`,
+                    { method: 'POST' },
+                )
+                const data = resp && 'data' in resp && resp.data ? resp.data : resp
+                if (data && (data as any).id) {
+                    const normalized = normalizeOrder(data as OrderPayload)
+                    const localOrders = readLocalMockOrders()
+                    const idx = localOrders.findIndex(
+                        (o) => o.id === id || (o as any).orderNo === id,
+                    )
+                    if (idx !== -1) {
+                        localOrders[idx] = normalized
+                        writeLocalMockOrders(localOrders)
+                    }
+                    return normalized
+                }
+            } catch (error) {
+                if (!canFallbackToMock(error)) throw error
+                // Fallback
             }
-        } catch (error) {
-            if (!canFallbackToMock(error)) throw error
-            // Fallback
         }
 
         const orders = readLocalMockOrders()
-        const index = orders.findIndex((o) => o.id === id)
+        const index = orders.findIndex((o) => o.id === id || (o as any).orderNo === id)
         if (index !== -1) {
             orders[index] = {
                 ...orders[index],

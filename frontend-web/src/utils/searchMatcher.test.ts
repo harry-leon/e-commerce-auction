@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-    removeVietnameseTones,
-    matchesSearchKeyword,
-    scoreProductSearch,
-} from './searchMatcher'
+import { removeVietnameseTones, matchesSearchKeyword, scoreProductSearch } from './searchMatcher'
 
 describe('Vietnamese Smart Search Matcher', () => {
     it('removes Vietnamese tones accurately', () => {

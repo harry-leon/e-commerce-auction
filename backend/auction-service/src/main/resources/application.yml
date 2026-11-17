@@ -18,6 +18,11 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  task:
+    scheduling:
+      pool:
+        size: 5
+      thread-name-prefix: auction-scheduler-
 
 server:
   port: ${SERVER_PORT:8080}
@@ -56,9 +61,9 @@ app:
     scheduler:
       enabled: ${AUCTION_SCHEDULER_ENABLED:true}
       opening-interval-ms: ${AUCTION_SCHEDULER_OPENING_INTERVAL_MS:5000}
-      closing-interval-ms: ${AUCTION_SCHEDULER_CLOSING_INTERVAL_MS:10000}
-      settlement-interval-ms: ${AUCTION_SCHEDULER_SETTLEMENT_INTERVAL_MS:10000}
-      handover-interval-ms: ${AUCTION_SCHEDULER_HANDOVER_INTERVAL_MS:10000}
+      closing-interval-ms: ${AUCTION_SCHEDULER_CLOSING_INTERVAL_MS:3000}
+      settlement-interval-ms: ${AUCTION_SCHEDULER_SETTLEMENT_INTERVAL_MS:3000}
+      handover-interval-ms: ${AUCTION_SCHEDULER_HANDOVER_INTERVAL_MS:30000}
     bidding:
       min-increment: ${AUCTION_MIN_INCREMENT:1000}
       anti-sniping-seconds: ${AUCTION_ANTI_SNIPING_SECONDS:120}

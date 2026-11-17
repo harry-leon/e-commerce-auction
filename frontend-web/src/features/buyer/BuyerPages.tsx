@@ -17,6 +17,7 @@ import {
     Truck,
     Gavel,
     Package,
+    Star,
     ShoppingCart,
     CreditCard,
     Shield,
@@ -680,7 +681,9 @@ export function CartPage() {
      */
     const beginCheckout = async () => {
         if (!cart || checkingCheckout) return
-        const currentSelectedItems = (cart.items || []).filter((it) => !unselectedItemIds.has(it.id))
+        const currentSelectedItems = (cart.items || []).filter(
+            (it) => !unselectedItemIds.has(it.id),
+        )
         if (currentSelectedItems.length === 0) {
             setError(
                 lang === 'vi'
@@ -1013,20 +1016,23 @@ export function CartPage() {
     }
 
     const pricing = calculateEstimatedPricing(selectedItems, appliedVoucher)
-    const subtotal = selectedItems.length > 0 ? (pricing.baseSubtotal || 0) : 0
+    const subtotal = selectedItems.length > 0 ? pricing.baseSubtotal || 0 : 0
     const discount =
         selectedItems.length > 0
             ? pricing.merchantVolumeDiscount + pricing.categoryDiscount + pricing.voucherDiscount
             : 0
     const shipping =
         selectedItems.length > 0
-            ? (cart?.shippingFee !== undefined && cart.shippingFee > 0
-                  ? cart.shippingFee
-                  : pricing.estimatedShipping)
+            ? cart?.shippingFee !== undefined && cart.shippingFee > 0
+                ? cart.shippingFee
+                : pricing.estimatedShipping
             : 0
     const tax = selectedItems.length > 0 ? pricing.estimatedTax : 0
     const peakHourFee = selectedItems.length > 0 ? pricing.peakHourFee : 0
-    const total = selectedItems.length > 0 ? Math.max(0, subtotal - discount + shipping + tax + peakHourFee) : 0
+    const total =
+        selectedItems.length > 0
+            ? Math.max(0, subtotal - discount + shipping + tax + peakHourFee)
+            : 0
 
     return (
         <BuyerLayout>
@@ -1071,7 +1077,9 @@ export function CartPage() {
                             <span className="font-bold text-primary bg-orange-100 px-1.5 py-0.5 rounded font-mono">
                                 FREESHIP
                             </span>
-                            {lang === 'en' ? ' for free shipping.' : ' để được miễn phí vận chuyển.'}
+                            {lang === 'en'
+                                ? ' for free shipping.'
+                                : ' để được miễn phí vận chuyển.'}
                         </span>
                     </div>
                     {!appliedVoucher && (
@@ -1117,7 +1125,9 @@ export function CartPage() {
                                 aria-label={lang === 'vi' ? 'Chọn tất cả' : 'Select all'}
                             />
                             <span>
-                                {lang === 'vi' ? 'Chọn tất cả' : 'Select all'} ({selectedItems.length}/{items.length} {lang === 'vi' ? 'sản phẩm' : 'items'})
+                                {lang === 'vi' ? 'Chọn tất cả' : 'Select all'} (
+                                {selectedItems.length}/{items.length}{' '}
+                                {lang === 'vi' ? 'sản phẩm' : 'items'})
                             </span>
                         </label>
                         {selectedItems.length > 0 && (
@@ -1180,7 +1190,8 @@ export function CartPage() {
                                         </button>
                                     </div>
 
-                                    {item.stockAvailable !== null && item.stockAvailable !== undefined ? (
+                                    {item.stockAvailable !== null &&
+                                    item.stockAvailable !== undefined ? (
                                         item.stockAvailable <= 0 ? (
                                             <span className="inline-block text-xs bg-red-100 text-danger px-2 py-0.5 rounded-full font-medium mt-1">
                                                 {tr(lang, 'outOfStock')}
@@ -1341,7 +1352,8 @@ export function CartPage() {
                         loading={checkingCheckout}
                         disabled={selectedItems.length === 0}
                     >
-                        {tr(lang, 'checkout')} {selectedItems.length > 0 ? `(${selectedItems.length})` : ''} →
+                        {tr(lang, 'checkout')}{' '}
+                        {selectedItems.length > 0 ? `(${selectedItems.length})` : ''} →
                     </Button>
                 </div>
             </div>
@@ -1932,7 +1944,8 @@ export function CheckoutPage() {
                                     (w) =>
                                         w.name.toLowerCase() === currentWard ||
                                         w.name.toLowerCase().includes(currentWard) ||
-                                        (currentWard.includes('ben nghe') && w.name.includes('Bến Nghé')),
+                                        (currentWard.includes('ben nghe') &&
+                                            w.name.includes('Bến Nghé')),
                                 )
                                 if (matchedWard) {
                                     setSelectedWardCode(matchedWard.code)
@@ -2100,7 +2113,9 @@ export function CheckoutPage() {
         // Tỉnh / Thành phố
         if (!shippingData.city.trim()) {
             errors.city =
-                lang === 'en' ? 'Please select a City / Province.' : 'Vui lòng chọn Tỉnh / Thành phố.'
+                lang === 'en'
+                    ? 'Please select a City / Province.'
+                    : 'Vui lòng chọn Tỉnh / Thành phố.'
         }
 
         // Quận / Huyện
@@ -2111,8 +2126,7 @@ export function CheckoutPage() {
 
         // Phường / Xã
         if (!shippingData.ward.trim()) {
-            errors.ward =
-                lang === 'en' ? 'Please select a Ward.' : 'Vui lòng chọn Phường / Xã.'
+            errors.ward = lang === 'en' ? 'Please select a Ward.' : 'Vui lòng chọn Phường / Xã.'
         }
 
         setShippingErrors(errors)
@@ -2302,7 +2316,10 @@ export function CheckoutPage() {
                 if (!isBuyNow) {
                     if (session) {
                         try {
-                            if (cartItems.length > 0 && cartItems.length === activeCheckoutItems.length) {
+                            if (
+                                cartItems.length > 0 &&
+                                cartItems.length === activeCheckoutItems.length
+                            ) {
                                 await clearCart()
                                 setCartCount(0)
                             } else {
@@ -2337,7 +2354,10 @@ export function CheckoutPage() {
             if (!isBuyNow) {
                 if (session) {
                     try {
-                        if (cartItems.length > 0 && cartItems.length === activeCheckoutItems.length) {
+                        if (
+                            cartItems.length > 0 &&
+                            cartItems.length === activeCheckoutItems.length
+                        ) {
                             await clearCart()
                             setCartCount(0)
                         } else {
@@ -2590,17 +2610,29 @@ export function CheckoutPage() {
                                         {/* Dropdown 1: Tỉnh / Thành phố */}
                                         <div className="flex flex-col gap-1">
                                             <label className="text-xs font-medium text-gray-600">
-                                                {lang === 'en' ? 'City / Province *' : 'Tỉnh / Thành phố *'}
+                                                {lang === 'en'
+                                                    ? 'City / Province *'
+                                                    : 'Tỉnh / Thành phố *'}
                                             </label>
                                             <select
-                                                aria-label={lang === 'en' ? 'City / Province' : 'Tỉnh / Thành phố'}
+                                                aria-label={
+                                                    lang === 'en'
+                                                        ? 'City / Province'
+                                                        : 'Tỉnh / Thành phố'
+                                                }
                                                 value={selectedProvinceCode}
                                                 disabled={loadingProvinces}
                                                 onChange={(e) =>
-                                                    handleProvinceChange(e.target.value ? Number(e.target.value) : '')
+                                                    handleProvinceChange(
+                                                        e.target.value
+                                                            ? Number(e.target.value)
+                                                            : '',
+                                                    )
                                                 }
                                                 className={`nexus-input text-sm py-2 px-3 rounded-lg border ${
-                                                    shippingErrors.city ? 'border-danger ring-1 ring-danger' : 'border-gray-300'
+                                                    shippingErrors.city
+                                                        ? 'border-danger ring-1 ring-danger'
+                                                        : 'border-gray-300'
                                                 }`}
                                             >
                                                 <option value="">
@@ -2619,7 +2651,9 @@ export function CheckoutPage() {
                                                 ))}
                                             </select>
                                             {shippingErrors.city && (
-                                                <p className="text-xs text-danger font-medium mt-0.5">{shippingErrors.city}</p>
+                                                <p className="text-xs text-danger font-medium mt-0.5">
+                                                    {shippingErrors.city}
+                                                </p>
                                             )}
                                         </div>
 
@@ -2629,14 +2663,22 @@ export function CheckoutPage() {
                                                 {lang === 'en' ? 'District *' : 'Quận / Huyện *'}
                                             </label>
                                             <select
-                                                aria-label={lang === 'en' ? 'District' : 'Quận / Huyện'}
+                                                aria-label={
+                                                    lang === 'en' ? 'District' : 'Quận / Huyện'
+                                                }
                                                 value={selectedDistrictCode}
                                                 disabled={!selectedProvinceCode || loadingDistricts}
                                                 onChange={(e) =>
-                                                    handleDistrictChange(e.target.value ? Number(e.target.value) : '')
+                                                    handleDistrictChange(
+                                                        e.target.value
+                                                            ? Number(e.target.value)
+                                                            : '',
+                                                    )
                                                 }
                                                 className={`nexus-input text-sm py-2 px-3 rounded-lg border ${
-                                                    shippingErrors.district ? 'border-danger ring-1 ring-danger' : 'border-gray-300'
+                                                    shippingErrors.district
+                                                        ? 'border-danger ring-1 ring-danger'
+                                                        : 'border-gray-300'
                                                 }`}
                                             >
                                                 <option value="">
@@ -2655,7 +2697,9 @@ export function CheckoutPage() {
                                                 ))}
                                             </select>
                                             {shippingErrors.district && (
-                                                <p className="text-xs text-danger font-medium mt-0.5">{shippingErrors.district}</p>
+                                                <p className="text-xs text-danger font-medium mt-0.5">
+                                                    {shippingErrors.district}
+                                                </p>
                                             )}
                                         </div>
 
@@ -2669,10 +2713,16 @@ export function CheckoutPage() {
                                                 value={selectedWardCode}
                                                 disabled={!selectedDistrictCode || loadingWards}
                                                 onChange={(e) =>
-                                                    handleWardChange(e.target.value ? Number(e.target.value) : '')
+                                                    handleWardChange(
+                                                        e.target.value
+                                                            ? Number(e.target.value)
+                                                            : '',
+                                                    )
                                                 }
                                                 className={`nexus-input text-sm py-2 px-3 rounded-lg border ${
-                                                    shippingErrors.ward ? 'border-danger ring-1 ring-danger' : 'border-gray-300'
+                                                    shippingErrors.ward
+                                                        ? 'border-danger ring-1 ring-danger'
+                                                        : 'border-gray-300'
                                                 }`}
                                             >
                                                 <option value="">
@@ -2691,7 +2741,9 @@ export function CheckoutPage() {
                                                 ))}
                                             </select>
                                             {shippingErrors.ward && (
-                                                <p className="text-xs text-danger font-medium mt-0.5">{shippingErrors.ward}</p>
+                                                <p className="text-xs text-danger font-medium mt-0.5">
+                                                    {shippingErrors.ward}
+                                                </p>
                                             )}
                                         </div>
                                     </div>
@@ -2753,13 +2805,23 @@ export function CheckoutPage() {
                             </div>
 
                             {/* Bản xem trước địa chỉ nhận hàng hoàn chỉnh */}
-                            {(shippingData.street || shippingData.ward || shippingData.district || shippingData.city) && (
+                            {(shippingData.street ||
+                                shippingData.ward ||
+                                shippingData.district ||
+                                shippingData.city) && (
                                 <p className="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 flex items-center gap-1.5">
                                     <span className="font-semibold text-gray-700">
-                                        {lang === 'en' ? 'Delivery address preview:' : 'Xem trước địa chỉ nhận hàng:'}
+                                        {lang === 'en'
+                                            ? 'Delivery address preview:'
+                                            : 'Xem trước địa chỉ nhận hàng:'}
                                     </span>
                                     <span>
-                                        {[shippingData.street, shippingData.ward, shippingData.district, shippingData.city]
+                                        {[
+                                            shippingData.street,
+                                            shippingData.ward,
+                                            shippingData.district,
+                                            shippingData.city,
+                                        ]
                                             .filter(Boolean)
                                             .join(', ')}
                                     </span>
@@ -4396,17 +4458,23 @@ export function MyReputationPage() {
     const isPublic =
         page === 'public-reputation' ||
         Boolean(pageParams?.id || pageParams?.userId || pageParams?.sellerId)
+    // Chức năng: Xác định userId của hồ sơ cần hiển thị.
+    // Đầu vào: pageParams (id, userId, sellerId) hoặc user context đang đăng nhập.
+    // Kết quả: UUID hợp lệ trong DB, nếu xem công khai mà không truyền id thì trỏ tới Seller mặc định của hệ thống.
     const targetUserId = String(
         pageParams?.id ||
             pageParams?.userId ||
             pageParams?.sellerId ||
-            user?.id ||
-            'b1fb6fd5-936c-439e-994c-f0c5c529b406',
+            (isPublic
+                ? '6433cfef-1ee8-439f-9cec-1dcf32f841e0'
+                : user?.id || '4928292a-14de-4d37-87f4-5fc8917cf240'),
     )
-    const targetName = resolveSellerName(
-        targetUserId,
-        typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null,
-    )
+    const targetName = isPublic
+        ? resolveSellerName(
+              targetUserId,
+              typeof pageParams?.sellerName === 'string' ? pageParams.sellerName : null,
+          )
+        : user?.fullName || (lang === 'vi' ? 'Hồ sơ cá nhân' : 'Personal Profile')
     const [reputation, setReputation] = useState<ReputationSummary | null>(null)
     const [eligibility, setEligibility] = useState<ReputationEligibility | null>(null)
     const [ratings, setRatings] = useState<RatingResponse[]>([])
@@ -4418,6 +4486,7 @@ export function MyReputationPage() {
         setError(null)
         try {
             if (isPublic) {
+                // Chức năng: Tải dữ liệu hồ sơ uy tín công khai từ Reputation Service qua Gateway
                 const [rep, elig, rates] = await Promise.all([
                     reputationApi.getUserReputation(targetUserId),
                     reputationApi.checkEligibility(targetUserId, 'BID'),
@@ -4428,10 +4497,14 @@ export function MyReputationPage() {
                 setRatings(rates?.content || [])
             } else {
                 if (!user) return
+                // Chức năng: Tải điểm uy tín cá nhân của tài khoản đăng nhập từ Backend
+                const uid = user.id
                 const [rep, elig, rates] = await Promise.all([
-                    reputationApi.getMyReputation(),
-                    reputationApi.checkEligibility(user.id, 'BID'),
-                    reputationApi.getRatingsForUser(user.id, 0, 50),
+                    reputationApi
+                        .getMyReputation()
+                        .catch(() => reputationApi.getUserReputation(uid)),
+                    reputationApi.checkEligibility(uid, 'BID'),
+                    reputationApi.getRatingsForUser(uid, 0, 50),
                 ])
                 setReputation(rep)
                 setEligibility(elig)
@@ -4441,7 +4514,7 @@ export function MyReputationPage() {
             setError(
                 err?.message ||
                     (lang === 'vi'
-                        ? 'Không thể tải thông tin uy tín'
+                        ? 'Không thể tải thông tin uy tín từ hệ thống'
                         : 'Failed to load reputation profile'),
             )
         } finally {
@@ -4470,14 +4543,39 @@ export function MyReputationPage() {
         )
     }
 
+    const displayAvgRating =
+        reputation && reputation.totalRatings > 0
+            ? (reputation.avgRating || 0).toFixed(1)
+            : ratings.length > 0
+              ? (ratings.reduce((s, r) => s + r.score, 0) / ratings.length).toFixed(1)
+              : null
+
     return (
         <BuyerLayout>
             <div className="max-w-4xl mx-auto space-y-6">
                 <Breadcrumb
-                    items={[{ label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' }]}
+                    items={
+                        isPublic
+                            ? [
+                                  { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
+                                  {
+                                      label: targetName,
+                                      page: 'seller-shop',
+                                  },
+                                  { label: lang === 'vi' ? 'Hồ sơ uy tín' : 'Reputation' },
+                              ]
+                            : [
+                                  { label: lang === 'vi' ? 'Trang chủ' : 'Home', page: 'home' },
+                                  {
+                                      label: lang === 'vi' ? 'Tài khoản' : 'Profile',
+                                      page: 'profile',
+                                  },
+                                  { label: lang === 'vi' ? 'Điểm uy tín' : 'My Reputation' },
+                              ]
+                    }
                 />
 
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900">
                             {isPublic
@@ -4493,6 +4591,66 @@ export function MyReputationPage() {
                                 ? 'Hệ thống tính điểm uy tín và phân cấp độ dựa trên lịch sử giao dịch và đánh giá từ cộng đồng.'
                                 : 'Trust level and reputation score calculated based on transaction history and community feedback.'}
                         </p>
+                    </div>
+
+                    {/* Nút điều hướng liên kết tránh trang mồ côi */}
+                    <div className="flex flex-wrap items-center gap-2.5">
+                        {isPublic ? (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        navigate('seller-shop', {
+                                            sellerId: targetUserId,
+                                            id: targetUserId,
+                                            sellerName: targetName,
+                                        })
+                                    }
+                                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-primary hover:bg-primary-dark transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                                >
+                                    <Package size={14} />
+                                    <span>
+                                        {lang === 'vi' ? 'Ghé thăm gian hàng' : 'Visit Shop'}
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('home')}
+                                    className="px-3.5 py-2 rounded-xl text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+                                >
+                                    <span>{lang === 'vi' ? 'Trang chủ' : 'Home'}</span>
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        navigate('public-reputation', {
+                                            sellerId: user?.id,
+                                            id: user?.id,
+                                            sellerName: user?.fullName,
+                                        })
+                                    }
+                                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-800 bg-amber-400 hover:bg-amber-500 transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                                >
+                                    <Star size={14} />
+                                    <span>
+                                        {lang === 'vi'
+                                            ? 'Xem hồ sơ công khai'
+                                            : 'View Public Profile'}
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('order-history')}
+                                    className="px-3.5 py-2 rounded-xl text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+                                >
+                                    <Package size={14} />
+                                    <span>{lang === 'vi' ? 'Đơn mua của tôi' : 'My Orders'}</span>
+                                </button>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -4540,16 +4698,17 @@ export function MyReputationPage() {
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <span className="text-3xl font-black text-amber-500">
-                                        ★{' '}
-                                        {reputation.avgRating
-                                            ? reputation.avgRating.toFixed(1)
-                                            : '5.0'}
+                                        ★ {displayAvgRating ?? '0.0'}
                                     </span>
                                 </div>
                                 <p className="text-xs text-gray-500 mt-2">
-                                    {lang === 'vi'
-                                        ? `Dựa trên ${reputation.totalRatings || ratings.length} lượt đánh giá hợp lệ`
-                                        : `Based on ${reputation.totalRatings || ratings.length} verified ratings`}
+                                    {displayAvgRating
+                                        ? lang === 'vi'
+                                            ? `Dựa trên ${reputation.totalRatings || ratings.length} lượt đánh giá thực tế`
+                                            : `Based on ${reputation.totalRatings || ratings.length} verified ratings`
+                                        : lang === 'vi'
+                                          ? 'Chưa có lượt đánh giá nào từ cộng đồng'
+                                          : 'No community ratings yet'}
                                 </p>
                             </div>
 
