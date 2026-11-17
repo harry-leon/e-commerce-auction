@@ -262,6 +262,22 @@ const SvgWallet = ({ size = 18, className = '' }: { size?: number; className?: s
     </svg>
 )
 
+const SvgCheck = ({ size = 14, className = '' }: { size?: number; className?: string }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <polyline points="20 6 9 17 4 12" />
+    </svg>
+)
+
 const SvgCheckSmall = ({ size = 13, className = '' }: { size?: number; className?: string }) => (
     <svg
         width={size}
@@ -1035,6 +1051,11 @@ export function OrderDetailView() {
                                     </span>
                                 )}
                             </span>
+                            {effectiveOrder.status === 'PROCESSING' && (
+                                <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                                    {lang === 'vi' ? 'Đang đóng gói' : 'Packing'}
+                                </span>
+                            )}
                             {effectiveOrder.updatedAt &&
                                 [
                                     'PAID',
@@ -1118,6 +1139,27 @@ export function OrderDetailView() {
                         </div>
                     </div>
                 </div>
+
+                {/* Banner trạng thái Đóng gói khi Người bán đang chuẩn bị hàng (PROCESSING) */}
+                {effectiveOrder.status === 'PROCESSING' && (
+                    <div className="bg-blue-50/90 border border-blue-200 rounded-2xl p-4 sm:p-5 flex items-center gap-3.5 shadow-sm">
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                            <SvgTruckIcon size={20} />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-sm sm:text-base text-blue-900">
+                                {lang === 'vi'
+                                    ? 'Người bán đang chuẩn bị & đóng gói hàng'
+                                    : 'Seller is preparing & packing your package'}
+                            </h3>
+                            <p className="text-xs text-blue-700 mt-0.5">
+                                {lang === 'vi'
+                                    ? 'Đơn hàng đã được thanh toán thành công. Người bán đang tiến hành đóng gói sản phẩm để bàn giao cho đơn vị vận chuyển sớm nhất.'
+                                    : 'Payment confirmed. The seller is packing your items and will hand them over to the carrier shortly.'}
+                            </p>
+                        </div>
+                    </div>
+                )}
 
                 {/* 3. Layout 2 cột: Cột trái (65% Vận đơn, Sản phẩm đã mua & Bảng giá), Cột phải (35% 3 Card) */}
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 items-start">
